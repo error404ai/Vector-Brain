@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/nodemon",
+  "watch": [
+    "dist"
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "src",
+    "node_modules"
+  ],
+  "exec": "node dist/app.js",
+  "delay": 250,
+  "exitcrash": true
+  
+}
