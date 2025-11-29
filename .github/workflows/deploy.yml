@@ -33,7 +33,13 @@ jobs:
             git stash
             git pull origin production
             docker compose -f docker-compose-prod.yml build
-            docker compose -f docker-compose-prod.yml down --timeout 60 --remove-orphans || true
+            
+            # Stop and remove containers with force to handle stuck containers
+            docker compose -f docker-compose-prod.yml down --timeout 30 --remove-orphans || true
+            
+            # Force remove any stuck containers
+            docker rm -f vector-brain-prod vector-brain-mysql-prod vector-brain-phpmyadmin-prod 2>/dev/null || true
+            
             docker builder prune -f
             docker compose -f docker-compose-prod.yml up --build -d
           EOF
