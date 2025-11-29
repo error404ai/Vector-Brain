@@ -7,7 +7,7 @@ services:
     restart: always
     env_file: .env
     ports:
-      - '${PORT:-3002}:3000'
+      - '${PORT:-3002}:3002'
     environment:
       - NODE_ENV=production
     depends_on:
