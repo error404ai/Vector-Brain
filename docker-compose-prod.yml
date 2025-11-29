@@ -5,19 +5,9 @@ services:
       dockerfile: Dockerfile.prod
     container_name: vector-brain-prod
     restart: always
+    env_file: .env.prod
     ports:
       - '${PORT:-3002}:3000'
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - MYSQLHOST=db
-      - MYSQLPORT=3306
-      - MYSQLUSERNAME=${MYSQLUSERNAME}
-      - MYSQLPASSWORD=${MYSQLPASSWORD}
-      - DATABASE=${DATABASE}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
-      - DBSYNC=false
     depends_on:
       db:
         condition: service_healthy

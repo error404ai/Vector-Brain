@@ -5,19 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: vector-brain-dev
     restart: unless-stopped
+    env_file: .env
     ports:
       - '${PORT:-3000}:3000'
-    environment:
-      - NODE_ENV=development
-      - PORT=3000
-      - MYSQLHOST=db
-      - MYSQLPORT=3306
-      - MYSQLUSERNAME=${MYSQLUSERNAME:-root}
-      - MYSQLPASSWORD=${MYSQLPASSWORD:-password}
-      - DATABASE=${DATABASE:-vector_brain}
-      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key}
-      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
-      - DBSYNC=${DBSYNC:-true}
     volumes:
       - .:/app
       - /app/node_modules
