@@ -33,9 +33,7 @@ jobs:
             git stash
             git pull origin production
             docker compose -f docker-compose-prod.yml build
-            docker compose -f docker-compose-prod.yml kill
-            docker compose -f docker-compose-prod.yml stop --timeout 30
-            docker compose -f docker-compose-prod.yml rm -f
+            docker compose -f docker-compose-prod.yml down --timeout 60 --remove-orphans || true
             docker builder prune -f
             docker compose -f docker-compose-prod.yml up --build -d
           EOF
