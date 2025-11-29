@@ -38,9 +38,6 @@ const app: express.Application = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Static files
-app.use(express.static(join(__dirname, '..', 'public')));
-
 // Initialize routing-controllers
 useExpressServer(app, {
   routePrefix: '/api',
@@ -60,6 +57,18 @@ useExpressServer(app, {
     origin: true,
     credentials: true,
   },
+});
+
+// Serve static files from public directory (built frontend)
+app.use(express.static(join(__dirname, '..', 'public')));
+
+// Fallback to index.html for client-side routing (SPA)
+app.get('*', (req, res) => {
+  // Don't interfere with API routes
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ message: 'API endpoint not found' });
+  }
+  res.sendFile(join(__dirname, '..', 'public', 'index.html'));
 });
 
 // Create HTTP server

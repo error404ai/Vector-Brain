@@ -1,8 +1,10 @@
 # Vector-Brain
 
-A clean TypeScript Express API starter template with TypeORM and dependency injection.
+A full-stack TypeScript monorepo with Express.js backend and React frontend.
 
 ## Features
+
+### Backend
 
 - **TypeScript** - Full TypeScript support with path aliases
 - **Express** - Fast, minimalist web framework
@@ -12,26 +14,40 @@ A clean TypeScript Express API starter template with TypeORM and dependency inje
 - **class-validator** - Request validation with decorators
 - **MySQL** - MySQL database support (easily changeable)
 
+### Frontend
+
+- **React 18** - Modern React with hooks
+- **Vite** - Lightning-fast build tool
+- **TypeScript** - Type-safe frontend development
+- **React Router** - Client-side routing
+- **Tailwind CSS** - Utility-first CSS framework (optional)
+
 ## Project Structure
 
 ```
-src/
-├── app.ts                 # Application entry point
-├── server.ts              # HTTP server setup
-├── config/                # Configuration files
-│   └── envConfig.ts       # Environment variables
-├── controllers/           # Route controllers
-├── entities/              # TypeORM entities
-├── helpers/               # Utility helpers
-├── loaders/               # App initialization loaders
-│   └── database.ts        # Database connection
-├── logger/                # Logging setup
-├── middleware/            # Express middlewares
-├── repositories/          # Custom repositories
-├── services/              # Business logic services
-│   └── controllerService/ # Service layer
-├── types/                 # TypeScript type definitions
-└── validations/           # Request DTOs/validators
+Vector-Brain/
+├── frontend/                 # React + Vite frontend
+│   ├── src/
+│   │   ├── pages/           # React pages
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── package.json
+│   └── vite.config.ts
+├── src/                      # Express.js backend
+│   ├── app.ts               # Application entry point
+│   ├── config/              # Configuration files
+│   ├── controllers/         # Route controllers
+│   ├── entities/            # TypeORM entities
+│   ├── helpers/             # Utility helpers
+│   ├── loaders/             # App initialization loaders
+│   ├── logger/              # Logging setup
+│   ├── middleware/          # Express middlewares
+│   ├── repositories/        # Custom repositories
+│   ├── services/            # Business logic services
+│   ├── types/               # TypeScript type definitions
+│   └── validations/         # Request DTOs/validators
+├── public/                  # Built frontend (generated)
+└── package.json             # Root package.json
 ```
 
 ## Getting Started
@@ -44,10 +60,20 @@ src/
 ### Installation
 
 1. Clone the repository
-2. Install dependencies:
+2. Install all dependencies (backend + frontend):
 
    ```bash
+   npm run install:all
+   ```
+
+   Or install separately:
+
+   ```bash
+   # Backend only
    npm install
+
+   # Frontend only
+   npm run install:frontend
    ```
 
 3. Configure environment variables:
@@ -63,27 +89,85 @@ src/
    npm run db:sync
    ```
 
-5. Start development server:
+5. Start development servers:
    ```bash
    npm run dev
    ```
 
-The API will be available at `http://localhost:3000/api`
+The backend API will be available at `http://localhost:3000/api`  
+The frontend will be available at `http://localhost:5173`
+
+## Development Workflow
+
+### Run Both Frontend and Backend
+
+```bash
+npm run dev
+```
+
+This starts:
+
+- Backend on `http://localhost:3000`
+- Frontend on `http://localhost:5173` (with API proxy)
+
+### Run Separately
+
+```bash
+# Backend only
+npm run dev:backend
+
+# Frontend only
+npm run dev:frontend
+```
+
+## Production Build
+
+Build the entire application:
+
+```bash
+npm run build:all
+```
+
+This will:
+
+1. Build backend TypeScript to `dist/`
+2. Build frontend React app to `public/`
+
+Start production server:
+
+```bash
+npm start
+```
+
+The server serves:
+
+- API endpoints at `/api/*`
+- Frontend static files for all other routes
+
+## Routing
+
+- **`/api/*`** - Backend API endpoints
+- **`/*`** - Frontend React app (all other routes)
 
 ## Available Scripts
 
-| Script                     | Description                              |
-| -------------------------- | ---------------------------------------- |
-| `npm run dev`              | Start development server with hot-reload |
-| `npm run build`            | Build for production                     |
-| `npm start`                | Start production server                  |
-| `npm run db:sync`          | Sync database schema                     |
-| `npm run db:drop`          | Drop all tables                          |
-| `npm run db:fresh`         | Drop, sync, and seed database            |
-| `npm run migrate:generate` | Generate migration from entity changes   |
-| `npm run migrate:run`      | Run pending migrations                   |
-| `npm run lint`             | Run ESLint                               |
-| `npm run format`           | Format code with Prettier                |
+| Script                     | Description                                   |
+| -------------------------- | --------------------------------------------- |
+| `npm run dev`              | Start both backend & frontend dev servers     |
+| `npm run dev:backend`      | Start backend development server only         |
+| `npm run dev:frontend`     | Start frontend development server only        |
+| `npm run build`            | Build backend for production                  |
+| `npm run build:frontend`   | Build frontend for production                 |
+| `npm run build:all`        | Build both backend and frontend               |
+| `npm start`                | Start production server                       |
+| `npm run install:all`      | Install all dependencies (backend + frontend) |
+| `npm run db:sync`          | Sync database schema                          |
+| `npm run db:drop`          | Drop all tables                               |
+| `npm run db:fresh`         | Drop, sync, and seed database                 |
+| `npm run migrate:generate` | Generate migration from entity changes        |
+| `npm run migrate:run`      | Run pending migrations                        |
+| `npm run lint`             | Run ESLint                                    |
+| `npm run format`           | Format code with Prettier                     |
 
 ## API Endpoints
 
