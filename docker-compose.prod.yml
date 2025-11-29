@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: vector-brain-prod
+    restart: always
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MYSQLHOST=db
+      - MYSQLPORT=3306
+      - MYSQLUSERNAME=${MYSQLUSERNAME}
+      - MYSQLPASSWORD=${MYSQLPASSWORD}
+      - DATABASE=${DATABASE}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
+      - DBSYNC=false
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vector-brain-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  db:
+    image: mysql:8.0
+    container_name: vector-brain-mysql-prod
+    restart: always
+    ports:
+      - '${MYSQL_EXTERNAL_PORT:-3306}:3306'
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQLPASSWORD}
+      - MYSQL_DATABASE=${DATABASE}
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQLPASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - vector-brain-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: vector-brain-phpmyadmin-prod
+    restart: always
+    ports:
+      - '${PHPMYADMIN_PORT:-8080}:80'
+    environment:
+      - PMA_HOST=db
+      - PMA_PORT=3306
+      - PMA_USER=${MYSQLUSERNAME}
+      - PMA_PASSWORD=${MYSQLPASSWORD}
+      - UPLOAD_LIMIT=100M
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vector-brain-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+volumes:
+  mysql_data_prod:
+
+networks:
+  vector-brain-network:
+    driver: bridge

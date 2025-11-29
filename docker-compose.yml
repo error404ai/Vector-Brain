@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vector-brain-dev
+    restart: unless-stopped
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MYSQLHOST=db
+      - MYSQLPORT=3306
+      - MYSQLUSERNAME=${MYSQLUSERNAME:-root}
+      - MYSQLPASSWORD=${MYSQLPASSWORD:-password}
+      - DATABASE=${DATABASE:-vector_brain}
+      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key}
+      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
+      - DBSYNC=${DBSYNC:-true}
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vector-brain-network
+
+  db:
+    image: mysql:8.0
+    container_name: vector-brain-mysql-dev
+    restart: unless-stopped
+    ports:
+      - '${MYSQL_EXTERNAL_PORT:-3306}:3306'
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQLPASSWORD:-password}
+      - MYSQL_DATABASE=${DATABASE:-vector_brain}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQLPASSWORD:-password}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - vector-brain-network
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: vector-brain-phpmyadmin-dev
+    restart: unless-stopped
+    ports:
+      - '${PHPMYADMIN_PORT:-8080}:80'
+    environment:
+      - PMA_HOST=db
+      - PMA_PORT=3306
+      - PMA_USER=${MYSQLUSERNAME:-root}
+      - PMA_PASSWORD=${MYSQLPASSWORD:-password}
+      - UPLOAD_LIMIT=100M
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vector-brain-network
+
+volumes:
+  mysql_data:
+
+networks:
+  vector-brain-network:
+    driver: bridge
