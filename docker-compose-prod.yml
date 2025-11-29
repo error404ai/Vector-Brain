@@ -67,7 +67,7 @@ services:
     container_name: vector-brain-phpmyadmin-prod
     restart: always
     ports:
-      - '${PHPMYADMIN_PORT:-8080}:80'
+      - '${PHPMYADMIN_PORT:-8081}:80'
     environment:
       - PMA_HOST=db
       - PMA_PORT=3306
