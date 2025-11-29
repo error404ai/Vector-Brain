@@ -8,7 +8,7 @@ services:
     container_name: vector-brain-prod
     restart: always
     ports:
-      - '${PORT:-3000}:3000'
+      - '${PORT:-3002}:3000'
     environment:
       - NODE_ENV=production
       - PORT=3000
