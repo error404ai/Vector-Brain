@@ -1,8 +1,9 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { UserService } from '@/services/controllerService/UserService';
-import { CreateUserValidation, UpdateUserValidation, UserQueryValidation, type CreateUserRequest, type UpdateUserRequest } from '@/validations/UserValidation';
+import { CreateUserValidation, UpdateUserValidation, UserQueryValidation } from '@/validations/UserValidation';
 import { Body, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
+import z from 'zod';
 
 @JsonController('/users')
 @Service()
@@ -22,13 +23,13 @@ export class UserController {
 
   @Post('/')
   @UseBefore(zodValidationMiddleware(CreateUserValidation))
-  async create(@Body() data: CreateUserRequest) {
+  async create(@Body() data: z.infer<typeof CreateUserValidation>) {
     return this.userService.create(data);
   }
 
   @Put('/:id')
   @UseBefore(zodValidationMiddleware(UpdateUserValidation))
-  async update(@Param('id') id: number, @Body() data: UpdateUserRequest) {
+  async update(@Param('id') id: number, @Body() data: z.infer<typeof UpdateUserValidation>) {
     return this.userService.update(id, data);
   }
 
