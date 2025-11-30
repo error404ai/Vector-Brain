@@ -1,12 +1,7 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { z } from 'zod';
 
-export class LoginDto {
-  @IsNotEmpty()
-  @IsEmail()
-  email: string;
-
-  @IsNotEmpty()
-  @IsString()
-  @MinLength(6)
-  password: string;
-}
+// Login validation
+export const LoginValidation = z.object({
+  email: z.string({ required_error: 'Email is required' }).email({ message: 'Invalid email format' }),
+  password: z.string({ required_error: 'Password is required' }).min(6, { message: 'Password must be at least 6 characters' }),
+});

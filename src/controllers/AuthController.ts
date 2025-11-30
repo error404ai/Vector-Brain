@@ -1,8 +1,10 @@
+import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AuthService } from '@/services/controllerService/AuthService';
-import { LoginDto } from '@/validations/AuthValidation';
+import { LoginValidation } from '@/validations/AuthValidation';
 import type { Request, Response } from 'express';
-import { Body, CookieParam, CurrentUser, Get, JsonController, Post, Req, Res } from 'routing-controllers';
+import { Body, CookieParam, CurrentUser, Get, JsonController, Post, Req, Res, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
+import z from 'zod';
 
 @JsonController('/auth')
 @Service()
@@ -10,7 +12,8 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('/login')
-  async login(@Body() data: LoginDto, @Req() req: Request, @Res() res: Response) {
+  @UseBefore(zodValidationMiddleware(LoginValidation))
+  async login(@Body() data: z.infer<typeof LoginValidation>, @Req() req: Request, @Res() res: Response) {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip || req.socket.remoteAddress;
 

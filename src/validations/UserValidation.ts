@@ -1,62 +1,31 @@
-import { Type } from 'class-transformer';
-import { IsBoolean, IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { z } from 'zod';
 
-export class CreateUserDto {
-  @IsNotEmpty()
-  @IsString()
-  name: string;
+// Helper for coercing string query params to numbers
+const coerceNumber = (fieldName: string) =>
+  z.coerce.number({
+    invalid_type_error: `${fieldName} must be a number`,
+  });
 
-  @IsNotEmpty()
-  @IsEmail()
-  email: string;
+// Create user validation
+export const CreateUserValidation = z.object({
+  name: z.string({ required_error: 'Name is required' }).min(1, 'Name is required'),
+  email: z.string({ required_error: 'Email is required' }).email({ message: 'Invalid email format' }),
+  password: z.string({ required_error: 'Password is required' }).min(6, { message: 'Password must be at least 6 characters' }),
+  phone: z.string().optional(),
+});
 
-  @IsNotEmpty()
-  @IsString()
-  @MinLength(6)
-  password: string;
+// Update user validation
+export const UpdateUserValidation = z.object({
+  name: z.string().min(1, 'Name cannot be empty').optional(),
+  email: z.string().email({ message: 'Invalid email format' }).optional(),
+  password: z.string().min(6, { message: 'Password must be at least 6 characters' }).optional(),
+  phone: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
 
-  @IsOptional()
-  @IsString()
-  phone?: string;
-}
-
-export class UpdateUserDto {
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(6)
-  password?: string;
-
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
-}
-
-export class UserQueryDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  page?: number = 1;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  limit?: number = 10;
-
-  @IsOptional()
-  @IsString()
-  search?: string;
-}
+// User query validation (for GET list)
+export const UserQueryValidation = z.object({
+  page: coerceNumber('Page').min(1, 'Page must be at least 1').optional().default(1),
+  limit: coerceNumber('Limit').min(1, 'Limit must be at least 1').optional().default(10),
+  search: z.string().optional(),
+});

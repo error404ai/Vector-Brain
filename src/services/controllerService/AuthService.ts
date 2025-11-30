@@ -4,9 +4,10 @@ import { UnauthorizedError } from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { JwtHelper } from '@/helpers/JwtHelper';
 import { AppDataSource } from '@/loaders/database';
-import { LoginDto } from '@/validations/AuthValidation';
+import { LoginValidation } from '@/validations/AuthValidation';
 import crypto from 'crypto';
 import { Service } from 'typedi';
+import z from 'zod';
 
 @Service()
 export class AuthService {
@@ -36,7 +37,7 @@ export class AuthService {
     return this.refreshTokenRepository.save(refreshToken);
   }
 
-  async login(data: LoginDto, userAgent?: string, ipAddress?: string) {
+  async login(data: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string) {
     // Find user by email including the password field
     const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: data.email }).andWhere('user.deletedAt IS NULL').getOne();
 
