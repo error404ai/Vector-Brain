@@ -1,10 +1,8 @@
-import { authApi } from '@/api/auth';
-import authManager from '@/utils/authManager';
+import { useLoginMutation } from '@/RTKService';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
-import { useState } from 'react';
 
 export const Route = createFileRoute('/')({
   component: LoginPage,
@@ -12,7 +10,7 @@ export const Route = createFileRoute('/')({
 
 function LoginPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const [login, { isLoading: loading }] = useLoginMutation();
 
   const form = useForm({
     initialValues: {
@@ -27,16 +25,11 @@ function LoginPage() {
   });
 
   const handleSubmit = async (values: typeof form.values) => {
-    setLoading(true);
     try {
-      const response = await authApi.login({
+      const response = await login({
         email: values.email,
         password: values.password,
-      });
-
-      // Save token and user data
-      authManager.saveToken(response.data.token);
-      authManager.saveUser(response.data.user);
+      }).unwrap();
 
       notifications.show({
         title: 'Welcome back!',
@@ -52,8 +45,6 @@ function LoginPage() {
         message,
         color: 'red',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
