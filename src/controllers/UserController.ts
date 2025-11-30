@@ -1,7 +1,9 @@
+import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { UserService } from '@/services/controllerService/UserService';
-import { CreateUserDto, UpdateUserDto, UserQueryDto } from '@/validations/UserValidation';
-import { Body, Delete, Get, JsonController, Param, Post, Put, QueryParams } from 'routing-controllers';
+import { CreateUserValidation, UpdateUserValidation, UserQueryValidation } from '@/validations/UserValidation';
+import { Body, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
+import z from 'zod';
 
 @JsonController('/users')
 @Service()
@@ -9,7 +11,8 @@ export class UserController {
   constructor(private userService: UserService) {}
 
   @Get('/')
-  async getAll(@QueryParams() query: UserQueryDto) {
+  @UseBefore(zodValidationMiddleware(UserQueryValidation))
+  async getAll(@QueryParams() query: any) {
     return this.userService.findAll(query);
   }
 
@@ -19,12 +22,14 @@ export class UserController {
   }
 
   @Post('/')
-  async create(@Body() data: CreateUserDto) {
+  @UseBefore(zodValidationMiddleware(CreateUserValidation))
+  async create(@Body() data: z.infer<typeof CreateUserValidation>) {
     return this.userService.create(data);
   }
 
   @Put('/:id')
-  async update(@Param('id') id: number, @Body() data: UpdateUserDto) {
+  @UseBefore(zodValidationMiddleware(UpdateUserValidation))
+  async update(@Param('id') id: number, @Body() data: z.infer<typeof UpdateUserValidation>) {
     return this.userService.update(id, data);
   }
 

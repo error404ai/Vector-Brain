@@ -1,14 +1,16 @@
 import { User } from '@/entities/User';
 import AppError from '@/helpers/AppError';
+import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { AppDataSource } from '@/loaders/database';
-import { CreateUserDto, UpdateUserDto, UserQueryDto } from '@/validations/UserValidation';
+import { CreateUserValidation, UpdateUserValidation, UserQueryValidation } from '@/validations/UserValidation';
 import { Service } from 'typedi';
+import z from 'zod';
 
 @Service()
 export class UserService {
   private userRepository = AppDataSource.getRepository(User);
 
-  async findAll(query: UserQueryDto) {
+  async findAll(query: z.infer<typeof UserQueryValidation>) {
     const { page = 1, limit = 10, search } = query;
     const skip = (page - 1) * limit;
 
@@ -43,7 +45,7 @@ export class UserService {
     return { data: user };
   }
 
-  async create(data: CreateUserDto) {
+  async create(data: z.infer<typeof CreateUserValidation>) {
     // Check if email already exists
     const existingUser = await this.userRepository.findOne({
       where: { email: data.email },
@@ -53,16 +55,25 @@ export class UserService {
       throw new AppError('Email already exists', 400);
     }
 
-    const user = this.userRepository.create(data);
+    // Hash the password before saving
+    const hashedPassword = CryptoHelper.generateHash(data.password);
+
+    const user = this.userRepository.create({
+      ...data,
+      password: hashedPassword,
+    });
     await this.userRepository.save(user);
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
 
     return {
       message: 'User created successfully',
-      data: user,
+      data: userWithoutPassword,
     };
   }
 
-  async update(id: number, data: UpdateUserDto) {
+  async update(id: number, data: z.infer<typeof UpdateUserValidation>) {
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -80,6 +91,11 @@ export class UserService {
       if (existingUser) {
         throw new AppError('Email already exists', 400);
       }
+    }
+
+    // Hash password if it's being updated
+    if (data.password) {
+      data.password = CryptoHelper.generateHash(data.password);
     }
 
     Object.assign(user, data);

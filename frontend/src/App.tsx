@@ -1,16 +1,12 @@
-import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
-import './App.css';
-import About from './pages/About';
-import Home from './pages/Home';
+import ErrorModal from "@/components/ui/ErrorModal";
+import { Router } from "./router";
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/about" element={<About />} />
-      </Routes>
-    </Router>
+    <>
+      <Router />
+      <ErrorModal />
+    </>
   );
 }
 

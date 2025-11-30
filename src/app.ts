@@ -1,3 +1,4 @@
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
@@ -19,8 +20,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Controllers - Add your controllers here
+import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
+
+// Auth middleware
+import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 
 dotenv.config();
 
@@ -38,11 +43,15 @@ const app: express.Application = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Cookie parser middleware
+app.use(cookieParser());
+
 // Initialize routing-controllers
 useExpressServer(app, {
   routePrefix: '/api',
   controllers: [
     // Add your controllers here
+    AuthController,
     HealthController,
     UserController,
   ],
@@ -57,6 +66,8 @@ useExpressServer(app, {
     origin: true,
     credentials: true,
   },
+  authorizationChecker,
+  currentUserChecker,
 });
 
 // Serve static files from public directory (built frontend)
