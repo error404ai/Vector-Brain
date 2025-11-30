@@ -1,3 +1,4 @@
+import newAuthManager from '@/_helpers/authManager';
 import { logout, setIsLoggedIn, setUser, type User } from '@/store/authSlice';
 import store from '@/store/store';
 
@@ -6,7 +7,9 @@ const USER_KEY = 'authUser';
 const authManager = {
   saveToken: (token: string) => {
     try {
-      localStorage.setItem('authToken', token);
+      // Use new auth manager to save session
+      const expireAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
+      newAuthManager.saveAuthSession({ accessToken: token, expireAt });
       // Clear caches from any previous session but keep the new auth token.
       void authManager.clearAppCache(true);
     } catch {
@@ -16,7 +19,8 @@ const authManager = {
   },
 
   getToken: () => {
-    return localStorage.getItem('authToken');
+    // Use new auth manager
+    return newAuthManager.getAccessToken();
   },
 
   saveUser: (user: User) => {
@@ -39,8 +43,8 @@ const authManager = {
 
   clearToken: () => {
     try {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem(USER_KEY);
+      // Use new auth manager
+      newAuthManager.clearTokens();
       // Clear caches fully on logout (don't preserve token).
       void authManager.clearAppCache(false);
     } catch {

@@ -1,10 +1,10 @@
-import { authApi } from '@/api/auth';
-import authManager from '@/utils/authManager';
+import { useLoginMutation } from '@/RTKService/authService';
+import { setIsLoggedIn, setUser } from '@/store';
+import { useAppDispatch } from '@/store/store';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
-import { useState } from 'react';
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -12,7 +12,8 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const dispatch = useAppDispatch();
+  const [login, { isLoading }] = useLoginMutation();
 
   const form = useForm({
     initialValues: {
@@ -27,16 +28,15 @@ function LoginPage() {
   });
 
   const handleSubmit = async (values: typeof form.values) => {
-    setLoading(true);
     try {
-      const response = await authApi.login({
+      const response = await login({
         email: values.email,
         password: values.password,
-      });
+      }).unwrap();
 
-      // Save token and user data
-      authManager.saveToken(response.data.token);
-      authManager.saveUser(response.data.user);
+      // Update Redux state
+      dispatch(setIsLoggedIn(true));
+      dispatch(setUser(response.data.user));
 
       notifications.show({
         title: 'Welcome back!',
@@ -52,8 +52,6 @@ function LoginPage() {
         message,
         color: 'red',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -79,7 +77,7 @@ function LoginPage() {
             </Anchor>
           </Group>
 
-          <Button type="submit" fullWidth color="vector" mt="md" loading={loading}>
+          <Button type="submit" fullWidth color="vector" mt="md" loading={isLoading}>
             Sign In
           </Button>
         </Stack>
