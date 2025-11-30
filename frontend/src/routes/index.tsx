@@ -2,7 +2,7 @@ import { setIsLoggedIn } from '@/store/authSlice';
 import authManager from '@/utils/authManager';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { useDispatch } from 'react-redux';
 
 export const Route = createFileRoute('/')({
@@ -97,13 +97,6 @@ function LoginPage() {
           </Button>
         </Stack>
       </form>
-
-      <Text c="dimmed" size="sm" ta="center">
-        Don&apos;t have an account?{' '}
-        <Link to="/settings">
-          <Anchor c="vector">Sign up</Anchor>
-        </Link>
-      </Text>
     </Stack>
   );
 }
