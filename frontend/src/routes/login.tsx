@@ -15,7 +15,7 @@ import { useForm } from "@mantine/form";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useDispatch } from "react-redux";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
@@ -38,7 +38,6 @@ function LoginPage() {
 
   const handleSubmit = (values: typeof form.values) => {
     console.log("Login attempt:", values);
-    // Simulate login - replace with actual API call
     authManager.saveToken("demo-token-123");
     dispatch(setIsLoggedIn(true));
     router.navigate({ to: "/dashboard" });
@@ -67,9 +66,6 @@ function LoginPage() {
                 backgroundColor: "rgba(9, 30, 56, 0.5)",
                 borderColor: "rgba(255,255,255,0.2)",
                 color: "white",
-                "&:focus": {
-                  borderColor: "#0B69C6",
-                },
               },
               label: { color: "rgba(255,255,255,0.7)" },
             }}
@@ -110,7 +106,7 @@ function LoginPage() {
       </form>
 
       <Text c="dimmed" size="sm" ta="center">
-        Don&apos;t have an account?{" "}
+        Do not have an account?{" "}
         <Anchor c="vector" href="/signup">
           Sign up
         </Anchor>

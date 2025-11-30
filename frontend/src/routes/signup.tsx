@@ -1,10 +1,7 @@
-import { setIsLoggedIn } from "@/store/authSlice";
-import authManager from "@/utils/authManager";
 import {
   Anchor,
   Button,
   Checkbox,
-  Group,
   PasswordInput,
   Stack,
   Text,
@@ -13,50 +10,67 @@ import {
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useDispatch } from "react-redux";
 
-export const Route = createFileRoute("/")({
-  component: LoginPage,
+export const Route = createFileRoute("/signup")({
+  component: SignupPage,
 });
 
-function LoginPage() {
+function SignupPage() {
   const router = useRouter();
-  const dispatch = useDispatch();
 
   const form = useForm({
     initialValues: {
+      name: "",
       email: "",
       password: "",
-      rememberMe: false,
+      confirmPassword: "",
+      terms: false,
     },
     validate: {
+      name: (value) =>
+        value.length >= 2 ? null : "Name must be at least 2 characters",
       email: (value) => (/^\S+@\S+$/.test(value) ? null : "Invalid email"),
       password: (value) =>
         value.length >= 6 ? null : "Password must be at least 6 characters",
+      confirmPassword: (value, values) =>
+        value === values.password ? null : "Passwords do not match",
+      terms: (value) => (value ? null : "You must accept the terms"),
     },
   });
 
   const handleSubmit = (values: typeof form.values) => {
-    console.log("Login attempt:", values);
-    // Simulate login - replace with actual API call
-    authManager.saveToken("demo-token-123");
-    dispatch(setIsLoggedIn(true));
-    router.navigate({ to: "/dashboard" });
+    console.log("Signup attempt:", values);
+    router.navigate({ to: "/login" });
   };
 
   return (
     <Stack gap="lg">
       <Stack gap="xs" align="center">
         <Title order={2} c="white">
-          Welcome Back
+          Create Account
         </Title>
         <Text c="dimmed" size="sm">
-          Sign in to access your Vector Brain dashboard
+          Get started with Vector Brain today
         </Text>
       </Stack>
 
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
+          <TextInput
+            label="Full Name"
+            placeholder="John Doe"
+            required
+            {...form.getInputProps("name")}
+            styles={{
+              input: {
+                backgroundColor: "rgba(9, 30, 56, 0.5)",
+                borderColor: "rgba(255,255,255,0.2)",
+                color: "white",
+              },
+              label: { color: "rgba(255,255,255,0.7)" },
+            }}
+          />
+
           <TextInput
             label="Email"
             placeholder="your@email.com"
@@ -67,9 +81,6 @@ function LoginPage() {
                 backgroundColor: "rgba(9, 30, 56, 0.5)",
                 borderColor: "rgba(255,255,255,0.2)",
                 color: "white",
-                "&:focus": {
-                  borderColor: "#0B69C6",
-                },
               },
               label: { color: "rgba(255,255,255,0.7)" },
             }}
@@ -77,7 +88,7 @@ function LoginPage() {
 
           <PasswordInput
             label="Password"
-            placeholder="Your password"
+            placeholder="Create a password"
             required
             {...form.getInputProps("password")}
             styles={{
@@ -90,29 +101,39 @@ function LoginPage() {
             }}
           />
 
-          <Group justify="space-between">
-            <Checkbox
-              label="Remember me"
-              {...form.getInputProps("rememberMe", { type: "checkbox" })}
-              styles={{
-                label: { color: "rgba(255,255,255,0.7)" },
-              }}
-            />
-            <Anchor c="vector" size="sm" href="#">
-              Forgot password?
-            </Anchor>
-          </Group>
+          <PasswordInput
+            label="Confirm Password"
+            placeholder="Confirm your password"
+            required
+            {...form.getInputProps("confirmPassword")}
+            styles={{
+              input: {
+                backgroundColor: "rgba(9, 30, 56, 0.5)",
+                borderColor: "rgba(255,255,255,0.2)",
+                color: "white",
+              },
+              label: { color: "rgba(255,255,255,0.7)" },
+            }}
+          />
+
+          <Checkbox
+            label="I agree to the terms and conditions"
+            {...form.getInputProps("terms", { type: "checkbox" })}
+            styles={{
+              label: { color: "rgba(255,255,255,0.7)" },
+            }}
+          />
 
           <Button type="submit" fullWidth color="vector" mt="md">
-            Sign In
+            Create Account
           </Button>
         </Stack>
       </form>
 
       <Text c="dimmed" size="sm" ta="center">
-        Don&apos;t have an account?{" "}
-        <Anchor c="vector" href="/signup">
-          Sign up
+        Already have an account?{" "}
+        <Anchor c="vector" href="/login">
+          Sign in
         </Anchor>
       </Text>
     </Stack>
