@@ -9,9 +9,11 @@ WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
+COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
 
 # Install dependencies
 RUN pnpm install
+RUN cd frontend && pnpm install
 
 # Copy source code
 COPY . .
@@ -19,8 +21,8 @@ COPY . .
 # Build the application
 RUN pnpm run build
 
-# Expose the port
-EXPOSE 3000
+# Expose the ports
+EXPOSE 3000 5173
 
 # Start the development server
 CMD ["pnpm", "run", "dev"]

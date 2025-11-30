@@ -8,9 +8,11 @@ services:
     env_file: .env
     ports:
       - '${PORT:-3000}:3000'
+      - '5173:5173'
     volumes:
       - .:/app
       - /app/node_modules
+      - /app/frontend/node_modules
     depends_on:
       db:
         condition: service_healthy
