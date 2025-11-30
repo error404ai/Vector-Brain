@@ -23,7 +23,7 @@ function RootComponent() {
   // }
 
   return (
-    <SkeletonTheme baseColor="#1A3A5C" highlightColor="#0A2E55">
+    <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f1f5f9">
       {isLoggedIn && !isPublicRoute ? (
         <AuthLayout>
           <Outlet />

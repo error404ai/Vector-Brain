@@ -36,9 +36,7 @@ function LoginPage() {
   return (
     <Stack gap="lg">
       <Stack gap="xs" align="center">
-        <Title order={2} c="white">
-          Welcome Back
-        </Title>
+        <Title order={2}>Welcome Back</Title>
         <Text c="dimmed" size="sm">
           Sign in to access your Vector Brain dashboard
         </Text>
@@ -46,47 +44,12 @@ function LoginPage() {
 
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
-          <TextInput
-            label="Email"
-            placeholder="your@email.com"
-            required
-            {...form.getInputProps('email')}
-            styles={{
-              input: {
-                backgroundColor: 'rgba(9, 30, 56, 0.5)',
-                borderColor: 'rgba(255,255,255,0.2)',
-                color: 'white',
-                '&:focus': {
-                  borderColor: '#0B69C6',
-                },
-              },
-              label: { color: 'rgba(255,255,255,0.7)' },
-            }}
-          />
+          <TextInput label="Email" placeholder="your@email.com" required {...form.getInputProps('email')} />
 
-          <PasswordInput
-            label="Password"
-            placeholder="Your password"
-            required
-            {...form.getInputProps('password')}
-            styles={{
-              input: {
-                backgroundColor: 'rgba(9, 30, 56, 0.5)',
-                borderColor: 'rgba(255,255,255,0.2)',
-                color: 'white',
-              },
-              label: { color: 'rgba(255,255,255,0.7)' },
-            }}
-          />
+          <PasswordInput label="Password" placeholder="Your password" required {...form.getInputProps('password')} />
 
           <Group justify="space-between">
-            <Checkbox
-              label="Remember me"
-              {...form.getInputProps('rememberMe', { type: 'checkbox' })}
-              styles={{
-                label: { color: 'rgba(255,255,255,0.7)' },
-              }}
-            />
+            <Checkbox label="Remember me" {...form.getInputProps('rememberMe', { type: 'checkbox' })} />
             <Anchor c="vector" size="sm" href="#">
               Forgot password?
             </Anchor>

@@ -114,11 +114,11 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: '#0A2E55',
+        backgroundColor: '#f1f5f9',
       }}
     >
       {/* Logo */}
-      <Box p="md" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+      <Box p="md" style={{ borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
         <Logo size={28} showText={!collapsed} />
       </Box>
 
@@ -146,7 +146,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       </ScrollArea>
 
       {/* Footer */}
-      <Box p="md" style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+      <Box p="md" style={{ borderTop: '1px solid rgba(0,0,0,0.1)' }}>
         {collapsed ? (
           <Tooltip label="Vector Brain v1.0" position="right" withArrow>
             <Box style={{ display: 'flex', justifyContent: 'center' }}>

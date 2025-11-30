@@ -13,7 +13,7 @@ interface MantineAppProviderProps {
   children: React.ReactNode;
 }
 
-// Create custom theme matching Vector AI Agent's color scheme (dark blue theme)
+// Create custom theme matching Vector AI Agent's color scheme (light mode)
 const theme = createTheme({
   /** Custom theme matching Vector AI Agent's blue color scheme */
   primaryColor: 'vector',
@@ -31,18 +31,18 @@ const theme = createTheme({
       '#074181',
       '#06346A', // darkest
     ],
-    // Dark blue background colors matching Vector AI Agent
+    // Light mode background colors
     dark: [
-      '#C1C2C5',
-      '#A6A7AB',
-      '#909296',
-      '#5C5F66',
-      '#373A40',
-      '#2C2E33',
-      '#1A3A5C', // sidebar/card backgrounds
-      '#0A2E55', // hover states
-      '#091E38', // main background (Vector AI Agent)
-      '#061525', // darkest
+      '#1e293b', // text color
+      '#334155',
+      '#475569',
+      '#64748b',
+      '#94a3b8',
+      '#cbd5e1',
+      '#e2e8f0', // light borders
+      '#f1f5f9', // sidebar/card backgrounds
+      '#f8fafc', // main background
+      '#ffffff', // white
     ],
   },
   fontFamily: 'Inter, system-ui, sans-serif',
@@ -53,20 +53,20 @@ const theme = createTheme({
   other: {
     // Custom gradient colors matching Vector AI Agent
     gradientFrom: '#0B69C6',
-    gradientVia: '#0A1E38',
-    gradientTo: '#091E38',
+    gradientVia: '#e0f2fe',
+    gradientTo: '#f8fafc',
     // Accent colors
     accentBlue: '#0B69C6',
     accentCyan: '#22D3EE',
-    bgPrimary: '#091E38',
-    bgSecondary: '#0A2E55',
-    bgCard: '#1A3A5C',
+    bgPrimary: '#f8fafc',
+    bgSecondary: '#f1f5f9',
+    bgCard: '#ffffff',
   },
 });
 
 export function MantineAppProvider({ children }: MantineAppProviderProps) {
   return (
-    <MantineProvider theme={theme} defaultColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="light">
       <ModalsProvider>
         <Notifications />
         {children}

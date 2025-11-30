@@ -10,7 +10,7 @@ export function GlobalLoader({ message = 'Loading...' }: GlobalLoaderProps) {
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: '#091E38',
+        backgroundColor: '#f8fafc',
         zIndex: 9999,
       }}
     >

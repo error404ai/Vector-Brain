@@ -11,7 +11,7 @@ export function GuestLayout({ children }: GuestLayoutProps) {
     <Box
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #091E38 0%, #0A2E55 50%, #091E38 100%)',
+        background: 'linear-gradient(135deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -26,9 +26,8 @@ export function GuestLayout({ children }: GuestLayoutProps) {
           radius="md"
           w="100%"
           style={{
-            backgroundColor: 'rgba(26, 58, 92, 0.8)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            backgroundColor: '#ffffff',
+            border: '1px solid rgba(0,0,0,0.1)',
           }}
         >
           {children}

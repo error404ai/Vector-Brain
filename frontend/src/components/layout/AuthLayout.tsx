@@ -43,23 +43,23 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       layout="default"
       styles={{
         main: {
-          backgroundColor: '#091E38',
+          backgroundColor: '#f8fafc',
           minHeight: '100vh',
         },
         header: {
-          backgroundColor: '#091E38',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
+          backgroundColor: '#ffffff',
+          borderBottom: '1px solid rgba(0,0,0,0.1)',
         },
         navbar: {
-          backgroundColor: '#0A2E55',
-          borderRight: '1px solid rgba(255,255,255,0.1)',
+          backgroundColor: '#f1f5f9',
+          borderRight: '1px solid rgba(0,0,0,0.1)',
         },
       }}
     >
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between">
           <Group>
-            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" color="white" />
+            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <ActionIcon variant="subtle" size="lg" visibleFrom="sm" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} color="gray">
               {sidebarCollapsed ? <IconMenu2 size="1.2rem" /> : <IconMenuDeep size="1.2rem" />}
             </ActionIcon>
@@ -83,7 +83,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   )}
                   {user ? (
                     <Group gap="xs" align="center" visibleFrom="sm">
-                      <Text fw={500} size="sm" lh={1} c="white">
+                      <Text fw={500} size="sm" lh={1}>
                         {user.name}
                       </Text>
                       <Badge size="xs" variant="light" color="vector">

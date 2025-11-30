@@ -1,59 +1,39 @@
-import {
-  Badge,
-  Card,
-  Grid,
-  Group,
-  Paper,
-  Progress,
-  RingProgress,
-  SimpleGrid,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from "@mantine/core";
-import {
-  IconArrowDownRight,
-  IconArrowUpRight,
-  IconBrain,
-  IconDatabase,
-  IconFolder,
-  IconUsers,
-} from "@tabler/icons-react";
-import { createFileRoute } from "@tanstack/react-router";
+import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconDatabase, IconFolder, IconUsers } from '@tabler/icons-react';
+import { createFileRoute } from '@tanstack/react-router';
 
-export const Route = createFileRoute("/dashboard")({
+export const Route = createFileRoute('/dashboard')({
   component: Dashboard,
 });
 
 const stats = [
   {
-    title: "Total Users",
-    value: "1,234",
+    title: 'Total Users',
+    value: '1,234',
     diff: 12,
     icon: IconUsers,
-    color: "vector",
+    color: 'vector',
   },
   {
-    title: "Active Projects",
-    value: "56",
+    title: 'Active Projects',
+    value: '56',
     diff: -3,
     icon: IconFolder,
-    color: "cyan",
+    color: 'cyan',
   },
   {
-    title: "Knowledge Items",
-    value: "8,432",
+    title: 'Knowledge Items',
+    value: '8,432',
     diff: 28,
     icon: IconBrain,
-    color: "teal",
+    color: 'teal',
   },
   {
-    title: "Database Size",
-    value: "2.4 GB",
+    title: 'Database Size',
+    value: '2.4 GB',
     diff: 5,
     icon: IconDatabase,
-    color: "grape",
+    color: 'grape',
   },
 ];
 
@@ -67,34 +47,24 @@ function Dashboard() {
         p="md"
         radius="md"
         style={{
-          backgroundColor: "#1A3A5C",
-          border: "1px solid rgba(255,255,255,0.1)",
+          backgroundColor: '#ffffff',
+          border: '1px solid rgba(0,0,0,0.1)',
         }}
       >
         <Group justify="space-between">
           <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
             {stat.title}
           </Text>
-          <ThemeIcon
-            color={stat.color}
-            variant="light"
-            size={38}
-            radius="md"
-          >
+          <ThemeIcon color={stat.color} variant="light" size={38} radius="md">
             <stat.icon size="1.5rem" stroke={1.5} />
           </ThemeIcon>
         </Group>
 
         <Group align="flex-end" gap="xs" mt={25}>
-          <Text fw={700} fz="xl" c="white">
+          <Text fw={700} fz="xl">
             {stat.value}
           </Text>
-          <Text
-            c={stat.diff > 0 ? "teal" : "red"}
-            fz="sm"
-            fw={500}
-            style={{ display: "flex", alignItems: "center" }}
-          >
+          <Text c={stat.diff > 0 ? 'teal' : 'red'} fz="sm" fw={500} style={{ display: 'flex', alignItems: 'center' }}>
             <span>{stat.diff}%</span>
             <DiffIcon size="1rem" stroke={1.5} />
           </Text>
@@ -112,9 +82,7 @@ function Dashboard() {
       {/* Page Header */}
       <Group justify="space-between" align="center">
         <div>
-          <Title order={2} c="white">
-            Dashboard
-          </Title>
+          <Title order={2}>Dashboard</Title>
           <Text c="dimmed" size="sm">
             Welcome back! Here&apos;s what&apos;s happening with your projects.
           </Text>
@@ -134,34 +102,34 @@ function Dashboard() {
             padding="lg"
             radius="md"
             style={{
-              backgroundColor: "#1A3A5C",
-              border: "1px solid rgba(255,255,255,0.1)",
+              backgroundColor: '#ffffff',
+              border: '1px solid rgba(0,0,0,0.1)',
             }}
           >
-            <Title order={4} c="white" mb="md">
+            <Title order={4} mb="md">
               Recent Activity
             </Title>
             <Stack gap="md">
               {[
                 {
-                  title: "New knowledge item added",
-                  time: "2 hours ago",
-                  color: "teal",
+                  title: 'New knowledge item added',
+                  time: '2 hours ago',
+                  color: 'teal',
                 },
                 {
                   title: "Project 'AI Assistant' updated",
-                  time: "5 hours ago",
-                  color: "vector",
+                  time: '5 hours ago',
+                  color: 'vector',
                 },
                 {
-                  title: "Database backup completed",
-                  time: "1 day ago",
-                  color: "cyan",
+                  title: 'Database backup completed',
+                  time: '1 day ago',
+                  color: 'cyan',
                 },
                 {
-                  title: "New user registered",
-                  time: "2 days ago",
-                  color: "grape",
+                  title: 'New user registered',
+                  time: '2 days ago',
+                  color: 'grape',
                 },
               ].map((activity, index) => (
                 <Group key={index} justify="space-between">
@@ -169,9 +137,7 @@ function Dashboard() {
                     <ThemeIcon color={activity.color} variant="light" size="sm">
                       <IconBrain size="0.8rem" />
                     </ThemeIcon>
-                    <Text size="sm" c="white">
-                      {activity.title}
-                    </Text>
+                    <Text size="sm">{activity.title}</Text>
                   </Group>
                   <Text size="xs" c="dimmed">
                     {activity.time}
@@ -187,11 +153,11 @@ function Dashboard() {
             padding="lg"
             radius="md"
             style={{
-              backgroundColor: "#1A3A5C",
-              border: "1px solid rgba(255,255,255,0.1)",
+              backgroundColor: '#ffffff',
+              border: '1px solid rgba(0,0,0,0.1)',
             }}
           >
-            <Title order={4} c="white" mb="md">
+            <Title order={4} mb="md">
               Storage Usage
             </Title>
             <Stack align="center" gap="md">
@@ -200,12 +166,12 @@ function Dashboard() {
                 roundCaps
                 thickness={12}
                 sections={[
-                  { value: 40, color: "#0B69C6" },
-                  { value: 15, color: "#22D3EE" },
-                  { value: 15, color: "#8B5CF6" },
+                  { value: 40, color: '#0B69C6' },
+                  { value: 15, color: '#22D3EE' },
+                  { value: 15, color: '#8B5CF6' },
                 ]}
                 label={
-                  <Text c="white" fw={700} ta="center" size="xl">
+                  <Text fw={700} ta="center" size="xl">
                     70%
                   </Text>
                 }
@@ -215,9 +181,7 @@ function Dashboard() {
                   <Text size="sm" c="dimmed">
                     Documents
                   </Text>
-                  <Text size="sm" c="white">
-                    1.0 GB
-                  </Text>
+                  <Text size="sm">1.0 GB</Text>
                 </Group>
                 <Progress value={40} color="vector" size="sm" />
 
@@ -225,9 +189,7 @@ function Dashboard() {
                   <Text size="sm" c="dimmed">
                     Media
                   </Text>
-                  <Text size="sm" c="white">
-                    0.4 GB
-                  </Text>
+                  <Text size="sm">0.4 GB</Text>
                 </Group>
                 <Progress value={15} color="cyan" size="sm" />
 
@@ -235,9 +197,7 @@ function Dashboard() {
                   <Text size="sm" c="dimmed">
                     Other
                   </Text>
-                  <Text size="sm" c="white">
-                    0.4 GB
-                  </Text>
+                  <Text size="sm">0.4 GB</Text>
                 </Group>
                 <Progress value={15} color="grape" size="sm" />
               </Stack>
