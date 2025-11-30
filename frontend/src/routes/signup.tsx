@@ -1,17 +1,8 @@
-import {
-  Anchor,
-  Button,
-  Checkbox,
-  PasswordInput,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
-import { useForm } from "@mantine/form";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { Anchor, Button, Checkbox, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
+import { useForm } from '@mantine/form';
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 
-export const Route = createFileRoute("/signup")({
+export const Route = createFileRoute('/signup')({
   component: SignupPage,
 });
 
@@ -20,27 +11,24 @@ function SignupPage() {
 
   const form = useForm({
     initialValues: {
-      name: "",
-      email: "",
-      password: "",
-      confirmPassword: "",
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
       terms: false,
     },
     validate: {
-      name: (value) =>
-        value.length >= 2 ? null : "Name must be at least 2 characters",
-      email: (value) => (/^\S+@\S+$/.test(value) ? null : "Invalid email"),
-      password: (value) =>
-        value.length >= 6 ? null : "Password must be at least 6 characters",
-      confirmPassword: (value, values) =>
-        value === values.password ? null : "Passwords do not match",
-      terms: (value) => (value ? null : "You must accept the terms"),
+      name: (value) => (value.length >= 2 ? null : 'Name must be at least 2 characters'),
+      email: (value) => (/^\S+@\S+$/.test(value) ? null : 'Invalid email'),
+      password: (value) => (value.length >= 6 ? null : 'Password must be at least 6 characters'),
+      confirmPassword: (value, values) => (value === values.password ? null : 'Passwords do not match'),
+      terms: (value) => (value ? null : 'You must accept the terms'),
     },
   });
 
   const handleSubmit = (values: typeof form.values) => {
-    console.log("Signup attempt:", values);
-    router.navigate({ to: "/login" });
+    console.log('Signup attempt:', values);
+    router.navigate({ to: '/login' });
   };
 
   return (
@@ -60,14 +48,14 @@ function SignupPage() {
             label="Full Name"
             placeholder="John Doe"
             required
-            {...form.getInputProps("name")}
+            {...form.getInputProps('name')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
@@ -75,14 +63,14 @@ function SignupPage() {
             label="Email"
             placeholder="your@email.com"
             required
-            {...form.getInputProps("email")}
+            {...form.getInputProps('email')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
@@ -90,14 +78,14 @@ function SignupPage() {
             label="Password"
             placeholder="Create a password"
             required
-            {...form.getInputProps("password")}
+            {...form.getInputProps('password')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
@@ -105,22 +93,22 @@ function SignupPage() {
             label="Confirm Password"
             placeholder="Confirm your password"
             required
-            {...form.getInputProps("confirmPassword")}
+            {...form.getInputProps('confirmPassword')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
           <Checkbox
             label="I agree to the terms and conditions"
-            {...form.getInputProps("terms", { type: "checkbox" })}
+            {...form.getInputProps('terms', { type: 'checkbox' })}
             styles={{
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
@@ -131,8 +119,8 @@ function SignupPage() {
       </form>
 
       <Text c="dimmed" size="sm" ta="center">
-        Already have an account?{" "}
-        <Anchor c="vector" href="/login">
+        Already have an account?{' '}
+        <Anchor c="vector" component={Link} to="/login">
           Sign in
         </Anchor>
       </Text>

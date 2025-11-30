@@ -12,7 +12,7 @@ import {
   Title,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useDispatch } from "react-redux";
 
 export const Route = createFileRoute("/")({
@@ -111,7 +111,7 @@ function LoginPage() {
 
       <Text c="dimmed" size="sm" ta="center">
         Don&apos;t have an account?{" "}
-        <Anchor c="vector" href="/signup">
+        <Anchor c="vector" component={Link} to="/signup">
           Sign up
         </Anchor>
       </Text>
