@@ -42,7 +42,7 @@ export function GuestLayout({ children }: GuestLayoutProps) {
               textDecoration: 'none',
             }}
           >
-            © 2024 Vector Brain. All rights reserved.
+            © 2025 Vector Brain. All rights reserved.
           </Box>
         </Center>
       </Stack>
