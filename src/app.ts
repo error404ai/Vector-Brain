@@ -19,8 +19,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Controllers - Add your controllers here
+import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
+
+// Auth middleware
+import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 
 dotenv.config();
 
@@ -43,6 +47,7 @@ useExpressServer(app, {
   routePrefix: '/api',
   controllers: [
     // Add your controllers here
+    AuthController,
     HealthController,
     UserController,
   ],
@@ -57,6 +62,8 @@ useExpressServer(app, {
     origin: true,
     credentials: true,
   },
+  authorizationChecker,
+  currentUserChecker,
 });
 
 // Serve static files from public directory (built frontend)

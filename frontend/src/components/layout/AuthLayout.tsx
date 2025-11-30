@@ -1,13 +1,13 @@
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
-import { setIsLoggedIn } from '@/store/authSlice';
 import type { RootState } from '@/store/store';
 import authManager from '@/utils/authManager';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
+import { useRouter } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 import Logo from '../ui/Logo';
 import { Sidebar } from './Sidebar';
 
@@ -18,18 +18,16 @@ interface AuthLayoutProps {
 export function AuthLayout({ children }: AuthLayoutProps) {
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const dispatch = useDispatch();
+  const router = useRouter();
+  const user = useSelector((state: RootState) => state.auth.user);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
 
   useAuthRedirect();
 
   const handleLogout = () => {
     authManager.clearToken();
-    dispatch(setIsLoggedIn(false));
+    router.navigate({ to: '/' });
   };
-
-  // Mock user data - replace with actual API call
-  const user = isLoggedIn ? { name: 'John Doe', email: 'john@example.com', role: 'Admin' } : null;
 
   return (
     <AppShell
@@ -70,7 +68,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <Menu.Target>
               <UnstyledButton>
                 <Group gap={7}>
-                  {user ? (
+                  {user && isLoggedIn ? (
                     <Avatar src={undefined} alt={user.name} size={32} radius="xl" color="vector">
                       {user.name
                         .split(' ')
@@ -81,13 +79,13 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   ) : (
                     <Avatar size={32} radius="xl" color="vector" />
                   )}
-                  {user ? (
+                  {user && isLoggedIn ? (
                     <Group gap="xs" align="center" visibleFrom="sm">
                       <Text fw={500} size="sm" lh={1}>
                         {user.name}
                       </Text>
                       <Badge size="xs" variant="light" color="vector">
-                        {user.role}
+                        Admin
                       </Badge>
                     </Group>
                   ) : (

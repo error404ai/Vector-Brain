@@ -1,5 +1,7 @@
-import { setIsLoggedIn } from '@/store/authSlice';
+import { logout, setIsLoggedIn, setUser, type User } from '@/store/authSlice';
 import store from '@/store/store';
+
+const USER_KEY = 'authUser';
 
 const authManager = {
   saveToken: (token: string) => {
@@ -17,19 +19,39 @@ const authManager = {
     return localStorage.getItem('authToken');
   },
 
+  saveUser: (user: User) => {
+    try {
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      store.dispatch(setUser(user));
+    } catch {
+      console.error('Failed to save user');
+    }
+  },
+
+  getUser: (): User | null => {
+    try {
+      const user = localStorage.getItem(USER_KEY);
+      return user ? JSON.parse(user) : null;
+    } catch {
+      return null;
+    }
+  },
+
   clearToken: () => {
     try {
       localStorage.removeItem('authToken');
+      localStorage.removeItem(USER_KEY);
       // Clear caches fully on logout (don't preserve token).
       void authManager.clearAppCache(false);
     } catch {
       console.error('Failed to clear token');
     }
-    store.dispatch(setIsLoggedIn(false));
+    store.dispatch(logout());
   },
 
   clearAppCache: async (preserveAuthToken = false) => {
     const preservedToken = preserveAuthToken ? localStorage.getItem('authToken') : null;
+    const preservedUser = preserveAuthToken ? localStorage.getItem(USER_KEY) : null;
 
     sessionStorage.clear();
 
@@ -40,18 +62,34 @@ const authManager = {
 
     for (const k of keys) {
       if (!k) continue;
-      if (preserveAuthToken && k === 'authToken') continue;
+      if (preserveAuthToken && (k === 'authToken' || k === USER_KEY)) continue;
       localStorage.removeItem(k);
     }
 
-    // Restore token if needed
+    // Restore token and user if needed
     if (preservedToken) {
       localStorage.setItem('authToken', preservedToken);
+    }
+    if (preservedUser) {
+      localStorage.setItem(USER_KEY, preservedUser);
     }
   },
 
   isAuthenticated: () => {
     return !!authManager.getToken();
+  },
+
+  // Initialize auth state from localStorage
+  initializeAuth: () => {
+    const token = authManager.getToken();
+    const user = authManager.getUser();
+
+    if (token && user) {
+      store.dispatch(setIsLoggedIn(true));
+      store.dispatch(setUser(user));
+    } else {
+      store.dispatch(setIsLoggedIn(false));
+    }
   },
 };
 

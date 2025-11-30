@@ -1,5 +1,6 @@
 import { User } from '@/entities/User';
 import AppError from '@/helpers/AppError';
+import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { AppDataSource } from '@/loaders/database';
 import { CreateUserDto, UpdateUserDto, UserQueryDto } from '@/validations/UserValidation';
 import { Service } from 'typedi';
@@ -53,12 +54,21 @@ export class UserService {
       throw new AppError('Email already exists', 400);
     }
 
-    const user = this.userRepository.create(data);
+    // Hash the password before saving
+    const hashedPassword = CryptoHelper.generateHash(data.password);
+
+    const user = this.userRepository.create({
+      ...data,
+      password: hashedPassword,
+    });
     await this.userRepository.save(user);
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
 
     return {
       message: 'User created successfully',
-      data: user,
+      data: userWithoutPassword,
     };
   }
 
@@ -80,6 +90,11 @@ export class UserService {
       if (existingUser) {
         throw new AppError('Email already exists', 400);
       }
+    }
+
+    // Hash password if it's being updated
+    if (data.password) {
+      data.password = CryptoHelper.generateHash(data.password);
     }
 
     Object.assign(user, data);

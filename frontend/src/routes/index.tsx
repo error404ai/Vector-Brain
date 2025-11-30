@@ -1,9 +1,10 @@
-import { setIsLoggedIn } from '@/store/authSlice';
+import { authApi } from '@/api/auth';
 import authManager from '@/utils/authManager';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
+import { notifications } from '@mantine/notifications';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
-import { useDispatch } from 'react-redux';
+import { useState } from 'react';
 
 export const Route = createFileRoute('/')({
   component: LoginPage,
@@ -11,7 +12,7 @@ export const Route = createFileRoute('/')({
 
 function LoginPage() {
   const router = useRouter();
-  const dispatch = useDispatch();
+  const [loading, setLoading] = useState(false);
 
   const form = useForm({
     initialValues: {
@@ -25,12 +26,35 @@ function LoginPage() {
     },
   });
 
-  const handleSubmit = (values: typeof form.values) => {
-    console.log('Login attempt:', values);
-    // Simulate login - replace with actual API call
-    authManager.saveToken('demo-token-123');
-    dispatch(setIsLoggedIn(true));
-    router.navigate({ to: '/dashboard' });
+  const handleSubmit = async (values: typeof form.values) => {
+    setLoading(true);
+    try {
+      const response = await authApi.login({
+        email: values.email,
+        password: values.password,
+      });
+
+      // Save token and user data
+      authManager.saveToken(response.data.token);
+      authManager.saveUser(response.data.user);
+
+      notifications.show({
+        title: 'Welcome back!',
+        message: `Logged in as ${response.data.user.name}`,
+        color: 'green',
+      });
+
+      router.navigate({ to: '/dashboard' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Login failed';
+      notifications.show({
+        title: 'Login Failed',
+        message,
+        color: 'red',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -55,7 +79,7 @@ function LoginPage() {
             </Anchor>
           </Group>
 
-          <Button type="submit" fullWidth color="vector" mt="md">
+          <Button type="submit" fullWidth color="vector" mt="md" loading={loading}>
             Sign In
           </Button>
         </Stack>
