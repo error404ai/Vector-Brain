@@ -1,21 +1,11 @@
-import { setIsLoggedIn } from "@/store/authSlice";
-import authManager from "@/utils/authManager";
-import {
-  Anchor,
-  Button,
-  Checkbox,
-  Group,
-  PasswordInput,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
-import { useForm } from "@mantine/form";
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useDispatch } from "react-redux";
+import { setIsLoggedIn } from '@/store/authSlice';
+import authManager from '@/utils/authManager';
+import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
+import { useForm } from '@mantine/form';
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
+import { useDispatch } from 'react-redux';
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute('/')({
   component: LoginPage,
 });
 
@@ -25,23 +15,22 @@ function LoginPage() {
 
   const form = useForm({
     initialValues: {
-      email: "",
-      password: "",
+      email: '',
+      password: '',
       rememberMe: false,
     },
     validate: {
-      email: (value) => (/^\S+@\S+$/.test(value) ? null : "Invalid email"),
-      password: (value) =>
-        value.length >= 6 ? null : "Password must be at least 6 characters",
+      email: (value) => (/^\S+@\S+$/.test(value) ? null : 'Invalid email'),
+      password: (value) => (value.length >= 6 ? null : 'Password must be at least 6 characters'),
     },
   });
 
   const handleSubmit = (values: typeof form.values) => {
-    console.log("Login attempt:", values);
+    console.log('Login attempt:', values);
     // Simulate login - replace with actual API call
-    authManager.saveToken("demo-token-123");
+    authManager.saveToken('demo-token-123');
     dispatch(setIsLoggedIn(true));
-    router.navigate({ to: "/dashboard" });
+    router.navigate({ to: '/dashboard' });
   };
 
   return (
@@ -61,17 +50,17 @@ function LoginPage() {
             label="Email"
             placeholder="your@email.com"
             required
-            {...form.getInputProps("email")}
+            {...form.getInputProps('email')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
-                "&:focus": {
-                  borderColor: "#0B69C6",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
+                '&:focus': {
+                  borderColor: '#0B69C6',
                 },
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
@@ -79,23 +68,23 @@ function LoginPage() {
             label="Password"
             placeholder="Your password"
             required
-            {...form.getInputProps("password")}
+            {...form.getInputProps('password')}
             styles={{
               input: {
-                backgroundColor: "rgba(9, 30, 56, 0.5)",
-                borderColor: "rgba(255,255,255,0.2)",
-                color: "white",
+                backgroundColor: 'rgba(9, 30, 56, 0.5)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
               },
-              label: { color: "rgba(255,255,255,0.7)" },
+              label: { color: 'rgba(255,255,255,0.7)' },
             }}
           />
 
           <Group justify="space-between">
             <Checkbox
               label="Remember me"
-              {...form.getInputProps("rememberMe", { type: "checkbox" })}
+              {...form.getInputProps('rememberMe', { type: 'checkbox' })}
               styles={{
-                label: { color: "rgba(255,255,255,0.7)" },
+                label: { color: 'rgba(255,255,255,0.7)' },
               }}
             />
             <Anchor c="vector" size="sm" href="#">
@@ -110,10 +99,10 @@ function LoginPage() {
       </form>
 
       <Text c="dimmed" size="sm" ta="center">
-        Don&apos;t have an account?{" "}
-        <Anchor c="vector" component={Link} to="/signup">
-          Sign up
-        </Anchor>
+        Don&apos;t have an account?{' '}
+        <Link to="/settings">
+          <Anchor c="vector">Sign up</Anchor>
+        </Link>
       </Text>
     </Stack>
   );
