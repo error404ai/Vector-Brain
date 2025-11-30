@@ -1,4 +1,4 @@
-import { useLoginMutation } from '@/RTKService';
+import { useLoginMutation } from '@/RTKService/authService/authService';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';

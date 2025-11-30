@@ -1,5 +1,5 @@
-import { useLoginMutation } from '@/RTKService/authService';
-import { setIsLoggedIn, setUser } from '@/store';
+import { useLoginMutation } from '@/RTKService/authService/authService';
+import { setIsLoggedIn, setUser } from '@/store/authSlice';
 import { useAppDispatch } from '@/store/store';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
