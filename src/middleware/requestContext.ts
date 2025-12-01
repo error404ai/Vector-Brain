@@ -67,6 +67,8 @@ export { Container };
 
 export function requestContextMiddleware(req: any, res: any, next: (err?: any) => void) {
   RequestContext.run(() => {
+    RequestContext.set('req', req);
+    RequestContext.set('res', res);
     next();
   });
 }

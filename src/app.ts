@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import 'reflect-metadata';
 
 // CRITICAL: Import requestContext BEFORE any other imports that use Container
-import './middleware/requestContext';
+import { requestContextMiddleware } from './middleware/requestContext';
 
 import type { IocAdapter } from 'routing-controllers';
 import { useContainer, useExpressServer } from 'routing-controllers';
@@ -45,6 +45,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Cookie parser middleware
 app.use(cookieParser());
+
+// Initialize per-request context
+app.use(requestContextMiddleware);
 
 // Initialize routing-controllers
 useExpressServer(app, {
