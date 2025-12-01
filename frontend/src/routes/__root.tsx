@@ -2,9 +2,7 @@ import { AuthLayout } from '@/components/layout/AuthLayout';
 import { GuestLayout } from '@/components/layout/GuestLayout';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import type { RootState } from '@/store/store';
-import { isDev } from '@/utils/isDev';
 import { Outlet, createRootRoute, useLocation } from '@tanstack/react-router';
-import { TanStackRouterDevtools } from '@tanstack/router-devtools';
 import { SkeletonTheme } from 'react-loading-skeleton';
 import { useSelector } from 'react-redux';
 
@@ -32,7 +30,7 @@ function RootComponent() {
           <Outlet />
         </GuestLayout>
       )}
-      {isDev && <TanStackRouterDevtools />}
+      {/* {isDev && <TanStackRouterDevtools />} */}
     </SkeletonTheme>
   );
 }
