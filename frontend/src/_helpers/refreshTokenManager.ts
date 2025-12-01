@@ -63,10 +63,6 @@ class RefreshTokenManager {
       return false;
     }
 
-    if (!authManager.getAccessToken()) {
-      return false;
-    }
-
     const requestUrl = this.getRequestUrl(requestArgs).toLowerCase();
     if (!requestUrl || this.isRefreshEndpoint(requestUrl)) {
       return false;

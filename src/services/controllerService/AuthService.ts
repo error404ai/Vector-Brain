@@ -12,8 +12,8 @@ import z from 'zod';
 
 @Service()
 export class AuthService {
-  private static readonly ACCESS_TOKEN_EXPIRES_IN = '1h';
-  private static readonly ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+  private static readonly ACCESS_TOKEN_EXPIRES_IN = '2m';
+  private static readonly ACCESS_TOKEN_TTL_MS = 2 * 60 * 1000;
 
   constructor(private cookieService: CookieService) {}
 
