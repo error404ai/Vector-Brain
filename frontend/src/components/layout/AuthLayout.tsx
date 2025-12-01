@@ -1,4 +1,3 @@
-import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import type { RootState } from '@/store/store';
 import authManager from '@/utils/authManager';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
@@ -21,8 +20,6 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const router = useRouter();
   const user = useSelector((state: RootState) => state.auth.user);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
-
-  useAuthRedirect();
 
   const handleLogout = () => {
     authManager.clearToken();

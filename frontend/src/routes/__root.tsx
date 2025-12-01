@@ -1,5 +1,6 @@
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { GuestLayout } from '@/components/layout/GuestLayout';
+import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import type { RootState } from '@/store/store';
 import { isDev } from '@/utils/isDev';
 import { Outlet, createRootRoute, useLocation } from '@tanstack/react-router';
@@ -18,9 +19,7 @@ function RootComponent() {
 
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
 
-  // if (isLoggedIn === 'initial') {
-  //   return <GlobalLoader />;
-  // }
+  useAuthRedirect();
 
   return (
     <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f1f5f9">
