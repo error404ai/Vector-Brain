@@ -1,11 +1,12 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AgentTaskService } from '@/services/controllerService/AgentTaskService';
 import { AgentTaskListValidation, CreateAgentTaskValidation } from '@/validations/AgentTaskValidation';
-import { Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParams, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
-@JsonController('/agent-tasks')
+@JsonController('/agent-task')
+@Authorized()
 @Service()
 export class AgentTaskController {
   constructor(private agentTaskService: AgentTaskService) {}

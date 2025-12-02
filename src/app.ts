@@ -25,7 +25,6 @@ import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
 
-// Auth middleware
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 
 dotenv.config();
@@ -40,26 +39,17 @@ useContainer(new TypeDIAdapter());
 
 const app: express.Application = express();
 
-// Body parser middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Cookie parser middleware
 app.use(cookieParser());
 
 // Initialize per-request context
 app.use(requestContextMiddleware);
 
-// Initialize routing-controllers
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [
-    // Add your controllers here
-    AgentTaskController,
-    AuthController,
-    HealthController,
-    UserController,
-  ],
+  controllers: [AgentTaskController, AuthController, HealthController, UserController],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
