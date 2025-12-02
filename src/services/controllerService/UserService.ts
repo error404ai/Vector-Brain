@@ -2,6 +2,7 @@ import { User } from '@/entities/User';
 import AppError from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { AppDataSource } from '@/loaders/database';
+import { ApiResponse } from '@/types/ApiResponse';
 import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -10,7 +11,7 @@ import z from 'zod';
 export class UserService {
   private userRepository = AppDataSource.getRepository(User);
 
-  async list(request: z.infer<typeof UserListValidation>) {
+  async list(request: z.infer<typeof UserListValidation>): Promise<ApiResponse> {
     const { page = 1, limit = 10, search } = request;
     const skip = (page - 1) * limit;
 
@@ -23,6 +24,7 @@ export class UserService {
     const [users, total] = await queryBuilder.skip(skip).take(limit).getManyAndCount();
 
     return {
+      message: 'Users retrieved successfully',
       data: users,
       meta: {
         total,
@@ -33,7 +35,7 @@ export class UserService {
     };
   }
 
-  async details(id: number) {
+  async details(id: number): Promise<ApiResponse> {
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -42,10 +44,13 @@ export class UserService {
       throw new AppError('User not found', 404);
     }
 
-    return { data: user };
+    return {
+      message: 'User details retrieved successfully',
+      data: user,
+    };
   }
 
-  async create(request: z.infer<typeof CreateUserValidation>) {
+  async create(request: z.infer<typeof CreateUserValidation>): Promise<ApiResponse> {
     // Check if email already exists
     const existingUser = await this.userRepository.findOne({
       where: { email: request.email },
@@ -73,7 +78,7 @@ export class UserService {
     };
   }
 
-  async update(id: number, data: z.infer<typeof UpdateUserValidation>) {
+  async update(id: number, data: z.infer<typeof UpdateUserValidation>): Promise<ApiResponse> {
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -107,7 +112,7 @@ export class UserService {
     };
   }
 
-  async delete(id: number) {
+  async delete(id: number): Promise<ApiResponse> {
     const user = await this.userRepository.findOne({
       where: { id },
     });
