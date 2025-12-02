@@ -19,12 +19,14 @@ export interface AuthState {
     message: string;
     trace: string;
   };
+  hasCheckedAuth: boolean;
 }
 
 const initialState: AuthState = {
   isLoggedIn: 'initial',
   user: null,
   error: { isError: false, message: '', trace: '' },
+  hasCheckedAuth: false,
 };
 
 export const authSlice = createSlice({
@@ -50,10 +52,15 @@ export const authSlice = createSlice({
     logout: (state) => {
       state.isLoggedIn = false;
       state.user = null;
+      state.hasCheckedAuth = true;
+    },
+
+    setAuthCheckCompleted: (state, action: PayloadAction<boolean>) => {
+      state.hasCheckedAuth = action.payload;
     },
   },
 });
 
-export const { setIsLoggedIn, setUser, setError, clearError, logout } = authSlice.actions;
+export const { setIsLoggedIn, setUser, setError, clearError, logout, setAuthCheckCompleted } = authSlice.actions;
 
 export default authSlice.reducer;

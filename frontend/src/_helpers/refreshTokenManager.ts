@@ -102,6 +102,7 @@ class RefreshTokenManager {
         {
           url: REFRESH_TOKEN_ENDPOINT,
           method: 'POST',
+          body: {},
         },
         api,
         extraOptions
