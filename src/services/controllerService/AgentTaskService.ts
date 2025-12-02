@@ -1,5 +1,6 @@
 import { AgentTask } from '@/entities/AgentTask';
 import AppError from '@/helpers/AppError';
+import paginate from '@/helpers/paginationHelper';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import { AgentTaskListValidation, CreateAgentTaskValidation } from '@/validations/AgentTaskValidation';
@@ -12,28 +13,16 @@ export class AgentTaskService {
 
   async list(request: z.infer<typeof AgentTaskListValidation>): Promise<ApiResponse> {
     const { page = 1, limit = 10 } = request;
-    const skip = (page - 1) * limit;
 
-    const queryBuilder = this.agentTaskRepository.createQueryBuilder('agentTask');
-
-    const [agentTasks, total] = await queryBuilder.skip(skip).take(limit).getManyAndCount();
-
-    return {
-      message: 'Agent tasks retrieved successfully',
-      data: agentTasks,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return await paginate(this.agentTaskRepository, {
+      page,
+      limit,
+    });
   }
 
   async details(id: number): Promise<ApiResponse> {
     const agentTask = await this.agentTaskRepository.findOne({
       where: { id },
-      relations: ['user'],
     });
 
     if (!agentTask) {

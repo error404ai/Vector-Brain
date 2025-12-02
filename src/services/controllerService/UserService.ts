@@ -1,10 +1,12 @@
 import { User } from '@/entities/User';
 import AppError from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
+import paginate from '@/helpers/paginationHelper';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
 import { Service } from 'typedi';
+import { FindOptionsWhere, IsNull, Like } from 'typeorm';
 import z from 'zod';
 
 @Service()
@@ -13,26 +15,20 @@ export class UserService {
 
   async list(request: z.infer<typeof UserListValidation>): Promise<ApiResponse> {
     const { page = 1, limit = 10, search } = request;
-    const skip = (page - 1) * limit;
 
-    const queryBuilder = this.userRepository.createQueryBuilder('user').where('user.deletedAt IS NULL');
+    const where: FindOptionsWhere<User> | FindOptionsWhere<User>[] = { deletedAt: IsNull() };
 
     if (search) {
-      queryBuilder.andWhere('(user.name LIKE :search OR user.email LIKE :search)', { search: `%${search}%` });
+      where.name = Like(`%${search}%`);
     }
 
-    const [users, total] = await queryBuilder.skip(skip).take(limit).getManyAndCount();
-
-    return {
-      message: 'Users retrieved successfully',
-      data: users,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return await paginate(this.userRepository, {
+      page,
+      limit,
+      findOptions: {
+        where,
       },
-    };
+    });
   }
 
   async details(id: number): Promise<ApiResponse> {

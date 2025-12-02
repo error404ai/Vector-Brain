@@ -11,12 +11,15 @@ export interface User {
 }
 
 export interface PaginatedResponse<T> {
+  message: string;
   data: T[];
-  meta: {
-    total: number;
-    page: number;
-    limit: number;
+  pagination: {
+    currentPage: number;
     totalPages: number;
+    totalCount: number;
+    pageSize: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
   };
 }
 
