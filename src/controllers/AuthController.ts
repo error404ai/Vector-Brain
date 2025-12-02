@@ -13,17 +13,17 @@ export class AuthController {
 
   @Post('/login')
   @UseBefore(zodValidationMiddleware(LoginValidation))
-  async login(@Body() data: z.infer<typeof LoginValidation>, @Req() req: Request) {
+  async login(@Body() request: z.infer<typeof LoginValidation>, @Req() req: Request) {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip || req.socket.remoteAddress;
 
-    return this.authService.login(data, userAgent, ipAddress);
+    return this.authService.login(request, userAgent, ipAddress);
   }
 
   @Post('/refresh-token')
   @UseBefore(zodValidationMiddleware(RefreshTokenValidation))
-  async refreshToken(@Body() data: z.infer<typeof RefreshTokenValidation>) {
-    return this.authService.refreshAccessToken(data);
+  async refreshToken(@Body() request: z.infer<typeof RefreshTokenValidation>) {
+    return this.authService.refreshAccessToken(request);
   }
 
   @Post('/logout')

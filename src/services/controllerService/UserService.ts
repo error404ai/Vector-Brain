@@ -2,7 +2,7 @@ import { User } from '@/entities/User';
 import AppError from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { AppDataSource } from '@/loaders/database';
-import { CreateUserValidation, UpdateUserValidation, UserQueryValidation } from '@/validations/UserValidation';
+import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -10,8 +10,8 @@ import z from 'zod';
 export class UserService {
   private userRepository = AppDataSource.getRepository(User);
 
-  async findAll(query: z.infer<typeof UserQueryValidation>) {
-    const { page = 1, limit = 10, search } = query;
+  async list(request: z.infer<typeof UserListValidation>) {
+    const { page = 1, limit = 10, search } = request;
     const skip = (page - 1) * limit;
 
     const queryBuilder = this.userRepository.createQueryBuilder('user').where('user.deletedAt IS NULL');
@@ -33,7 +33,7 @@ export class UserService {
     };
   }
 
-  async findOne(id: number) {
+  async details(id: number) {
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -45,10 +45,10 @@ export class UserService {
     return { data: user };
   }
 
-  async create(data: z.infer<typeof CreateUserValidation>) {
+  async create(request: z.infer<typeof CreateUserValidation>) {
     // Check if email already exists
     const existingUser = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email: request.email },
     });
 
     if (existingUser) {
@@ -56,10 +56,10 @@ export class UserService {
     }
 
     // Hash the password before saving
-    const hashedPassword = CryptoHelper.generateHash(data.password);
+    const hashedPassword = CryptoHelper.generateHash(request.password);
 
     const user = this.userRepository.create({
-      ...data,
+      ...request,
       password: hashedPassword,
     });
     await this.userRepository.save(user);

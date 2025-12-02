@@ -58,9 +58,9 @@ export class AuthService {
     };
   }
 
-  async login(data: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string) {
+  async login(request: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string) {
     // Find user by email including the password field
-    const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: data.email }).andWhere('user.deletedAt IS NULL').getOne();
+    const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: request.email }).andWhere('user.deletedAt IS NULL').getOne();
 
     if (!user) {
       throw new UnauthorizedError('Invalid email or password');
@@ -71,7 +71,7 @@ export class AuthService {
     }
 
     // Verify password
-    const hashedPassword = CryptoHelper.generateHash(data.password);
+    const hashedPassword = CryptoHelper.generateHash(request.password);
     if (user.password !== hashedPassword) {
       throw new UnauthorizedError('Invalid email or password');
     }

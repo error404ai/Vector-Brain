@@ -1,7 +1,7 @@
 import { AgentTask } from '@/entities/AgentTask';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
-import { AgentTaskQueryValidation, CreateAgentTaskValidation } from '@/validations/AgentTaskValidation';
+import { AgentTaskListValidation, CreateAgentTaskValidation } from '@/validations/AgentTaskValidation';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -9,8 +9,8 @@ import z from 'zod';
 export class AgentTaskService {
   private agentTaskRepository = AppDataSource.getRepository(AgentTask);
 
-  async findAll(query: z.infer<typeof AgentTaskQueryValidation>) {
-    const { page = 1, limit = 10 } = query;
+  async findAll(request: z.infer<typeof AgentTaskListValidation>) {
+    const { page = 1, limit = 10 } = request;
     const skip = (page - 1) * limit;
 
     const queryBuilder = this.agentTaskRepository.createQueryBuilder('agentTask');
@@ -28,7 +28,7 @@ export class AgentTaskService {
     };
   }
 
-  async findOne(id: number) {
+  async details(id: number) {
     const agentTask = await this.agentTaskRepository.findOne({
       where: { id },
       relations: ['user'],
@@ -41,10 +41,10 @@ export class AgentTaskService {
     return { data: agentTask };
   }
 
-  async create(data: z.infer<typeof CreateAgentTaskValidation>, userId: number) {
+  async create(request: z.infer<typeof CreateAgentTaskValidation>, userId: number) {
     const agentTask = this.agentTaskRepository.create({
       user_id: userId,
-      prompt: data.prompt,
+      prompt: request.prompt,
     });
 
     const savedAgentTask = await this.agentTaskRepository.save(agentTask);
