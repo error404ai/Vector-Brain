@@ -20,6 +20,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Controllers - Add your controllers here
+import { AgentTaskController } from './controllers/AgentTaskController';
 import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
@@ -54,6 +55,7 @@ useExpressServer(app, {
   routePrefix: '/api',
   controllers: [
     // Add your controllers here
+    AgentTaskController,
     AuthController,
     HealthController,
     UserController,
