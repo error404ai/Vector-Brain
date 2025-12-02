@@ -13,8 +13,8 @@ export class AgentTaskController {
 
   @Get('/list')
   @UseBefore(zodValidationMiddleware(AgentTaskListValidation))
-  async getAll(@QueryParams() request: any) {
-    return this.agentTaskService.findAll(request);
+  async list(@QueryParams() request: any) {
+    return this.agentTaskService.list(request);
   }
 
   @Get('/details/:id')
