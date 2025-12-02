@@ -1,5 +1,5 @@
 import newAuthManager from '@/_helpers/authManager';
-import { logout, setIsLoggedIn, setUser, type User } from '@/store/authSlice';
+import { logout, setAuthCheckCompleted, setIsLoggedIn, setUser, type User } from '@/store/authSlice';
 import store from '@/store/store';
 
 const USER_KEY = 'authUser';
@@ -16,6 +16,7 @@ const authManager = {
       console.error('Failed to save token');
     }
     store.dispatch(setIsLoggedIn(true));
+    store.dispatch(setAuthCheckCompleted(true));
   },
 
   getToken: () => {
@@ -51,6 +52,7 @@ const authManager = {
       console.error('Failed to clear token');
     }
     store.dispatch(logout());
+    store.dispatch(setAuthCheckCompleted(true));
   },
 
   clearAppCache: async (preserveAuthToken = false) => {
@@ -91,8 +93,10 @@ const authManager = {
     if (token && user) {
       store.dispatch(setIsLoggedIn(true));
       store.dispatch(setUser(user));
+      store.dispatch(setAuthCheckCompleted(true));
     } else {
       store.dispatch(setIsLoggedIn(false));
+      store.dispatch(setAuthCheckCompleted(false));
     }
   },
 };

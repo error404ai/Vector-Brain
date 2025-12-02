@@ -1,7 +1,6 @@
 import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
-import { IconBrain, IconChartBar, IconDashboard, IconDatabase, IconFolder, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconBrain, IconDashboard, IconSettings, IconUsers } from '@tabler/icons-react';
 import { Link, useLocation } from '@tanstack/react-router';
-import Logo from '../ui/Logo';
 
 const mainNavItems = [
   {
@@ -11,34 +10,10 @@ const mainNavItems = [
     badge: null,
   },
   {
-    label: 'Projects',
-    icon: IconFolder,
-    href: '/projects',
-    badge: null,
-  },
-  {
     label: 'Users',
     icon: IconUsers,
     href: '/users',
     badge: { label: 'NEW', color: 'cyan' },
-  },
-  {
-    label: 'Analytics',
-    icon: IconChartBar,
-    href: '/analytics',
-    badge: null,
-  },
-  {
-    label: 'Knowledge Base',
-    icon: IconBrain,
-    href: '/knowledge',
-    badge: { label: 'AI', color: 'vector' },
-  },
-  {
-    label: 'Database',
-    icon: IconDatabase,
-    href: '/database',
-    badge: null,
   },
 ];
 
@@ -117,11 +92,6 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         backgroundColor: '#f1f5f9',
       }}
     >
-      {/* Logo */}
-      <Box p="md" style={{ borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
-        <Logo size={28} showText={!collapsed} />
-      </Box>
-
       {/* Navigation */}
       <ScrollArea flex={1} p="md">
         <Stack gap="lg">

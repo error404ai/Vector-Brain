@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import 'reflect-metadata';
 
 // CRITICAL: Import requestContext BEFORE any other imports that use Container
-import './middleware/requestContext';
+import { requestContextMiddleware } from './middleware/requestContext';
 
 import type { IocAdapter } from 'routing-controllers';
 import { useContainer, useExpressServer } from 'routing-controllers';
@@ -20,6 +20,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Controllers - Add your controllers here
+import { AgentTaskController } from './controllers/AgentTaskController';
 import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
@@ -46,11 +47,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Cookie parser middleware
 app.use(cookieParser());
 
+// Initialize per-request context
+app.use(requestContextMiddleware);
+
 // Initialize routing-controllers
 useExpressServer(app, {
   routePrefix: '/api',
   controllers: [
     // Add your controllers here
+    AgentTaskController,
     AuthController,
     HealthController,
     UserController,

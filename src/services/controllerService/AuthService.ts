@@ -4,13 +4,19 @@ import { UnauthorizedError } from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { JwtHelper } from '@/helpers/JwtHelper';
 import { AppDataSource } from '@/loaders/database';
-import { LoginValidation } from '@/validations/AuthValidation';
+import { CookieService } from '@/services/auth/CookieService';
+import { LoginValidation, RefreshTokenValidation } from '@/validations/AuthValidation';
 import crypto from 'crypto';
 import { Service } from 'typedi';
 import z from 'zod';
 
 @Service()
 export class AuthService {
+  private static readonly ACCESS_TOKEN_EXPIRES_IN = '2m';
+  private static readonly ACCESS_TOKEN_TTL_MS = 2 * 60 * 1000;
+
+  constructor(private cookieService: CookieService) {}
+
   private userRepository = AppDataSource.getRepository(User);
   private refreshTokenRepository = AppDataSource.getRepository(RefreshToken);
 
@@ -37,6 +43,21 @@ export class AuthService {
     return this.refreshTokenRepository.save(refreshToken);
   }
 
+  private buildAccessTokenPayload(user: User) {
+    const token = JwtHelper.generateToken(
+      {
+        userId: user.id,
+        email: user.email,
+      },
+      AuthService.ACCESS_TOKEN_EXPIRES_IN
+    );
+
+    return {
+      token,
+      expireAt: new Date(Date.now() + AuthService.ACCESS_TOKEN_TTL_MS).toISOString(),
+    };
+  }
+
   async login(data: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string) {
     // Find user by email including the password field
     const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: data.email }).andWhere('user.deletedAt IS NULL').getOne();
@@ -55,20 +76,12 @@ export class AuthService {
       throw new UnauthorizedError('Invalid email or password');
     }
 
-    // Generate JWT access token (short-lived)
-    const accessToken = JwtHelper.generateToken(
-      {
-        userId: user.id,
-        email: user.email,
-      },
-      '1h' // 1 hour expiry
-    );
+    const accessToken = this.buildAccessTokenPayload(user);
 
     // Generate refresh token (long-lived)
     const refreshToken = await this.createRefreshToken(user.id, userAgent, ipAddress);
 
-    // Calculate expire time
-    const expireAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+    await this.cookieService.setRefreshToken(refreshToken.token);
 
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
@@ -77,14 +90,24 @@ export class AuthService {
       message: 'Login successful',
       data: {
         user: userWithoutPassword,
-        token: accessToken,
+        token: accessToken.token,
         refreshToken: refreshToken.token,
-        expireAt,
+        expireAt: accessToken.expireAt,
       },
     };
   }
 
-  async refreshAccessToken(refreshTokenString: string) {
+  async refreshAccessToken(request?: z.infer<typeof RefreshTokenValidation>) {
+    let refreshTokenString = request?.refresh_token;
+
+    if (!refreshTokenString) {
+      refreshTokenString = await this.cookieService.getRefreshToken();
+    }
+
+    if (!refreshTokenString) {
+      throw new UnauthorizedError('Refresh token not provided');
+    }
+
     // Find the refresh token
     const refreshToken = await this.refreshTokenRepository.findOne({
       where: { token: refreshTokenString, revoked: false },
@@ -111,35 +134,34 @@ export class AuthService {
       throw new UnauthorizedError('User not found or inactive');
     }
 
-    // Generate new access token
-    const newAccessToken = JwtHelper.generateToken(
-      {
-        userId: user.id,
-        email: user.email,
-      },
-      '1h'
-    );
+    const newAccessToken = this.buildAccessTokenPayload(user);
 
-    const expireAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await this.cookieService.setRefreshToken(refreshToken.token);
 
     return {
       status: 'success',
       message: 'Token refreshed successfully',
       data: {
-        accessToken: newAccessToken,
-        expire_at: expireAt,
+        accessToken: newAccessToken.token,
+        expire_at: newAccessToken.expireAt,
       },
     };
   }
 
-  async logout(userId: number, refreshTokenString?: string) {
-    if (refreshTokenString) {
-      // Revoke specific refresh token
-      await this.refreshTokenRepository.update({ token: refreshTokenString, userId }, { revoked: true });
-    } else {
-      // Revoke all refresh tokens for this user
+  async logout(userId?: number, refreshTokenString?: string) {
+    let tokenToRevoke = refreshTokenString;
+
+    if (!tokenToRevoke) {
+      tokenToRevoke = (await this.cookieService.getRefreshToken()) ?? undefined;
+    }
+
+    if (tokenToRevoke) {
+      await this.refreshTokenRepository.update({ token: tokenToRevoke }, { revoked: true });
+    } else if (userId) {
       await this.refreshTokenRepository.update({ userId }, { revoked: true });
     }
+
+    await this.cookieService.clearRefreshToken();
 
     return {
       message: 'Logged out successfully',
