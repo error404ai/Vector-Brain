@@ -1,0 +1,32 @@
+name: DB Fresh Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  db-fresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the code (optional, but good practice)
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up SSH
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_DEPLOY_KEY }}
+
+      - name: Test SSH Connection
+        run: |
+          ssh -v -o StrictHostKeyChecking=no root@62.72.26.9 exit
+
+      # Step 3: Run DB Fresh on VPS
+      - name: Run DB Fresh
+        run: |
+          ssh -o StrictHostKeyChecking=no root@62.72.26.9 << 'EOF'
+            set -e
+            cd /var/www/Vector-Brain
+            docker exec vector-brain-prod npm run db:fresh
+          EOF
