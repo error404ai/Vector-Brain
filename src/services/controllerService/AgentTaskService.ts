@@ -45,6 +45,8 @@ export class AgentTaskService {
     const agentTask = this.agentTaskRepository.create({
       user_id: userId,
       prompt: request.prompt,
+      logs: request.logs,
+      steps: request.steps,
     });
 
     const savedAgentTask = await this.agentTaskRepository.save(agentTask);

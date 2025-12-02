@@ -3,6 +3,8 @@ import { z } from 'zod';
 // Create agent task validation
 export const CreateAgentTaskValidation = z.object({
   prompt: z.string({ required_error: 'Prompt is required' }).min(1, 'Prompt is required'),
+  logs: z.string().optional(),
+  steps: z.string().optional(),
 });
 
 // Agent task query validation (for GET list)
