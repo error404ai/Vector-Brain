@@ -1,67 +1,42 @@
-# Production Dockerfile - Multi-stage build
 FROM node:20-alpine AS builder
 
-# Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files (backend + frontend) for better layer caching
 COPY package.json pnpm-lock.yaml ./
 COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
 
-# Install all dependencies (including devDependencies for build)
 RUN pnpm install --frozen-lockfile
 RUN cd frontend && pnpm install --frozen-lockfile
 
-# Copy source code
 COPY . .
 
-# Build the backend and frontend bundles
 RUN pnpm run build
 RUN cd frontend && pnpm run build
 
-# Production stage
 FROM node:20-alpine AS production
 
-# Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Set working directory
 WORKDIR /app
 
-# Set NODE_ENV to production
+COPY --from=builder /app .
+
+RUN pnpm install --frozen-lockfile --prod=false
+
 ENV NODE_ENV=production
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install only production dependencies
-RUN pnpm install --frozen-lockfile
-
-# Copy built files from builder stage
-COPY --from=builder /app/dist ./dist
-
-# Copy public folder if exists
-COPY --from=builder /app/public ./public
-
-# Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-# Change ownership of the app directory
 RUN chown -R nodejs:nodejs /app
 
-# Switch to non-root user
 USER nodejs
 
-# Expose the port
 EXPOSE 3002
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3002/api/health || exit 1
 
-# Start the production server
 CMD ["node", "dist/app.js"]
