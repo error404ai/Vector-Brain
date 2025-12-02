@@ -10,7 +10,7 @@ import z from 'zod';
 export class AgentTaskService {
   private agentTaskRepository = AppDataSource.getRepository(AgentTask);
 
-  async findAll(request: z.infer<typeof AgentTaskListValidation>): Promise<ApiResponse> {
+  async list(request: z.infer<typeof AgentTaskListValidation>): Promise<ApiResponse> {
     const { page = 1, limit = 10 } = request;
     const skip = (page - 1) * limit;
 
