@@ -1,12 +1,12 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { UserService } from '@/services/controllerService/UserService';
 import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
-import { Body, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
+import { Authorized, Body, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
-
-@JsonController('/users')
 @Service()
+@Authorized()
+@JsonController('/users')
 export class UserController {
   constructor(private userService: UserService) {}
 

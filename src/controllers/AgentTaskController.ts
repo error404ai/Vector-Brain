@@ -5,9 +5,9 @@ import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post
 import { Service } from 'typedi';
 import z from 'zod';
 
-@JsonController('/agent-task')
-@Authorized()
 @Service()
+@Authorized()
+@JsonController('/agent-task')
 export class AgentTaskController {
   constructor(private agentTaskService: AgentTaskService) {}
 
