@@ -23,7 +23,7 @@ function RootComponent() {
 
   return (
     <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f1f5f9">
-      {isCheckingAuth && <GlobalLoader message="Confirming your session..." />}
+      {(isCheckingAuth || isLoggedIn === 'initial') && <GlobalLoader message="Confirming your session..." />}
       {isAuthenticated && !isPublicRoute ? (
         <AuthLayout>
           <Outlet />
