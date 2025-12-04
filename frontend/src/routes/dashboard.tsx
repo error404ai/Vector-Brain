@@ -2,6 +2,7 @@ import { useGetDashboardSummaryQuery, type RecentActivity } from '@/RTKService/d
 import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconRobot, IconUser, IconUsers } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
+import { Helmet } from 'react-helmet-async';
 
 export const Route = createFileRoute('/dashboard')({
   component: Dashboard,
@@ -122,140 +123,145 @@ function Dashboard() {
   });
 
   return (
-    <Stack gap="lg">
-      {/* Page Header */}
-      <Group justify="space-between" align="center">
-        <div>
-          <Title order={2}>Dashboard</Title>
-          <Text c="dimmed" size="sm">
-            Welcome back! Here&apos;s what&apos;s happening with your projects.
-          </Text>
-        </div>
-        <Badge color="vector" variant="light" size="lg">
-          Vector Brain v1.0
-        </Badge>
-      </Group>
+    <>
+      <Helmet>
+        <title>Dashboard - Vector Brain</title>
+      </Helmet>
+      <Stack gap="lg">
+        {/* Page Header */}
+        <Group justify="space-between" align="center">
+          <div>
+            <Title order={2}>Dashboard</Title>
+            <Text c="dimmed" size="sm">
+              Welcome back! Here&apos;s what&apos;s happening with your projects.
+            </Text>
+          </div>
+          <Badge color="vector" variant="light" size="lg">
+            Vector Brain v1.0
+          </Badge>
+        </Group>
 
-      {/* Stats Grid */}
-      <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }}>{renderStatCards}</SimpleGrid>
+        {/* Stats Grid */}
+        <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }}>{renderStatCards}</SimpleGrid>
 
-      {/* Activity and Progress */}
-      <Grid>
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Card
-            padding="lg"
-            radius="md"
-            style={{
-              backgroundColor: '#ffffff',
-              border: '1px solid rgba(0,0,0,0.1)',
-            }}
-          >
-            <Title order={4} mb="md">
-              Recent Activity
-            </Title>
-            <Stack gap="md">
-              {isLoading ? (
-                // Loading skeletons
-                Array.from({ length: 4 }).map((_, index) => (
-                  <Group key={index} justify="space-between">
-                    <Group gap="sm">
-                      <Skeleton height={24} width={24} radius="sm" />
-                      <Skeleton height={16} width={200} />
-                    </Group>
-                    <Skeleton height={12} width={80} />
-                  </Group>
-                ))
-              ) : recentActivity.length > 0 ? (
-                recentActivity.map((activity) => {
-                  const ActivityIcon = getActivityIcon(activity.type);
-                  return (
-                    <Group key={`${activity.type}-${activity.id}`} justify="space-between">
+        {/* Activity and Progress */}
+        <Grid>
+          <Grid.Col span={{ base: 12, md: 8 }}>
+            <Card
+              padding="lg"
+              radius="md"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid rgba(0,0,0,0.1)',
+              }}
+            >
+              <Title order={4} mb="md">
+                Recent Activity
+              </Title>
+              <Stack gap="md">
+                {isLoading ? (
+                  // Loading skeletons
+                  Array.from({ length: 4 }).map((_, index) => (
+                    <Group key={index} justify="space-between">
                       <Group gap="sm">
-                        <ThemeIcon color={getActivityColor(activity.type)} variant="light" size="sm">
-                          <ActivityIcon size="0.8rem" />
-                        </ThemeIcon>
-                        <div>
-                          <Text size="sm">{activity.title}</Text>
-                          <Text size="xs" c="dimmed">
-                            {activity.description}
-                          </Text>
-                        </div>
+                        <Skeleton height={24} width={24} radius="sm" />
+                        <Skeleton height={16} width={200} />
                       </Group>
-                      <Text size="xs" c="dimmed">
-                        {formatTimeAgo(activity.createdAt)}
-                      </Text>
+                      <Skeleton height={12} width={80} />
                     </Group>
-                  );
-                })
-              ) : (
-                <Text size="sm" c="dimmed" ta="center">
-                  No recent activity
-                </Text>
-              )}
-            </Stack>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Card
-            padding="lg"
-            radius="md"
-            style={{
-              backgroundColor: '#ffffff',
-              border: '1px solid rgba(0,0,0,0.1)',
-            }}
-          >
-            <Title order={4} mb="md">
-              Overview
-            </Title>
-            <Stack align="center" gap="md">
-              <RingProgress
-                size={150}
-                roundCaps
-                thickness={12}
-                sections={[
-                  { value: stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0, color: '#0B69C6' },
-                  { value: stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0, color: '#22D3EE' },
-                ]}
-                label={
-                  isLoading ? (
-                    <Skeleton height={28} width={40} mx="auto" />
-                  ) : (
-                    <Text fw={700} ta="center" size="xl">
-                      {stats?.totalAgentTasks ?? 0}
-                    </Text>
-                  )
-                }
-              />
-              <Stack gap="xs" w="100%">
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Active Users
+                  ))
+                ) : recentActivity.length > 0 ? (
+                  recentActivity.map((activity) => {
+                    const ActivityIcon = getActivityIcon(activity.type);
+                    return (
+                      <Group key={`${activity.type}-${activity.id}`} justify="space-between">
+                        <Group gap="sm">
+                          <ThemeIcon color={getActivityColor(activity.type)} variant="light" size="sm">
+                            <ActivityIcon size="0.8rem" />
+                          </ThemeIcon>
+                          <div>
+                            <Text size="sm">{activity.title}</Text>
+                            <Text size="xs" c="dimmed">
+                              {activity.description}
+                            </Text>
+                          </div>
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          {formatTimeAgo(activity.createdAt)}
+                        </Text>
+                      </Group>
+                    );
+                  })
+                ) : (
+                  <Text size="sm" c="dimmed" ta="center">
+                    No recent activity
                   </Text>
-                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.activeUsers ?? 0}</Text>}
-                </Group>
-                <Progress value={stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0} color="vector" size="sm" />
-
-                <Group justify="space-between" mt="xs">
-                  <Text size="sm" c="dimmed">
-                    Recent Tasks
-                  </Text>
-                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.recentAgentTasks ?? 0}</Text>}
-                </Group>
-                <Progress value={stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0} color="cyan" size="sm" />
-
-                <Group justify="space-between" mt="xs">
-                  <Text size="sm" c="dimmed">
-                    Total Tasks
-                  </Text>
-                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.totalAgentTasks ?? 0}</Text>}
-                </Group>
-                <Progress value={100} color="grape" size="sm" />
+                )}
               </Stack>
-            </Stack>
-          </Card>
-        </Grid.Col>
-      </Grid>
-    </Stack>
+            </Card>
+          </Grid.Col>
+
+          <Grid.Col span={{ base: 12, md: 4 }}>
+            <Card
+              padding="lg"
+              radius="md"
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid rgba(0,0,0,0.1)',
+              }}
+            >
+              <Title order={4} mb="md">
+                Overview
+              </Title>
+              <Stack align="center" gap="md">
+                <RingProgress
+                  size={150}
+                  roundCaps
+                  thickness={12}
+                  sections={[
+                    { value: stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0, color: '#0B69C6' },
+                    { value: stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0, color: '#22D3EE' },
+                  ]}
+                  label={
+                    isLoading ? (
+                      <Skeleton height={28} width={40} mx="auto" />
+                    ) : (
+                      <Text fw={700} ta="center" size="xl">
+                        {stats?.totalAgentTasks ?? 0}
+                      </Text>
+                    )
+                  }
+                />
+                <Stack gap="xs" w="100%">
+                  <Group justify="space-between">
+                    <Text size="sm" c="dimmed">
+                      Active Users
+                    </Text>
+                    {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.activeUsers ?? 0}</Text>}
+                  </Group>
+                  <Progress value={stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0} color="vector" size="sm" />
+
+                  <Group justify="space-between" mt="xs">
+                    <Text size="sm" c="dimmed">
+                      Recent Tasks
+                    </Text>
+                    {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.recentAgentTasks ?? 0}</Text>}
+                  </Group>
+                  <Progress value={stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0} color="cyan" size="sm" />
+
+                  <Group justify="space-between" mt="xs">
+                    <Text size="sm" c="dimmed">
+                      Total Tasks
+                    </Text>
+                    {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.totalAgentTasks ?? 0}</Text>}
+                  </Group>
+                  <Progress value={100} color="grape" size="sm" />
+                </Stack>
+              </Stack>
+            </Card>
+          </Grid.Col>
+        </Grid>
+      </Stack>
+    </>
   );
 }

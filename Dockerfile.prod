@@ -28,7 +28,7 @@ RUN pnpm install --frozen-lockfile --prod=false
 ENV NODE_ENV=production
 
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+    adduser -S -D -u 1001 nodejs
 
 RUN chown -R nodejs:nodejs /app
 
