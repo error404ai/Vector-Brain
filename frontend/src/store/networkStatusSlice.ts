@@ -4,13 +4,11 @@ import { createSlice } from '@reduxjs/toolkit';
 export interface NetworkStatusState {
   isNetworkOffline: boolean;
   isServerUnreachable: boolean;
-  tokenExpired: boolean;
 }
 
 const initialState: NetworkStatusState = {
   isNetworkOffline: false,
   isServerUnreachable: false,
-  tokenExpired: false,
 };
 
 export const networkStatusSlice = createSlice({
@@ -23,9 +21,6 @@ export const networkStatusSlice = createSlice({
     setServerUnreachable: (state, action: PayloadAction<boolean>) => {
       state.isServerUnreachable = action.payload;
     },
-    setTokenExpired: (state, action: PayloadAction<boolean>) => {
-      state.tokenExpired = action.payload;
-    },
     clearNetworkError: (state) => {
       state.isNetworkOffline = false;
       state.isServerUnreachable = false;
@@ -33,6 +28,6 @@ export const networkStatusSlice = createSlice({
   },
 });
 
-export const { setNetworkOffline, setServerUnreachable, setTokenExpired, clearNetworkError } = networkStatusSlice.actions;
+export const { setNetworkOffline, setServerUnreachable, clearNetworkError } = networkStatusSlice.actions;
 
 export default networkStatusSlice.reducer;

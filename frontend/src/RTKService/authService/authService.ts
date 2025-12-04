@@ -68,12 +68,12 @@ const authApi = baseApi.injectEndpoints({
       async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         try {
           await queryFulfilled;
-          authManager.clearTokens();
+          authManager.clearAccessToken();
           dispatch(logout());
           dispatch(setAuthCheckCompleted(true));
         } catch {
           // Still clear tokens on logout even if API fails
-          authManager.clearTokens();
+          authManager.clearAccessToken();
           dispatch(logout());
           dispatch(setAuthCheckCompleted(true));
         }

@@ -8,8 +8,7 @@ const authManager = {
   saveToken: (token: string) => {
     try {
       // Use new auth manager to save session
-      const expireAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
-      newAuthManager.saveAuthSession({ accessToken: token, expireAt });
+      newAuthManager.saveAccessToken(token);
       // Clear caches from any previous session but keep the new auth token.
       void authManager.clearAppCache(true);
     } catch {
@@ -45,7 +44,7 @@ const authManager = {
   clearToken: () => {
     try {
       // Use new auth manager
-      newAuthManager.clearTokens();
+      newAuthManager.clearAccessToken();
       // Clear caches fully on logout (don't preserve token).
       void authManager.clearAppCache(false);
     } catch {
@@ -56,7 +55,6 @@ const authManager = {
   },
 
   clearAppCache: async (preserveAuthToken = false) => {
-    const preservedToken = preserveAuthToken ? localStorage.getItem('authToken') : null;
     const preservedUser = preserveAuthToken ? localStorage.getItem(USER_KEY) : null;
 
     sessionStorage.clear();
@@ -68,14 +66,11 @@ const authManager = {
 
     for (const k of keys) {
       if (!k) continue;
-      if (preserveAuthToken && (k === 'authToken' || k === USER_KEY)) continue;
+      if (preserveAuthToken && k === USER_KEY) continue;
       localStorage.removeItem(k);
     }
 
-    // Restore token and user if needed
-    if (preservedToken) {
-      localStorage.setItem('authToken', preservedToken);
-    }
+    // Restore user if needed
     if (preservedUser) {
       localStorage.setItem(USER_KEY, preservedUser);
     }
