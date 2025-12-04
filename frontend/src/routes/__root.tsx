@@ -22,7 +22,7 @@ function RootComponent() {
 
   return (
     <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f1f5f9">
-      {(!authInitialized || loading) && <GlobalLoader message="Confirming your session..." />}
+      {(!authInitialized || loading) && <GlobalLoader />}
       {!isPublicRoute ? (
         <AuthLayout>
           <Outlet />

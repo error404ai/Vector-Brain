@@ -47,34 +47,16 @@ const authManager = {
     try {
       const { data } = await queryFulfilled;
 
-      if (data?.status === 'success' && data?.action === 'LOGIN_SUCCESS') {
-        // Login successful with tokens
-        const accessToken = data.data?.accessToken;
-        if (accessToken) {
-          this.saveAccessToken(accessToken);
-        }
-      } else if (data?.status === 'success' && data?.action === 'OTP_SENT') {
-        // OTP has been sent, user needs to verify
-        this.clearAccessToken();
-        // Store OTP session info for later verification
-        localStorage.setItem(
-          'otpSession',
-          JSON.stringify({
-            session: data.data?.session,
-            expiresIn: data.data?.expiresIn,
-          })
-        );
+      const token = data?.data?.token;
+      if (token) {
+        this.saveAccessToken(token);
       }
-
-      // Invalidate all RTK Query tags so every cached endpoint can be refetched
-      // after a successful login (refresh global state like account, lists, etc.).
       try {
         const allTags = Object.values(TAGS)
           .filter(Boolean)
           .map((t) => ({ type: t }));
         dispatch(baseApi.util.invalidateTags(allTags));
       } catch (invErr) {
-        // Log to help debugging when invalidation doesn't trigger refetch
         console.error('Failed to invalidate RTK Query tags on login:', invErr);
       }
     } catch (err) {
@@ -87,11 +69,10 @@ const authManager = {
     try {
       const { data } = await queryFulfilled;
 
-      if (data?.status === 'success' && data?.action === 'LOGIN_SUCCESS') {
-        const accessToken = data.data?.accessToken;
-        if (accessToken) {
-          this.saveAccessToken(accessToken);
-        }
+      // Check if OTP verification was successful by presence of token
+      const token = data?.data?.token;
+      if (token) {
+        this.saveAccessToken(token);
       }
 
       dispatch(baseApi.util.invalidateTags([TAGS.ACCOUNT_INFO]));
