@@ -3,7 +3,6 @@ import type { RootState } from '@/store/store';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
-import { useRouter } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -17,18 +16,18 @@ interface AuthLayoutProps {
 export function AuthLayout({ children }: AuthLayoutProps) {
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const router = useRouter();
   const user = useSelector((state: RootState) => state.auth.user);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const [logout] = useLogoutMutation();
 
   const handleLogout = async () => {
+    console.log('logging out');
     try {
       await logout().unwrap();
+      console.log('logout successful, navigation will be handled by useAuthRedirect');
     } catch (error) {
       console.error('Logout failed:', error);
     }
-    router.navigate({ to: '/' });
   };
 
   return (

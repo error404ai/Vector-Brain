@@ -1,4 +1,5 @@
 import authManager from '@/_helpers/authManager';
+import { logout, setAuthCheckCompleted } from '@/store/authSlice';
 import { baseApi, TAGS } from '../baseApi';
 
 export interface User {
@@ -64,13 +65,17 @@ const authApi = baseApi.injectEndpoints({
         url: '/auth/logout',
         method: 'POST',
       }),
-      async onQueryStarted(_arg, { queryFulfilled }) {
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         try {
           await queryFulfilled;
           authManager.clearTokens();
+          dispatch(logout());
+          dispatch(setAuthCheckCompleted(true));
         } catch {
           // Still clear tokens on logout even if API fails
           authManager.clearTokens();
+          dispatch(logout());
+          dispatch(setAuthCheckCompleted(true));
         }
       },
       invalidatesTags: [TAGS.ACCOUNT_INFO, TAGS.PROFILE],
