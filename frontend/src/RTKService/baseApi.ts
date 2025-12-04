@@ -11,6 +11,8 @@ export const TAGS = {
   PROFILE: 'Profile',
   USER: 'User',
   USERS: 'Users',
+  AGENT_TASK: 'AgentTask',
+  AGENT_TASKS: 'AgentTasks',
 } as const;
 
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
