@@ -1,5 +1,5 @@
 import { useGetProfileQuery } from '@/RTKService/authService/authService';
-import { setAuthCheckCompleted, setIsLoggedIn } from '@/store/authSlice';
+import { setAuthInitialized, setIsLoggedIn } from '@/store/authSlice';
 import type { RootState } from '@/store/store';
 import { useAppDispatch } from '@/store/store';
 import authManager from '@/utils/authManager';
@@ -15,7 +15,7 @@ export const useAuthRedirect = () => {
   const location = useLocation();
   const dispatch = useAppDispatch();
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
-  const hasCheckedAuth = useSelector((state: RootState) => state.auth.hasCheckedAuth);
+  const authInitialized = useSelector((state: RootState) => state.auth.authInitialized);
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
   const { data, error, isError } = useGetProfileQuery(undefined);
@@ -27,7 +27,7 @@ export const useAuthRedirect = () => {
     if (!profile) return;
     authManager.saveUser(profile);
     dispatch(setIsLoggedIn(true));
-    dispatch(setAuthCheckCompleted(true));
+    dispatch(setAuthInitialized(true));
     handledErrorRef.current = false;
   }, [profile, dispatch]);
 
@@ -37,12 +37,12 @@ export const useAuthRedirect = () => {
     if (status === 401 || status === 403) {
       handledErrorRef.current = true;
       authManager.clearToken();
-      dispatch(setAuthCheckCompleted(true));
+      dispatch(setAuthInitialized(true));
     }
   }, [isError, error, dispatch]);
 
   useEffect(() => {
-    if (!hasCheckedAuth) {
+    if (!authInitialized) {
       return;
     }
 
@@ -51,9 +51,9 @@ export const useAuthRedirect = () => {
     } else if (isLoggedIn && isPublicRoute) {
       router.navigate({ to: '/dashboard' });
     }
-  }, [hasCheckedAuth, isLoggedIn, isPublicRoute, router]);
+  }, [authInitialized, isLoggedIn, isPublicRoute, router]);
 
-  const isCheckingAuth = useMemo(() => !hasCheckedAuth, [hasCheckedAuth]);
+  const isCheckingAuth = useMemo(() => !authInitialized, [authInitialized]);
 
   return { isCheckingAuth };
 };

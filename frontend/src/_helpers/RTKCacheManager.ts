@@ -13,7 +13,7 @@ interface CacheEntry {
  */
 class RTKCacheManager {
   private static readonly CACHE_PREFIX = 'rtk-query::';
-  public static readonly CACHE_ENABLED = false; // Set to true to enable caching
+  public static readonly CACHE_ENABLED = true;
   private static readonly MAX_CACHE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
   private static memoryCache = new Map<string, CacheEntry>();
 

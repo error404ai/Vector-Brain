@@ -19,7 +19,6 @@ export interface AuthState {
     message: string;
     trace: string;
   };
-  hasCheckedAuth: boolean;
   tokenExpired: boolean;
   loggingOut: boolean;
   redirectForSelectOrg: boolean;
@@ -31,7 +30,6 @@ const initialState: AuthState = {
   isLoggedIn: 'initial',
   user: null,
   error: { isError: false, message: '', trace: '' },
-  hasCheckedAuth: false,
   tokenExpired: false,
   loggingOut: false,
   redirectForSelectOrg: typeof window !== 'undefined' && localStorage.getItem('redirectForSelectOrg') === 'true',
@@ -62,16 +60,11 @@ export const authSlice = createSlice({
     logout: (state) => {
       state.isLoggedIn = false;
       state.user = null;
-      state.hasCheckedAuth = true;
       state.tokenExpired = false;
       state.loggingOut = false;
       state.redirectForSelectOrg = false;
       state.longRequestPending = false;
       state.authInitialized = false;
-    },
-
-    setAuthCheckCompleted: (state, action: PayloadAction<boolean>) => {
-      state.hasCheckedAuth = action.payload;
     },
 
     setTokenExpired: (state, action: PayloadAction<boolean>) => {
@@ -101,6 +94,6 @@ export const authSlice = createSlice({
   },
 });
 
-export const { setIsLoggedIn, setUser, setError, clearError, logout, setAuthCheckCompleted, setTokenExpired, setLoggingOut, setRedirectForSelectOrg, setLongRequestPending, setAuthInitialized } = authSlice.actions;
+export const { setIsLoggedIn, setUser, setError, clearError, logout, setTokenExpired, setLoggingOut, setRedirectForSelectOrg, setLongRequestPending, setAuthInitialized } = authSlice.actions;
 
 export default authSlice.reducer;

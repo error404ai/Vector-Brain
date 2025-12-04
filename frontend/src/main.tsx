@@ -5,10 +5,6 @@ import App from './App';
 import { MantineAppProvider } from './components/providers/MantineProvider';
 import './index.css';
 import { store } from './store/store';
-import authManager from './utils/authManager';
-
-// Initialize auth state from localStorage
-authManager.initializeAuth();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
