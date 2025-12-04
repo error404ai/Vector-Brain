@@ -1,5 +1,5 @@
+import { useLogoutMutation } from '@/RTKService/authService/authService';
 import type { RootState } from '@/store/store';
-import authManager from '@/utils/authManager';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
@@ -20,9 +20,14 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const router = useRouter();
   const user = useSelector((state: RootState) => state.auth.user);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
+  const [logout] = useLogoutMutation();
 
-  const handleLogout = () => {
-    authManager.clearToken();
+  const handleLogout = async () => {
+    try {
+      await logout().unwrap();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
     router.navigate({ to: '/' });
   };
 
