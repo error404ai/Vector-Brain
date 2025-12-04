@@ -1,7 +1,7 @@
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { GuestLayout } from '@/components/layout/GuestLayout';
 import { GlobalLoader } from '@/components/loaders/GlobalLoader';
-import { useAuthRedirect } from '@/hooks/useAuthRedirect';
+import { useAuthRedirect } from '@/hooks';
 import type { RootState } from '@/store/store';
 import { Outlet, createRootRoute, useLocation } from '@tanstack/react-router';
 import { SkeletonTheme } from 'react-loading-skeleton';
@@ -16,15 +16,14 @@ function RootComponent() {
   const publicRoutes = ['/login', '/signup', '/'];
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
-  const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
-  const isAuthenticated = isLoggedIn === true;
+  const authInitialized = useSelector((state: RootState) => state.auth.authInitialized);
 
-  const { isCheckingAuth } = useAuthRedirect();
+  useAuthRedirect();
 
   return (
     <SkeletonTheme baseColor="#e2e8f0" highlightColor="#f1f5f9">
-      {(isCheckingAuth || isLoggedIn === 'initial') && <GlobalLoader message="Confirming your session..." />}
-      {isAuthenticated && !isPublicRoute ? (
+      {!authInitialized && <GlobalLoader message="Confirming your session..." />}
+      {!isPublicRoute ? (
         <AuthLayout>
           <Outlet />
         </AuthLayout>
@@ -33,7 +32,6 @@ function RootComponent() {
           <Outlet />
         </GuestLayout>
       )}
-      {/* {isDev && <TanStackRouterDevtools />} */}
     </SkeletonTheme>
   );
 }

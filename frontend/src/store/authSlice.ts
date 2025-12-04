@@ -12,7 +12,6 @@ export interface User {
 }
 
 export interface AuthState {
-  isLoggedIn: boolean | 'initial';
   user: User | null;
   error: {
     isError: boolean;
@@ -27,7 +26,6 @@ export interface AuthState {
 }
 
 const initialState: AuthState = {
-  isLoggedIn: 'initial',
   user: null,
   error: { isError: false, message: '', trace: '' },
   tokenExpired: false,
@@ -41,10 +39,6 @@ export const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
-    setIsLoggedIn: (state, action: PayloadAction<boolean>) => {
-      state.isLoggedIn = action.payload;
-    },
-
     setUser: (state, action: PayloadAction<User | null>) => {
       state.user = action.payload;
     },
@@ -58,7 +52,6 @@ export const authSlice = createSlice({
     },
 
     logout: (state) => {
-      state.isLoggedIn = false;
       state.user = null;
       state.tokenExpired = false;
       state.loggingOut = false;
@@ -94,6 +87,6 @@ export const authSlice = createSlice({
   },
 });
 
-export const { setIsLoggedIn, setUser, setError, clearError, logout, setTokenExpired, setLoggingOut, setRedirectForSelectOrg, setLongRequestPending, setAuthInitialized } = authSlice.actions;
+export const { setUser, setError, clearError, logout, setTokenExpired, setLoggingOut, setRedirectForSelectOrg, setLongRequestPending, setAuthInitialized } = authSlice.actions;
 
 export default authSlice.reducer;

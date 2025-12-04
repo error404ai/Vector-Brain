@@ -17,7 +17,6 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const user = useSelector((state: RootState) => state.auth.user);
-  const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const [logout] = useLogoutMutation();
 
   const handleLogout = async () => {
@@ -69,7 +68,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <Menu.Target>
               <UnstyledButton>
                 <Group gap={7}>
-                  {user && isLoggedIn ? (
+                  {user ? (
                     <Avatar src={undefined} alt={user.name} size={32} radius="xl" color="vector">
                       {user.name
                         .split(' ')
@@ -80,7 +79,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   ) : (
                     <Avatar size={32} radius="xl" color="vector" />
                   )}
-                  {user && isLoggedIn ? (
+                  {user ? (
                     <Group gap="xs" align="center" visibleFrom="sm">
                       <Text fw={500} size="sm" lh={1}>
                         {user.name}

@@ -1,5 +1,5 @@
 import { useLoginMutation } from '@/RTKService/authService/authService';
-import { setIsLoggedIn, setUser } from '@/store/authSlice';
+import { setUser } from '@/store/authSlice';
 import { useAppDispatch } from '@/store/store';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
@@ -35,7 +35,6 @@ function LoginPage() {
       }).unwrap();
 
       // Update Redux state
-      dispatch(setIsLoggedIn(true));
       dispatch(setUser(response.data.user));
 
       notifications.show({
