@@ -1,44 +1,84 @@
-import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconDatabase, IconFolder, IconUsers } from '@tabler/icons-react';
+import { useGetDashboardSummaryQuery, type RecentActivity } from '@/RTKService/dashboardService/dashboardService';
+import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconRobot, IconUser, IconUsers } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/dashboard')({
   component: Dashboard,
 });
 
-const stats = [
-  {
-    title: 'Total Users',
-    value: '1,234',
-    diff: 12,
-    icon: IconUsers,
-    color: 'vector',
-  },
-  {
-    title: 'Active Projects',
-    value: '56',
-    diff: -3,
-    icon: IconFolder,
-    color: 'cyan',
-  },
-  {
-    title: 'Knowledge Items',
-    value: '8,432',
-    diff: 28,
-    icon: IconBrain,
-    color: 'teal',
-  },
-  {
-    title: 'Database Size',
-    value: '2.4 GB',
-    diff: 5,
-    icon: IconDatabase,
-    color: 'grape',
-  },
-];
-
 function Dashboard() {
-  const statCards = stats.map((stat) => {
+  const { data: summaryResponse, isLoading } = useGetDashboardSummaryQuery();
+  const summary = summaryResponse?.data;
+  const stats = summary?.stats;
+  const recentActivity = summary?.recentActivity ?? [];
+
+  const statCards = [
+    {
+      title: 'Total Users',
+      value: stats?.totalUsers ?? 0,
+      diff: 12,
+      icon: IconUsers,
+      color: 'vector',
+    },
+    {
+      title: 'Active Users',
+      value: stats?.activeUsers ?? 0,
+      diff: 5,
+      icon: IconUser,
+      color: 'cyan',
+    },
+    {
+      title: 'Total Agent Tasks',
+      value: stats?.totalAgentTasks ?? 0,
+      diff: 28,
+      icon: IconRobot,
+      color: 'teal',
+    },
+    {
+      title: 'Recent Tasks (7d)',
+      value: stats?.recentAgentTasks ?? 0,
+      diff: 15,
+      icon: IconBrain,
+      color: 'grape',
+    },
+  ];
+
+  const getActivityIcon = (type: RecentActivity['type']) => {
+    switch (type) {
+      case 'user':
+        return IconUser;
+      case 'agent_task':
+        return IconRobot;
+      default:
+        return IconBrain;
+    }
+  };
+
+  const getActivityColor = (type: RecentActivity['type']) => {
+    switch (type) {
+      case 'user':
+        return 'vector';
+      case 'agent_task':
+        return 'teal';
+      default:
+        return 'gray';
+    }
+  };
+
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return 'Just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    return date.toLocaleDateString();
+  };
+
+  const renderStatCards = statCards.map((stat) => {
     const DiffIcon = stat.diff > 0 ? IconArrowUpRight : IconArrowDownRight;
 
     return (
@@ -61,9 +101,13 @@ function Dashboard() {
         </Group>
 
         <Group align="flex-end" gap="xs" mt={25}>
-          <Text fw={700} fz="xl">
-            {stat.value}
-          </Text>
+          {isLoading ? (
+            <Skeleton height={28} width={60} />
+          ) : (
+            <Text fw={700} fz="xl">
+              {stat.value.toLocaleString()}
+            </Text>
+          )}
           <Text c={stat.diff > 0 ? 'teal' : 'red'} fz="sm" fw={500} style={{ display: 'flex', alignItems: 'center' }}>
             <span>{stat.diff}%</span>
             <DiffIcon size="1rem" stroke={1.5} />
@@ -93,7 +137,7 @@ function Dashboard() {
       </Group>
 
       {/* Stats Grid */}
-      <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }}>{statCards}</SimpleGrid>
+      <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }}>{renderStatCards}</SimpleGrid>
 
       {/* Activity and Progress */}
       <Grid>
@@ -110,40 +154,44 @@ function Dashboard() {
               Recent Activity
             </Title>
             <Stack gap="md">
-              {[
-                {
-                  title: 'New knowledge item added',
-                  time: '2 hours ago',
-                  color: 'teal',
-                },
-                {
-                  title: "Project 'AI Assistant' updated",
-                  time: '5 hours ago',
-                  color: 'vector',
-                },
-                {
-                  title: 'Database backup completed',
-                  time: '1 day ago',
-                  color: 'cyan',
-                },
-                {
-                  title: 'New user registered',
-                  time: '2 days ago',
-                  color: 'grape',
-                },
-              ].map((activity, index) => (
-                <Group key={index} justify="space-between">
-                  <Group gap="sm">
-                    <ThemeIcon color={activity.color} variant="light" size="sm">
-                      <IconBrain size="0.8rem" />
-                    </ThemeIcon>
-                    <Text size="sm">{activity.title}</Text>
+              {isLoading ? (
+                // Loading skeletons
+                Array.from({ length: 4 }).map((_, index) => (
+                  <Group key={index} justify="space-between">
+                    <Group gap="sm">
+                      <Skeleton height={24} width={24} radius="sm" />
+                      <Skeleton height={16} width={200} />
+                    </Group>
+                    <Skeleton height={12} width={80} />
                   </Group>
-                  <Text size="xs" c="dimmed">
-                    {activity.time}
-                  </Text>
-                </Group>
-              ))}
+                ))
+              ) : recentActivity.length > 0 ? (
+                recentActivity.map((activity) => {
+                  const ActivityIcon = getActivityIcon(activity.type);
+                  return (
+                    <Group key={`${activity.type}-${activity.id}`} justify="space-between">
+                      <Group gap="sm">
+                        <ThemeIcon color={getActivityColor(activity.type)} variant="light" size="sm">
+                          <ActivityIcon size="0.8rem" />
+                        </ThemeIcon>
+                        <div>
+                          <Text size="sm">{activity.title}</Text>
+                          <Text size="xs" c="dimmed">
+                            {activity.description}
+                          </Text>
+                        </div>
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        {formatTimeAgo(activity.createdAt)}
+                      </Text>
+                    </Group>
+                  );
+                })
+              ) : (
+                <Text size="sm" c="dimmed" ta="center">
+                  No recent activity
+                </Text>
+              )}
             </Stack>
           </Card>
         </Grid.Col>
@@ -158,7 +206,7 @@ function Dashboard() {
             }}
           >
             <Title order={4} mb="md">
-              Storage Usage
+              Overview
             </Title>
             <Stack align="center" gap="md">
               <RingProgress
@@ -166,40 +214,43 @@ function Dashboard() {
                 roundCaps
                 thickness={12}
                 sections={[
-                  { value: 40, color: '#0B69C6' },
-                  { value: 15, color: '#22D3EE' },
-                  { value: 15, color: '#8B5CF6' },
+                  { value: stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0, color: '#0B69C6' },
+                  { value: stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0, color: '#22D3EE' },
                 ]}
                 label={
-                  <Text fw={700} ta="center" size="xl">
-                    70%
-                  </Text>
+                  isLoading ? (
+                    <Skeleton height={28} width={40} mx="auto" />
+                  ) : (
+                    <Text fw={700} ta="center" size="xl">
+                      {stats?.totalAgentTasks ?? 0}
+                    </Text>
+                  )
                 }
               />
               <Stack gap="xs" w="100%">
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
-                    Documents
+                    Active Users
                   </Text>
-                  <Text size="sm">1.0 GB</Text>
+                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.activeUsers ?? 0}</Text>}
                 </Group>
-                <Progress value={40} color="vector" size="sm" />
+                <Progress value={stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0} color="vector" size="sm" />
 
                 <Group justify="space-between" mt="xs">
                   <Text size="sm" c="dimmed">
-                    Media
+                    Recent Tasks
                   </Text>
-                  <Text size="sm">0.4 GB</Text>
+                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.recentAgentTasks ?? 0}</Text>}
                 </Group>
-                <Progress value={15} color="cyan" size="sm" />
+                <Progress value={stats ? (stats.recentAgentTasks / Math.max(stats.totalAgentTasks, 1)) * 100 : 0} color="cyan" size="sm" />
 
                 <Group justify="space-between" mt="xs">
                   <Text size="sm" c="dimmed">
-                    Other
+                    Total Tasks
                   </Text>
-                  <Text size="sm">0.4 GB</Text>
+                  {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.totalAgentTasks ?? 0}</Text>}
                 </Group>
-                <Progress value={15} color="grape" size="sm" />
+                <Progress value={100} color="grape" size="sm" />
               </Stack>
             </Stack>
           </Card>

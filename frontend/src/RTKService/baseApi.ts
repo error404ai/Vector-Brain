@@ -13,6 +13,7 @@ export const TAGS = {
   USERS: 'Users',
   AGENT_TASK: 'AgentTask',
   AGENT_TASKS: 'AgentTasks',
+  DASHBOARD: 'Dashboard',
 } as const;
 
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
