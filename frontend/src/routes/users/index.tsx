@@ -8,6 +8,7 @@ import { notifications } from '@mantine/notifications';
 import { IconCheck, IconUserPlus, IconX } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
+import { Helmet } from 'react-helmet-async';
 import { UserActions } from './_partials/UserActions';
 import { UserFormModal } from './_partials/UserFormModal';
 import { UserStatusBadge } from './_partials/UserStatusBadge';
@@ -142,65 +143,70 @@ function Users() {
   ];
 
   return (
-    <Box>
-      {/* Page Header */}
-      <Group justify="space-between" mb="xl">
-        <div>
-          <Title order={2}>Users Management</Title>
-          <Text c="dimmed" size="sm">
-            Manage user accounts and permissions
-          </Text>
-        </div>
-        <Group>
-          {selectedUsers.length > 0 && (
-            <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
-              Delete Selected ({selectedUsers.length})
+    <>
+      <Helmet>
+        <title>Users - Vector Brain</title>
+      </Helmet>
+      <Box>
+        {/* Page Header */}
+        <Group justify="space-between" mb="xl">
+          <div>
+            <Title order={2}>Users Management</Title>
+            <Text c="dimmed" size="sm">
+              Manage user accounts and permissions
+            </Text>
+          </div>
+          <Group>
+            {selectedUsers.length > 0 && (
+              <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
+                Delete Selected ({selectedUsers.length})
+              </Button>
+            )}
+            <Button leftSection={<IconUserPlus size="1rem" />} onClick={openCreateModal}>
+              Add New User
             </Button>
-          )}
-          <Button leftSection={<IconUserPlus size="1rem" />} onClick={openCreateModal}>
-            Add New User
-          </Button>
+          </Group>
         </Group>
-      </Group>
 
-      {/* DataTable */}
-      <DataTable<User>
-        columns={columns}
-        data={users}
-        loading={isLoading}
-        withTableBorder
-        striped
-        highlightOnHover
-        withRowSelection
-        selectedRecords={selectedUsers}
-        onSelectionChange={setSelectedUsers}
-        sortable
-        onSortStatusChange={handleSortChange}
-        searchable
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search users by name or email..."
-        pagination
-        page={pagination?.currentPage ?? page}
-        recordsPerPage={pagination?.pageSize ?? limit}
-        totalRecords={pagination?.totalCount ?? 0}
-        totalPages={pagination?.totalPages}
-        hasPreviousPage={pagination?.hasPreviousPage}
-        hasNextPage={pagination?.hasNextPage}
-        onPageChange={setPage}
-        onRecordsPerPageChange={setLimit}
-        recordsPerPageOptions={[5, 10, 20, 50]}
-        noRecordsText="No users found"
-        loadingText="Loading users..."
-        minHeight={300}
-        verticalSpacing="sm"
-      />
+        {/* DataTable */}
+        <DataTable<User>
+          columns={columns}
+          data={users}
+          loading={isLoading}
+          withTableBorder
+          striped
+          highlightOnHover
+          withRowSelection
+          selectedRecords={selectedUsers}
+          onSelectionChange={setSelectedUsers}
+          sortable
+          onSortStatusChange={handleSortChange}
+          searchable
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search users by name or email..."
+          pagination
+          page={pagination?.currentPage ?? page}
+          recordsPerPage={pagination?.pageSize ?? limit}
+          totalRecords={pagination?.totalCount ?? 0}
+          totalPages={pagination?.totalPages}
+          hasPreviousPage={pagination?.hasPreviousPage}
+          hasNextPage={pagination?.hasNextPage}
+          onPageChange={setPage}
+          onRecordsPerPageChange={setLimit}
+          recordsPerPageOptions={[5, 10, 20, 50]}
+          noRecordsText="No users found"
+          loadingText="Loading users..."
+          minHeight={300}
+          verticalSpacing="sm"
+        />
 
-      {/* Create User Modal */}
-      <UserFormModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} title="Create New User" />
+        {/* Create User Modal */}
+        <UserFormModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} title="Create New User" />
 
-      {/* Edit User Modal */}
-      <UserFormModal user={editingUser} opened={editModalOpened} onClose={handleCloseEditModal} onSubmit={handleUpdateSubmit} isLoading={isUpdating} title="Edit User" />
-    </Box>
+        {/* Edit User Modal */}
+        <UserFormModal user={editingUser} opened={editModalOpened} onClose={handleCloseEditModal} onSubmit={handleUpdateSubmit} isLoading={isUpdating} title="Edit User" />
+      </Box>
+    </>
   );
 }

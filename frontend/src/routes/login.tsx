@@ -3,6 +3,7 @@ import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput,
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
+import { Helmet } from 'react-helmet-async';
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -49,39 +50,44 @@ function LoginPage() {
   };
 
   return (
-    <Stack gap="lg">
-      <Stack gap="xs" align="center">
-        <Title order={2}>Welcome Back</Title>
-        <Text c="dimmed" size="sm">
-          Sign in to access your Vector Brain dashboard
+    <>
+      <Helmet>
+        <title>Login - Vector Brain</title>
+      </Helmet>
+      <Stack gap="lg">
+        <Stack gap="xs" align="center">
+          <Title order={2}>Welcome Back</Title>
+          <Text c="dimmed" size="sm">
+            Sign in to access your Vector Brain dashboard
+          </Text>
+        </Stack>
+
+        <form onSubmit={form.onSubmit(handleSubmit)}>
+          <Stack gap="md">
+            <TextInput label="Email" placeholder="your@email.com" required {...form.getInputProps('email')} />
+
+            <PasswordInput label="Password" placeholder="Your password" required {...form.getInputProps('password')} />
+
+            <Group justify="space-between">
+              <Checkbox label="Remember me" {...form.getInputProps('rememberMe', { type: 'checkbox' })} />
+              <Anchor c="vector" size="sm" href="#">
+                Forgot password?
+              </Anchor>
+            </Group>
+
+            <Button type="submit" fullWidth color="vector" mt="md" loading={isLoading}>
+              Sign In
+            </Button>
+          </Stack>
+        </form>
+
+        <Text c="dimmed" size="sm" ta="center">
+          Do not have an account?{' '}
+          <Anchor c="vector" component={Link} to="/signup">
+            Sign up
+          </Anchor>
         </Text>
       </Stack>
-
-      <form onSubmit={form.onSubmit(handleSubmit)}>
-        <Stack gap="md">
-          <TextInput label="Email" placeholder="your@email.com" required {...form.getInputProps('email')} />
-
-          <PasswordInput label="Password" placeholder="Your password" required {...form.getInputProps('password')} />
-
-          <Group justify="space-between">
-            <Checkbox label="Remember me" {...form.getInputProps('rememberMe', { type: 'checkbox' })} />
-            <Anchor c="vector" size="sm" href="#">
-              Forgot password?
-            </Anchor>
-          </Group>
-
-          <Button type="submit" fullWidth color="vector" mt="md" loading={isLoading}>
-            Sign In
-          </Button>
-        </Stack>
-      </form>
-
-      <Text c="dimmed" size="sm" ta="center">
-        Do not have an account?{' '}
-        <Anchor c="vector" component={Link} to="/signup">
-          Sign up
-        </Anchor>
-      </Text>
-    </Stack>
+    </>
   );
 }

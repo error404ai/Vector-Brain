@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HelmetProvider } from 'react-helmet-async';
 import { Provider } from 'react-redux';
 import App from './App';
 import { MantineAppProvider } from './components/providers/MantineProvider';
@@ -8,10 +9,12 @@ import { store } from './store/store';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Provider store={store}>
-      <MantineAppProvider>
-        <App />
-      </MantineAppProvider>
-    </Provider>
+    <HelmetProvider>
+      <Provider store={store}>
+        <MantineAppProvider>
+          <App />
+        </MantineAppProvider>
+      </Provider>
+    </HelmetProvider>
   </StrictMode>
 );

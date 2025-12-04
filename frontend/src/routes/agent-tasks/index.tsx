@@ -8,6 +8,7 @@ import { notifications } from '@mantine/notifications';
 import { IconCheck, IconPlus, IconX } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
+import { Helmet } from 'react-helmet-async';
 import { AgentTaskActions } from './_partials/AgentTaskActions';
 import { AgentTaskDetailModal } from './_partials/AgentTaskDetailModal';
 import { CreateAgentTaskModal } from './_partials/CreateAgentTaskModal';
@@ -137,63 +138,68 @@ function AgentTasks() {
   ];
 
   return (
-    <Box>
-      {/* Page Header */}
-      <Group justify="space-between" mb="xl">
-        <div>
-          <Title order={2}>Agent Tasks</Title>
-          <Text c="dimmed" size="sm">
-            Manage AI agent tasks and their execution logs
-          </Text>
-        </div>
-        <Group>
-          {selectedTasks.length > 0 && (
-            <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
-              Delete Selected ({selectedTasks.length})
+    <>
+      <Helmet>
+        <title>Agent Tasks - Vector Brain</title>
+      </Helmet>
+      <Box>
+        {/* Page Header */}
+        <Group justify="space-between" mb="xl">
+          <div>
+            <Title order={2}>Agent Tasks</Title>
+            <Text c="dimmed" size="sm">
+              Manage AI agent tasks and their execution logs
+            </Text>
+          </div>
+          <Group>
+            {selectedTasks.length > 0 && (
+              <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
+                Delete Selected ({selectedTasks.length})
+              </Button>
+            )}
+            <Button leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
+              New Task
             </Button>
-          )}
-          <Button leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
-            New Task
-          </Button>
+          </Group>
         </Group>
-      </Group>
 
-      {/* DataTable */}
-      <DataTable<AgentTask>
-        columns={columns}
-        data={agentTasks}
-        loading={isLoading}
-        withTableBorder
-        striped
-        highlightOnHover
-        withRowSelection
-        selectedRecords={selectedTasks}
-        onSelectionChange={setSelectedTasks}
-        sortable
-        onSortStatusChange={handleSortChange}
-        searchable
-        searchValue={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search tasks by prompt..."
-        pagination
-        page={pagination?.currentPage ?? page}
-        recordsPerPage={pagination?.pageSize ?? limit}
-        totalRecords={pagination?.totalCount ?? 0}
-        totalPages={pagination?.totalPages}
-        onPageChange={setPage}
-        onRecordsPerPageChange={setLimit}
-        recordsPerPageOptions={[5, 10, 20, 50]}
-        noRecordsText="No agent tasks found"
-        loadingText="Loading agent tasks..."
-        minHeight={300}
-        verticalSpacing="sm"
-      />
+        {/* DataTable */}
+        <DataTable<AgentTask>
+          columns={columns}
+          data={agentTasks}
+          loading={isLoading}
+          withTableBorder
+          striped
+          highlightOnHover
+          withRowSelection
+          selectedRecords={selectedTasks}
+          onSelectionChange={setSelectedTasks}
+          sortable
+          onSortStatusChange={handleSortChange}
+          searchable
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search tasks by prompt..."
+          pagination
+          page={pagination?.currentPage ?? page}
+          recordsPerPage={pagination?.pageSize ?? limit}
+          totalRecords={pagination?.totalCount ?? 0}
+          totalPages={pagination?.totalPages}
+          onPageChange={setPage}
+          onRecordsPerPageChange={setLimit}
+          recordsPerPageOptions={[5, 10, 20, 50]}
+          noRecordsText="No agent tasks found"
+          loadingText="Loading agent tasks..."
+          minHeight={300}
+          verticalSpacing="sm"
+        />
 
-      {/* Create Agent Task Modal */}
-      <CreateAgentTaskModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} />
+        {/* Create Agent Task Modal */}
+        <CreateAgentTaskModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} />
 
-      {/* Agent Task Detail Modal */}
-      <AgentTaskDetailModal task={viewingTask} opened={detailModalOpened} onClose={handleCloseDetailModal} />
-    </Box>
+        {/* Agent Task Detail Modal */}
+        <AgentTaskDetailModal task={viewingTask} opened={detailModalOpened} onClose={handleCloseDetailModal} />
+      </Box>
+    </>
   );
 }
