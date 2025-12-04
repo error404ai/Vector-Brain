@@ -8,7 +8,7 @@ export const userSeed = async (connection: DataSource) => {
     {
       name: 'Admin',
       email: 'admin@gmail.com',
-      password: CryptoHelper.generateHash('password123'),
+      password: CryptoHelper.generateHash('1234512345'),
       phone: '+1234567890',
       isActive: true,
     },
