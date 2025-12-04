@@ -1,6 +1,4 @@
 import { useLoginMutation } from '@/RTKService/authService/authService';
-import { setUser } from '@/store/authSlice';
-import { useAppDispatch } from '@/store/store';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
@@ -12,7 +10,6 @@ export const Route = createFileRoute('/login')({
 
 function LoginPage() {
   const router = useRouter();
-  const dispatch = useAppDispatch();
   const [login, { isLoading }] = useLoginMutation();
 
   const form = useForm({
@@ -33,9 +30,6 @@ function LoginPage() {
         email: values.email,
         password: values.password,
       }).unwrap();
-
-      // Update Redux state
-      dispatch(setUser(response.data.user));
 
       notifications.show({
         title: 'Welcome back!',

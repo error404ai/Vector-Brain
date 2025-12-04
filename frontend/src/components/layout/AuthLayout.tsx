@@ -1,11 +1,9 @@
-import { useLogoutMutation } from '@/RTKService/authService/authService';
-import type { RootState } from '@/store/store';
+import { useGetProfileQuery, useLogoutMutation } from '@/RTKService/authService/authService';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { useSelector } from 'react-redux';
 import Logo from '../ui/Logo';
 import { Sidebar } from './Sidebar';
 
@@ -16,7 +14,8 @@ interface AuthLayoutProps {
 export function AuthLayout({ children }: AuthLayoutProps) {
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const user = useSelector((state: RootState) => state.auth.user);
+  const { data: profile } = useGetProfileQuery();
+  const user = profile?.data;
   const [logout] = useLogoutMutation();
 
   const handleLogout = async () => {
