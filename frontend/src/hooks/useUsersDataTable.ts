@@ -2,29 +2,6 @@ import type { SortParams } from '@/components/datatable';
 import { useCreateUserMutation, useDeleteUserMutation, useGetUsersQuery, useUpdateUserMutation, type CreateUserPayload, type GetUsersParams, type UpdateUserPayload, type User } from '@/RTKService/userService/userService';
 import { useCallback, useState } from 'react';
 
-/**
- * Hook for managing users DataTable state and server communication
- *
- * Provides all necessary state and handlers for server-side pagination,
- * sorting, searching, and CRUD operations.
- *
- * @example
- * const {
- *   data,
- *   pagination,
- *   isLoading,
- *   page,
- *   limit,
- *   search,
- *   setPage,
- *   setLimit,
- *   setSearch,
- *   handleSortChange,
- *   handleCreateUser,
- *   handleUpdateUser,
- *   handleDeleteUser,
- * } = useUsersDataTable();
- */
 export function useUsersDataTable() {
   // Pagination state
   const [page, setPage] = useState(1);
@@ -49,6 +26,11 @@ export function useUsersDataTable() {
 
   // Fetch users with pagination
   const { data: response, isLoading, isFetching, refetch } = useGetUsersQuery(queryParams);
+
+  console.log({
+    isLoading,
+    isFetching,
+  });
 
   // CRUD mutations
   const [createUser, { isLoading: isCreating }] = useCreateUserMutation();

@@ -6,34 +6,6 @@ import { DataTable as MantineDataTable } from 'mantine-datatable';
 import { useEffect, useState } from 'react';
 import type { DataTableColumn, DataTableProps, SortParams } from './types';
 
-/**
- * Reusable DataTable Component
- *
- * A wrapper around mantine-datatable that provides:
- * - Server-side pagination (adapted for Vector-Brain pagination helper)
- * - Server-side sorting
- * - Server-side search/filtering with debounce
- * - Column resizing
- * - Row selection
- * - Loading states
- * - Empty states
- *
- * @example
- * // Basic usage with Vector-Brain pagination response
- * const { data: response, isLoading } = useGetUsersQuery({ page, limit, search });
- *
- * <DataTable
- *   columns={columns}
- *   data={response?.data}
- *   loading={isLoading}
- *   pagination
- *   page={response?.pagination.currentPage}
- *   recordsPerPage={response?.pagination.pageSize}
- *   totalRecords={response?.pagination.totalCount}
- *   totalPages={response?.pagination.totalPages}
- *   onPageChange={setPage}
- * />
- */
 export function DataTable<T extends object>({
   columns,
   data = [],

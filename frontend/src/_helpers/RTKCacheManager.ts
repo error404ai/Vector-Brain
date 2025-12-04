@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { IDBPDatabase } from 'idb';
+import { openDB } from 'idb';
 
 interface CacheEntry {
   key: string;
@@ -8,14 +10,31 @@ interface CacheEntry {
 }
 
 /**
- * RTK Cache Manager - uses in-memory cache as a fallback when idb is not available
- * To enable IndexedDB caching, install 'idb' package and update this class
+ * RTK Cache Manager - uses IndexedDB for persistent caching
+ * Follows the pattern from cms-frontend for stale-while-revalidate caching
  */
 class RTKCacheManager {
   private static readonly CACHE_PREFIX = 'rtk-query::';
   public static readonly CACHE_ENABLED = true;
-  private static readonly MAX_CACHE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
-  private static memoryCache = new Map<string, CacheEntry>();
+  private static readonly DB_NAME = 'rtk-query-cache';
+  private static readonly STORE_NAME = 'cache';
+  private static readonly MAX_CACHE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
+  private static readonly CACHE_INVALIDATION_STATUS_CODES = [500, 404]; // Status codes that invalidate cache
+  private static dbPromise: Promise<IDBPDatabase> | null = null;
+
+  private static async getDB(): Promise<IDBPDatabase> {
+    if (!this.dbPromise) {
+      this.dbPromise = openDB(this.DB_NAME, 1, {
+        upgrade(db) {
+          if (!db.objectStoreNames.contains(RTKCacheManager.STORE_NAME)) {
+            const store = db.createObjectStore(RTKCacheManager.STORE_NAME, { keyPath: 'key' });
+            store.createIndex('timestamp', 'timestamp');
+          }
+        },
+      });
+    }
+    return this.dbPromise;
+  }
 
   private static calculateSize(data: unknown): number {
     try {
@@ -25,33 +44,46 @@ class RTKCacheManager {
     }
   }
 
-  private static cleanupOldCache(newEntrySize: number): void {
+  private static async cleanupOldCache(newEntrySize: number): Promise<void> {
     try {
-      const entries = Array.from(this.memoryCache.entries())
-        .map(([mapKey, entry]) => ({ ...entry, key: mapKey }))
-        .sort((a: CacheEntry, b: CacheEntry) => a.timestamp - b.timestamp);
+      const db = await this.getDB();
+      const tx = db.transaction(this.STORE_NAME, 'readonly');
+      const index = tx.store.index('timestamp');
+      const allEntries = await index.getAll();
+      await tx.done;
 
-      let totalSize = entries.reduce((sum: number, entry: CacheEntry) => sum + (entry.size || 0), 0);
+      // Sort by timestamp (oldest first)
+      allEntries.sort((a, b) => a.timestamp - b.timestamp);
+
+      let totalSize = allEntries.reduce((sum, entry) => sum + (entry.size || 0), 0);
       const targetSize = this.MAX_CACHE_SIZE - newEntrySize;
 
       if (totalSize + newEntrySize <= this.MAX_CACHE_SIZE) {
-        return;
+        return; // No cleanup needed
       }
 
-      for (const entry of entries) {
+      const writeTx = db.transaction(this.STORE_NAME, 'readwrite');
+      for (const entry of allEntries) {
         if (totalSize <= targetSize) break;
-        this.memoryCache.delete(entry.key);
+        await writeTx.store.delete(entry.key);
         totalSize -= entry.size || 0;
       }
+      await writeTx.done;
     } catch (error) {
       console.warn('Failed to cleanup old cache entries', error);
     }
   }
 
+  private static shouldInvalidateCache(statusCode: number): boolean {
+    return this.CACHE_INVALIDATION_STATUS_CODES.includes(statusCode);
+  }
+
   static getCacheKey(endpointName: string, args?: unknown): string | null {
     try {
       const serializedArgs = JSON.stringify(args ?? null);
-      return `${this.CACHE_PREFIX}${endpointName}:${serializedArgs}`;
+      const userPrefix = this.getUserCachePrefix();
+      const prefix = userPrefix ? `${userPrefix}` : '';
+      return `${this.CACHE_PREFIX}${prefix}${endpointName}:${serializedArgs}`;
     } catch (error) {
       console.warn(`RTK Query cache serialization failed for endpoint "${endpointName}"`, error);
       return null;
@@ -63,7 +95,10 @@ class RTKCacheManager {
       return null;
     }
 
-    return this.memoryCache.get(key) || null;
+    const db = await this.getDB();
+    const entry: CacheEntry | undefined = await db.get(this.STORE_NAME, key);
+
+    return entry || null;
   }
 
   static async writeCacheEntry(key: string, data: unknown): Promise<void> {
@@ -73,8 +108,11 @@ class RTKCacheManager {
 
     try {
       const size = this.calculateSize(data);
-      this.cleanupOldCache(size);
 
+      // Cleanup old entries if needed
+      await this.cleanupOldCache(size);
+
+      const db = await this.getDB();
       const entry: CacheEntry = {
         key,
         timestamp: Date.now(),
@@ -82,7 +120,7 @@ class RTKCacheManager {
         data,
       };
 
-      this.memoryCache.set(key, entry);
+      await db.put(this.STORE_NAME, entry);
     } catch (error) {
       console.warn(`Failed to persist RTK Query cache for key "${key}"`, error);
     }
@@ -94,25 +132,33 @@ class RTKCacheManager {
     }
 
     try {
-      this.memoryCache.delete(key);
+      const db = await this.getDB();
+      await db.delete(this.STORE_NAME, key);
     } catch (error) {
       console.warn(`Failed to remove RTK Query cache for key "${key}"`, error);
     }
   }
 
-  static handleCache({ rawBaseQuery, args, api, extraOptions, baseApi, cacheKey }: { rawBaseQuery: any; args: any; api: any; extraOptions: any; baseApi: any; cacheKey: string }): boolean | object | Promise<any> {
+  static async handleCache({ rawBaseQuery, args, api, extraOptions, baseApi, cacheKey }: { rawBaseQuery: any; args: any; api: any; extraOptions: any; baseApi: any; cacheKey: string }): Promise<{
+    cachedResponse: { data: unknown; meta: { size: number; cacheTimestamp: number; source: string } } | null;
+    networkPromise: Promise<any>;
+  }> {
     const cachedEntryPromise = RTKCacheManager.readCacheEntry(cacheKey);
 
-    rawBaseQuery(args, api, extraOptions)
+    const networkPromise = rawBaseQuery(args, api, extraOptions)
       .then(async (result: any) => {
-        if (result?.error && result.error.status === 500) {
+        const endpointName = typeof api?.endpoint === 'string' ? api.endpoint : null;
+        RTKCacheManager.syncUserCachePrefix(endpointName, result);
+
+        const errorStatus = result?.error?.originalStatus ?? result?.error?.status;
+        if (typeof errorStatus === 'number' && RTKCacheManager.shouldInvalidateCache(errorStatus)) {
           await RTKCacheManager.deleteCacheEntry(cacheKey);
-          return;
+          return result;
         }
 
         if (result && typeof result === 'object' && 'data' in result) {
           await RTKCacheManager.writeCacheEntry(cacheKey, result.data);
-          // Get original args from RTK Query state
+          // Synchronise RTK Query cache with refreshed data
           const state = api.getState?.();
           const queryCacheKey = api.queryCacheKey;
           const queryState = state?.[baseApi.reducerPath]?.queries?.[queryCacheKey];
@@ -121,25 +167,89 @@ class RTKCacheManager {
             api.dispatch(baseApi.util.upsertQueryData(api.endpoint, originalArgs, result.data));
           }
         }
+
+        return result;
       })
       .catch(async (error: unknown) => {
         await RTKCacheManager.deleteCacheEntry(cacheKey);
         console.warn(`RTK Query request failed for key "${cacheKey}"`, error);
+        throw error;
       });
 
-    return cachedEntryPromise.then((cachedEntry) => {
-      if (cachedEntry) {
-        return {
+    const cachedEntry = await cachedEntryPromise;
+
+    if (cachedEntry) {
+      return {
+        cachedResponse: {
           data: cachedEntry.data,
           meta: {
             size: cachedEntry.size,
             cacheTimestamp: cachedEntry.timestamp,
-            source: 'memory',
+            source: 'indexedDB',
           },
-        };
-      }
-      return false;
-    });
+        },
+        networkPromise,
+      };
+    }
+
+    return {
+      cachedResponse: null,
+      networkPromise,
+    };
+  }
+
+  static storeUserCachePrefix(accountUserType: string | null | undefined, accountUserId: string | number | null | undefined): string | null {
+    if (!accountUserType || accountUserId === undefined || accountUserId === null) {
+      return null;
+    }
+
+    const key = `${accountUserType}::${accountUserId}::`;
+
+    try {
+      localStorage.setItem('RTKCacheUserPrefix', key);
+    } catch (error) {
+      console.warn('Failed to set RTK cache user prefix', error);
+    }
+    return key;
+  }
+
+  static clearUserCachePrefix(): void {
+    try {
+      localStorage.removeItem('RTKCacheUserPrefix');
+    } catch (error) {
+      console.warn('Failed to clear RTK cache user prefix', error);
+    }
+  }
+
+  static getUserCachePrefix(): string | null {
+    try {
+      return localStorage.getItem('RTKCacheUserPrefix');
+    } catch (error) {
+      console.warn('Failed to read RTK cache user prefix', error);
+      return null;
+    }
+  }
+
+  static syncUserCachePrefix(endpointName: string | null, result: any): void {
+    const errorStatus = result?.error?.status ?? result?.error?.originalStatus;
+
+    if (typeof errorStatus === 'number' && errorStatus === 401) {
+      RTKCacheManager.clearUserCachePrefix();
+      return;
+    }
+
+    // Support both getAccountInfo (cms-frontend) and getProfile (Vector-Brain)
+    if (endpointName !== 'getAccountInfo' && endpointName !== 'getProfile') {
+      return;
+    }
+
+    const payload = result.data?.data ?? result.data;
+    const accountType = payload?.account_type ?? payload?.accountUserType ?? payload?.role ?? 'user';
+    const accountId = payload?.id ?? payload?.account_user_id ?? payload?.accountUserId ?? null;
+
+    if (accountType != null && accountId != null) {
+      RTKCacheManager.storeUserCachePrefix(String(accountType), String(accountId));
+    }
   }
 }
 

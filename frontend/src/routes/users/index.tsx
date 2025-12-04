@@ -18,7 +18,7 @@ export const Route = createFileRoute('/users/')({
 
 function Users() {
   // Get users data and handlers from custom hook
-  const { data: users, pagination, isLoading, isFetching, isCreating, isUpdating, isDeleting, page, limit, search, setPage, setLimit, setSearch, handleSortChange, handleCreateUser, handleUpdateUser, handleDeleteUser } = useUsersDataTable();
+  const { data: users, pagination, isLoading, isCreating, isUpdating, isDeleting, page, limit, search, setPage, setLimit, setSearch, handleSortChange, handleCreateUser, handleUpdateUser, handleDeleteUser } = useUsersDataTable();
 
   // Row selection state
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
@@ -167,7 +167,7 @@ function Users() {
       <DataTable<User>
         columns={columns}
         data={users}
-        loading={isLoading || isFetching}
+        loading={isLoading}
         withTableBorder
         striped
         highlightOnHover
