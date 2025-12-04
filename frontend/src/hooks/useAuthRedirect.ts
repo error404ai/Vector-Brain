@@ -1,59 +1,90 @@
+import authManager from '@/_helpers/authManager';
 import { useGetProfileQuery } from '@/RTKService/authService/authService';
-import { setAuthCheckCompleted, setIsLoggedIn } from '@/store/authSlice';
+import { setTokenExpired } from '@/store/authSlice';
 import type { RootState } from '@/store/store';
-import { useAppDispatch } from '@/store/store';
-import authManager from '@/utils/authManager';
-import type { FetchBaseQueryError } from '@reduxjs/toolkit/query';
 import { useLocation, useRouter } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef } from 'react';
-import { useSelector } from 'react-redux';
+import { useEffect, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 
 const publicRoutes = ['/login', '/signup', '/'];
 
-export const useAuthRedirect = () => {
+export default function useAuthRedirect(skip: boolean = false) {
   const router = useRouter();
   const location = useLocation();
-  const dispatch = useAppDispatch();
-  const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
-  const hasCheckedAuth = useSelector((state: RootState) => state.auth.hasCheckedAuth);
+  const dispatch = useDispatch();
+  const authInitialized = useSelector((state: RootState) => state.auth.authInitialized);
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
-  const { data, error, isError } = useGetProfileQuery(undefined);
-  const handledErrorRef = useRef(false);
+  const hasToken = !!authManager.getAccessToken();
 
-  const profile = data?.data ?? null;
+  // Use getProfile to initialize auth if token exists but auth not initialized
+  const { isLoading: isProfileLoading } = useGetProfileQuery(undefined);
+
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced loading state to prevent flickering (1 second debounce)
+  const [debouncedLoading, setDebouncedLoading] = useState(false);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!profile) return;
-    authManager.saveUser(profile);
-    dispatch(setIsLoggedIn(true));
-    dispatch(setAuthCheckCompleted(true));
-    handledErrorRef.current = false;
-  }, [profile, dispatch]);
-
-  useEffect(() => {
-    if (!isError || handledErrorRef.current) return;
-    const status = (error as FetchBaseQueryError | undefined)?.status;
-    if (status === 401 || status === 403) {
-      handledErrorRef.current = true;
-      authManager.clearToken();
-      dispatch(setAuthCheckCompleted(true));
+    const performRedirect = (path: string) => {
+      setIsRedirecting(true);
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+      redirectTimerRef.current = setTimeout(() => setIsRedirecting(false), 2000);
+      dispatch(setTokenExpired(false));
+      router.navigate({ to: path });
+    };
+    if (skip) {
+      return;
     }
-  }, [isError, error, dispatch]);
-
-  useEffect(() => {
-    if (!hasCheckedAuth) {
+    if (!authInitialized) {
       return;
     }
 
-    if (!isLoggedIn && !isPublicRoute) {
-      router.navigate({ to: '/login' });
-    } else if (isLoggedIn && isPublicRoute) {
-      router.navigate({ to: '/dashboard' });
+    if (!hasToken && !isPublicRoute) {
+      performRedirect('/login');
+      return;
+    } else if (hasToken && isPublicRoute) {
+      performRedirect('/dashboard');
+      return;
     }
-  }, [hasCheckedAuth, isLoggedIn, isPublicRoute, router]);
+  }, [authInitialized, isPublicRoute, router, hasToken, dispatch, skip]);
 
-  const isCheckingAuth = useMemo(() => !hasCheckedAuth, [hasCheckedAuth]);
+  useEffect(
+    () => () => {
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    },
+    []
+  );
 
-  return { isCheckingAuth };
-};
+  const loading = Boolean(hasToken && isProfileLoading);
+
+  const currentLoadingState = loading || isRedirecting;
+
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    if (currentLoadingState && !debouncedLoading) {
+      // eslint-disable-next-line
+      setDebouncedLoading(true);
+    } else if (!currentLoadingState && debouncedLoading) {
+      debounceTimerRef.current = setTimeout(() => {
+        setDebouncedLoading(false);
+      }, 1000);
+    }
+  }, [currentLoadingState, debouncedLoading]);
+
+  return debouncedLoading;
+}

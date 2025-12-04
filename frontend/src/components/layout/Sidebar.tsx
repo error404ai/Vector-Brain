@@ -1,5 +1,5 @@
 import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
-import { IconBrain, IconDashboard, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers } from '@tabler/icons-react';
 import { Link, useLocation } from '@tanstack/react-router';
 
 const mainNavItems = [
@@ -14,6 +14,12 @@ const mainNavItems = [
     icon: IconUsers,
     href: '/users',
     badge: { label: 'NEW', color: 'cyan' },
+  },
+  {
+    label: 'Agent Tasks',
+    icon: IconRobot,
+    href: '/agent-tasks',
+    badge: null,
   },
 ];
 

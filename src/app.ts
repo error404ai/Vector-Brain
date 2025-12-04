@@ -25,7 +25,6 @@ import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
 
-// Auth middleware
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 
 dotenv.config();
@@ -40,26 +39,19 @@ useContainer(new TypeDIAdapter());
 
 const app: express.Application = express();
 
-// Body parser middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Cookie parser middleware
 app.use(cookieParser());
+app.use((req, res, next) => {
+  setTimeout(() => next(), 1000);
+});
 
-// Initialize per-request context
 app.use(requestContextMiddleware);
 
-// Initialize routing-controllers
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [
-    // Add your controllers here
-    AgentTaskController,
-    AuthController,
-    HealthController,
-    UserController,
-  ],
+  controllers: [AgentTaskController, AuthController, HealthController, UserController],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
@@ -75,22 +67,17 @@ useExpressServer(app, {
   currentUserChecker,
 });
 
-// Serve static files from public directory (built frontend)
 app.use(express.static(join(__dirname, '..', 'public')));
 
-// Fallback to index.html for client-side routing (SPA)
 app.get('*', (req, res) => {
-  // Don't interfere with API routes
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API endpoint not found' });
   }
   res.sendFile(join(__dirname, '..', 'public', 'index.html'));
 });
 
-// Create HTTP server
 const server = http.createServer(app);
 
-// Database connection and server start
 AppDataSource.initialize()
   .then(() => {
     Logger.info('Database connected successfully');

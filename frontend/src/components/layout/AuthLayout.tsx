@@ -1,12 +1,9 @@
-import type { RootState } from '@/store/store';
-import authManager from '@/utils/authManager';
+import { useGetProfileQuery, useLogoutMutation } from '@/RTKService/authService/authService';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
-import { useRouter } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { useSelector } from 'react-redux';
 import Logo from '../ui/Logo';
 import { Sidebar } from './Sidebar';
 
@@ -17,13 +14,18 @@ interface AuthLayoutProps {
 export function AuthLayout({ children }: AuthLayoutProps) {
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const router = useRouter();
-  const user = useSelector((state: RootState) => state.auth.user);
-  const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
+  const { data: profile } = useGetProfileQuery();
+  const user = profile?.data;
+  const [logout] = useLogoutMutation();
 
-  const handleLogout = () => {
-    authManager.clearToken();
-    router.navigate({ to: '/' });
+  const handleLogout = async () => {
+    console.log('logging out');
+    try {
+      await logout().unwrap();
+      console.log('logout successful, navigation will be handled by useAuthRedirect');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
   };
 
   return (
@@ -65,7 +67,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <Menu.Target>
               <UnstyledButton>
                 <Group gap={7}>
-                  {user && isLoggedIn ? (
+                  {user ? (
                     <Avatar src={undefined} alt={user.name} size={32} radius="xl" color="vector">
                       {user.name
                         .split(' ')
@@ -76,7 +78,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   ) : (
                     <Avatar size={32} radius="xl" color="vector" />
                   )}
-                  {user && isLoggedIn ? (
+                  {user ? (
                     <Group gap="xs" align="center" visibleFrom="sm">
                       <Text fw={500} size="sm" lh={1}>
                         {user.name}

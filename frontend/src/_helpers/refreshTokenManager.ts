@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { setAuthInitialized, setTokenExpired } from '@/store/authSlice';
 import type { FetchBaseQueryError, QueryReturnValue } from '@reduxjs/toolkit/query';
 import { fetchBaseQuery, type FetchBaseQueryMeta } from '@reduxjs/toolkit/query/react';
-import authManager, { type AuthSessionData } from './authManager';
+import authManager from './authManager';
 import Global from './global';
 
 const REFRESH_TOKEN_ENDPOINT = '/auth/refresh-token';
@@ -71,29 +72,18 @@ class RefreshTokenManager {
     return true;
   }
 
-  private static parseSession(payload: RefreshTokenPayload['data']): AuthSessionData | null {
+  private static parseSession(payload: RefreshTokenPayload['data']): string | null {
     if (!payload || typeof payload !== 'object') {
       return null;
     }
 
-    const { accessToken, expire_at: expireAt } = payload;
+    const { accessToken } = payload;
 
     if (typeof accessToken !== 'string' || accessToken.trim().length === 0) {
       return null;
     }
 
-    if (typeof expireAt === 'string' && expireAt.trim().length > 0) {
-      return {
-        accessToken,
-        expireAt,
-      };
-    }
-
-    const fallbackExpireAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
-    return {
-      accessToken,
-      expireAt: fallbackExpireAt,
-    };
+    return accessToken.trim();
   }
 
   private static async performRefresh(api: any, extraOptions: any): Promise<boolean> {
@@ -124,7 +114,7 @@ class RefreshTokenManager {
         return false;
       }
 
-      authManager.saveAuthSession(sessionData);
+      authManager.saveAccessToken(sessionData);
       return true;
     } catch (error) {
       console.error('Token refresh threw unexpectedly', error);
@@ -177,11 +167,21 @@ class RefreshTokenManager {
           result = await baseQueryFn(requestArgs, api, extraOptions);
         } else {
           console.warn('Refresh token is invalid, clearing auth session');
-          authManager.clearTokens();
+          const tokenExpired = api.getState().auth?.tokenExpired;
+          if (!tokenExpired) {
+            api.dispatch(setTokenExpired(true));
+          }
+          authManager.clearAccessToken();
         }
       } catch (error) {
         console.error('Token refresh failed with retryable error:', error);
       }
+    }
+
+    try {
+      api.dispatch(setAuthInitialized(true));
+    } catch {
+      // ignore dispatch failures
     }
 
     return result;

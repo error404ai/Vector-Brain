@@ -11,6 +11,9 @@ export const TAGS = {
   PROFILE: 'Profile',
   USER: 'User',
   USERS: 'Users',
+  AGENT_TASK: 'AgentTask',
+  AGENT_TASKS: 'AgentTasks',
+  DASHBOARD: 'Dashboard',
 } as const;
 
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
@@ -27,7 +30,14 @@ const baseQuery = async (args: any, api: any, extraOptions: any) => {
   });
 
   const cacheKey = RTKCacheManager.getCacheKey(api?.endpoint, args);
-  const shouldCache = RTKCacheManager.CACHE_ENABLED && api?.type === 'query' && Boolean(cacheKey);
+  const shouldCache = (): boolean => {
+    const cacheEnabled = RTKCacheManager.CACHE_ENABLED;
+    const isQuery = api?.type === 'query';
+    const hasCacheKey = Boolean(cacheKey);
+    // Simplified caching logic for Vector-Brain - always cache queries
+    // The user cache prefix is included in the cache key if available
+    return cacheEnabled && isQuery && hasCacheKey;
+  };
 
   const executeWithRefresh = async (requestArgs: any, requestApi: any, requestExtraOptions: any) => {
     const result = await RefreshTokenManager.execute({
@@ -37,12 +47,15 @@ const baseQuery = async (args: any, api: any, extraOptions: any) => {
       baseQueryFn: rawBaseQuery,
     });
 
+    const endpointName = typeof requestApi?.endpoint === 'string' ? requestApi.endpoint : null;
+    RTKCacheManager.syncUserCachePrefix(endpointName, result);
+
     await authManager.handleApiError(result, requestApi);
     return result;
   };
 
-  if (shouldCache && cacheKey) {
-    const cacheResult = RTKCacheManager.handleCache({
+  if (shouldCache() && cacheKey) {
+    const { cachedResponse, networkPromise } = await RTKCacheManager.handleCache({
       rawBaseQuery: executeWithRefresh,
       args,
       api,
@@ -51,9 +64,13 @@ const baseQuery = async (args: any, api: any, extraOptions: any) => {
       cacheKey,
     });
 
-    if (cacheResult) {
-      return cacheResult;
+    if (cachedResponse) {
+      // Avoid unhandled rejections while background refresh syncs the cache
+      networkPromise.catch(() => {});
+      return cachedResponse;
     }
+
+    return networkPromise;
   }
 
   // No cache or not cacheable - fetch normally

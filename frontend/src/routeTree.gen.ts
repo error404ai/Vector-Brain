@@ -13,6 +13,8 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as UsersIndexRouteImport } from './routes/users/index'
+import { Route as AgentTasksIndexRouteImport } from './routes/agent-tasks/index'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -34,18 +36,32 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UsersIndexRoute = UsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentTasksIndexRoute = AgentTasksIndexRouteImport.update({
+  id: '/agent-tasks/',
+  path: '/agent-tasks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/agent-tasks': typeof AgentTasksIndexRoute
+  '/users': typeof UsersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/agent-tasks': typeof AgentTasksIndexRoute
+  '/users': typeof UsersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +69,28 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/agent-tasks/': typeof AgentTasksIndexRoute
+  '/users/': typeof UsersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/login' | '/settings'
+  fullPaths:
+    | '/'
+    | '/dashboard'
+    | '/login'
+    | '/settings'
+    | '/agent-tasks'
+    | '/users'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/login' | '/settings'
-  id: '__root__' | '/' | '/dashboard' | '/login' | '/settings'
+  to: '/' | '/dashboard' | '/login' | '/settings' | '/agent-tasks' | '/users'
+  id:
+    | '__root__'
+    | '/'
+    | '/dashboard'
+    | '/login'
+    | '/settings'
+    | '/agent-tasks/'
+    | '/users/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +98,8 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
+  AgentTasksIndexRoute: typeof AgentTasksIndexRoute
+  UsersIndexRoute: typeof UsersIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +132,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/users/': {
+      id: '/users/'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof UsersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-tasks/': {
+      id: '/agent-tasks/'
+      path: '/agent-tasks'
+      fullPath: '/agent-tasks'
+      preLoaderRoute: typeof AgentTasksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +154,8 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
+  AgentTasksIndexRoute: AgentTasksIndexRoute,
+  UsersIndexRoute: UsersIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

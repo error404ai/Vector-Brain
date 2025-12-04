@@ -1,10 +1,6 @@
-import { Center, Loader, Stack, Text } from '@mantine/core';
+import { Center, Loader, Stack } from '@mantine/core';
 
-interface GlobalLoaderProps {
-  message?: string;
-}
-
-export function GlobalLoader({ message = 'Loading...' }: GlobalLoaderProps) {
+export function GlobalLoader() {
   return (
     <Center
       style={{
@@ -16,9 +12,6 @@ export function GlobalLoader({ message = 'Loading...' }: GlobalLoaderProps) {
     >
       <Stack align="center" gap="md">
         <Loader size="lg" color="vector" type="dots" />
-        <Text c="dimmed" size="sm">
-          {message}
-        </Text>
       </Stack>
     </Center>
   );

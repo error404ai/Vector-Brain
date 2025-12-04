@@ -24,7 +24,7 @@ export const UpdateUserValidation = z.object({
 });
 
 // User query validation (for GET list)
-export const UserQueryValidation = z.object({
+export const UserListValidation = z.object({
   page: coerceNumber('Page').min(1, 'Page must be at least 1').optional().default(1),
   limit: coerceNumber('Limit').min(1, 'Limit must be at least 1').optional().default(10),
   search: z.string().optional(),

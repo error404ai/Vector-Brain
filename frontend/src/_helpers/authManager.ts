@@ -1,80 +1,57 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { clearNetworkError, setNetworkOffline, setServerUnreachable, setTokenExpired } from '@/store/networkStatusSlice';
+import { baseApi, TAGS } from '@/RTKService/baseApi';
+import { setTokenExpired } from '@/store/authSlice';
+import { clearNetworkError, setNetworkOffline, setServerUnreachable } from '@/store/networkStatusSlice';
 import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
 import type { FetchBaseQueryError, FetchBaseQueryMeta, QueryReturnValue } from '@reduxjs/toolkit/query';
 import Global from './global';
 
-// Dynamic import to avoid circular dependency
-let baseApiModule: { baseApi: any; TAGS: any } | null = null;
-const getBaseApi = async (): Promise<{ baseApi: any; TAGS: any }> => {
-  if (!baseApiModule) {
-    baseApiModule = await import('@/RTKService/baseApi');
+let inMemoryAccessToken: string | null = null;
+
+const sanitizeAccessToken = (token: unknown): string | null => {
+  if (typeof token === 'string' && token.trim().length > 0) {
+    return token.trim();
   }
-  return baseApiModule!;
+  return null;
 };
 
-export type AuthSessionData = {
-  accessToken: string;
-  expireAt: string;
+const setAccessToken = (token: string | null): void => {
+  inMemoryAccessToken = token;
 };
 
 const authManager = {
   getAccessToken(): string | null {
-    const auth = this.getAllTokens();
-    if (auth) {
-      return auth.accessToken || null;
+    return inMemoryAccessToken;
+  },
+
+  clearAccessToken(): void {
+    console.log('clearing access token from auth manager');
+    setAccessToken(null);
+  },
+
+  saveAccessToken(token: string): void {
+    const sanitized = sanitizeAccessToken(token);
+    if (!sanitized) {
+      console.warn('Attempted to save invalid access token', token);
+      return;
     }
-    return null;
+    setAccessToken(sanitized);
   },
 
-  getAllTokens(): AuthSessionData | null {
-    const authSession = localStorage.getItem('authSession');
-    if (authSession) {
-      try {
-        const parsed = JSON.parse(authSession) as AuthSessionData;
-        return {
-          accessToken: parsed.accessToken,
-          expireAt: parsed.expireAt,
-        };
-      } catch (error) {
-        console.error('Error parsing tokens from auth:', error);
-        return null;
-      }
-    }
-    return null;
-  },
-
-  clearTokens(): void {
-    console.log('clearing auth session token from auth manager');
-    localStorage.removeItem('authSession');
-    localStorage.removeItem('authUser');
-  },
-
-  saveAuthSession(data: AuthSessionData): void {
-    localStorage.setItem('authSession', JSON.stringify(data));
+  clearTwoStepVerification(): void {
+    localStorage.removeItem('twoStepVerification');
   },
 
   async handleLoginOnQueryStarted(queryFulfilled: Promise<any>, dispatch: ThunkDispatch<any, any, UnknownAction>): Promise<void> {
     try {
       const { data } = await queryFulfilled;
 
-      if (data?.message === 'Login successful' && data?.data?.token) {
-        // Login successful with tokens
-        const expireAt = new Date(Date.now() + 55 * 60 * 1000).toISOString(); // Default 55 mins
-        this.saveAuthSession({
-          accessToken: data.data.token,
-          expireAt: data.data.expireAt || expireAt,
-        });
-
-        // Save user data
-        if (data.data.user) {
-          localStorage.setItem('authUser', JSON.stringify(data.data.user));
-        }
+      const token = data?.data?.token;
+      if (token) {
+        this.saveAccessToken(token);
       }
-
-      // Invalidate all RTK Query tags so every cached endpoint can be refetched
       try {
-        const { baseApi, TAGS } = await getBaseApi();
         const allTags = Object.values(TAGS)
           .filter(Boolean)
           .map((t) => ({ type: t }));
@@ -82,8 +59,41 @@ const authManager = {
       } catch (invErr) {
         console.error('Failed to invalidate RTK Query tags on login:', invErr);
       }
-    } catch {
+    } catch (err) {
       // ignore
+    }
+  },
+
+  // centralize onQueryStarted handling for OTP verification
+  async handleOtpVerificationOnQueryStarted(queryFulfilled: Promise<any>, dispatch: ThunkDispatch<any, any, UnknownAction>): Promise<void> {
+    try {
+      const { data } = await queryFulfilled;
+
+      // Check if OTP verification was successful by presence of token
+      const token = data?.data?.token;
+      if (token) {
+        this.saveAccessToken(token);
+      }
+
+      dispatch(baseApi.util.invalidateTags([TAGS.ACCOUNT_INFO]));
+    } catch (err) {
+      // ignore
+    }
+  },
+
+  async handleAccountInfo(queryFulfilled: Promise<any>): Promise<void> {
+    try {
+      const { data } = await queryFulfilled;
+      const isRegistered = data.data.is_registered;
+      const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+
+      if (isRegistered !== 'yes') {
+        if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+          window.location.href = '/pay-now';
+        }
+      }
+    } catch (err) {
+      // ignore error
     }
   },
 
@@ -124,16 +134,11 @@ const authManager = {
     try {
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), timeout);
-      const probeUrl = Global.BASE_API_PATH + '/health';
-      const res = await fetch(probeUrl, {
-        method: 'GET',
-        cache: 'no-store',
-        signal: controller.signal,
-        mode: 'cors',
-      });
+      const probeUrl = Global.BASE_API_PATH;
+      const res = await fetch(probeUrl, { method: 'HEAD', cache: 'no-store', signal: controller.signal, mode: 'cors' });
       clearTimeout(id);
       return res && (res.ok || res.type === 'opaque');
-    } catch {
+    } catch (err) {
       return false;
     }
   },
@@ -159,10 +164,7 @@ const authManager = {
           }
         }
       } else if (status === 401) {
-        const tokenExpired = api.getState().networkStatus?.tokenExpired;
-        if (!tokenExpired) {
-          api.dispatch(setTokenExpired(true));
-        }
+        // refresh token manager handling the unauthorized case
       } else if (typeof status === 'number' && status >= 500 && status < 600) {
         api.dispatch(setServerUnreachable(true));
       }
@@ -175,7 +177,7 @@ const authManager = {
     }
 
     if (this.getAccessToken() && !result.error) {
-      const tokenExpired = api.getState().networkStatus?.tokenExpired;
+      const tokenExpired = api.getState().auth.tokenExpired;
       if (tokenExpired) {
         api.dispatch(setTokenExpired(false));
       }

@@ -5,6 +5,7 @@ import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { JwtHelper } from '@/helpers/JwtHelper';
 import { AppDataSource } from '@/loaders/database';
 import { CookieService } from '@/services/auth/CookieService';
+import { ApiResponse } from '@/types/ApiResponse';
 import { LoginValidation, RefreshTokenValidation } from '@/validations/AuthValidation';
 import crypto from 'crypto';
 import { Service } from 'typedi';
@@ -12,8 +13,8 @@ import z from 'zod';
 
 @Service()
 export class AuthService {
-  private static readonly ACCESS_TOKEN_EXPIRES_IN = '2m';
-  private static readonly ACCESS_TOKEN_TTL_MS = 2 * 60 * 1000;
+  private static readonly ACCESS_TOKEN_EXPIRES_IN = '10m';
+  private static readonly ACCESS_TOKEN_TTL_MS = 10 * 60 * 1000;
 
   constructor(private cookieService: CookieService) {}
 
@@ -58,9 +59,9 @@ export class AuthService {
     };
   }
 
-  async login(data: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string) {
+  async login(request: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string): Promise<ApiResponse> {
     // Find user by email including the password field
-    const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: data.email }).andWhere('user.deletedAt IS NULL').getOne();
+    const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: request.email }).andWhere('user.deletedAt IS NULL').getOne();
 
     if (!user) {
       throw new UnauthorizedError('Invalid email or password');
@@ -71,7 +72,7 @@ export class AuthService {
     }
 
     // Verify password
-    const hashedPassword = CryptoHelper.generateHash(data.password);
+    const hashedPassword = CryptoHelper.generateHash(request.password);
     if (user.password !== hashedPassword) {
       throw new UnauthorizedError('Invalid email or password');
     }
@@ -97,7 +98,7 @@ export class AuthService {
     };
   }
 
-  async refreshAccessToken(request?: z.infer<typeof RefreshTokenValidation>) {
+  async refreshAccessToken(request?: z.infer<typeof RefreshTokenValidation>): Promise<ApiResponse> {
     let refreshTokenString = request?.refresh_token;
 
     if (!refreshTokenString) {
@@ -148,7 +149,7 @@ export class AuthService {
     };
   }
 
-  async logout(userId?: number, refreshTokenString?: string) {
+  async logout(userId?: number, refreshTokenString?: string): Promise<ApiResponse> {
     let tokenToRevoke = refreshTokenString;
 
     if (!tokenToRevoke) {
@@ -168,7 +169,7 @@ export class AuthService {
     };
   }
 
-  async getProfile(userId: number) {
+  async getProfile(userId: number): Promise<ApiResponse> {
     const user = await this.userRepository.findOne({
       where: { id: userId, deletedAt: undefined },
     });
@@ -178,6 +179,7 @@ export class AuthService {
     }
 
     return {
+      message: 'Profile retrieved successfully',
       data: user,
     };
   }
