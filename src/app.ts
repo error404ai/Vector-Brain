@@ -43,9 +43,9 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use(cookieParser());
-app.use((req, res, next) => {
-  setTimeout(() => next(), 1000);
-});
+// app.use((req, res, next) => {
+//   setTimeout(() => next(), 1000);
+// });
 
 app.use(requestContextMiddleware);
 
