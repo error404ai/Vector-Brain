@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AuthService } from '@/services/controllerService/AuthService';
-import { LoginValidation, RefreshTokenValidation } from '@/validations/AuthValidation';
+import { LoginValidation, RefreshTokenValidation, SignupValidation } from '@/validations/AuthValidation';
 import type { Request } from 'express';
 import { Body, CurrentUser, Get, JsonController, Post, Req, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
@@ -18,6 +18,15 @@ export class AuthController {
     const ipAddress = req.ip || req.socket.remoteAddress;
 
     return this.authService.login(request, userAgent, ipAddress);
+  }
+
+  @Post('/signup')
+  @UseBefore(zodValidationMiddleware(SignupValidation))
+  async signup(@Body() request: z.infer<typeof SignupValidation>, @Req() req: Request) {
+    const userAgent = req.headers['user-agent'];
+    const ipAddress = req.ip || req.socket.remoteAddress;
+
+    return this.authService.signup(request, userAgent, ipAddress);
   }
 
   @Post('/refresh-token')

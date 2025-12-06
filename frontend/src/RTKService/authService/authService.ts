@@ -8,6 +8,7 @@ export interface User {
   email: string;
   phone?: string;
   isActive: boolean;
+  role: 'admin' | 'user' | 'guest';
   createdAt: string;
   updatedAt: string;
 }
@@ -17,7 +18,23 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface SignupRequest {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+}
+
 export interface LoginResponse {
+  message: string;
+  data: {
+    user: User;
+    token: string;
+    expireAt?: string;
+  };
+}
+
+export interface SignupResponse {
   message: string;
   data: {
     user: User;
@@ -46,6 +63,17 @@ const authApi = baseApi.injectEndpoints({
         url: '/auth/login',
         method: 'POST',
         body: credentials,
+      }),
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await authManager.handleLoginOnQueryStarted(queryFulfilled, dispatch);
+      },
+    }),
+
+    signup: builder.mutation<SignupResponse, SignupRequest>({
+      query: (userData) => ({
+        url: '/auth/signup',
+        method: 'POST',
+        body: userData,
       }),
       async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         await authManager.handleLoginOnQueryStarted(queryFulfilled, dispatch);
@@ -88,6 +116,6 @@ const authApi = baseApi.injectEndpoints({
   }),
 });
 
-export const { useLoginMutation, useGetProfileQuery, useLazyGetProfileQuery, useLogoutMutation, useRefreshTokenMutation } = authApi;
+export const { useLoginMutation, useSignupMutation, useGetProfileQuery, useLazyGetProfileQuery, useLogoutMutation, useRefreshTokenMutation } = authApi;
 
 export default authApi;
