@@ -1,12 +1,12 @@
 import { RefreshToken } from '@/entities/RefreshToken';
-import { User } from '@/entities/User';
-import { UnauthorizedError } from '@/helpers/AppError';
+import { Role, User } from '@/entities/User';
+import AppError, { UnauthorizedError } from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import { JwtHelper } from '@/helpers/JwtHelper';
 import { AppDataSource } from '@/loaders/database';
 import { CookieService } from '@/services/auth/CookieService';
 import { ApiResponse } from '@/types/ApiResponse';
-import { LoginValidation, RefreshTokenValidation } from '@/validations/AuthValidation';
+import { LoginValidation, RefreshTokenValidation, SignupValidation } from '@/validations/AuthValidation';
 import crypto from 'crypto';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -181,6 +181,70 @@ export class AuthService {
     return {
       message: 'Profile retrieved successfully',
       data: user,
+    };
+  }
+
+  async signup(request: z.infer<typeof SignupValidation>, userAgent?: string, ipAddress?: string): Promise<ApiResponse> {
+    const isGuest = request.isGuest ?? false;
+
+    // For guest signup, generate a unique identifier if no email provided
+    let email = request.email;
+    let name = request.name;
+    let password = request.password;
+
+    if (isGuest) {
+      // Generate unique guest credentials if not provided
+      const guestId = crypto.randomBytes(8).toString('hex');
+      email = email || `guest_${guestId}@guest.local`;
+      name = name || `Guest_${guestId}`;
+      password = password || crypto.randomBytes(16).toString('hex');
+    }
+
+    // Check if email already exists (only if email was provided or generated)
+    if (email) {
+      const existingUser = await this.userRepository.findOne({
+        where: { email },
+      });
+
+      if (existingUser) {
+        throw new AppError('Email already exists', 400);
+      }
+    }
+
+    // Hash the password
+    const hashedPassword = CryptoHelper.generateHash(password!);
+
+    // Create the user
+    const user = this.userRepository.create({
+      name: name!,
+      email: email!,
+      password: hashedPassword,
+      phone: request.phone,
+      role: isGuest ? Role.GUEST : Role.USER,
+      isActive: true,
+    });
+
+    await this.userRepository.save(user);
+
+    // Generate access token
+    const accessToken = this.buildAccessTokenPayload(user);
+
+    // Generate refresh token
+    const refreshToken = await this.createRefreshToken(user.id, userAgent, ipAddress);
+
+    await this.cookieService.setRefreshToken(refreshToken.token);
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    return {
+      message: isGuest ? 'Guest account created successfully' : 'Signup successful',
+      data: {
+        user: userWithoutPassword,
+        token: accessToken.token,
+        refreshToken: refreshToken.token,
+        expireAt: accessToken.expireAt,
+      },
     };
   }
 }

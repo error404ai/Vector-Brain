@@ -38,6 +38,15 @@ export class AgentTaskService {
       prompt: request.prompt,
       logs: request.logs,
       steps: request.steps,
+      provider: request.provider,
+      model: request.model,
+      success: request.success ?? false,
+      message: request.message,
+      total_steps: request.total_steps ?? 0,
+      total_duration_seconds: request.total_duration_seconds ?? 0,
+      urls_visited: request.urls_visited,
+      model_actions: request.model_actions,
+      errors: request.errors,
     });
 
     const savedAgentTask = await this.agentTaskRepository.save(agentTask);
