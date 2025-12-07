@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:20 AS builder
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -15,7 +15,7 @@ COPY . .
 RUN pnpm run build
 RUN cd frontend && pnpm run build
 
-FROM node:20-alpine AS production
+FROM node:20 AS production
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -27,8 +27,8 @@ RUN pnpm install --frozen-lockfile --prod=false
 
 ENV NODE_ENV=production
 
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S -D -u 1001 nodejs
+RUN groupadd -g 1001 nodejs && \
+    useradd -u 1001 -g nodejs -s /bin/bash nodejs
 
 RUN chown -R nodejs:nodejs /app
 
