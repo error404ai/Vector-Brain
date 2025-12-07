@@ -6,6 +6,15 @@ export interface AgentTask {
   prompt: string;
   logs: string | null;
   steps: string | null;
+  provider: string | null;
+  model: string | null;
+  success: boolean;
+  message: string | null;
+  total_steps: number;
+  total_duration_seconds: number;
+  urls_visited: string | null;
+  model_actions: string | null;
+  errors: string | null;
   created_at: string;
   updated_at: string;
 }

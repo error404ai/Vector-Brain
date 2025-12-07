@@ -123,6 +123,48 @@ function AgentTasks() {
       ),
     },
     {
+      accessor: 'provider',
+      title: 'Provider',
+      sortable: true,
+      render: (task) => (
+        <Text size="sm" c={task.provider ? 'inherit' : 'dimmed'}>
+          {task.provider || 'N/A'}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'model',
+      title: 'Model',
+      sortable: true,
+      render: (task) => (
+        <Text size="sm" c={task.model ? 'inherit' : 'dimmed'}>
+          {task.model || 'N/A'}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'success',
+      title: 'Success',
+      sortable: true,
+      render: (task) => (
+        <Text size="sm" c={task.success ? 'green' : 'red'}>
+          {task.success ? 'Yes' : 'No'}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'total_steps',
+      title: 'Total Steps',
+      sortable: true,
+      render: (task) => <Text size="sm">{task.total_steps}</Text>,
+    },
+    {
+      accessor: 'total_duration_seconds',
+      title: 'Duration (s)',
+      sortable: true,
+      render: (task) => <Text size="sm">{task.total_duration_seconds.toFixed(2)}</Text>,
+    },
+    {
       accessor: 'created_at',
       title: 'Created',
       sortable: true,
