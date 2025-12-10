@@ -83,7 +83,6 @@ export class UserService {
       throw new AppError('User not found', 404);
     }
 
-    // Check if email is being changed and if it already exists
     if (data.email && data.email !== user.email) {
       const existingUser = await this.userRepository.findOne({
         where: { email: data.email },
@@ -94,7 +93,6 @@ export class UserService {
       }
     }
 
-    // Hash password if it's being updated
     if (data.password) {
       data.password = CryptoHelper.generateHash(data.password);
     }
