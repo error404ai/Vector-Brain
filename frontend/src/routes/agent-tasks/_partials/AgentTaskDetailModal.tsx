@@ -57,6 +57,93 @@ export function AgentTaskDetailModal({ task, opened, onClose }: AgentTaskDetailM
           </Box>
         )}
 
+        {task.provider && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Provider
+            </Text>
+            <Text size="sm">{task.provider}</Text>
+          </Box>
+        )}
+
+        {task.model && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Model
+            </Text>
+            <Text size="sm">{task.model}</Text>
+          </Box>
+        )}
+
+        <Box>
+          <Text size="sm" c="dimmed" mb="xs">
+            Success
+          </Text>
+          <Badge color={task.success ? 'green' : 'red'}>{task.success ? 'Yes' : 'No'}</Badge>
+        </Box>
+
+        {task.message && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Message
+            </Text>
+            <Text size="sm">{task.message}</Text>
+          </Box>
+        )}
+
+        <Box>
+          <Text size="sm" c="dimmed" mb="xs">
+            Total Steps
+          </Text>
+          <Text size="sm">{task.total_steps}</Text>
+        </Box>
+
+        <Box>
+          <Text size="sm" c="dimmed" mb="xs">
+            Total Duration (seconds)
+          </Text>
+          <Text size="sm">{task.total_duration_seconds.toFixed(2)}</Text>
+        </Box>
+
+        {task.urls_visited && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              URLs Visited
+            </Text>
+            <ScrollArea h={100}>
+              <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {task.urls_visited}
+              </Code>
+            </ScrollArea>
+          </Box>
+        )}
+
+        {task.model_actions && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Model Actions
+            </Text>
+            <ScrollArea h={150}>
+              <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {task.model_actions}
+              </Code>
+            </ScrollArea>
+          </Box>
+        )}
+
+        {task.errors && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Errors
+            </Text>
+            <ScrollArea h={150}>
+              <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {task.errors}
+              </Code>
+            </ScrollArea>
+          </Box>
+        )}
+
         <Group justify="space-between">
           <Box>
             <Text size="xs" c="dimmed">
