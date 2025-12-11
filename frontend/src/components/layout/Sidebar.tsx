@@ -21,6 +21,12 @@ const mainNavItems = [
     href: '/agent-tasks',
     badge: null,
   },
+  {
+    label: 'AI Rules',
+    icon: IconBrain,
+    href: '/ai-rules',
+    badge: null,
+  },
 ];
 
 const systemItems = [

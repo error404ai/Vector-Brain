@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UsersIndexRouteImport } from './routes/users/index'
+import { Route as AiRulesIndexRouteImport } from './routes/ai-rules/index'
 import { Route as AgentTasksIndexRouteImport } from './routes/agent-tasks/index'
 
 const SignupRoute = SignupRouteImport.update({
@@ -47,6 +48,11 @@ const UsersIndexRoute = UsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AiRulesIndexRoute = AiRulesIndexRouteImport.update({
+  id: '/ai-rules/',
+  path: '/ai-rules/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AgentTasksIndexRoute = AgentTasksIndexRouteImport.update({
   id: '/agent-tasks/',
   path: '/agent-tasks/',
@@ -60,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/agent-tasks': typeof AgentTasksIndexRoute
+  '/ai-rules': typeof AiRulesIndexRoute
   '/users': typeof UsersIndexRoute
 }
 export interface FileRoutesByTo {
@@ -69,6 +76,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/agent-tasks': typeof AgentTasksIndexRoute
+  '/ai-rules': typeof AiRulesIndexRoute
   '/users': typeof UsersIndexRoute
 }
 export interface FileRoutesById {
@@ -79,6 +87,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/agent-tasks/': typeof AgentTasksIndexRoute
+  '/ai-rules/': typeof AiRulesIndexRoute
   '/users/': typeof UsersIndexRoute
 }
 export interface FileRouteTypes {
@@ -90,6 +99,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signup'
     | '/agent-tasks'
+    | '/ai-rules'
     | '/users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -99,6 +109,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signup'
     | '/agent-tasks'
+    | '/ai-rules'
     | '/users'
   id:
     | '__root__'
@@ -108,6 +119,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signup'
     | '/agent-tasks/'
+    | '/ai-rules/'
     | '/users/'
   fileRoutesById: FileRoutesById
 }
@@ -118,6 +130,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   SignupRoute: typeof SignupRoute
   AgentTasksIndexRoute: typeof AgentTasksIndexRoute
+  AiRulesIndexRoute: typeof AiRulesIndexRoute
   UsersIndexRoute: typeof UsersIndexRoute
 }
 
@@ -165,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ai-rules/': {
+      id: '/ai-rules/'
+      path: '/ai-rules'
+      fullPath: '/ai-rules'
+      preLoaderRoute: typeof AiRulesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agent-tasks/': {
       id: '/agent-tasks/'
       path: '/agent-tasks'
@@ -182,6 +202,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   SignupRoute: SignupRoute,
   AgentTasksIndexRoute: AgentTasksIndexRoute,
+  AiRulesIndexRoute: AiRulesIndexRoute,
   UsersIndexRoute: UsersIndexRoute,
 }
 export const routeTree = rootRouteImport
