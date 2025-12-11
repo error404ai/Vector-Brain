@@ -38,13 +38,13 @@ export function AiRuleDetailModal({ rule, opened, onClose }: AiRuleDetailModalPr
           </Box>
         )}
 
-        {rule.conditions && (
+        {rule.rule && (
           <Box>
             <Text size="sm" c="dimmed" mb="xs">
-              Conditions
+              Rule
             </Text>
             <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {typeof rule.conditions === 'string' ? rule.conditions : JSON.stringify(rule.conditions, null, 2)}
+              {rule.rule}
             </Code>
           </Box>
         )}

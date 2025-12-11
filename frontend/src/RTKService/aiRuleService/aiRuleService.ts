@@ -6,7 +6,7 @@ export interface AiRule {
   user_id: number;
   name: string;
   description?: string;
-  conditions?: any;
+  rule?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -45,7 +45,7 @@ export interface GetAiRulesParams {
 export interface CreateAiRulePayload {
   name: string;
   description?: string;
-  conditions?: any;
+  rule?: string;
   is_active?: boolean;
 }
 
@@ -55,7 +55,7 @@ export interface CreateAiRulePayload {
 export interface UpdateAiRulePayload {
   name?: string;
   description?: string;
-  conditions?: any;
+  rule?: string;
   is_active?: boolean;
 }
 

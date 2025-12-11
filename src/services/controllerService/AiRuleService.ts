@@ -47,7 +47,7 @@ export class AiRuleService {
       user_id: userId,
       name: request.name,
       description: request.description,
-      conditions: request.conditions,
+      rule: request.rule,
       is_active: request.is_active ?? true,
     });
 

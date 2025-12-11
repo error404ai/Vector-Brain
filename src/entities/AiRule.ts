@@ -15,8 +15,8 @@ export class AiRule {
   @Column({ type: 'text', nullable: true })
   description: string;
 
-  @Column({ type: 'json', nullable: true })
-  conditions: any;
+  @Column({ type: 'text', nullable: true })
+  rule: string;
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;

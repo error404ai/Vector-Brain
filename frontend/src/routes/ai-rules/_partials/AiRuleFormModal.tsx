@@ -16,21 +16,11 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     initialValues: {
       name: rule?.name || '',
       description: rule?.description || '',
-      conditions: rule?.conditions ? (typeof rule.conditions === 'string' ? rule.conditions : JSON.stringify(rule.conditions, null, 2)) : '',
+      rule: rule?.rule || '',
       is_active: rule?.is_active ?? true,
     },
     validate: {
       name: (value: string) => (value.length < 1 ? 'Name is required' : null),
-      conditions: (value: string) => {
-        if (value.trim()) {
-          try {
-            JSON.parse(value);
-          } catch {
-            return 'Conditions must be valid JSON';
-          }
-        }
-        return null;
-      },
     },
   });
 
@@ -40,7 +30,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
       form.setValues({
         name: rule?.name || '',
         description: rule?.description || '',
-        conditions: rule?.conditions ? (typeof rule.conditions === 'string' ? rule.conditions : JSON.stringify(rule.conditions, null, 2)) : '',
+        rule: rule?.rule || '',
         is_active: rule?.is_active ?? true,
       });
     }
@@ -52,7 +42,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
       const payload: CreateAiRulePayload | UpdateAiRulePayload = {
         name: values.name,
         ...(values.description.trim() && { description: values.description }),
-        ...(values.conditions.trim() && { conditions: JSON.parse(values.conditions) }),
+        ...(values.rule.trim() && { rule: values.rule }),
         is_active: values.is_active,
       };
 
@@ -77,7 +67,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
 
           <Textarea label="Description" placeholder="Enter rule description (optional)" minRows={2} maxRows={4} autosize {...form.getInputProps('description')} />
 
-          <Textarea label="Conditions (JSON)" placeholder='Enter conditions as JSON (e.g., {"key": "value"})' minRows={3} maxRows={6} autosize {...form.getInputProps('conditions')} />
+          <Textarea label="Rule" placeholder="Enter the AI rule text" minRows={3} maxRows={6} autosize {...form.getInputProps('rule')} />
 
           <Checkbox label="Active" {...form.getInputProps('is_active', { type: 'checkbox' })} />
 

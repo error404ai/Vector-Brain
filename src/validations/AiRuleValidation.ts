@@ -10,7 +10,7 @@ const coerceNumber = (fieldName: string) =>
 export const CreateAiRuleValidation = z.object({
   name: z.string({ required_error: 'Name is required' }).min(1, 'Name is required'),
   description: z.string().optional(),
-  conditions: z.any().optional(),
+  rule: z.string().optional(),
   is_active: z.boolean().optional(),
 });
 
@@ -18,7 +18,7 @@ export const CreateAiRuleValidation = z.object({
 export const UpdateAiRuleValidation = z.object({
   name: z.string().min(1, 'Name cannot be empty').optional(),
   description: z.string().optional(),
-  conditions: z.any().optional(),
+  rule: z.string().optional(),
   is_active: z.boolean().optional(),
 });
 
