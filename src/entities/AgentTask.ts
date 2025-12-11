@@ -12,10 +12,10 @@ export class AgentTask {
   @Column({ type: 'text' })
   prompt: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   logs: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   steps: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true })

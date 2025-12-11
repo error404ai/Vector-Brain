@@ -21,6 +21,7 @@ const __dirname = dirname(__filename);
 
 // Controllers - Add your controllers here
 import { AgentTaskController } from './controllers/AgentTaskController';
+import { AiRuleController } from './controllers/AiRuleController';
 import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
@@ -51,7 +52,7 @@ app.use(requestContextMiddleware);
 
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [AgentTaskController, AuthController, HealthController, UserController],
+  controllers: [AgentTaskController, AiRuleController, AuthController, HealthController, UserController],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
