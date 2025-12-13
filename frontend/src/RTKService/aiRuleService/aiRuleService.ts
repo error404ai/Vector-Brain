@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { baseApi, TAGS } from '../baseApi';
 
 export interface AiRule {
@@ -59,6 +58,45 @@ export interface UpdateAiRulePayload {
   is_active?: boolean;
 }
 
+/**
+ * Semantic search parameters
+ */
+export interface SemanticSearchParams {
+  query: string;
+  limit?: number;
+}
+
+/**
+ * Search result with similarity score
+ */
+export interface AiRuleSearchResult {
+  id: number;
+  name: string;
+  description: string | null;
+  rule: string | null;
+  is_active: boolean;
+  score: number;
+}
+
+/**
+ * Semantic search response
+ */
+export interface SemanticSearchResponse {
+  message: string;
+  data: AiRuleSearchResult[];
+}
+
+/**
+ * Backfill response
+ */
+export interface BackfillResponse {
+  message: string;
+  data: {
+    processed: number;
+    failed: number;
+  };
+}
+
 const aiRuleApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     // List AI rules with pagination - matches /ai-rules/list endpoint
@@ -108,9 +146,26 @@ const aiRuleApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [TAGS.AI_RULES],
     }),
+
+    // Semantic search AI rules - matches /ai-rules/search endpoint
+    searchAiRules: builder.mutation<SemanticSearchResponse, SemanticSearchParams>({
+      query: (params) => ({
+        url: '/ai-rules/search',
+        method: 'POST',
+        body: params,
+      }),
+    }),
+
+    // Backfill vector embeddings - matches /ai-rules/backfill-vectors endpoint
+    backfillVectors: builder.mutation<BackfillResponse, void>({
+      query: () => ({
+        url: '/ai-rules/backfill-vectors',
+        method: 'POST',
+      }),
+    }),
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation } = aiRuleApi;
 
 export default aiRuleApi;
