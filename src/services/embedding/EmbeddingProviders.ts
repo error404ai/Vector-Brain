@@ -1,12 +1,6 @@
 import { EmbeddingProviderConfig, IEmbeddingProvider } from '@/types/EmbeddingProvider';
 import { Embeddings } from '@langchain/core/embeddings';
 
-/**
- * Base Embedding Provider using LangChain
- *
- * This abstract class provides common functionality for all embedding providers
- * using LangChain's unified interface.
- */
 export abstract class BaseLangChainProvider implements IEmbeddingProvider {
   protected embeddings: Embeddings;
   protected dimensions: number;
@@ -41,9 +35,6 @@ export abstract class BaseLangChainProvider implements IEmbeddingProvider {
   }
 }
 
-/**
- * Factory function to create embedding providers
- */
 export async function createEmbeddingProvider(config: EmbeddingProviderConfig): Promise<IEmbeddingProvider> {
   switch (config.provider) {
     case 'openai':
@@ -57,9 +48,6 @@ export async function createEmbeddingProvider(config: EmbeddingProviderConfig): 
   }
 }
 
-/**
- * OpenAI Embedding Provider using LangChain
- */
 async function createOpenAIProvider(config: EmbeddingProviderConfig): Promise<IEmbeddingProvider> {
   const { OpenAIEmbeddings } = await import('@langchain/openai');
 
@@ -69,7 +57,6 @@ async function createOpenAIProvider(config: EmbeddingProviderConfig): Promise<IE
     ...(config.dimensions && { dimensions: config.dimensions }),
   });
 
-  // Determine dimensions based on model
   let dimensions = config.dimensions || 1536;
   if (config.model === 'text-embedding-3-small') {
     dimensions = config.dimensions || 1536;
@@ -84,12 +71,6 @@ async function createOpenAIProvider(config: EmbeddingProviderConfig): Promise<IE
   })();
 }
 
-/**
- * DeepSeek Embedding Provider using OpenAI-compatible API via LangChain
- *
- * DeepSeek uses OpenAI-compatible API format, so we can use OpenAIEmbeddings
- * with a custom base URL.
- */
 async function createDeepSeekProvider(config: EmbeddingProviderConfig): Promise<IEmbeddingProvider> {
   const { OpenAIEmbeddings } = await import('@langchain/openai');
 
@@ -110,12 +91,6 @@ async function createDeepSeekProvider(config: EmbeddingProviderConfig): Promise<
   })();
 }
 
-/**
- * Custom Embedding Provider for any OpenAI-compatible API
- *
- * This allows using any provider that implements the OpenAI embeddings API format.
- * Examples: local LLMs via Ollama, Azure OpenAI, Fireworks, Together AI, etc.
- */
 async function createCustomProvider(config: EmbeddingProviderConfig): Promise<IEmbeddingProvider> {
   if (!config.baseUrl) {
     throw new Error('Custom provider requires a baseUrl');

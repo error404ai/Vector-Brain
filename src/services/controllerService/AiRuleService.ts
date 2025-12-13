@@ -57,18 +57,12 @@ export class AiRuleService {
 
     const savedAiRule = await this.aiRuleRepository.save(aiRule);
 
-    // Store vector in Qdrant if rule text is provided
     if (savedAiRule.rule && savedAiRule.rule.trim()) {
-      try {
-        await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
-          name: savedAiRule.name,
-          description: savedAiRule.description,
-          is_active: savedAiRule.is_active,
-        });
-      } catch (error) {
-        Logger.error(`Failed to store vector for new rule ${savedAiRule.id}:`, error);
-        // Don't fail the request if vector storage fails
-      }
+      await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
+        name: savedAiRule.name,
+        description: savedAiRule.description,
+        is_active: savedAiRule.is_active,
+      });
     }
 
     return { message: 'AI rule created successfully', data: savedAiRule };
@@ -86,7 +80,6 @@ export class AiRuleService {
     Object.assign(aiRule, data);
     await this.aiRuleRepository.save(aiRule);
 
-    // Update vector in Qdrant if rule text changed
     if (data.rule !== undefined) {
       try {
         if (aiRule.rule && aiRule.rule.trim()) {
@@ -118,43 +111,26 @@ export class AiRuleService {
     }
 
     await this.aiRuleRepository.remove(aiRule);
-
-    // Delete vector from Qdrant
-    try {
-      await this.aiEmbeddingService.deleteVector(id);
-    } catch (error) {
-      Logger.error(`Failed to delete vector for rule ${id}:`, error);
-      // Don't fail the request if vector deletion fails
-    }
+    await this.aiEmbeddingService.deleteVector(id);
 
     return { message: 'AI rule deleted successfully' };
   }
 
-  /**
-   * Search for AI rules by semantic similarity to a prompt
-   *
-   * @param request - Search request containing prompt and optional limit
-   * @returns Matching rules sorted by similarity score
-   */
   async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
-    // Search for similar vectors in Qdrant
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
 
     if (searchResults.length === 0) {
       return { message: 'No matching rules found', data: [] };
     }
 
-    // Get the rule IDs from search results
     const ruleIds = searchResults.map((result) => result.id);
 
-    // Fetch full rule details from database
     const rules = await this.aiRuleRepository.find({
       where: { id: In(ruleIds) },
     });
 
-    // Combine rules with similarity scores and sort by score
     const rulesWithScores = rules
       .map((rule) => {
         const searchResult = searchResults.find((r) => r.id === rule.id);
@@ -171,10 +147,6 @@ export class AiRuleService {
     };
   }
 
-  /**
-   * Backfill vectors for all existing rules
-   * Useful for migrating existing data to use vector search
-   */
   async backfillAllVectors(): Promise<ApiResponse> {
     const rules = await this.aiRuleRepository.find({
       where: { is_active: true },

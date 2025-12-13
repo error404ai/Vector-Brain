@@ -61,7 +61,6 @@ export class DashboardService {
   async getRecentActivity(): Promise<ApiResponse> {
     const activities: RecentActivity[] = [];
 
-    // Get recent users (last 5)
     const recentUsers = await this.userRepository.find({
       where: { deletedAt: IsNull() },
       order: { createdAt: 'DESC' },
@@ -78,7 +77,6 @@ export class DashboardService {
       });
     }
 
-    // Get recent agent tasks (last 5)
     const recentTasks = await this.agentTaskRepository.find({
       order: { created_at: 'DESC' },
       take: 5,
@@ -94,7 +92,6 @@ export class DashboardService {
       });
     }
 
-    // Sort by creation date (newest first) and take top 10
     activities.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const topActivities = activities.slice(0, 10);
 

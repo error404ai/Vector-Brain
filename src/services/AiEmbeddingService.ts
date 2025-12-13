@@ -5,16 +5,6 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { Service } from 'typedi';
 import { createEmbeddingProvider } from './embedding/EmbeddingProviders';
 
-/**
- * AI Embedding Service
- *
- * This service handles:
- * 1. Generating embeddings using configurable providers (OpenAI, DeepSeek, etc.)
- * 2. Storing and retrieving vectors from Qdrant
- * 3. Performing similarity searches
- *
- * The embedding provider can be easily switched via environment configuration.
- */
 @Service()
 export class AiEmbeddingService {
   private qdrantClient: QdrantClient;
@@ -23,7 +13,6 @@ export class AiEmbeddingService {
   private isInitialized: boolean = false;
 
   constructor() {
-    // Initialize Qdrant client
     this.qdrantClient = new QdrantClient({
       url: envConfig.qdrantUrl,
       ...(envConfig.qdrantApiKey && { apiKey: envConfig.qdrantApiKey }),
@@ -32,17 +21,12 @@ export class AiEmbeddingService {
     this.collectionName = envConfig.qdrantCollectionName || 'ai_rules';
   }
 
-  /**
-   * Initialize the embedding provider and Qdrant collection
-   * Call this on application startup
-   */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
       return;
     }
 
     try {
-      // Initialize embedding provider if API key is configured
       if (envConfig.embeddingApiKey) {
         this.embeddingProvider = await createEmbeddingProvider({
           provider: envConfig.embeddingProvider || 'openai',
@@ -56,7 +40,6 @@ export class AiEmbeddingService {
         Logger.warn('No embedding API key configured. Vector operations will be skipped.');
       }
 
-      // Initialize Qdrant collection
       await this.ensureCollectionExists();
       this.isInitialized = true;
       Logger.info('AiEmbeddingService initialized successfully');
@@ -66,9 +49,6 @@ export class AiEmbeddingService {
     }
   }
 
-  /**
-   * Ensure the Qdrant collection exists, create it if not
-   */
   private async ensureCollectionExists(): Promise<void> {
     try {
       const collections = await this.qdrantClient.getCollections();
@@ -84,7 +64,6 @@ export class AiEmbeddingService {
           },
         });
 
-        // Create payload index for faster filtering
         await this.qdrantClient.createPayloadIndex(this.collectionName, {
           field_name: 'rule_id',
           field_schema: 'integer',
@@ -105,16 +84,10 @@ export class AiEmbeddingService {
     }
   }
 
-  /**
-   * Check if the service is properly configured for vector operations
-   */
   isConfigured(): boolean {
     return this.isInitialized && this.embeddingProvider !== null;
   }
 
-  /**
-   * Generate embedding for a text
-   */
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.embeddingProvider) {
       throw new Error('Embedding provider not configured');
@@ -122,13 +95,6 @@ export class AiEmbeddingService {
     return this.embeddingProvider.embedText(text);
   }
 
-  /**
-   * Store a vector in Qdrant for an AI rule
-   *
-   * @param ruleId - The ID of the AI rule in the database
-   * @param text - The text to embed (typically the rule content)
-   * @param metadata - Additional metadata to store with the vector
-   */
   async storeVector(ruleId: number, text: string, metadata?: Record<string, unknown>): Promise<void> {
     if (!this.isConfigured()) {
       Logger.warn('Embedding service not configured, skipping vector storage');
@@ -158,11 +124,6 @@ export class AiEmbeddingService {
     }
   }
 
-  /**
-   * Delete a vector from Qdrant
-   *
-   * @param ruleId - The ID of the AI rule to delete
-   */
   async deleteVector(ruleId: number): Promise<void> {
     if (!this.isConfigured()) {
       Logger.warn('Embedding service not configured, skipping vector deletion');
@@ -181,14 +142,6 @@ export class AiEmbeddingService {
     }
   }
 
-  /**
-   * Search for similar rules based on a prompt
-   *
-   * @param prompt - The search prompt
-   * @param limit - Maximum number of results to return
-   * @param filter - Optional filter conditions
-   * @returns Array of search results with rule IDs and similarity scores
-   */
   async searchSimilar(prompt: string, limit: number = 10, filter?: { is_active?: boolean }): Promise<VectorSearchResult[]> {
     if (!this.isConfigured()) {
       Logger.warn('Embedding service not configured, returning empty results');
@@ -198,7 +151,6 @@ export class AiEmbeddingService {
     try {
       const promptVector = await this.generateEmbedding(prompt);
 
-      // Build filter if provided
       const qdrantFilter = filter
         ? {
             must: Object.entries(filter)
@@ -228,12 +180,6 @@ export class AiEmbeddingService {
     }
   }
 
-  /**
-   * Backfill vectors for existing rules
-   * Useful for migrating existing data
-   *
-   * @param rules - Array of rules with id, rule text, and optional metadata
-   */
   async backfillVectors(rules: Array<{ id: number; rule: string; metadata?: Record<string, unknown> }>): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error('Embedding service not configured');

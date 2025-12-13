@@ -21,16 +21,14 @@ export class AuthService {
   private userRepository = AppDataSource.getRepository(User);
   private refreshTokenRepository = AppDataSource.getRepository(RefreshToken);
 
-  // Generate a secure refresh token
   private generateRefreshToken(): string {
     return crypto.randomBytes(64).toString('hex');
   }
 
-  // Create and save refresh token to database
   private async createRefreshToken(userId: number, userAgent?: string, ipAddress?: string): Promise<RefreshToken> {
     const token = this.generateRefreshToken();
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30 days expiry
+    expiresAt.setDate(expiresAt.getDate() + 30);
 
     const refreshToken = this.refreshTokenRepository.create({
       token,
@@ -60,7 +58,6 @@ export class AuthService {
   }
 
   async login(request: z.infer<typeof LoginValidation>, userAgent?: string, ipAddress?: string): Promise<ApiResponse> {
-    // Find user by email including the password field
     const user = await this.userRepository.createQueryBuilder('user').addSelect('user.password').where('user.email = :email', { email: request.email }).andWhere('user.deletedAt IS NULL').getOne();
 
     if (!user) {
@@ -71,7 +68,6 @@ export class AuthService {
       throw new UnauthorizedError('Your account has been deactivated');
     }
 
-    // Verify password
     const hashedPassword = CryptoHelper.generateHash(request.password);
     if (user.password !== hashedPassword) {
       throw new UnauthorizedError('Invalid email or password');
@@ -79,12 +75,10 @@ export class AuthService {
 
     const accessToken = this.buildAccessTokenPayload(user);
 
-    // Generate refresh token (long-lived)
     const refreshToken = await this.createRefreshToken(user.id, userAgent, ipAddress);
 
     await this.cookieService.setRefreshToken(refreshToken.token);
 
-    // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
     return {
@@ -109,7 +103,6 @@ export class AuthService {
       throw new UnauthorizedError('Refresh token not provided');
     }
 
-    // Find the refresh token
     const refreshToken = await this.refreshTokenRepository.findOne({
       where: { token: refreshTokenString, revoked: false },
     });
@@ -118,15 +111,12 @@ export class AuthService {
       throw new UnauthorizedError('Invalid refresh token');
     }
 
-    // Check if token has expired
     if (new Date() > refreshToken.expiresAt) {
-      // Revoke the expired token
       refreshToken.revoked = true;
       await this.refreshTokenRepository.save(refreshToken);
       throw new UnauthorizedError('Refresh token has expired');
     }
 
-    // Find the user
     const user = await this.userRepository.findOne({
       where: { id: refreshToken.userId, deletedAt: undefined },
     });
@@ -187,20 +177,17 @@ export class AuthService {
   async signup(request: z.infer<typeof SignupValidation>, userAgent?: string, ipAddress?: string): Promise<ApiResponse> {
     const isGuest = request.isGuest ?? false;
 
-    // For guest signup, generate a unique identifier if no email provided
     let email = request.email;
     let name = request.name;
     let password = request.password;
 
     if (isGuest) {
-      // Generate unique guest credentials if not provided
       const guestId = crypto.randomBytes(8).toString('hex');
       email = email || `guest_${guestId}@guest.local`;
       name = name || `Guest_${guestId}`;
       password = password || crypto.randomBytes(16).toString('hex');
     }
 
-    // Check if email already exists (only if email was provided or generated)
     if (email) {
       const existingUser = await this.userRepository.findOne({
         where: { email },
@@ -211,10 +198,8 @@ export class AuthService {
       }
     }
 
-    // Hash the password
     const hashedPassword = CryptoHelper.generateHash(password!);
 
-    // Create the user
     const user = this.userRepository.create({
       name: name!,
       email: email!,
@@ -226,15 +211,12 @@ export class AuthService {
 
     await this.userRepository.save(user);
 
-    // Generate access token
     const accessToken = this.buildAccessTokenPayload(user);
 
-    // Generate refresh token
     const refreshToken = await this.createRefreshToken(user.id, userAgent, ipAddress);
 
     await this.cookieService.setRefreshToken(refreshToken.token);
 
-    // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
     return {
