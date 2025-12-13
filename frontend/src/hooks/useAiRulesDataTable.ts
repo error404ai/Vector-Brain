@@ -142,6 +142,7 @@ export function useAiRulesDataTable() {
     isDeleting,
     isSearching,
     isBackfilling,
+    isVectorizing,
 
     // Current state
     page,
