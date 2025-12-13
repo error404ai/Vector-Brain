@@ -9,6 +9,7 @@ export interface AiRule {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  vector_exist?: boolean;
 }
 
 /**
@@ -25,6 +26,14 @@ export interface PaginatedResponse<T> {
     hasPreviousPage: boolean;
     hasNextPage: boolean;
   };
+}
+
+/**
+ * Generic API response
+ */
+export interface ApiResponse<T = any> {
+  message: string;
+  data?: T;
 }
 
 /**
@@ -163,9 +172,18 @@ const aiRuleApi = baseApi.injectEndpoints({
         method: 'POST',
       }),
     }),
+
+    // Vectorize single AI rule - matches /ai-rules/vectorize/:id endpoint
+    vectorizeAiRule: builder.mutation<ApiResponse, number>({
+      query: (id) => ({
+        url: `/ai-rules/vectorize/${id}`,
+        method: 'POST',
+      }),
+      invalidatesTags: [TAGS.AI_RULES],
+    }),
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation } = aiRuleApi;
 
 export default aiRuleApi;

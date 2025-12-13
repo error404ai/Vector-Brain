@@ -1,5 +1,5 @@
 import type { SortParams } from '@/components/datatable';
-import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type GetAiRulesParams, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type GetAiRulesParams, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
 import { useCallback, useState } from 'react';
 
 export function useAiRulesDataTable() {
@@ -40,6 +40,7 @@ export function useAiRulesDataTable() {
   // Semantic search mutations
   const [searchAiRules, { isLoading: isSearching }] = useSearchAiRulesMutation();
   const [backfillVectors, { isLoading: isBackfilling }] = useBackfillVectorsMutation();
+  const [vectorizeAiRule, { isLoading: isVectorizing }] = useVectorizeAiRuleMutation();
 
   // Handlers
   const handlePageChange = useCallback((newPage: number) => {
@@ -114,6 +115,15 @@ export function useAiRulesDataTable() {
     return result;
   }, [backfillVectors]);
 
+  // Vectorize single rule handler
+  const handleVectorizeAiRule = useCallback(
+    async (ruleId: number) => {
+      const result = await vectorizeAiRule(ruleId).unwrap();
+      return result;
+    },
+    [vectorizeAiRule]
+  );
+
   return {
     // Data
     data: response?.data ?? [],
@@ -153,6 +163,7 @@ export function useAiRulesDataTable() {
     handleSemanticSearch,
     handleClearSemanticSearch,
     handleBackfillVectors,
+    handleVectorizeAiRule,
     refetch,
   };
 }

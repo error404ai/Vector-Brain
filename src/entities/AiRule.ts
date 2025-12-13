@@ -1,5 +1,8 @@
+import { AiEmbeddingService } from '@/services/AiEmbeddingService';
+import Container from 'typedi';
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
 import { User } from './User';
+import { Hydrate } from '../decorators/hydratable';
 
 @Entity('ai_rules')
 export class AiRule {
@@ -30,4 +33,11 @@ export class AiRule {
   @ManyToOne(() => User)
   @JoinColumn({ name: 'user_id' })
   user: Relation<User>;
+
+  @Hydrate
+  async vectorExist(): Promise<boolean> {
+    const embeddingService = Container.get(AiEmbeddingService);
+    await embeddingService.initialize();
+    return embeddingService.vectorExists(this.id);
+  }
 }

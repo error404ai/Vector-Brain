@@ -44,6 +44,7 @@ function AiRules() {
     handleSemanticSearch,
     handleClearSemanticSearch,
     handleBackfillVectors,
+    handleVectorizeAiRule,
   } = useAiRulesDataTable();
 
   // Local semantic search input state
@@ -171,6 +172,26 @@ function AiRules() {
     }
   };
 
+  // Handle vectorize single rule
+  const handleVectorize = async (rule: AiRule) => {
+    try {
+      await handleVectorizeAiRule(rule.id);
+      notifications.show({
+        title: 'Vectorization Complete',
+        message: `Rule "${rule.name}" has been vectorized`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Vectorization Error',
+        message: 'Failed to vectorize the rule',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
   // Define table columns
   const columns: DataTableColumn<AiRule>[] = [
     {
@@ -196,6 +217,16 @@ function AiRules() {
       width: 100,
     },
     {
+      accessor: 'vector_exist',
+      title: 'Vectorized',
+      render: (rule) => (
+        <Badge color={rule.vector_exist ? 'green' : 'red'} variant="light">
+          {rule.vector_exist ? 'Yes' : 'No'}
+        </Badge>
+      ),
+      width: 100,
+    },
+    {
       accessor: 'created_at',
       title: 'Created',
       render: (rule) => new Date(rule.created_at).toLocaleDateString(),
@@ -206,7 +237,7 @@ function AiRules() {
       accessor: 'actions',
       title: 'Actions',
       width: 120,
-      render: (rule) => <AiRuleActions rule={rule} onView={handleViewRule} onEdit={handleEditRule} onDelete={handleDeleteRule} />,
+      render: (rule) => <AiRuleActions rule={rule} onView={handleViewRule} onEdit={handleEditRule} onDelete={handleDeleteRule} onVectorize={handleVectorize} />,
     },
   ];
 

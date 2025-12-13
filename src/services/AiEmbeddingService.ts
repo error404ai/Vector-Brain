@@ -180,6 +180,24 @@ export class AiEmbeddingService {
     }
   }
 
+  async vectorExists(ruleId: number): Promise<boolean> {
+    if (!this.isConfigured()) {
+      return false;
+    }
+
+    try {
+      const result = await this.qdrantClient.retrieve(this.collectionName, {
+        ids: [ruleId],
+        with_payload: false,
+        with_vector: false,
+      });
+      return result.length > 0;
+    } catch (error) {
+      Logger.error(`Failed to check vector existence for rule ID ${ruleId}:`, error);
+      return false;
+    }
+  }
+
   async backfillVectors(rules: Array<{ id: number; rule: string; metadata?: Record<string, unknown> }>): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error('Embedding service not configured');

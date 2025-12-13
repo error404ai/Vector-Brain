@@ -1,6 +1,5 @@
 import { AiRule } from '@/entities/AiRule';
 import AppError from '@/helpers/AppError';
-import paginate from '@/helpers/paginationHelper';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiEmbeddingService } from '@/services/AiEmbeddingService';
@@ -25,13 +24,29 @@ export class AiRuleService {
       where.name = Like(`%${search}%`);
     }
 
-    return await paginate(this.aiRuleRepository, {
-      page,
-      limit,
-      findOptions: {
-        where,
-      },
+    const [items, totalCount] = await this.aiRuleRepository.findAndCount({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    // Hydrate to add vector_exist
+    await (this.aiRuleRepository as any).hydrateEntities(items);
+
+    const totalPages = Math.ceil(totalCount / limit);
+
+    return {
+      message: 'AI rules fetched successfully',
+      data: items,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        pageSize: limit,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
   }
 
   async details(id: number): Promise<ApiResponse> {
@@ -158,17 +173,26 @@ export class AiRuleService {
       where: { is_active: true },
     });
 
-    const rulesToBackfill = rules
-      .filter((rule) => rule.rule && rule.rule.trim())
-      .map((rule) => ({
-        id: rule.id,
-        rule: rule.rule,
-        metadata: {
-          name: rule.name,
-          description: rule.description,
-          is_active: rule.is_active,
-        },
-      }));
+    // Filter rules that have content and are not already vectorized
+    const rulesToCheck = rules.filter((rule) => rule.rule && rule.rule.trim());
+
+    const rulesToBackfillPromises = rulesToCheck.map(async (rule) => {
+      const exists = await this.aiEmbeddingService.vectorExists(rule.id);
+      return exists
+        ? null
+        : {
+            id: rule.id,
+            rule: rule.rule,
+            metadata: {
+              name: rule.name,
+              description: rule.description,
+              is_active: rule.is_active,
+            },
+          };
+    });
+
+    const rulesToBackfillResults = await Promise.all(rulesToBackfillPromises);
+    const rulesToBackfill = rulesToBackfillResults.filter((rule) => rule !== null);
 
     await this.aiEmbeddingService.backfillVectors(rulesToBackfill);
 
@@ -176,5 +200,33 @@ export class AiRuleService {
       message: `Backfilled vectors for ${rulesToBackfill.length} rules`,
       data: { count: rulesToBackfill.length },
     };
+  }
+
+  async vectorizeSingle(id: number): Promise<ApiResponse> {
+    const aiRule = await this.aiRuleRepository.findOne({
+      where: { id },
+    });
+
+    if (!aiRule) {
+      throw new AppError('AI rule not found', 404);
+    }
+
+    if (!aiRule.rule || !aiRule.rule.trim()) {
+      throw new AppError('AI rule has no content to vectorize', 400);
+    }
+
+    // Check if already vectorized
+    const exists = await this.aiEmbeddingService.vectorExists(id);
+    if (exists) {
+      throw new AppError('AI rule is already vectorized', 400);
+    }
+
+    await this.aiEmbeddingService.storeVector(id, aiRule.rule, {
+      name: aiRule.name,
+      description: aiRule.description,
+      is_active: aiRule.is_active,
+    });
+
+    return { message: 'AI rule vectorized successfully' };
   }
 }

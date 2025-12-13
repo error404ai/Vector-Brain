@@ -59,4 +59,13 @@ export class AiRuleController {
   async backfillVectors() {
     return this.aiRuleService.backfillAllVectors();
   }
+
+  /**
+   * Vectorize a single AI rule
+   * POST /api/ai-rules/vectorize/:id
+   */
+  @Post('/vectorize/:id')
+  async vectorize(@Param('id') id: number) {
+    return this.aiRuleService.vectorizeSingle(id);
+  }
 }

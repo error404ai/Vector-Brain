@@ -111,26 +111,22 @@ export class BaseRepository<T extends ObjectLiteral> extends Repository<T> {
     const promises: Promise<void>[] = [];
     
     for (const entity of entities) {
-      // Avoid circular references
       if (!entity || typeof entity !== 'object' || visited.has(entity)) {
         continue;
       }
       
       visited.add(entity);
-      
-      // Hydrate the current entity's properties
-      const configs = (entity as any).__hydratableConfigs || [];
+      const configs = (entity as any).__hydratableConfigs || 
+                     (entity.constructor?.prototype?.__hydratableConfigs) || [];
       for (const config of configs) {
         if (typeof (entity as any)[config.methodName] === 'function') {
           promises.push(
             Promise.resolve((entity as any)[config.methodName]())
               .then((value) => {
-                // Delete the property first if it exists to ensure we can redefine it
                 if (config.propertyName in entity) {
                   delete (entity as any)[config.propertyName];
                 }
                 
-                // Define property as writable so it can be reassigned later
                 Object.defineProperty(entity, config.propertyName, {
                   value,
                   writable: true,
@@ -140,19 +136,35 @@ export class BaseRepository<T extends ObjectLiteral> extends Repository<T> {
               })
               .catch((err) => console.error(`Hydration error for ${config.methodName}:`, err))
           );
+        } else {
+          const descriptor = Object.getOwnPropertyDescriptor(
+            Object.getPrototypeOf(entity),
+            config.methodName
+          );
+          if (descriptor && typeof descriptor.get === 'function') {
+            promises.push(
+              Promise.resolve((entity as any)[config.methodName])
+                .then((value) => {
+                  Object.defineProperty(entity, config.propertyName, {
+                    value,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                  });
+                })
+                .catch((err) => console.error(`Hydration error for getter ${config.methodName}:`, err))
+            );
+          }
         }
       }
       
-      // Recursively hydrate nested relations
       for (const key in entity) {
         const value = entity[key];
         
         if (value && typeof value === 'object') {
           if (Array.isArray(value)) {
-            // Hydrate array of entities
             promises.push(this.hydrateEntities(value, visited));
           } else if (value.constructor && value.constructor.name !== 'Date' && !visited.has(value)) {
-            // Hydrate single nested entity
             promises.push(this.hydrateEntities([value], visited));
           }
         }
