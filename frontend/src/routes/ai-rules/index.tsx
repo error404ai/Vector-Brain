@@ -238,7 +238,7 @@ function AiRules() {
             Semantic Search
           </Text>
           <Text size="sm" c="dimmed" mb="md">
-            Search AI rules by meaning using vector similarity. This finds rules that are conceptually similar to your query.
+            Enter a natural language prompt to retrieve the most semantically related AI rules using vector similarity.
           </Text>
           <Group>
             <TextInput placeholder="e.g., rules about user authentication..." value={semanticInput} onChange={(e) => setSemanticInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSemanticSearchSubmit()} style={{ flex: 1 }} leftSection={<IconSearch size={16} />} />
@@ -282,10 +282,10 @@ function AiRules() {
                         </Badge>
                       </Group>
                       <Badge color="blue" variant="light" size="sm">
-                        {(result.score * 100).toFixed(1)}% match
+                        {(result.similarity_score * 100).toFixed(1)}% match
                       </Badge>
                     </Group>
-                    <Progress value={result.score * 100} size="xs" mb="xs" color="blue" />
+                    <Progress value={result.similarity_score * 100} size="xs" mb="xs" color="blue" />
                     {result.description && (
                       <Text size="sm" c="dimmed" lineClamp={2}>
                         {result.description}

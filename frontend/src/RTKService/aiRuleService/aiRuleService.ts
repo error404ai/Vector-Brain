@@ -75,7 +75,7 @@ export interface AiRuleSearchResult {
   description: string | null;
   rule: string | null;
   is_active: boolean;
-  score: number;
+  similarity_score: number;
 }
 
 /**
