@@ -94,7 +94,7 @@ export function useAiRulesDataTable() {
         return;
       }
       setSemanticQuery(query);
-      const result = await searchAiRules({ query, limit: 10 }).unwrap();
+      const result = await searchAiRules({ query, limit: 3 }).unwrap();
       setSemanticResults(result.data);
       setIsSemanticMode(true);
     },
