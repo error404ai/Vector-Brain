@@ -28,3 +28,9 @@ export const AiRuleListValidation = z.object({
   limit: coerceNumber('Limit').min(1, 'Limit must be at least 1').optional().default(10),
   search: z.string().optional(),
 });
+
+// Search AI rules by prompt validation
+export const SearchAiRulesValidation = z.object({
+  prompt: z.string({ required_error: 'Prompt is required' }).min(1, 'Prompt is required'),
+  limit: coerceNumber('Limit').min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100').optional().default(10),
+});

@@ -57,8 +57,29 @@ services:
     networks:
       - vector-brain-network
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: vector-brain-qdrant-dev
+    restart: unless-stopped
+    ports:
+      - '${QDRANT_PORT:-6333}:6333'
+      - '${QDRANT_GRPC_PORT:-6334}:6334'
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:6333/readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - vector-brain-network
+
 volumes:
   mysql_data:
+  qdrant_data:
 
 networks:
   vector-brain-network:

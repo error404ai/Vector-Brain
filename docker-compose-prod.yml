@@ -78,8 +78,37 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: vector-brain-qdrant-prod
+    restart: always
+    ports:
+      - '${QDRANT_PORT:-6333}:6333'
+      - '${QDRANT_GRPC_PORT:-6334}:6334'
+    volumes:
+      - qdrant_data_prod:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:6333/readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - vector-brain-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
 volumes:
   mysql_data_prod:
+  qdrant_data_prod:
 
 networks:
   vector-brain-network:

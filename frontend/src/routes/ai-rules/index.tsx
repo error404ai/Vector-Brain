@@ -2,11 +2,11 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useAiRulesDataTable, type AiRule, type CreateAiRulePayload, type UpdateAiRulePayload } from '@/hooks/useAiRulesDataTable';
-import { Box, Button, Group, Text, Title } from '@mantine/core';
+import { Badge, Box, Button, Card, Group, Progress, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconPlus, IconX } from '@tabler/icons-react';
+import { IconCheck, IconDatabase, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
@@ -20,7 +20,35 @@ export const Route = createFileRoute('/ai-rules/')({
 
 function AiRules() {
   // Get AI rules data and handlers from custom hook
-  const { data: aiRules, pagination, isLoading, isCreating, isUpdating, page, limit, search, setPage, setLimit, setSearch, handleSortChange, handleCreateAiRule, handleUpdateAiRule, handleDeleteAiRule } = useAiRulesDataTable();
+  const {
+    data: aiRules,
+    pagination,
+    isLoading,
+    isCreating,
+    isUpdating,
+    page,
+    limit,
+    search,
+    setPage,
+    setLimit,
+    setSearch,
+    handleSortChange,
+    handleCreateAiRule,
+    handleUpdateAiRule,
+    handleDeleteAiRule,
+    // Semantic search
+    semanticResults,
+    isSemanticMode,
+    isSearching,
+    isBackfilling,
+    handleSemanticSearch,
+    handleClearSemanticSearch,
+    handleBackfillVectors,
+    handleVectorizeAiRule,
+  } = useAiRulesDataTable();
+
+  // Local semantic search input state
+  const [semanticInput, setSemanticInput] = useState('');
 
   // View rule state
   const [viewingRule, setViewingRule] = useState<AiRule | undefined>();
@@ -106,6 +134,64 @@ function AiRules() {
     });
   };
 
+  // Handle semantic search submit
+  const handleSemanticSearchSubmit = async () => {
+    if (!semanticInput.trim()) {
+      handleClearSemanticSearch();
+      return;
+    }
+    try {
+      await handleSemanticSearch(semanticInput);
+    } catch (error) {
+      notifications.show({
+        title: 'Search Error',
+        message: 'Failed to perform semantic search',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  // Handle backfill
+  const handleBackfill = async () => {
+    try {
+      const result = await handleBackfillVectors();
+      notifications.show({
+        title: 'Backfill Complete',
+        message: `Processed ${result.data.processed} rules, ${result.data.failed} failed`,
+        color: result.data.failed > 0 ? 'yellow' : 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Backfill Error',
+        message: 'Failed to backfill vector embeddings',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  // Handle vectorize single rule
+  const handleVectorize = async (rule: AiRule) => {
+    try {
+      await handleVectorizeAiRule(rule.id);
+      notifications.show({
+        title: 'Vectorization Complete',
+        message: `Rule "${rule.name}" has been vectorized`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Vectorization Error',
+        message: 'Failed to vectorize the rule',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
   // Define table columns
   const columns: DataTableColumn<AiRule>[] = [
     {
@@ -131,6 +217,16 @@ function AiRules() {
       width: 100,
     },
     {
+      accessor: 'vector_exist',
+      title: 'Vectorized',
+      render: (rule) => (
+        <Badge color={rule.vector_exist ? 'green' : 'red'} variant="light">
+          {rule.vector_exist ? 'Yes' : 'No'}
+        </Badge>
+      ),
+      width: 100,
+    },
+    {
       accessor: 'created_at',
       title: 'Created',
       render: (rule) => new Date(rule.created_at).toLocaleDateString(),
@@ -141,7 +237,7 @@ function AiRules() {
       accessor: 'actions',
       title: 'Actions',
       width: 120,
-      render: (rule) => <AiRuleActions rule={rule} onView={handleViewRule} onEdit={handleEditRule} onDelete={handleDeleteRule} />,
+      render: (rule) => <AiRuleActions rule={rule} onView={handleViewRule} onEdit={handleEditRule} onDelete={handleDeleteRule} onVectorize={handleVectorize} />,
     },
   ];
 
@@ -157,10 +253,81 @@ function AiRules() {
             <Title order={2}>AI Rules</Title>
             <Text c="dimmed">Manage AI rules for your agent tasks</Text>
           </div>
-          <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
-            Create AI Rule
-          </Button>
+          <Group>
+            <Button variant="light" leftSection={<IconDatabase size={16} />} onClick={handleBackfill} loading={isBackfilling}>
+              Backfill Vectors
+            </Button>
+            <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
+              Create AI Rule
+            </Button>
+          </Group>
         </Group>
+
+        {/* Semantic Search Section */}
+        <Card withBorder mb="md" p="md">
+          <Text fw={500} mb="sm">
+            Semantic Search
+          </Text>
+          <Text size="sm" c="dimmed" mb="md">
+            Enter a natural language prompt to retrieve the most semantically related AI rules using vector similarity.
+          </Text>
+          <Group>
+            <TextInput placeholder="e.g., rules about user authentication..." value={semanticInput} onChange={(e) => setSemanticInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSemanticSearchSubmit()} style={{ flex: 1 }} leftSection={<IconSearch size={16} />} />
+            <Button onClick={handleSemanticSearchSubmit} loading={isSearching}>
+              Search
+            </Button>
+            {isSemanticMode && (
+              <Button
+                variant="subtle"
+                color="gray"
+                onClick={() => {
+                  setSemanticInput('');
+                  handleClearSemanticSearch();
+                }}
+              >
+                Clear
+              </Button>
+            )}
+          </Group>
+        </Card>
+
+        {/* Semantic Search Results */}
+        {isSemanticMode && (
+          <Card withBorder mb="md" p="md">
+            <Text fw={500} mb="sm">
+              Search Results ({semanticResults.length} matches)
+            </Text>
+            {semanticResults.length === 0 ? (
+              <Text c="dimmed" size="sm">
+                No matching rules found
+              </Text>
+            ) : (
+              <Stack gap="sm">
+                {semanticResults.map((result) => (
+                  <Card key={result.id} withBorder p="sm">
+                    <Group justify="space-between" mb="xs">
+                      <Group>
+                        <Text fw={500}>{result.name}</Text>
+                        <Badge color={result.is_active ? 'green' : 'gray'} size="sm">
+                          {result.is_active ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </Group>
+                      <Badge color="blue" variant="light" size="sm">
+                        {(result.similarity_score * 100).toFixed(1)}% match
+                      </Badge>
+                    </Group>
+                    <Progress value={result.similarity_score * 100} size="xs" mb="xs" color="blue" />
+                    {result.description && (
+                      <Text size="sm" c="dimmed" lineClamp={2}>
+                        {result.description}
+                      </Text>
+                    )}
+                  </Card>
+                ))}
+              </Stack>
+            )}
+          </Card>
+        )}
 
         <DataTable
           data={aiRules}

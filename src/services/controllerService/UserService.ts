@@ -47,7 +47,6 @@ export class UserService {
   }
 
   async create(request: z.infer<typeof CreateUserValidation>): Promise<ApiResponse> {
-    // Check if email already exists
     const existingUser = await this.userRepository.findOne({
       where: { email: request.email },
     });
@@ -56,7 +55,6 @@ export class UserService {
       throw new AppError('Email already exists', 400);
     }
 
-    // Hash the password before saving
     const hashedPassword = CryptoHelper.generateHash(request.password);
 
     const user = this.userRepository.create({
@@ -65,7 +63,6 @@ export class UserService {
     });
     await this.userRepository.save(user);
 
-    // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
     return {

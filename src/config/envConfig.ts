@@ -54,6 +54,18 @@ const envConfig = {
   smtpSecure: process.env.SMTP_SECURE === 'true',
   smtpAuthUser: process.env.SMTP_AUTH_USER,
   smtpAuthPass: process.env.SMTP_AUTH_PASS,
+
+  // Embedding Provider Configuration
+  embeddingProvider: (process.env.EMBEDDING_PROVIDER as 'openai' | 'deepseek' | 'custom') || 'openai',
+  embeddingApiKey: process.env.EMBEDDING_API_KEY,
+  embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-ada-002',
+  embeddingBaseUrl: process.env.EMBEDDING_BASE_URL, // For custom providers like DeepSeek
+  embeddingDimensions: parseInt(process.env.EMBEDDING_DIMENSIONS || '1536'),
+
+  // Qdrant Vector Database Configuration
+  qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
+  qdrantApiKey: process.env.QDRANT_API_KEY, // Optional, for production auth
+  qdrantCollectionName: process.env.QDRANT_COLLECTION_NAME || 'ai_rules',
 };
 
 export default envConfig;

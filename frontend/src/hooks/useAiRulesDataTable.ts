@@ -1,5 +1,5 @@
 import type { SortParams } from '@/components/datatable';
-import { useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useUpdateAiRuleMutation, type AiRule, type CreateAiRulePayload, type GetAiRulesParams, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type GetAiRulesParams, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
 import { useCallback, useState } from 'react';
 
 export function useAiRulesDataTable() {
@@ -9,6 +9,11 @@ export function useAiRulesDataTable() {
 
   // Search state
   const [search, setSearch] = useState('');
+
+  // Semantic search state
+  const [semanticQuery, setSemanticQuery] = useState('');
+  const [semanticResults, setSemanticResults] = useState<AiRuleSearchResult[]>([]);
+  const [isSemanticMode, setIsSemanticMode] = useState(false);
 
   // Sort state
   const [sort, setSort] = useState<SortParams | undefined>(undefined);
@@ -31,6 +36,11 @@ export function useAiRulesDataTable() {
   const [createAiRule, { isLoading: isCreating }] = useCreateAiRuleMutation();
   const [updateAiRule, { isLoading: isUpdating }] = useUpdateAiRuleMutation();
   const [deleteAiRule, { isLoading: isDeleting }] = useDeleteAiRuleMutation();
+
+  // Semantic search mutations
+  const [searchAiRules, { isLoading: isSearching }] = useSearchAiRulesMutation();
+  const [backfillVectors, { isLoading: isBackfilling }] = useBackfillVectorsMutation();
+  const [vectorizeAiRule, { isLoading: isVectorizing }] = useVectorizeAiRuleMutation();
 
   // Handlers
   const handlePageChange = useCallback((newPage: number) => {
@@ -76,10 +86,53 @@ export function useAiRulesDataTable() {
     [deleteAiRule]
   );
 
+  // Semantic search handler
+  const handleSemanticSearch = useCallback(
+    async (query: string) => {
+      if (!query.trim()) {
+        setSemanticResults([]);
+        setIsSemanticMode(false);
+        return;
+      }
+      setSemanticQuery(query);
+      const result = await searchAiRules({ query, limit: 3 }).unwrap();
+      setSemanticResults(result.data);
+      setIsSemanticMode(true);
+    },
+    [searchAiRules]
+  );
+
+  // Clear semantic search
+  const handleClearSemanticSearch = useCallback(() => {
+    setSemanticQuery('');
+    setSemanticResults([]);
+    setIsSemanticMode(false);
+  }, []);
+
+  // Backfill vectors handler
+  const handleBackfillVectors = useCallback(async () => {
+    const result = await backfillVectors().unwrap();
+    return result;
+  }, [backfillVectors]);
+
+  // Vectorize single rule handler
+  const handleVectorizeAiRule = useCallback(
+    async (ruleId: number) => {
+      const result = await vectorizeAiRule(ruleId).unwrap();
+      return result;
+    },
+    [vectorizeAiRule]
+  );
+
   return {
     // Data
     data: response?.data ?? [],
     pagination: response?.pagination,
+
+    // Semantic search data
+    semanticQuery,
+    semanticResults,
+    isSemanticMode,
 
     // Loading states
     isLoading,
@@ -87,6 +140,8 @@ export function useAiRulesDataTable() {
     isCreating,
     isUpdating,
     isDeleting,
+    isSearching,
+    isBackfilling,
 
     // Current state
     page,
@@ -105,8 +160,12 @@ export function useAiRulesDataTable() {
     handleCreateAiRule,
     handleUpdateAiRule,
     handleDeleteAiRule,
+    handleSemanticSearch,
+    handleClearSemanticSearch,
+    handleBackfillVectors,
+    handleVectorizeAiRule,
     refetch,
   };
 }
 
-export type { AiRule, CreateAiRulePayload, UpdateAiRulePayload };
+export type { AiRule, AiRuleSearchResult, CreateAiRulePayload, UpdateAiRulePayload };
