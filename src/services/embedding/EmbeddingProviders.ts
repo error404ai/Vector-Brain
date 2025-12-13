@@ -82,7 +82,7 @@ async function createDeepSeekProvider(config: EmbeddingProviderConfig): Promise<
     },
   });
 
-  const dimensions = config.dimensions || 1536;
+  const dimensions = config.dimensions || 768;
 
   return new (class extends BaseLangChainProvider {
     constructor() {
