@@ -2,15 +2,19 @@ import { AiRule } from '@/entities/AiRule';
 import AppError from '@/helpers/AppError';
 import paginate from '@/helpers/paginationHelper';
 import { AppDataSource } from '@/loaders/database';
+import Logger from '@/logger/index';
+import { AiEmbeddingService } from '@/services/AiEmbeddingService';
 import { ApiResponse } from '@/types/ApiResponse';
-import { AiRuleListValidation, CreateAiRuleValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
+import { AiRuleListValidation, CreateAiRuleValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Service } from 'typedi';
-import { FindOptionsWhere, Like } from 'typeorm';
+import { FindOptionsWhere, In, Like } from 'typeorm';
 import z from 'zod';
 
 @Service()
 export class AiRuleService {
   private aiRuleRepository = AppDataSource.getRepository(AiRule);
+
+  constructor(private aiEmbeddingService: AiEmbeddingService) {}
 
   async list(request: z.infer<typeof AiRuleListValidation>): Promise<ApiResponse> {
     const { page = 1, limit = 10, search } = request;
@@ -53,6 +57,20 @@ export class AiRuleService {
 
     const savedAiRule = await this.aiRuleRepository.save(aiRule);
 
+    // Store vector in Qdrant if rule text is provided
+    if (savedAiRule.rule && savedAiRule.rule.trim()) {
+      try {
+        await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
+          name: savedAiRule.name,
+          description: savedAiRule.description,
+          is_active: savedAiRule.is_active,
+        });
+      } catch (error) {
+        Logger.error(`Failed to store vector for new rule ${savedAiRule.id}:`, error);
+        // Don't fail the request if vector storage fails
+      }
+    }
+
     return { message: 'AI rule created successfully', data: savedAiRule };
   }
 
@@ -68,6 +86,25 @@ export class AiRuleService {
     Object.assign(aiRule, data);
     await this.aiRuleRepository.save(aiRule);
 
+    // Update vector in Qdrant if rule text changed
+    if (data.rule !== undefined) {
+      try {
+        if (aiRule.rule && aiRule.rule.trim()) {
+          await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.rule, {
+            name: aiRule.name,
+            description: aiRule.description,
+            is_active: aiRule.is_active,
+          });
+        } else {
+          // Remove vector if rule text is cleared
+          await this.aiEmbeddingService.deleteVector(aiRule.id);
+        }
+      } catch (error) {
+        Logger.error(`Failed to update vector for rule ${id}:`, error);
+        // Don't fail the request if vector update fails
+      }
+    }
+
     return { message: 'AI rule updated successfully', data: aiRule };
   }
 
@@ -82,6 +119,84 @@ export class AiRuleService {
 
     await this.aiRuleRepository.remove(aiRule);
 
+    // Delete vector from Qdrant
+    try {
+      await this.aiEmbeddingService.deleteVector(id);
+    } catch (error) {
+      Logger.error(`Failed to delete vector for rule ${id}:`, error);
+      // Don't fail the request if vector deletion fails
+    }
+
     return { message: 'AI rule deleted successfully' };
+  }
+
+  /**
+   * Search for AI rules by semantic similarity to a prompt
+   *
+   * @param request - Search request containing prompt and optional limit
+   * @returns Matching rules sorted by similarity score
+   */
+  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
+    const { prompt, limit = 10 } = request;
+
+    // Search for similar vectors in Qdrant
+    const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
+
+    if (searchResults.length === 0) {
+      return { message: 'No matching rules found', data: [] };
+    }
+
+    // Get the rule IDs from search results
+    const ruleIds = searchResults.map((result) => result.id);
+
+    // Fetch full rule details from database
+    const rules = await this.aiRuleRepository.find({
+      where: { id: In(ruleIds) },
+    });
+
+    // Combine rules with similarity scores and sort by score
+    const rulesWithScores = rules
+      .map((rule) => {
+        const searchResult = searchResults.find((r) => r.id === rule.id);
+        return {
+          ...rule,
+          similarity_score: searchResult?.score || 0,
+        };
+      })
+      .sort((a, b) => b.similarity_score - a.similarity_score);
+
+    return {
+      message: 'Rules retrieved successfully',
+      data: rulesWithScores,
+    };
+  }
+
+  /**
+   * Backfill vectors for all existing rules
+   * Useful for migrating existing data to use vector search
+   */
+  async backfillAllVectors(): Promise<ApiResponse> {
+    const rules = await this.aiRuleRepository.find({
+      where: { is_active: true },
+    });
+
+    const rulesToBackfill = rules
+      .filter((rule) => rule.rule && rule.rule.trim())
+      .map((rule) => ({
+        id: rule.id,
+        rule: rule.rule,
+        metadata: {
+          name: rule.name,
+          description: rule.description,
+          is_active: rule.is_active,
+        },
+      }));
+
+    await this.aiEmbeddingService.backfillVectors(rulesToBackfill);
+
+    return {
+      message: `Backfilled vectors for ${rulesToBackfill.length} rules`,
+      data: { count: rulesToBackfill.length },
+    };
   }
 }

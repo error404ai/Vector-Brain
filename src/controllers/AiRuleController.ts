@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AiRuleService } from '@/services/controllerService/AiRuleService';
-import { AiRuleListValidation, CreateAiRuleValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
+import { AiRuleListValidation, CreateAiRuleValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -37,5 +37,26 @@ export class AiRuleController {
   @Delete('/delete/:id')
   async delete(@Param('id') id: number) {
     return this.aiRuleService.delete(id);
+  }
+
+  /**
+   * Search for AI rules by semantic similarity to a prompt
+   * POST /api/ai-rules/search
+   * Body: { prompt: string, limit?: number }
+   */
+  @Post('/search')
+  @UseBefore(zodValidationMiddleware(SearchAiRulesValidation))
+  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>) {
+    return this.aiRuleService.searchByPrompt(request);
+  }
+
+  /**
+   * Backfill vectors for all existing rules
+   * POST /api/ai-rules/backfill-vectors
+   * This is an admin operation for migrating existing data
+   */
+  @Post('/backfill-vectors')
+  async backfillVectors() {
+    return this.aiRuleService.backfillAllVectors();
   }
 }

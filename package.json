@@ -44,6 +44,9 @@
   "author": "Vector Software",
   "license": "MIT",
   "dependencies": {
+    "@langchain/core": "^0.3.26",
+    "@langchain/openai": "^0.3.17",
+    "@qdrant/js-client-rest": "^1.13.0",
     "@types/winston": "^2.4.4",
     "axios": "^1.13.2",
     "body-parser": "^1.19.0",

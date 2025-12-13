@@ -27,6 +27,7 @@ import { HealthController } from './controllers/HealthController';
 import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
+import { AiEmbeddingService } from './services/AiEmbeddingService';
 
 dotenv.config();
 
@@ -80,8 +81,18 @@ app.get('*', (req, res) => {
 const server = http.createServer(app);
 
 AppDataSource.initialize()
-  .then(() => {
+  .then(async () => {
     Logger.info('Database connected successfully');
+
+    // Initialize AI Embedding Service (Qdrant collection)
+    try {
+      const aiEmbeddingService = Container.get(AiEmbeddingService);
+      await aiEmbeddingService.initialize();
+      Logger.info('AI Embedding Service initialized successfully');
+    } catch (error) {
+      Logger.warn('AI Embedding Service initialization failed (vector operations may be unavailable):', error);
+      // Don't fail app startup if embedding service fails
+    }
 
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, () => {
