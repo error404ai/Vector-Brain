@@ -37,7 +37,6 @@ function AiRules() {
     handleUpdateAiRule,
     handleDeleteAiRule,
     // Semantic search
-    semanticQuery,
     semanticResults,
     isSemanticMode,
     isSearching,

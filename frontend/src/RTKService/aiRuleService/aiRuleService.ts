@@ -152,7 +152,7 @@ const aiRuleApi = baseApi.injectEndpoints({
       query: (params) => ({
         url: '/ai-rules/search',
         method: 'POST',
-        body: params,
+        body: { prompt: params.query, limit: params.limit },
       }),
     }),
 

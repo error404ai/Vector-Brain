@@ -111,7 +111,13 @@ export class AiRuleService {
     }
 
     await this.aiRuleRepository.remove(aiRule);
-    await this.aiEmbeddingService.deleteVector(id);
+
+    try {
+      await this.aiEmbeddingService.deleteVector(id);
+    } catch (error) {
+      Logger.error(`Failed to delete vector for rule ${id}:`, error);
+      // Don't fail the request if vector deletion fails
+    }
 
     return { message: 'AI rule deleted successfully' };
   }
