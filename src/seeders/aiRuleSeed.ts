@@ -43,8 +43,8 @@ If Gmail is NOT logged in:
     },
     {
       user_id: 1,
-      name: 'Twitter Like Rule',
-      description: 'Rule for liking tweets on Twitter/X with state checking',
+      name: 'Twitter Like Rule - Basic State Checking',
+      description: 'Basic rule for liking tweets on Twitter/X with state checking to avoid toggling',
       rule: `When the user requests to like tweets on Twitter/X:
 
 1. Before clicking the Like button on any tweet:
@@ -73,6 +73,89 @@ If Gmail is NOT logged in:
    - Re-liking tweets that are already in the correct state.
 
 This rule ensures that the agent only performs a Like action, not an Unlike.`,
+      is_active: true,
+    },
+    {
+      user_id: 1,
+      name: 'Twitter Like Rule - Timeline Focused',
+      description: 'Rule for liking tweets on Twitter/X while staying on the user timeline',
+      rule: `When the user requests to like tweets on Twitter/X, follow these rules:
+
+1. Stay on the target user's main profile timeline.
+   - Do NOT open individual tweet pages unless the user explicitly asks.
+   - Avoid clicking the tweet text, username, or timestamp.
+   - Only interact with the Like button on the timeline list view.
+
+2. Before liking a tweet:
+   - Check if the Like icon is already active (filled heart).
+   - If active → SKIP that tweet.
+   - If inactive → Click Like once.
+
+3. After clicking Like:
+   - DO NOT click anything else on the tweet.
+   - DO NOT re-open the tweet.
+   - DO NOT toggle it again.
+   - Move to the next visible tweet.
+
+4. Scrolling rules:
+   - Scroll the timeline slowly to reveal new tweets.
+   - Do NOT scroll too fast or jump back to the top.
+   - Only scroll AFTER you have processed all visible tweets.
+
+5. Avoid:
+   - Opening tweet detail pages.
+   - Liking promoted/advertisement tweets.
+   - Clicking reply, retweet, share, or analytics icons.
+   - Leaving the user's timeline page.
+
+6. Liking multiple tweets:
+   - Maintain a counter.
+   - Like only the first N tweets that are NOT already liked.
+   - Stop immediately after reaching the requested number.
+
+This rule ensures stability: remain on the user timeline, never enter tweet pages, and like tweets safely without toggling.`,
+      is_active: true,
+    },
+    {
+      user_id: 1,
+      name: 'Twitter Like Rule - No Detail Pages',
+      description: 'Strict rule for liking tweets on Twitter/X without ever opening tweet detail pages',
+      rule: `When liking tweets on Twitter/X, the agent must NEVER open the tweet detail page.
+
+1. You must stay ONLY on the timeline list view.
+   - Do NOT click the tweet body, username, timestamp, media, or text.
+   - Only interact with the heart icon inside the timeline list.
+
+2. If a click accidentally opens a tweet detail page:
+   - Immediately return to the timeline using the browser back button.
+   - Do NOT like or interact with tweets inside the detail page.
+   - Resume from the previous scroll position.
+
+3. How to like tweets:
+   - Locate ONLY the heart icon in the list view.
+   - Check if it is already active (filled heart).
+     • If active → SKIP.
+     • If inactive → click once.
+   - After liking, do NOT click anything else on that tweet.
+
+4. Scrolling rules:
+   - Scroll slowly and linearly downwards.
+   - Do NOT scroll back to the top.
+   - Do NOT reload the page.
+
+5. Liking multiple tweets:
+   - Keep a counter and stop when the number of likes is reached.
+   - Skip replies, promoted tweets, and ads.
+   - Skip tweets already liked.
+
+6. Forbidden actions:
+   - Opening tweet details.
+   - Clicking tweet bodies.
+   - Liking inside tweet detail view.
+   - Re-liking (unliking) tweets.
+   - Navigating to replies or threads.
+
+The agent must stay in the timeline list view the entire time and`,
       is_active: true,
     },
   ];
