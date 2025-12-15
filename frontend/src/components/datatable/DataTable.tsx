@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Group, Pagination, Select, Text, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, TextInput, Tooltip } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconColumns, IconSearch, IconSortAscending, IconSortDescending } from '@tabler/icons-react';
 import type { DataTableColumnTextAlign, DataTableSortStatus, DataTableColumn as MantineColumn, DataTableProps as MantineDataTableProps } from 'mantine-datatable';
@@ -28,7 +28,6 @@ export function DataTable<T extends object>({
   page = 1,
   recordsPerPage = 10,
   totalRecords = data.length,
-  totalPages: propsTotalPages,
   onPageChange,
   onRecordsPerPageChange,
   recordsPerPageOptions = [5, 10, 20, 50],
@@ -83,11 +82,11 @@ export function DataTable<T extends object>({
     resizable: column.resizable,
   }));
 
-  // Calculate pagination values
-  // Use provided totalPages or calculate from totalRecords
-  const totalPages = propsTotalPages ?? Math.ceil(totalRecords / recordsPerPage);
-  const startRecord = totalRecords > 0 ? (page - 1) * recordsPerPage + 1 : 0;
-  const endRecord = Math.min(page * recordsPerPage, totalRecords);
+  // // Calculate pagination values
+  // // Use provided totalPages or calculate from totalRecords
+  // const totalPages = propsTotalPages ?? Math.ceil(totalRecords / recordsPerPage);
+  // const startRecord = totalRecords > 0 ? (page - 1) * recordsPerPage + 1 : 0;
+  // const endRecord = Math.min(page * recordsPerPage, totalRecords);
 
   // Internal safe handlers to satisfy mantine-datatable props
   const handlePageChangeInternal = (p: number) => {
@@ -164,39 +163,6 @@ export function DataTable<T extends object>({
 
       {/* Main DataTable */}
       <MantineDataTable<T> {...renderedProps} />
-
-      {/* Pagination and info */}
-      {pagination && totalRecords > 0 && (
-        <Group justify="space-between" mt="md">
-          <Group>
-            <Text size="sm" c="dimmed">
-              Showing {startRecord}-{endRecord} of {totalRecords} records
-            </Text>
-            {onRecordsPerPageChange && (
-              <Group gap="xs">
-                <Text size="sm" c="dimmed">
-                  Show:
-                </Text>
-                <Select
-                  data={recordsPerPageOptions.map((option) => ({
-                    value: option.toString(),
-                    label: option.toString(),
-                  }))}
-                  value={recordsPerPage.toString()}
-                  onChange={(value) => {
-                    if (value && onRecordsPerPageChange) {
-                      onRecordsPerPageChange(parseInt(value, 10));
-                    }
-                  }}
-                  size="xs"
-                  w={80}
-                />
-              </Group>
-            )}
-          </Group>
-          {totalPages > 1 && <Pagination total={totalPages} value={page} onChange={onPageChange} size="sm" />}
-        </Group>
-      )}
     </Box>
   );
 }
