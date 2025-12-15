@@ -121,7 +121,6 @@ export function DataTable<T extends object>({
     loadingText,
     minHeight,
     verticalSpacing,
-    paginationActiveBackgroundColor: 'transparent',
   };
 
   const renderedProps: MantineDataTableProps<T> = pagination
