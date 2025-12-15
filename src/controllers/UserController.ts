@@ -1,4 +1,3 @@
-import { AccessControllerHelper } from '@/helpers/AccessControllerHelper';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { UserService } from '@/services/controllerService/UserService';
 import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
@@ -14,43 +13,28 @@ export class UserController {
   @Get('/list')
   @UseBefore(zodValidationMiddleware(UserListValidation))
   async list(@QueryParams() query: any, @CurrentUser({ required: true }) user: { userId: number; email: string }) {
-    if (!(await AccessControllerHelper.canViewUser(user.userId))) {
-      throw new Error('Unauthorized to view users');
-    }
-    return this.userService.list(query);
+    return this.userService.list(query, user.userId);
   }
 
   @Get('/details/:id')
   async details(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number; email: string }) {
-    if (!(await AccessControllerHelper.canViewUser(user.userId))) {
-      throw new Error('Unauthorized to view user details');
-    }
-    return this.userService.details(id);
+    return this.userService.details(id, user.userId);
   }
 
   @Post('/create')
   @UseBefore(zodValidationMiddleware(CreateUserValidation))
   async create(@Body() request: z.infer<typeof CreateUserValidation>, @CurrentUser({ required: true }) user: { userId: number; email: string }) {
-    if (!(await AccessControllerHelper.canCreateUser(user.userId))) {
-      throw new Error('Unauthorized to create user');
-    }
-    return this.userService.create(request);
+    return this.userService.create(request, user.userId);
   }
 
   @Put('/update/:id')
   @UseBefore(zodValidationMiddleware(UpdateUserValidation))
   async update(@Param('id') id: number, @Body() data: z.infer<typeof UpdateUserValidation>, @CurrentUser({ required: true }) user: { userId: number; email: string }) {
-    if (!(await AccessControllerHelper.canUpdateUser(user.userId))) {
-      throw new Error('Unauthorized to update user');
-    }
-    return this.userService.update(id, data);
+    return this.userService.update(id, data, user.userId);
   }
 
   @Delete('/delete/:id')
   async delete(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number; email: string }) {
-    if (!(await AccessControllerHelper.canDeleteUser(user.userId))) {
-      throw new Error('Unauthorized to delete user');
-    }
-    return this.userService.delete(id);
+    return this.userService.delete(id, user.userId);
   }
 }

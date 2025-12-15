@@ -1,5 +1,6 @@
 import { User } from '@/entities/User';
-import AppError from '@/helpers/AppError';
+import { AccessControllerHelper } from '@/helpers/AccessControllerHelper';
+import AppError, { ForbiddenError } from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
 import paginate from '@/helpers/paginationHelper';
 import { AppDataSource } from '@/loaders/database';
@@ -13,7 +14,11 @@ import z from 'zod';
 export class UserService {
   private userRepository = AppDataSource.getRepository(User);
 
-  async list(request: z.infer<typeof UserListValidation>): Promise<ApiResponse> {
+  async list(request: z.infer<typeof UserListValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canViewUser(userId))) {
+      throw new ForbiddenError('Unauthorized to view users');
+    }
+
     const { page = 1, limit = 10, search, sortField, sortDirection } = request;
 
     const where: FindOptionsWhere<User> | FindOptionsWhere<User>[] = { deletedAt: IsNull() };
@@ -44,7 +49,11 @@ export class UserService {
     });
   }
 
-  async details(id: number): Promise<ApiResponse> {
+  async details(id: number, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canViewUser(userId))) {
+      throw new ForbiddenError('Unauthorized to view user details');
+    }
+
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -59,7 +68,11 @@ export class UserService {
     };
   }
 
-  async create(request: z.infer<typeof CreateUserValidation>): Promise<ApiResponse> {
+  async create(request: z.infer<typeof CreateUserValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canCreateUser(userId))) {
+      throw new ForbiddenError('Unauthorized to create user');
+    }
+
     const existingUser = await this.userRepository.findOne({
       where: { email: request.email },
     });
@@ -84,7 +97,11 @@ export class UserService {
     };
   }
 
-  async update(id: number, data: z.infer<typeof UpdateUserValidation>): Promise<ApiResponse> {
+  async update(id: number, data: z.infer<typeof UpdateUserValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canUpdateUser(userId))) {
+      throw new ForbiddenError('Unauthorized to update user');
+    }
+
     const user = await this.userRepository.findOne({
       where: { id },
     });
@@ -116,7 +133,11 @@ export class UserService {
     };
   }
 
-  async delete(id: number): Promise<ApiResponse> {
+  async delete(id: number, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canDeleteUser(userId))) {
+      throw new ForbiddenError('Unauthorized to delete user');
+    }
+
     const user = await this.userRepository.findOne({
       where: { id },
     });

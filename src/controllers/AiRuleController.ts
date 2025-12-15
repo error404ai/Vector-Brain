@@ -13,13 +13,13 @@ export class AiRuleController {
 
   @Get('/list')
   @UseBefore(zodValidationMiddleware(AiRuleListValidation))
-  async list(@QueryParams() query: any) {
-    return this.aiRuleService.list(query);
+  async list(@QueryParams() query: any, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.list(query, user.userId);
   }
 
   @Get('/details/:id')
-  async details(@Param('id') id: number) {
-    return this.aiRuleService.details(id);
+  async details(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.details(id, user.userId);
   }
 
   @Post('/create')
@@ -30,24 +30,24 @@ export class AiRuleController {
 
   @Put('/update/:id')
   @UseBefore(zodValidationMiddleware(UpdateAiRuleValidation))
-  async update(@Param('id') id: number, @Body() data: z.infer<typeof UpdateAiRuleValidation>) {
-    return this.aiRuleService.update(id, data);
+  async update(@Param('id') id: number, @Body() data: z.infer<typeof UpdateAiRuleValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.update(id, data, user.userId);
   }
 
   @Delete('/delete/:id')
-  async delete(@Param('id') id: number) {
-    return this.aiRuleService.delete(id);
+  async delete(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.delete(id, user.userId);
   }
 
   @Post('/search')
   @UseBefore(zodValidationMiddleware(SearchAiRulesValidation))
-  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>) {
-    return this.aiRuleService.searchByPrompt(request);
+  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.searchByPrompt(request, user.userId);
   }
 
   @Post('/backfill-vectors')
-  async backfillVectors() {
-    return this.aiRuleService.backfillAllVectors();
+  async backfillVectors(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.backfillAllVectors(user.userId);
   }
 
   @Post('/vectorize/:id')

@@ -1,47 +1,76 @@
-import { getRepository } from 'typeorm';
+import { AiRule } from '../entities/AiRule';
 import { Role, User } from '../entities/User';
+import { AppDataSource } from '../loaders/database';
 
 export class AccessControllerHelper {
-  /**
-   * Checks if the user with the given userId can create a new user.
-   * @param userId The ID of the current user.
-   * @returns True if the user can create a user, false otherwise.
-   */
   static async canCreateUser(userId: number): Promise<boolean> {
-    const user = await getRepository(User).findOne({ where: { id: userId } });
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
     if (!user) return false;
     return user.role === Role.ADMIN;
   }
 
-  /**
-   * Checks if the user with the given userId can delete a user.
-   * @param userId The ID of the current user.
-   * @returns True if the user can delete a user, false otherwise.
-   */
   static async canDeleteUser(userId: number): Promise<boolean> {
-    const user = await getRepository(User).findOne({ where: { id: userId } });
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
     if (!user) return false;
     return user.role === Role.ADMIN;
   }
 
-  /**
-   * Checks if the user with the given userId can view users.
-   * @param userId The ID of the current user.
-   * @returns True if the user can view users, false otherwise.
-   */
   static async canViewUser(userId: number): Promise<boolean> {
-    const user = await getRepository(User).findOne({ where: { id: userId } });
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
     if (!user) return false;
     return user.role === Role.ADMIN || user.role === Role.USER;
   }
 
-  /**
-   * Checks if the user with the given userId can update a user.
-   * @param userId The ID of the current user.
-   * @returns True if the user can update a user, false otherwise.
-   */
   static async canUpdateUser(userId: number): Promise<boolean> {
-    const user = await getRepository(User).findOne({ where: { id: userId } });
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    if (!user) return false;
+    return user.role === Role.ADMIN;
+  }
+
+  static async canCreateAiRule(userId: number): Promise<boolean> {
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    if (!user) return false;
+    return user.role === Role.ADMIN || user.role === Role.USER;
+  }
+
+  static async canViewAiRule(userId: number, ruleId: number): Promise<boolean> {
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    if (!user) return false;
+
+    if (user.role === Role.ADMIN) return true;
+
+    const aiRule = await AppDataSource.getRepository(AiRule).findOne({ where: { id: ruleId } });
+    if (!aiRule) return false;
+
+    return aiRule.user_id === userId;
+  }
+
+  static async canUpdateAiRule(userId: number, ruleId: number): Promise<boolean> {
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    if (!user) return false;
+
+    if (user.role === Role.ADMIN) return true;
+
+    const aiRule = await AppDataSource.getRepository(AiRule).findOne({ where: { id: ruleId } });
+    if (!aiRule) return false;
+
+    return aiRule.user_id === userId;
+  }
+
+  static async canDeleteAiRule(userId: number, ruleId: number): Promise<boolean> {
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    if (!user) return false;
+
+    if (user.role === Role.ADMIN) return true;
+
+    const aiRule = await AppDataSource.getRepository(AiRule).findOne({ where: { id: ruleId } });
+    if (!aiRule) return false;
+
+    return aiRule.user_id === userId;
+  }
+
+  static async canManageAiRules(userId: number): Promise<boolean> {
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
     if (!user) return false;
     return user.role === Role.ADMIN;
   }
