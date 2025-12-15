@@ -1,5 +1,6 @@
 import { AiRule } from '@/entities/AiRule';
-import AppError from '@/helpers/AppError';
+import { AccessControllerHelper } from '@/helpers/AccessControllerHelper';
+import AppError, { ForbiddenError } from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiEmbeddingService } from '@/services/AiEmbeddingService';
@@ -15,7 +16,11 @@ export class AiRuleService {
 
   constructor(private aiEmbeddingService: AiEmbeddingService) {}
 
-  async list(request: z.infer<typeof AiRuleListValidation>): Promise<ApiResponse> {
+  async list(request: z.infer<typeof AiRuleListValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
+      throw new ForbiddenError('Unauthorized to view AI rules');
+    }
+
     const { page = 1, limit = 10, search, sortField, sortDirection } = request;
 
     const where: FindOptionsWhere<AiRule> = {};
@@ -57,7 +62,11 @@ export class AiRuleService {
     };
   }
 
-  async details(id: number): Promise<ApiResponse> {
+  async details(id: number, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canViewAiRule(userId, id))) {
+      throw new ForbiddenError('Unauthorized to view this AI rule');
+    }
+
     const aiRule = await this.aiRuleRepository.findOne({
       where: { id },
     });
@@ -70,6 +79,10 @@ export class AiRuleService {
   }
 
   async create(request: z.infer<typeof CreateAiRuleValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
+      throw new ForbiddenError('Unauthorized to create AI rule');
+    }
+
     const aiRule = this.aiRuleRepository.create({
       user_id: userId,
       name: request.name,
@@ -91,7 +104,11 @@ export class AiRuleService {
     return { message: 'AI rule created successfully', data: savedAiRule };
   }
 
-  async update(id: number, data: z.infer<typeof UpdateAiRuleValidation>): Promise<ApiResponse> {
+  async update(id: number, data: z.infer<typeof UpdateAiRuleValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canUpdateAiRule(userId, id))) {
+      throw new ForbiddenError('Unauthorized to update this AI rule');
+    }
+
     const aiRule = await this.aiRuleRepository.findOne({
       where: { id },
     });
@@ -124,7 +141,11 @@ export class AiRuleService {
     return { message: 'AI rule updated successfully', data: aiRule };
   }
 
-  async delete(id: number): Promise<ApiResponse> {
+  async delete(id: number, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canDeleteAiRule(userId, id))) {
+      throw new ForbiddenError('Unauthorized to delete this AI rule');
+    }
+
     const aiRule = await this.aiRuleRepository.findOne({
       where: { id },
     });
@@ -145,7 +166,11 @@ export class AiRuleService {
     return { message: 'AI rule deleted successfully' };
   }
 
-  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
+  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
+      throw new ForbiddenError('Unauthorized to search AI rules');
+    }
+
     const { prompt, limit = 10 } = request;
 
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
@@ -176,7 +201,11 @@ export class AiRuleService {
     };
   }
 
-  async backfillAllVectors(): Promise<ApiResponse> {
+  async backfillAllVectors(userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canManageAiRules(userId))) {
+      throw new ForbiddenError('Unauthorized to manage AI rules');
+    }
+
     const rules = await this.aiRuleRepository.find({
       where: { is_active: true },
     });

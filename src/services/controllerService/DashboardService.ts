@@ -63,7 +63,7 @@ export class DashboardService {
 
     const recentUsers = await this.userRepository.find({
       where: { deletedAt: IsNull() },
-      order: { createdAt: 'DESC' },
+      order: { created_at: 'DESC' },
       take: 5,
     });
 
@@ -73,7 +73,7 @@ export class DashboardService {
         type: 'user',
         title: 'New user registered',
         description: `${user.name} joined the platform`,
-        createdAt: user.createdAt,
+        createdAt: user.created_at,
       });
     }
 
