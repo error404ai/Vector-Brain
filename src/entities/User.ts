@@ -30,10 +30,10 @@ export class User {
   role: Role;
 
   @CreateDateColumn({ type: 'datetime' })
-  createdAt: Date;
+  created_at: Date;
 
   @UpdateDateColumn({ type: 'datetime' })
-  updatedAt: Date;
+  updated_at: Date;
 
   @DeleteDateColumn({ type: 'datetime', nullable: true })
   deletedAt: Date;

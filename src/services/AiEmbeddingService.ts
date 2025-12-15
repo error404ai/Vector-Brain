@@ -198,6 +198,16 @@ export class AiEmbeddingService {
     }
   }
 
+  async dropCollection(): Promise<void> {
+    try {
+      await this.qdrantClient.deleteCollection(this.collectionName);
+      Logger.info(`Dropped Qdrant collection: ${this.collectionName}`);
+    } catch (error) {
+      Logger.error(`Failed to drop Qdrant collection ${this.collectionName}:`, error);
+      throw error;
+    }
+  }
+
   async backfillVectors(rules: Array<{ id: number; rule: string; metadata?: Record<string, unknown> }>): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error('Embedding service not configured');

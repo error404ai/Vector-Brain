@@ -16,7 +16,7 @@ export class AiRuleService {
   constructor(private aiEmbeddingService: AiEmbeddingService) {}
 
   async list(request: z.infer<typeof AiRuleListValidation>): Promise<ApiResponse> {
-    const { page = 1, limit = 10, search } = request;
+    const { page = 1, limit = 10, search, sortField, sortDirection } = request;
 
     const where: FindOptionsWhere<AiRule> = {};
 
@@ -24,10 +24,18 @@ export class AiRuleService {
       where.name = Like(`%${search}%`);
     }
 
+    const order: any = {};
+    if (sortField) {
+      order[sortField] = sortDirection || 'asc';
+    } else {
+      order.created_at = 'desc'; // Default sort by created_at descending
+    }
+
     const [items, totalCount] = await this.aiRuleRepository.findAndCount({
       where,
       skip: (page - 1) * limit,
       take: limit,
+      order,
     });
 
     // Hydrate to add vector_exist

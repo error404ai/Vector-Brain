@@ -1,5 +1,6 @@
 // Seed file - Add your seeders here
 import { AppDataSource } from '@/loaders/database';
+import { aiRuleSeed } from './aiRuleSeed';
 import { userSeed } from './userSeed';
 
 async function runSeeders() {
@@ -11,6 +12,7 @@ async function runSeeders() {
 
     // Run seeders
     await userSeed(connection);
+    await aiRuleSeed(connection);
 
     console.log('Seeding completed successfully!');
   } catch (error) {
