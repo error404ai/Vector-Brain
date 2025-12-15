@@ -82,13 +82,6 @@ export function DataTable<T extends object>({
     resizable: column.resizable,
   }));
 
-  // // Calculate pagination values
-  // // Use provided totalPages or calculate from totalRecords
-  // const totalPages = propsTotalPages ?? Math.ceil(totalRecords / recordsPerPage);
-  // const startRecord = totalRecords > 0 ? (page - 1) * recordsPerPage + 1 : 0;
-  // const endRecord = Math.min(page * recordsPerPage, totalRecords);
-
-  // Internal safe handlers to satisfy mantine-datatable props
   const handlePageChangeInternal = (p: number) => {
     if (onPageChange) onPageChange(p);
   };

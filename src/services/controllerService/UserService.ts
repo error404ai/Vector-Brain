@@ -6,7 +6,7 @@ import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import { CreateUserValidation, UpdateUserValidation, UserListValidation } from '@/validations/UserValidation';
 import { Service } from 'typedi';
-import { FindOptionsWhere, IsNull, Like } from 'typeorm';
+import { FindManyOptions, FindOptionsWhere, IsNull, Like } from 'typeorm';
 import z from 'zod';
 
 @Service()
@@ -14,7 +14,7 @@ export class UserService {
   private userRepository = AppDataSource.getRepository(User);
 
   async list(request: z.infer<typeof UserListValidation>): Promise<ApiResponse> {
-    const { page = 1, limit = 10, search } = request;
+    const { page = 1, limit = 10, search, sortField, sortDirection } = request;
 
     const where: FindOptionsWhere<User> | FindOptionsWhere<User>[] = { deletedAt: IsNull() };
 
@@ -22,12 +22,25 @@ export class UserService {
       where.name = Like(`%${search}%`);
     }
 
+    const findOptions: FindManyOptions<User> = {
+      where,
+    };
+
+    // Default sort by created_at descending if no sort specified
+    if (sortField) {
+      findOptions.order = {
+        [sortField]: sortDirection || 'asc',
+      };
+    } else {
+      findOptions.order = {
+        created_at: 'desc',
+      };
+    }
+
     return await paginate(this.userRepository, {
       page,
       limit,
-      findOptions: {
-        where,
-      },
+      findOptions,
     });
   }
 
