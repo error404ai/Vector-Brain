@@ -18,7 +18,7 @@ export class AccessControllerHelper {
   static async canViewUser(userId: number): Promise<boolean> {
     const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
     if (!user) return false;
-    return user.role === Role.ADMIN || user.role === Role.USER;
+    return user.role === Role.ADMIN;
   }
 
   static async canUpdateUser(userId: number): Promise<boolean> {
