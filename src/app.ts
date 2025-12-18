@@ -24,6 +24,7 @@ import { AgentTaskController } from './controllers/AgentTaskController';
 import { AiRuleController } from './controllers/AiRuleController';
 import { AuthController } from './controllers/AuthController';
 import { HealthController } from './controllers/HealthController';
+import { PromptController } from './controllers/PromptController';
 import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
@@ -53,7 +54,7 @@ app.use(requestContextMiddleware);
 
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [AgentTaskController, AiRuleController, AuthController, HealthController, UserController],
+  controllers: [AgentTaskController, AiRuleController, AuthController, HealthController, PromptController, UserController],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
@@ -62,7 +63,7 @@ useExpressServer(app, {
   },
   classTransformer: true,
   cors: {
-    origin: true,
+    origin: ['http://localhost:3000', 'http://localhost:5173'],
     credentials: true,
   },
   authorizationChecker,
