@@ -63,7 +63,7 @@ useExpressServer(app, {
   },
   classTransformer: true,
   cors: {
-    origin: ['http://localhost:3000', 'http://localhost:5173'],
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'https://app.vectoragent.io'],
     credentials: true,
   },
   authorizationChecker,
