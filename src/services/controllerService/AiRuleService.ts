@@ -167,10 +167,6 @@ export class AiRuleService {
   }
 
   async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId: number): Promise<ApiResponse> {
-    if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
-      throw new ForbiddenError('Unauthorized to search AI rules');
-    }
-
     const { prompt, limit = 10 } = request;
 
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
