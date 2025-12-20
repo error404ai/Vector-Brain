@@ -206,6 +206,12 @@ function AiRules() {
       sortable: true,
     },
     {
+      accessor: 'website',
+      title: 'Website',
+      render: (rule) => rule.website || 'N/A',
+      sortable: true,
+    },
+    {
       accessor: 'is_active',
       title: 'Active',
       render: (rule) => (rule.is_active ? 'Yes' : 'No'),
