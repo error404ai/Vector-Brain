@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { AiRule } from '@/entities/AiRule';
 import { User } from '@/entities/User';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
@@ -9,7 +10,7 @@ interface DashboardStats {
   totalUsers: number;
   activeUsers: number;
   totalAgentTasks: number;
-  recentAgentTasks: number;
+  totalAiRules: number;
 }
 
 interface RecentActivity {
@@ -24,6 +25,7 @@ interface RecentActivity {
 export class DashboardService {
   private userRepository = AppDataSource.getRepository(User);
   private agentTaskRepository = AppDataSource.getRepository(AgentTask);
+  private aiRuleRepository = AppDataSource.getRepository(AiRule);
 
   async getStats(): Promise<ApiResponse> {
     // Get user statistics
@@ -38,18 +40,15 @@ export class DashboardService {
     // Get agent task statistics
     const totalAgentTasks = await this.agentTaskRepository.count();
 
-    // Get tasks created in the last 7 days
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const recentAgentTasks = await this.agentTaskRepository.createQueryBuilder('task').where('task.created_at >= :date', { date: sevenDaysAgo }).getCount();
+    // Get AI rules statistics
+    const totalAiRules = await this.aiRuleRepository.count();
 
     // Calculate percentage changes (mock for now - can be enhanced with historical data)
     const stats: DashboardStats = {
       totalUsers,
       activeUsers,
       totalAgentTasks,
-      recentAgentTasks,
+      totalAiRules,
     };
 
     return {

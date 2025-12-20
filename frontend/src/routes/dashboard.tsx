@@ -37,11 +37,11 @@ function Dashboard() {
       color: 'teal',
     },
     {
-      title: 'Recent Tasks (7d)',
-      value: stats?.recentAgentTasks ?? 0,
-      diff: 15,
+      title: 'Total AI Rules',
+      value: stats?.totalAiRules ?? 0,
+      diff: 10,
       icon: IconBrain,
-      color: 'grape',
+      color: 'orange',
     },
   ];
 
