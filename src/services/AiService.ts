@@ -2,6 +2,7 @@ import envConfig from '@/config/envConfig';
 import Logger from '@/logger/index';
 import { ChatOpenAI } from '@langchain/openai';
 import { Service } from 'typedi';
+import * as z from 'zod';
 
 @Service()
 export class AiService {
@@ -26,16 +27,12 @@ export class AiService {
     }
 
     try {
-      const systemPrompt = 'You are a helpful assistant. Answer with only "yes" or "no".';
-      const userPrompt = `Is the following user prompt related to the website "${website}"? Prompt: "${prompt}". Answer with yes or no.`;
+      const schema = z.object({ isRelated: z.boolean() });
+      const structuredModel = this.chatModel.withStructuredOutput(schema);
 
-      const response = await this.chatModel.invoke([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ]);
+      const response = await structuredModel.invoke([{ role: 'user', content: `Is the following user prompt related to the website "${website}"? Prompt: "${prompt}"` }]);
 
-      const answer = (response.content as string).trim().toLowerCase();
-      return answer === 'yes';
+      return response.isRelated;
     } catch (error) {
       Logger.error('Failed to check relatedness with AI:', error);
       return false;
