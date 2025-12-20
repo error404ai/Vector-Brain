@@ -44,7 +44,7 @@ export class DashboardService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const recentAgentTasks = await this.agentTaskRepository.count({
-      where: { createdAt: MoreThan(thirtyDaysAgo) },
+      where: { created_at: MoreThan(thirtyDaysAgo) },
     });
 
     // Get AI rules statistics
