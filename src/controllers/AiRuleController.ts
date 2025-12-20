@@ -42,7 +42,7 @@ export class AiRuleController {
   @Post('/search')
   @UseBefore(zodValidationMiddleware(SearchAiRulesValidation))
   async search(@Body() request: z.infer<typeof SearchAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
-    return this.aiRuleService.searchByPrompt(request, user.userId);
+    return this.aiRuleService.searchByPrompt(request);
   }
 
   @Post('/backfill-vectors')

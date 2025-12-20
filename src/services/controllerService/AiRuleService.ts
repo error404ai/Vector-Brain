@@ -166,7 +166,7 @@ export class AiRuleService {
     return { message: 'AI rule deleted successfully' };
   }
 
-  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId: number): Promise<ApiResponse> {
+  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
     const detectedWebsite = this.detectWebsite(prompt);
@@ -185,7 +185,7 @@ export class AiRuleService {
 
     let filteredRules = rules;
     if (detectedWebsite) {
-      filteredRules = rules.filter(rule => rule.website === detectedWebsite || rule.website === null);
+      filteredRules = rules.filter((rule) => rule.website === detectedWebsite || rule.website === null);
     }
 
     const rulesWithScores = filteredRules
