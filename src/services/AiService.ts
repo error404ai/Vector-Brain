@@ -13,7 +13,6 @@ export class AiService {
       this.chatModel = new ChatOpenAI({
         openAIApiKey: envConfig.embeddingApiKey,
         modelName: 'gpt-5-mini',
-        temperature: 0.7,
       });
     } else {
       Logger.warn('No OpenAI API key configured. AI services will be unavailable.');
