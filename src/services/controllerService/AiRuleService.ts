@@ -4,6 +4,7 @@ import AppError, { ForbiddenError } from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiEmbeddingService } from '@/services/AiEmbeddingService';
+import { AiService } from '@/services/AiService';
 import { ApiResponse } from '@/types/ApiResponse';
 import { AiRuleListValidation, CreateAiRuleValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Service } from 'typedi';
@@ -14,7 +15,10 @@ import z from 'zod';
 export class AiRuleService {
   private aiRuleRepository = AppDataSource.getRepository(AiRule);
 
-  constructor(private aiEmbeddingService: AiEmbeddingService) {}
+  constructor(
+    private aiEmbeddingService: AiEmbeddingService,
+    private aiService: AiService
+  ) {}
 
   async list(request: z.infer<typeof AiRuleListValidation>, userId: number): Promise<ApiResponse> {
     if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
@@ -169,8 +173,6 @@ export class AiRuleService {
   async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
-    const detectedWebsite = this.detectWebsite(prompt);
-
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
 
     if (searchResults.length === 0) {
@@ -183,10 +185,13 @@ export class AiRuleService {
       where: { id: In(ruleIds) },
     });
 
-    let filteredRules = rules;
-    if (detectedWebsite) {
-      filteredRules = rules.filter((rule) => rule.website === detectedWebsite || rule.website === null);
-    }
+    // Filter rules based on AI check for website relatedness
+    const filteredRulesPromises = rules.map(async (rule) => {
+      if (!rule.website) return rule;
+      const isRelated = await this.aiService.isPromptRelatedToWebsite(prompt, rule.website);
+      return isRelated ? rule : null;
+    });
+    const filteredRules = (await Promise.all(filteredRulesPromises)).filter((rule) => rule !== null) as typeof rules;
 
     const rulesWithScores = filteredRules
       .map((rule) => {
@@ -268,23 +273,5 @@ export class AiRuleService {
     });
 
     return { message: 'AI rule vectorized successfully' };
-  }
-
-  private detectWebsite(prompt: string): string | null {
-    const urlRegex = /https?:\/\/(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\/|$)/g;
-    const matches = [...prompt.matchAll(urlRegex)];
-    if (matches.length > 0) {
-      const domain = matches[0][1].split('.')[0];
-      return domain;
-    }
-
-    // Keywords
-    const keywords = ['twitter', 'gmail', 'blogger', 'facebook', 'instagram', 'youtube', 'linkedin', 'github'];
-    for (const keyword of keywords) {
-      if (prompt.toLowerCase().includes(keyword)) {
-        return keyword;
-      }
-    }
-    return null;
   }
 }
