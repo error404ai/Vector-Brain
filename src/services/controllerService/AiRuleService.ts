@@ -4,6 +4,7 @@ import AppError, { ForbiddenError } from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiEmbeddingService } from '@/services/AiEmbeddingService';
+import { AiService } from '@/services/AiService';
 import { ApiResponse } from '@/types/ApiResponse';
 import { AiRuleListValidation, CreateAiRuleValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Service } from 'typedi';
@@ -14,7 +15,10 @@ import z from 'zod';
 export class AiRuleService {
   private aiRuleRepository = AppDataSource.getRepository(AiRule);
 
-  constructor(private aiEmbeddingService: AiEmbeddingService) {}
+  constructor(
+    private aiEmbeddingService: AiEmbeddingService,
+    private aiService: AiService
+  ) {}
 
   async list(request: z.infer<typeof AiRuleListValidation>, userId: number): Promise<ApiResponse> {
     if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
@@ -86,8 +90,8 @@ export class AiRuleService {
     const aiRule = this.aiRuleRepository.create({
       user_id: userId,
       name: request.name,
-      description: request.description,
       rule: request.rule,
+      website: request.website,
       is_active: request.is_active ?? true,
     });
 
@@ -96,7 +100,7 @@ export class AiRuleService {
     if (savedAiRule.rule && savedAiRule.rule.trim()) {
       await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
         name: savedAiRule.name,
-        description: savedAiRule.description,
+        website: savedAiRule.website,
         is_active: savedAiRule.is_active,
       });
     }
@@ -125,7 +129,7 @@ export class AiRuleService {
         if (aiRule.rule && aiRule.rule.trim()) {
           await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.rule, {
             name: aiRule.name,
-            description: aiRule.description,
+            website: aiRule.website,
             is_active: aiRule.is_active,
           });
         } else {
@@ -166,7 +170,7 @@ export class AiRuleService {
     return { message: 'AI rule deleted successfully' };
   }
 
-  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId: number): Promise<ApiResponse> {
+  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
@@ -181,7 +185,14 @@ export class AiRuleService {
       where: { id: In(ruleIds) },
     });
 
-    const rulesWithScores = rules
+    const filteredRulesPromises = rules.map(async (rule) => {
+      if (!rule.website) return rule;
+      const isRelated = await this.aiService.isPromptRelatedToWebsite(prompt, rule.website);
+      return isRelated ? rule : null;
+    });
+    const filteredRules = (await Promise.all(filteredRulesPromises)).filter((rule) => rule !== null) as typeof rules;
+
+    const rulesWithScores = filteredRules
       .map((rule) => {
         const searchResult = searchResults.find((r) => r.id === rule.id);
         return {
@@ -218,7 +229,7 @@ export class AiRuleService {
             rule: rule.rule,
             metadata: {
               name: rule.name,
-              description: rule.description,
+              website: rule.website,
               is_active: rule.is_active,
             },
           };
@@ -256,7 +267,7 @@ export class AiRuleService {
 
     await this.aiEmbeddingService.storeVector(id, aiRule.rule, {
       name: aiRule.name,
-      description: aiRule.description,
+      website: aiRule.website,
       is_active: aiRule.is_active,
     });
 

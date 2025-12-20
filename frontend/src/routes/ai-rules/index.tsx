@@ -206,11 +206,6 @@ function AiRules() {
       sortable: true,
     },
     {
-      accessor: 'description',
-      title: 'Description',
-      render: (rule) => rule.description || '-',
-    },
-    {
       accessor: 'is_active',
       title: 'Active',
       render: (rule) => (rule.is_active ? 'Yes' : 'No'),
@@ -317,11 +312,6 @@ function AiRules() {
                       </Badge>
                     </Group>
                     <Progress value={result.similarity_score * 100} size="xs" mb="xs" color="blue" />
-                    {result.description && (
-                      <Text size="sm" c="dimmed" lineClamp={2}>
-                        {result.description}
-                      </Text>
-                    )}
                   </Card>
                 ))}
               </Stack>

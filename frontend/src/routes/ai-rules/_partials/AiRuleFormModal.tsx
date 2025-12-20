@@ -15,12 +15,13 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
   const form = useForm({
     initialValues: {
       name: rule?.name || '',
-      description: rule?.description || '',
       rule: rule?.rule || '',
+      website: rule?.website || '',
       is_active: rule?.is_active ?? true,
     },
     validate: {
       name: (value: string) => (value.length < 1 ? 'Name is required' : null),
+      rule: (value: string) => (value.length < 1 ? 'Rule is required' : null),
     },
   });
 
@@ -29,8 +30,8 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     if (opened) {
       form.setValues({
         name: rule?.name || '',
-        description: rule?.description || '',
         rule: rule?.rule || '',
+        website: rule?.website || '',
         is_active: rule?.is_active ?? true,
       });
     }
@@ -41,8 +42,8 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     try {
       const payload: CreateAiRulePayload | UpdateAiRulePayload = {
         name: values.name,
-        ...(values.description.trim() && { description: values.description }),
-        ...(values.rule.trim() && { rule: values.rule }),
+        rule: values.rule,
+        ...(values.website.trim() && { website: values.website }),
         is_active: values.is_active,
       };
 
@@ -65,9 +66,9 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
         <Stack gap="md">
           <TextInput label="Name" placeholder="Enter rule name" required {...form.getInputProps('name')} />
 
-          <Textarea label="Description" placeholder="Enter rule description (optional)" minRows={2} maxRows={4} autosize {...form.getInputProps('description')} />
+          <Textarea label="Rule" placeholder="Enter the AI rule text" required minRows={3} maxRows={6} autosize {...form.getInputProps('rule')} />
 
-          <Textarea label="Rule" placeholder="Enter the AI rule text" minRows={3} maxRows={6} autosize {...form.getInputProps('rule')} />
+          <TextInput label="Website" placeholder="e.g., twitter, gmail (optional)" {...form.getInputProps('website')} />
 
           <Checkbox label="Active" {...form.getInputProps('is_active', { type: 'checkbox' })} />
 
