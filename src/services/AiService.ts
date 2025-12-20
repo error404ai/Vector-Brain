@@ -11,7 +11,7 @@ export class AiService {
     if (envConfig.embeddingApiKey) {
       this.chatModel = new ChatOpenAI({
         openAIApiKey: envConfig.embeddingApiKey,
-        modelName: 'gpt-4o-mini',
+        modelName: 'gpt-5-mini',
         temperature: 0.7,
       });
     } else {
