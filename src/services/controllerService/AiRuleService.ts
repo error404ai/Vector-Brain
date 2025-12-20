@@ -86,8 +86,8 @@ export class AiRuleService {
     const aiRule = this.aiRuleRepository.create({
       user_id: userId,
       name: request.name,
-      description: request.description,
       rule: request.rule,
+      website: request.website,
       is_active: request.is_active ?? true,
     });
 
@@ -96,7 +96,7 @@ export class AiRuleService {
     if (savedAiRule.rule && savedAiRule.rule.trim()) {
       await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
         name: savedAiRule.name,
-        description: savedAiRule.description,
+        website: savedAiRule.website,
         is_active: savedAiRule.is_active,
       });
     }
@@ -125,7 +125,7 @@ export class AiRuleService {
         if (aiRule.rule && aiRule.rule.trim()) {
           await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.rule, {
             name: aiRule.name,
-            description: aiRule.description,
+            website: aiRule.website,
             is_active: aiRule.is_active,
           });
         } else {
@@ -169,6 +169,8 @@ export class AiRuleService {
   async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId: number): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
+    const detectedWebsite = this.detectWebsite(prompt);
+
     const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
 
     if (searchResults.length === 0) {
@@ -181,7 +183,12 @@ export class AiRuleService {
       where: { id: In(ruleIds) },
     });
 
-    const rulesWithScores = rules
+    let filteredRules = rules;
+    if (detectedWebsite) {
+      filteredRules = rules.filter(rule => rule.website === detectedWebsite || rule.website === null);
+    }
+
+    const rulesWithScores = filteredRules
       .map((rule) => {
         const searchResult = searchResults.find((r) => r.id === rule.id);
         return {
@@ -218,7 +225,7 @@ export class AiRuleService {
             rule: rule.rule,
             metadata: {
               name: rule.name,
-              description: rule.description,
+              website: rule.website,
               is_active: rule.is_active,
             },
           };
@@ -256,10 +263,29 @@ export class AiRuleService {
 
     await this.aiEmbeddingService.storeVector(id, aiRule.rule, {
       name: aiRule.name,
-      description: aiRule.description,
+      website: aiRule.website,
       is_active: aiRule.is_active,
     });
 
     return { message: 'AI rule vectorized successfully' };
+  }
+
+  private detectWebsite(prompt: string): string | null {
+    // Extract domains from URLs
+    const urlRegex = /https?:\/\/(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\/|$)/g;
+    const matches = [...prompt.matchAll(urlRegex)];
+    if (matches.length > 0) {
+      const domain = matches[0][1].split('.')[0]; // e.g., twitter from twitter.com
+      return domain;
+    }
+
+    // Keywords
+    const keywords = ['twitter', 'gmail', 'blogger', 'facebook', 'instagram', 'youtube', 'linkedin', 'github'];
+    for (const keyword of keywords) {
+      if (prompt.toLowerCase().includes(keyword)) {
+        return keyword;
+      }
+    }
+    return null;
   }
 }

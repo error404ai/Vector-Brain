@@ -5,8 +5,8 @@ export interface AiRule {
   id: number;
   user_id: number;
   name: string;
-  description?: string;
   rule?: string;
+  website?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -53,8 +53,8 @@ export interface GetAiRulesParams {
  */
 export interface CreateAiRulePayload {
   name: string;
-  description?: string;
-  rule?: string;
+  rule: string;
+  website?: string;
   is_active?: boolean;
 }
 
@@ -63,8 +63,8 @@ export interface CreateAiRulePayload {
  */
 export interface UpdateAiRulePayload {
   name?: string;
-  description?: string;
   rule?: string;
+  website?: string;
   is_active?: boolean;
 }
 
@@ -82,8 +82,8 @@ export interface SemanticSearchParams {
 export interface AiRuleSearchResult {
   id: number;
   name: string;
-  description: string | null;
   rule: string | null;
+  website: string | null;
   is_active: boolean;
   similarity_score: number;
 }

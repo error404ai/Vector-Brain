@@ -7,7 +7,7 @@ export const aiRuleSeed = async (connection: DataSource) => {
     {
       user_id: 1,
       name: 'Blogger Blog Creation Rule',
-      description: 'Rule for creating a new blog on Blogger when Gmail is logged in',
+      website: 'blogger',
       rule: `When the user wants to create a new blog on Blogger, and a Gmail account is already logged into the browser:
 
 1. Detect that a Google account is already active:
@@ -44,7 +44,7 @@ If Gmail is NOT logged in:
     {
       user_id: 1,
       name: 'Twitter Like Rule - Basic State Checking',
-      description: 'Basic rule for liking tweets on Twitter/X with state checking to avoid toggling',
+      website: 'twitter',
       rule: `When the user requests to like tweets on Twitter/X:
 
 1. Before clicking the Like button on any tweet:
@@ -78,7 +78,7 @@ This rule ensures that the agent only performs a Like action, not an Unlike.`,
     {
       user_id: 1,
       name: 'Twitter Like Rule - Timeline Focused',
-      description: 'Rule for liking tweets on Twitter/X while staying on the user timeline',
+      website: 'twitter',
       rule: `When the user requests to like tweets on Twitter/X, follow these rules:
 
 1. Stay on the target user's main profile timeline.
@@ -119,7 +119,7 @@ This rule ensures stability: remain on the user timeline, never enter tweet page
     {
       user_id: 1,
       name: 'Twitter Like Rule - No Detail Pages',
-      description: 'Strict rule for liking tweets on Twitter/X without ever opening tweet detail pages',
+      website: 'twitter',
       rule: `When liking tweets on Twitter/X, the agent must NEVER open the tweet detail page.
 
 1. You must stay ONLY on the timeline list view.
@@ -174,7 +174,7 @@ The agent must stay in the timeline list view the entire time and`,
       if (savedAiRule.rule && savedAiRule.rule.trim()) {
         await embeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
           name: savedAiRule.name,
-          description: savedAiRule.description,
+          website: savedAiRule.website,
           is_active: savedAiRule.is_active,
         });
       }

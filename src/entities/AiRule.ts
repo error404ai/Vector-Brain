@@ -1,8 +1,8 @@
 import { AiEmbeddingService } from '@/services/AiEmbeddingService';
 import Container from 'typedi';
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
-import { User } from './User';
 import { Hydrate } from '../decorators/hydratable';
+import { User } from './User';
 
 @Entity('ai_rules')
 export class AiRule {
@@ -16,10 +16,10 @@ export class AiRule {
   name: string;
 
   @Column({ type: 'text', nullable: true })
-  description: string;
-
-  @Column({ type: 'text', nullable: true })
   rule: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  website: string | null;
 
   @Column({ type: 'boolean', default: true })
   is_active: boolean;

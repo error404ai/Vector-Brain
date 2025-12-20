@@ -29,12 +29,12 @@ export function AiRuleDetailModal({ rule, opened, onClose }: AiRuleDetailModalPr
           <Text size="sm">{rule.name}</Text>
         </Box>
 
-        {rule.description && (
+        {rule.website && (
           <Box>
             <Text size="sm" c="dimmed" mb="xs">
-              Description
+              Website
             </Text>
-            <Text size="sm">{rule.description}</Text>
+            <Text size="sm">{rule.website}</Text>
           </Box>
         )}
 
