@@ -7,7 +7,7 @@ export const aiRuleSeed = async (connection: DataSource) => {
     {
       user_id: 1,
       name: 'Blogger Blog Creation Rule',
-      website: 'blogger',
+      website: 'https://blogger.com',
       rule: `When the user wants to create a new blog on Blogger, and a Gmail account is already logged into the browser:
 
 1. Detect that a Google account is already active:
@@ -44,7 +44,7 @@ If Gmail is NOT logged in:
     {
       user_id: 1,
       name: 'Twitter Like Rule - Basic State Checking',
-      website: 'twitter',
+      website: 'https://x.com',
       rule: `When the user requests to like tweets on Twitter/X:
 
 1. Before clicking the Like button on any tweet:
@@ -78,7 +78,7 @@ This rule ensures that the agent only performs a Like action, not an Unlike.`,
     {
       user_id: 1,
       name: 'Twitter Like Rule - Timeline Focused',
-      website: 'twitter',
+      website: 'https://x.com',
       rule: `When the user requests to like tweets on Twitter/X, follow these rules:
 
 1. Stay on the target user's main profile timeline.
@@ -119,7 +119,7 @@ This rule ensures stability: remain on the user timeline, never enter tweet page
     {
       user_id: 1,
       name: 'Twitter Like Rule - No Detail Pages',
-      website: 'twitter',
+      website: 'https://x.com',
       rule: `When liking tweets on Twitter/X, the agent must NEVER open the tweet detail page.
 
 1. You must stay ONLY on the timeline list view.
