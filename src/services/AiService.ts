@@ -32,6 +32,8 @@ export class AiService {
 
       const response = await structuredModel.invoke([{ role: 'user', content: `Is the following user prompt related to the website "${website}"? Prompt: "${prompt}"` }]);
 
+      console.log('related', response.isRelated);
+
       return response.isRelated;
     } catch (error) {
       Logger.error('Failed to check relatedness with AI:', error);

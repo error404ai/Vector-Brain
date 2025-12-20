@@ -185,7 +185,6 @@ export class AiRuleService {
       where: { id: In(ruleIds) },
     });
 
-    // Filter rules based on AI check for website relatedness
     const filteredRulesPromises = rules.map(async (rule) => {
       if (!rule.website) return rule;
       const isRelated = await this.aiService.isPromptRelatedToWebsite(prompt, rule.website);
