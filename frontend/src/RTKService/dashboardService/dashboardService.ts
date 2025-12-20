@@ -4,6 +4,7 @@ export interface DashboardStats {
   totalUsers: number;
   activeUsers: number;
   totalAgentTasks: number;
+  recentAgentTasks: number;
   totalAiRules: number;
 }
 

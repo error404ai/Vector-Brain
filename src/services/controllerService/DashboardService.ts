@@ -4,12 +4,13 @@ import { User } from '@/entities/User';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
-import { IsNull } from 'typeorm';
+import { IsNull, MoreThan } from 'typeorm';
 
 interface DashboardStats {
   totalUsers: number;
   activeUsers: number;
   totalAgentTasks: number;
+  recentAgentTasks: number;
   totalAiRules: number;
 }
 
@@ -40,6 +41,12 @@ export class DashboardService {
     // Get agent task statistics
     const totalAgentTasks = await this.agentTaskRepository.count();
 
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentAgentTasks = await this.agentTaskRepository.count({
+      where: { createdAt: MoreThan(thirtyDaysAgo) },
+    });
+
     // Get AI rules statistics
     const totalAiRules = await this.aiRuleRepository.count();
 
@@ -48,6 +55,7 @@ export class DashboardService {
       totalUsers,
       activeUsers,
       totalAgentTasks,
+      recentAgentTasks,
       totalAiRules,
     };
 
