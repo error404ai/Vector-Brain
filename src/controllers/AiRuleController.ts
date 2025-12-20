@@ -41,7 +41,7 @@ export class AiRuleController {
 
   @Post('/search')
   @UseBefore(zodValidationMiddleware(SearchAiRulesValidation))
-  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>) {
     return this.aiRuleService.searchByPrompt(request);
   }
 
