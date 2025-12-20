@@ -271,11 +271,10 @@ export class AiRuleService {
   }
 
   private detectWebsite(prompt: string): string | null {
-    // Extract domains from URLs
     const urlRegex = /https?:\/\/(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\/|$)/g;
     const matches = [...prompt.matchAll(urlRegex)];
     if (matches.length > 0) {
-      const domain = matches[0][1].split('.')[0]; // e.g., twitter from twitter.com
+      const domain = matches[0][1].split('.')[0];
       return domain;
     }
 
