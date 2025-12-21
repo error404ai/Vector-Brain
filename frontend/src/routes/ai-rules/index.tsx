@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
@@ -45,10 +46,17 @@ function AiRules() {
     handleClearSemanticSearch,
     handleBackfillVectors,
     handleVectorizeAiRule,
+    handleExportAiRules,
+    handleImportAiRules,
+    isExporting,
+    isImporting,
   } = useAiRulesDataTable();
 
   // Local semantic search input state
   const [semanticInput, setSemanticInput] = useState('');
+
+  // Selected rules for export
+  const [selectedRules, setSelectedRules] = useState<number[]>([]);
 
   // View rule state
   const [viewingRule, setViewingRule] = useState<AiRule | undefined>();
@@ -192,6 +200,73 @@ function AiRules() {
     }
   };
 
+  // Handle export
+  const handleExport = async (exportAll = false) => {
+    try {
+      const params = exportAll ? undefined : { ids: selectedRules };
+      const result = await handleExportAiRules(params);
+      const dataStr = JSON.stringify(result.data, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+      const exportFileDefaultName = `ai-rules-${new Date().toISOString().split('T')[0]}.json`;
+      const linkElement = document.createElement('a');
+      linkElement.setAttribute('href', dataUri);
+      linkElement.setAttribute('download', exportFileDefaultName);
+      linkElement.click();
+      notifications.show({
+        title: 'Export Complete',
+        message: `Exported ${result.data.length} rules`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Export Error',
+        message: 'Failed to export rules',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  // Handle import
+  const handleImport = async (file: File, deleteExisting = false) => {
+    try {
+      const text = await file.text();
+      const rules = JSON.parse(text);
+      if (!Array.isArray(rules)) {
+        throw new Error('Invalid file format');
+      }
+      const result = await handleImportAiRules({ rules: rules as any, deleteExisting });
+      notifications.show({
+        title: 'Import Complete',
+        message: result.message,
+        color: result.data.failed > 0 ? 'yellow' : 'green',
+        icon: <IconCheck size={16} />,
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Import Error',
+        message: 'Failed to import rules',
+        color: 'red',
+        icon: <IconX size={16} />,
+      });
+    }
+  };
+
+  // Handle file input for import
+  const handleFileImport = (deleteExisting = false) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        handleImport(file, deleteExisting);
+      }
+    };
+    input.click();
+  };
+
   // Define table columns
   const columns: DataTableColumn<AiRule>[] = [
     {
@@ -257,6 +332,18 @@ function AiRules() {
           <Group>
             <Button variant="light" leftSection={<IconDatabase size={16} />} onClick={handleBackfill} loading={isBackfilling}>
               Backfill Vectors
+            </Button>
+            <Button variant="outline" onClick={() => handleExport(false)} loading={isExporting} disabled={selectedRules.length === 0}>
+              Export Selected ({selectedRules.length})
+            </Button>
+            <Button variant="outline" onClick={() => handleExport(true)} loading={isExporting}>
+              Export All
+            </Button>
+            <Button variant="outline" onClick={() => handleFileImport(false)} loading={isImporting}>
+              Import
+            </Button>
+            <Button variant="outline" color="red" onClick={() => handleFileImport(true)} loading={isImporting}>
+              Import (Replace All)
             </Button>
             <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
               Create AI Rule
@@ -347,6 +434,9 @@ function AiRules() {
           loadingText="Loading AI rules..."
           minHeight={300}
           verticalSpacing="sm"
+          withRowSelection
+          selectedRecords={aiRules.filter((rule) => selectedRules.includes(rule.id))}
+          onSelectionChange={(selected) => setSelectedRules(selected.map((r) => r.id))}
         />
       </Box>
 

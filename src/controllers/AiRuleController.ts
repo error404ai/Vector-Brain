@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AiRuleService } from '@/services/controllerService/AiRuleService';
-import { AiRuleListValidation, CreateAiRuleValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
+import { AiRuleListValidation, CreateAiRuleValidation, ExportAiRulesValidation, ImportAiRulesValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -53,5 +53,17 @@ export class AiRuleController {
   @Post('/vectorize/:id')
   async vectorize(@Param('id') id: number) {
     return this.aiRuleService.vectorizeSingle(id);
+  }
+
+  @Get('/export')
+  @UseBefore(zodValidationMiddleware(ExportAiRulesValidation))
+  async export(@QueryParams() query: any, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.export(query, user.userId);
+  }
+
+  @Post('/import')
+  @UseBefore(zodValidationMiddleware(ImportAiRulesValidation))
+  async import(@Body() request: z.infer<typeof ImportAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.import(request, user.userId);
   }
 }

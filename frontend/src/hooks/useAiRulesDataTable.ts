@@ -1,5 +1,5 @@
 import type { SortParams } from '@/components/datatable';
-import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type GetAiRulesParams, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useImportAiRulesMutation, useLazyExportAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type ExportAiRulesParams, type GetAiRulesParams, type ImportAiRulesPayload, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
 import { useCallback, useState } from 'react';
 
 export function useAiRulesDataTable() {
@@ -41,6 +41,10 @@ export function useAiRulesDataTable() {
   const [searchAiRules, { isLoading: isSearching }] = useSearchAiRulesMutation();
   const [backfillVectors, { isLoading: isBackfilling }] = useBackfillVectorsMutation();
   const [vectorizeAiRule, { isLoading: isVectorizing }] = useVectorizeAiRuleMutation();
+
+  // Export/Import mutations
+  const [exportAiRules, { isLoading: isExporting }] = useLazyExportAiRulesQuery();
+  const [importAiRules, { isLoading: isImporting }] = useImportAiRulesMutation();
 
   // Handlers
   const handlePageChange = useCallback((newPage: number) => {
@@ -124,6 +128,24 @@ export function useAiRulesDataTable() {
     [vectorizeAiRule]
   );
 
+  // Export AI rules handler
+  const handleExportAiRules = useCallback(
+    async (params?: ExportAiRulesParams) => {
+      const result = await exportAiRules(params).unwrap();
+      return result;
+    },
+    [exportAiRules]
+  );
+
+  // Import AI rules handler
+  const handleImportAiRules = useCallback(
+    async (data: ImportAiRulesPayload) => {
+      const result = await importAiRules(data).unwrap();
+      return result;
+    },
+    [importAiRules]
+  );
+
   return {
     // Data
     data: response?.data ?? [],
@@ -143,6 +165,8 @@ export function useAiRulesDataTable() {
     isSearching,
     isBackfilling,
     isVectorizing,
+    isExporting,
+    isImporting,
 
     // Current state
     page,
@@ -165,6 +189,8 @@ export function useAiRulesDataTable() {
     handleClearSemanticSearch,
     handleBackfillVectors,
     handleVectorizeAiRule,
+    handleExportAiRules,
+    handleImportAiRules,
     refetch,
   };
 }

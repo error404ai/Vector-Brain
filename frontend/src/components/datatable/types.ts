@@ -5,7 +5,7 @@ import React from 'react';
  */
 export interface DataTableColumn<T = object> {
   accessor: keyof T | string;
-  title?: string;
+  title?: string | React.ReactNode;
   sortable?: boolean;
   searchable?: boolean;
   width?: number | string;

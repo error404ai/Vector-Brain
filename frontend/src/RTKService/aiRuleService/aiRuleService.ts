@@ -107,6 +107,33 @@ export interface BackfillResponse {
   };
 }
 
+/**
+ * Export AI rules parameters
+ */
+export interface ExportAiRulesParams {
+  ids?: number[];
+}
+
+/**
+ * Import AI rules payload
+ */
+export interface ImportAiRulesPayload {
+  rules: Omit<CreateAiRulePayload, 'is_active'> & { is_active?: boolean }[];
+  deleteExisting?: boolean;
+}
+
+/**
+ * Import response
+ */
+export interface ImportAiRulesResponse {
+  message: string;
+  data: {
+    imported: number;
+    failed: number;
+    errors: { name: string; error: string }[];
+  };
+}
+
 const aiRuleApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     // List AI rules with pagination - matches /ai-rules/list endpoint
@@ -182,9 +209,28 @@ const aiRuleApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [TAGS.AI_RULES],
     }),
+
+    // Export AI rules - matches /ai-rules/export endpoint
+    exportAiRules: builder.query<{ message: string; data: Omit<AiRule, 'id' | 'user_id' | 'created_at' | 'updated_at' | 'vector_exist'>[] }, ExportAiRulesParams | void>({
+      query: (params) => ({
+        url: '/ai-rules/export',
+        method: 'GET',
+        params: params || {},
+      }),
+    }),
+
+    // Import AI rules - matches /ai-rules/import endpoint
+    importAiRules: builder.mutation<ImportAiRulesResponse, ImportAiRulesPayload>({
+      query: (data) => ({
+        url: '/ai-rules/import',
+        method: 'POST',
+        body: data,
+      }),
+      invalidatesTags: [TAGS.AI_RULES],
+    }),
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation } = aiRuleApi;
 
 export default aiRuleApi;
