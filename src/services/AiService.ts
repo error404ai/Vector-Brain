@@ -3,16 +3,17 @@ import Logger from '@/logger/index';
 import { ChatOpenAI } from '@langchain/openai';
 import { Service } from 'typedi';
 import * as z from 'zod';
+import SettingService from './controllerService/SettingService';
 
 @Service()
 export class AiService {
   private chatModel: ChatOpenAI | null = null;
 
-  constructor() {
+  constructor(private settingService: SettingService) {
     if (envConfig.embeddingApiKey) {
       this.chatModel = new ChatOpenAI({
         openAIApiKey: envConfig.embeddingApiKey,
-        modelName: 'gpt-5-mini',
+        modelName: 'gpt-4o-mini',
       });
     } else {
       Logger.warn('No OpenAI API key configured. AI services will be unavailable.');
@@ -45,7 +46,7 @@ export class AiService {
       throw new Error('AI service not configured');
     }
 
-    const systemPrompt = `You are an expert prompt engineer. Enhance the following user prompt to make it clearer, more specific, and more effective for AI models. Keep the core intent but improve structure, add context if needed, and ensure it's concise. Return only the enhanced prompt, no explanations.`;
+    const systemPrompt = await this.settingService.getSettingValue('systemPromptForEnhancement') as string;
 
     const response = await this.chatModel.invoke([
       { role: 'system', content: systemPrompt },
