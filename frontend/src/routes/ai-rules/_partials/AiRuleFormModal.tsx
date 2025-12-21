@@ -22,6 +22,15 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     validate: {
       name: (value: string) => (value.length < 1 ? 'Name is required' : null),
       rule: (value: string) => (value.length < 1 ? 'Rule is required' : null),
+      website: (value: string) => {
+        if (!value.trim()) return null;
+        try {
+          new URL(value);
+          return null;
+        } catch {
+          return 'Invalid URL. Please enter a valid URL, e.g., https://example.com';
+        }
+      },
     },
   });
 
@@ -68,7 +77,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
 
           <Textarea label="Rule" placeholder="Enter the AI rule text" required minRows={3} maxRows={6} autosize {...form.getInputProps('rule')} />
 
-          <TextInput label="Website" placeholder="e.g., twitter, gmail (optional)" {...form.getInputProps('website')} />
+          <TextInput label="Website" placeholder="e.g., https://twitter.com (optional)" {...form.getInputProps('website')} />
 
           <Checkbox label="Active" {...form.getInputProps('is_active', { type: 'checkbox' })} />
 
