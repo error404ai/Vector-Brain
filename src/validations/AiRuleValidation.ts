@@ -12,6 +12,7 @@ export const CreateAiRuleValidation = z.object({
   rule: z.string({ required_error: 'Rule is required' }).min(1, 'Rule is required'),
   website: z.string().url().optional(),
   is_active: z.boolean().optional(),
+  is_global: z.boolean().optional(),
 });
 
 // Update AI rule validation
@@ -35,4 +36,27 @@ export const AiRuleListValidation = z.object({
 export const SearchAiRulesValidation = z.object({
   prompt: z.string({ required_error: 'Prompt is required' }).min(1, 'Prompt is required'),
   limit: coerceNumber('Limit').min(1, 'Limit must be at least 1').max(100, 'Limit cannot exceed 100').optional().default(10),
+});
+
+// Export AI rules validation
+export const ExportAiRulesValidation = z.object({
+  ids: z.string().optional(),
+});
+
+// Import AI rules validation
+export const ImportAiRulesValidation = z.object({
+  rules: z.array(
+    z.object({
+      name: z.string().min(1, 'Name is required'),
+      rule: z.string().min(1, 'Rule is required'),
+      website: z.union([z.string().url(), z.null()]),
+      is_active: z.boolean().optional(),
+    })
+  ),
+  deleteExisting: z.boolean().optional(),
+});
+
+// Bulk delete AI rules validation
+export const BulkDeleteAiRulesValidation = z.object({
+  ids: z.array(coerceNumber('ID')).min(1, 'At least one ID is required'),
 });

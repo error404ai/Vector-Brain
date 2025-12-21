@@ -1,7 +1,11 @@
-import { Button, Card, Divider, Group, PasswordInput, Select, Stack, Switch, Tabs, Text, TextInput, Title } from '@mantine/core';
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { useGetSettingsQuery, useUpdateSettingMutation } from '@/RTKService/settingService/settingService';
+import { Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { IconBell, IconKey, IconPalette, IconUser } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
+import { IconSettings } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
+import React from 'react';
 import { Helmet } from 'react-helmet-async';
 
 export const Route = createFileRoute('/settings')({
@@ -9,26 +13,54 @@ export const Route = createFileRoute('/settings')({
 });
 
 function SettingsPage() {
-  const profileForm = useForm({
+  const { data: settings, isLoading } = useGetSettingsQuery();
+  const [updateSetting, { isLoading: isUpdating }] = useUpdateSettingMutation();
+
+  const systemPromptSetting = settings?.find((s) => s.key === 'systemPromptForEnhancement');
+
+  const form = useForm({
     initialValues: {
-      name: 'John Doe',
-      email: 'john@example.com',
-      company: 'Vector Software',
+      systemPrompt: (systemPromptSetting?.value as string) || '',
     },
   });
 
-  const passwordForm = useForm({
-    initialValues: {
-      currentPassword: '',
-      newPassword: '',
-      confirmPassword: '',
-    },
-  });
+  // Update form when settings load
+  React.useEffect(() => {
+    if (systemPromptSetting) {
+      form.setValues({
+        systemPrompt: systemPromptSetting.value as string,
+      });
+    }
+  }, [systemPromptSetting, form]);
+
+  const handleSubmit = async (values: typeof form.values) => {
+    try {
+      await updateSetting({
+        key: 'systemPromptForEnhancement',
+        value: values.systemPrompt,
+      }).unwrap();
+      notifications.show({
+        title: 'Success',
+        message: 'System prompt updated successfully',
+        color: 'green',
+      });
+    } catch (error) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to update system prompt',
+        color: 'red',
+      });
+    }
+  };
 
   const cardStyle = {
     backgroundColor: '#ffffff',
     border: '1px solid rgba(0,0,0,0.1)',
   };
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
 
   return (
     <>
@@ -39,100 +71,28 @@ function SettingsPage() {
         <div>
           <Title order={2}>Settings</Title>
           <Text c="dimmed" size="sm">
-            Manage your account settings
+            Manage your system settings
           </Text>
         </div>
 
-        <Tabs defaultValue="profile" color="vector">
-          <Tabs.List>
-            <Tabs.Tab value="profile" leftSection={<IconUser size="1rem" />}>
-              Profile
-            </Tabs.Tab>
-            <Tabs.Tab value="security" leftSection={<IconKey size="1rem" />}>
-              Security
-            </Tabs.Tab>
-            <Tabs.Tab value="notifications" leftSection={<IconBell size="1rem" />}>
-              Notifications
-            </Tabs.Tab>
-            <Tabs.Tab value="appearance" leftSection={<IconPalette size="1rem" />}>
-              Appearance
-            </Tabs.Tab>
-          </Tabs.List>
-
-          <Tabs.Panel value="profile" pt="xl">
-            <Card padding="lg" radius="md" style={cardStyle}>
+        <Card padding="lg" radius="md" style={cardStyle}>
+          <Stack gap="md">
+            <Group>
+              <IconSettings size="1.5rem" />
+              <Title order={4}>AI Settings</Title>
+            </Group>
+            <form onSubmit={form.onSubmit(handleSubmit)}>
               <Stack gap="md">
-                <TextInput label="Full Name" {...profileForm.getInputProps('name')} />
-                <TextInput label="Email" {...profileForm.getInputProps('email')} />
-                <TextInput label="Company" {...profileForm.getInputProps('company')} />
+                <Textarea label="System Prompt for Prompt Enhancement" description="This prompt is used to enhance user prompts for better AI responses" placeholder="Enter system prompt..." minRows={4} {...form.getInputProps('systemPrompt')} />
                 <Group justify="flex-end">
-                  <Button color="vector">Save</Button>
+                  <Button type="submit" color="vector" loading={isUpdating}>
+                    Save
+                  </Button>
                 </Group>
               </Stack>
-            </Card>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="security" pt="xl">
-            <Card padding="lg" radius="md" style={cardStyle}>
-              <Title order={4} mb="md">
-                Change Password
-              </Title>
-              <Stack gap="md">
-                <PasswordInput label="Current Password" {...passwordForm.getInputProps('currentPassword')} />
-                <PasswordInput label="New Password" {...passwordForm.getInputProps('newPassword')} />
-                <PasswordInput label="Confirm Password" {...passwordForm.getInputProps('confirmPassword')} />
-                <Group justify="flex-end">
-                  <Button color="vector">Update</Button>
-                </Group>
-              </Stack>
-              <Divider my="xl" color="rgba(0,0,0,0.1)" />
-              <Group justify="space-between">
-                <div>
-                  <Text size="sm">Enable 2FA</Text>
-                </div>
-                <Switch color="vector" />
-              </Group>
-            </Card>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="notifications" pt="xl">
-            <Card padding="lg" radius="md" style={cardStyle}>
-              <Stack gap="lg">
-                <Group justify="space-between">
-                  <Text size="sm">Email Notifications</Text>
-                  <Switch color="vector" defaultChecked />
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm">Push Notifications</Text>
-                  <Switch color="vector" defaultChecked />
-                </Group>
-              </Stack>
-            </Card>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="appearance" pt="xl">
-            <Card padding="lg" radius="md" style={cardStyle}>
-              <Stack gap="lg">
-                <Select
-                  label="Theme"
-                  defaultValue="light"
-                  data={[
-                    { value: 'light', label: 'Light' },
-                    { value: 'dark', label: 'Dark' },
-                  ]}
-                />
-                <Select
-                  label="Language"
-                  defaultValue="en"
-                  data={[
-                    { value: 'en', label: 'English' },
-                    { value: 'es', label: 'Spanish' },
-                  ]}
-                />
-              </Stack>
-            </Card>
-          </Tabs.Panel>
-        </Tabs>
+            </form>
+          </Stack>
+        </Card>
       </Stack>
     </>
   );

@@ -9,8 +9,8 @@ export class AiRule {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'int' })
-  user_id: number;
+  @Column({ type: 'int', nullable: true })
+  user_id: number | null;
 
   @Column({ type: 'varchar', length: 255 })
   name: string;
@@ -30,9 +30,9 @@ export class AiRule {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'user_id' })
-  user: Relation<User>;
+  user: Relation<User | null>;
 
   @Hydrate
   async vectorExist(): Promise<boolean> {

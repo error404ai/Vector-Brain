@@ -3,7 +3,7 @@ import { baseApi, TAGS } from '../baseApi';
 
 export interface AiRule {
   id: number;
-  user_id: number;
+  user_id: number | null;
   name: string;
   rule?: string;
   website?: string;
@@ -56,6 +56,7 @@ export interface CreateAiRulePayload {
   rule: string;
   website?: string;
   is_active?: boolean;
+  is_global?: boolean;
 }
 
 /**
@@ -105,6 +106,47 @@ export interface BackfillResponse {
     processed: number;
     failed: number;
   };
+}
+
+/**
+ * Export AI rules parameters
+ */
+export interface ExportAiRulesParams {
+  ids?: number[];
+}
+
+/**
+ * Import AI rules payload
+ */
+export interface ImportAiRulesPayload {
+  rules: Omit<CreateAiRulePayload, 'is_active'> & { is_active?: boolean }[];
+  deleteExisting?: boolean;
+}
+
+/**
+ * Import response
+ */
+export interface ImportAiRulesResponse {
+  message: string;
+  data: {
+    imported: number;
+    failed: number;
+    errors: { name: string; error: string }[];
+  };
+}
+
+/**
+ * Bulk delete payload
+ */
+export interface BulkDeleteAiRulesPayload {
+  ids: number[];
+}
+
+/**
+ * Bulk delete response
+ */
+export interface BulkDeleteAiRulesResponse {
+  message: string;
 }
 
 const aiRuleApi = baseApi.injectEndpoints({
@@ -182,9 +224,38 @@ const aiRuleApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [TAGS.AI_RULES],
     }),
+
+    // Export AI rules - matches /ai-rules/export endpoint
+    exportAiRules: builder.query<{ message: string; data: Omit<AiRule, 'id' | 'user_id' | 'created_at' | 'updated_at' | 'vector_exist'>[] }, ExportAiRulesParams | void>({
+      query: (params) => ({
+        url: '/ai-rules/export',
+        method: 'GET',
+        params: params?.ids ? { ids: params.ids.join(',') } : {},
+      }),
+    }),
+
+    // Import AI rules - matches /ai-rules/import endpoint
+    importAiRules: builder.mutation<ImportAiRulesResponse, ImportAiRulesPayload>({
+      query: (data) => ({
+        url: '/ai-rules/import',
+        method: 'POST',
+        body: data,
+      }),
+      invalidatesTags: [TAGS.AI_RULES],
+    }),
+
+    // Bulk delete AI rules - matches /ai-rules/bulk-delete endpoint
+    bulkDeleteAiRules: builder.mutation<BulkDeleteAiRulesResponse, BulkDeleteAiRulesPayload>({
+      query: (data) => ({
+        url: '/ai-rules/bulk-delete',
+        method: 'POST',
+        body: data,
+      }),
+      invalidatesTags: [TAGS.AI_RULES],
+    }),
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
 
 export default aiRuleApi;
