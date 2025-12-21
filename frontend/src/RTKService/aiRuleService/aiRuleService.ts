@@ -230,7 +230,7 @@ const aiRuleApi = baseApi.injectEndpoints({
       query: (params) => ({
         url: '/ai-rules/export',
         method: 'GET',
-        params: params || {},
+        params: params?.ids ? { ids: params.ids.join(',') } : {},
       }),
     }),
 

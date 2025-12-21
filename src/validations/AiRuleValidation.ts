@@ -40,10 +40,7 @@ export const SearchAiRulesValidation = z.object({
 
 // Export AI rules validation
 export const ExportAiRulesValidation = z.object({
-  ids: z
-    .string()
-    .optional()
-    .transform((val) => (val ? val.split(',').map((id) => parseInt(id.trim())) : undefined)),
+  ids: z.string().optional(),
 });
 
 // Import AI rules validation

@@ -296,22 +296,35 @@ export class AiRuleService {
       throw new ForbiddenError('Unauthorized to export AI rules');
     }
 
-    const { ids } = request;
+    const { ids: idsString } = request;
+    const ids = idsString ? idsString.split(',').map((id) => parseInt(id.trim())) : undefined;
 
     let rules: AiRule[];
 
     if (ids && ids.length > 0) {
-      // For selected rules, check permissions
-      const accessibleIds: number[] = [];
-      for (const id of ids) {
-        if (await AccessControllerHelper.canViewAiRule(userId, id)) {
-          accessibleIds.push(id);
+      // For selected rules, check permissions unless user is admin
+      const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+      const isAdmin = user?.role === Role.ADMIN;
+
+      if (isAdmin) {
+        // Admins can export any rules
+        rules = await this.aiRuleRepository.find({
+          where: { id: In(ids) },
+          select: ['name', 'rule', 'website', 'is_active'],
+        });
+      } else {
+        // Non-admins can only export rules they can view
+        const accessibleIds: number[] = [];
+        for (const id of ids) {
+          if (await AccessControllerHelper.canViewAiRule(userId, id)) {
+            accessibleIds.push(id);
+          }
         }
+        rules = await this.aiRuleRepository.find({
+          where: { id: In(accessibleIds) },
+          select: ['name', 'rule', 'website', 'is_active'],
+        });
       }
-      rules = await this.aiRuleRepository.find({
-        where: { id: In(accessibleIds) },
-        select: ['name', 'rule', 'website', 'is_active'],
-      });
     } else {
       // Export all accessible rules
       const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
