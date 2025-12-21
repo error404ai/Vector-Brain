@@ -49,7 +49,6 @@ function AiRules() {
     handleExportAiRules,
     handleImportAiRules,
     isExporting,
-    isImporting,
     handleBulkDeleteAiRules,
     isBulkDeleting,
   } = useAiRulesDataTable();
@@ -59,6 +58,10 @@ function AiRules() {
 
   // Selected rules for export
   const [selectedRules, setSelectedRules] = useState<number[]>([]);
+
+  // Import loading states
+  const [isImportingNormal, setIsImportingNormal] = useState(false);
+  const [isImportingReplace, setIsImportingReplace] = useState(false);
 
   // View rule state
   const [viewingRule, setViewingRule] = useState<AiRule | undefined>();
@@ -231,7 +234,8 @@ function AiRules() {
   };
 
   // Handle import
-  const handleImport = async (file: File, deleteExisting = false) => {
+  const handleImport = async (file: File, deleteExisting = false, setLoading: (loading: boolean) => void) => {
+    setLoading(true);
     try {
       const text = await file.text();
       const rules = JSON.parse(text);
@@ -252,6 +256,8 @@ function AiRules() {
         color: 'red',
         icon: <IconX size={16} />,
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -287,13 +293,14 @@ function AiRules() {
 
   // Handle file input for import
   const handleFileImport = (deleteExisting = false) => {
+    const setLoading = deleteExisting ? setIsImportingReplace : setIsImportingNormal;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        handleImport(file, deleteExisting);
+        handleImport(file, deleteExisting, setLoading);
       }
     };
     input.click();
@@ -374,10 +381,10 @@ function AiRules() {
             <Button variant="outline" color="red" onClick={handleBulkDelete} loading={isBulkDeleting} disabled={selectedRules.length === 0}>
               Delete Selected ({selectedRules.length})
             </Button>
-            <Button variant="outline" onClick={() => handleFileImport(false)} loading={isImporting}>
+            <Button variant="outline" onClick={() => handleFileImport(false)} loading={isImportingNormal}>
               Import
             </Button>
-            <Button variant="outline" color="red" onClick={() => handleFileImport(true)} loading={isImporting}>
+            <Button variant="outline" color="red" onClick={() => handleFileImport(true)} loading={isImportingReplace}>
               Import (Replace All)
             </Button>
             <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
