@@ -134,6 +134,20 @@ export interface ImportAiRulesResponse {
   };
 }
 
+/**
+ * Bulk delete payload
+ */
+export interface BulkDeleteAiRulesPayload {
+  ids: number[];
+}
+
+/**
+ * Bulk delete response
+ */
+export interface BulkDeleteAiRulesResponse {
+  message: string;
+}
+
 const aiRuleApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     // List AI rules with pagination - matches /ai-rules/list endpoint
@@ -228,9 +242,19 @@ const aiRuleApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [TAGS.AI_RULES],
     }),
+
+    // Bulk delete AI rules - matches /ai-rules/bulk-delete endpoint
+    bulkDeleteAiRules: builder.mutation<BulkDeleteAiRulesResponse, BulkDeleteAiRulesPayload>({
+      query: (data) => ({
+        url: '/ai-rules/bulk-delete',
+        method: 'POST',
+        body: data,
+      }),
+      invalidatesTags: [TAGS.AI_RULES],
+    }),
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
 
 export default aiRuleApi;

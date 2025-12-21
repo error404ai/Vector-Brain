@@ -353,4 +353,35 @@ export class AiRuleService {
       data: { imported: importedRules.length, failed: errors.length, errors },
     };
   }
+
+  async bulkDelete(ids: number[], userId: number): Promise<ApiResponse> {
+    // Check permissions for each rule
+    for (const id of ids) {
+      if (!(await AccessControllerHelper.canDeleteAiRule(userId, id))) {
+        throw new ForbiddenError(`Unauthorized to delete AI rule ${id}`);
+      }
+    }
+
+    const rules = await this.aiRuleRepository.find({
+      where: { id: In(ids) },
+    });
+
+    if (rules.length !== ids.length) {
+      throw new AppError('Some AI rules not found', 404);
+    }
+
+    await this.aiRuleRepository.remove(rules);
+
+    // Delete vectors
+    for (const rule of rules) {
+      try {
+        await this.aiEmbeddingService.deleteVector(rule.id);
+      } catch (error) {
+        Logger.error(`Failed to delete vector for rule ${rule.id}:`, error);
+        // Don't fail the request if vector deletion fails
+      }
+    }
+
+    return { message: `Deleted ${rules.length} AI rules successfully` };
+  }
 }

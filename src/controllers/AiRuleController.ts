@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AiRuleService } from '@/services/controllerService/AiRuleService';
-import { AiRuleListValidation, CreateAiRuleValidation, ExportAiRulesValidation, ImportAiRulesValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
+import { AiRuleListValidation, BulkDeleteAiRulesValidation, CreateAiRuleValidation, ExportAiRulesValidation, ImportAiRulesValidation, SearchAiRulesValidation, UpdateAiRuleValidation } from '@/validations/AiRuleValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, Put, QueryParams, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -65,5 +65,11 @@ export class AiRuleController {
   @UseBefore(zodValidationMiddleware(ImportAiRulesValidation))
   async import(@Body() request: z.infer<typeof ImportAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.aiRuleService.import(request, user.userId);
+  }
+
+  @Post('/bulk-delete')
+  @UseBefore(zodValidationMiddleware(BulkDeleteAiRulesValidation))
+  async bulkDelete(@Body() request: z.infer<typeof BulkDeleteAiRulesValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.bulkDelete(request.ids, user.userId);
   }
 }

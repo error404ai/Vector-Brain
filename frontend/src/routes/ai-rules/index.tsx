@@ -50,6 +50,8 @@ function AiRules() {
     handleImportAiRules,
     isExporting,
     isImporting,
+    handleBulkDeleteAiRules,
+    isBulkDeleting,
   } = useAiRulesDataTable();
 
   // Local semantic search input state
@@ -253,6 +255,36 @@ function AiRules() {
     }
   };
 
+  // Handle bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedRules.length === 0) return;
+    modals.openConfirmModal({
+      title: 'Delete Selected AI Rules',
+      children: <Text size="sm">Are you sure you want to delete {selectedRules.length} selected AI rule(s)? This action cannot be undone.</Text>,
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        try {
+          await handleBulkDeleteAiRules(selectedRules);
+          setSelectedRules([]);
+          notifications.show({
+            title: 'Success',
+            message: `Deleted ${selectedRules.length} AI rules successfully`,
+            color: 'green',
+            icon: <IconCheck size={16} />,
+          });
+        } catch (error) {
+          notifications.show({
+            title: 'Error',
+            message: 'Failed to delete selected AI rules',
+            color: 'red',
+            icon: <IconX size={16} />,
+          });
+        }
+      },
+    });
+  };
+
   // Handle file input for import
   const handleFileImport = (deleteExisting = false) => {
     const input = document.createElement('input');
@@ -338,6 +370,9 @@ function AiRules() {
             </Button>
             <Button variant="outline" onClick={() => handleExport(true)} loading={isExporting}>
               Export All
+            </Button>
+            <Button variant="outline" color="red" onClick={handleBulkDelete} loading={isBulkDeleting} disabled={selectedRules.length === 0}>
+              Delete Selected ({selectedRules.length})
             </Button>
             <Button variant="outline" onClick={() => handleFileImport(false)} loading={isImporting}>
               Import

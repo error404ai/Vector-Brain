@@ -1,5 +1,5 @@
 import type { SortParams } from '@/components/datatable';
-import { useBackfillVectorsMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useImportAiRulesMutation, useLazyExportAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type ExportAiRulesParams, type GetAiRulesParams, type ImportAiRulesPayload, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import { useBackfillVectorsMutation, useBulkDeleteAiRulesMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useImportAiRulesMutation, useLazyExportAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type ExportAiRulesParams, type GetAiRulesParams, type ImportAiRulesPayload, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
 import { useCallback, useState } from 'react';
 
 export function useAiRulesDataTable() {
@@ -45,6 +45,7 @@ export function useAiRulesDataTable() {
   // Export/Import mutations
   const [exportAiRules, { isLoading: isExporting }] = useLazyExportAiRulesQuery();
   const [importAiRules, { isLoading: isImporting }] = useImportAiRulesMutation();
+  const [bulkDeleteAiRules, { isLoading: isBulkDeleting }] = useBulkDeleteAiRulesMutation();
 
   // Handlers
   const handlePageChange = useCallback((newPage: number) => {
@@ -146,6 +147,15 @@ export function useAiRulesDataTable() {
     [importAiRules]
   );
 
+  // Bulk delete AI rules handler
+  const handleBulkDeleteAiRules = useCallback(
+    async (ids: number[]) => {
+      const result = await bulkDeleteAiRules({ ids }).unwrap();
+      return result;
+    },
+    [bulkDeleteAiRules]
+  );
+
   return {
     // Data
     data: response?.data ?? [],
@@ -167,6 +177,7 @@ export function useAiRulesDataTable() {
     isVectorizing,
     isExporting,
     isImporting,
+    isBulkDeleting,
 
     // Current state
     page,
@@ -191,6 +202,7 @@ export function useAiRulesDataTable() {
     handleVectorizeAiRule,
     handleExportAiRules,
     handleImportAiRules,
+    handleBulkDeleteAiRules,
     refetch,
   };
 }
