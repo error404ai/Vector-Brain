@@ -42,7 +42,7 @@ export class AccessControllerHelper {
     const aiRule = await AppDataSource.getRepository(AiRule).findOne({ where: { id: ruleId } });
     if (!aiRule) return false;
 
-    return aiRule.user_id === userId;
+    return aiRule.user_id === userId || aiRule.user_id === null;
   }
 
   static async canUpdateAiRule(userId: number, ruleId: number): Promise<boolean> {

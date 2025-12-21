@@ -12,6 +12,7 @@ export const CreateAiRuleValidation = z.object({
   rule: z.string({ required_error: 'Rule is required' }).min(1, 'Rule is required'),
   website: z.string().url().optional(),
   is_active: z.boolean().optional(),
+  is_global: z.boolean().optional(),
 });
 
 // Update AI rule validation

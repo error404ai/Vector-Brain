@@ -3,7 +3,7 @@ import { baseApi, TAGS } from '../baseApi';
 
 export interface AiRule {
   id: number;
-  user_id: number;
+  user_id: number | null;
   name: string;
   rule?: string;
   website?: string;
@@ -56,6 +56,7 @@ export interface CreateAiRulePayload {
   rule: string;
   website?: string;
   is_active?: boolean;
+  is_global?: boolean;
 }
 
 /**

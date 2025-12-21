@@ -1,4 +1,5 @@
 import type { AiRule, CreateAiRulePayload, UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import { useGetProfileQuery } from '@/RTKService/authService/authService';
 import { Button, Checkbox, Group, Modal, Stack, Textarea, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useEffect } from 'react';
@@ -12,12 +13,16 @@ interface AiRuleFormModalProps {
 }
 
 export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: AiRuleFormModalProps) {
+  const { data: profile } = useGetProfileQuery();
+  const isAdmin = profile?.data?.role === 'admin';
+
   const form = useForm({
     initialValues: {
       name: rule?.name || '',
       rule: rule?.rule || '',
       website: rule?.website || '',
       is_active: rule?.is_active ?? true,
+      is_global: false,
     },
     validate: {
       name: (value: string) => (value.length < 1 ? 'Name is required' : null),
@@ -42,6 +47,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
         rule: rule?.rule || '',
         website: rule?.website || '',
         is_active: rule?.is_active ?? true,
+        is_global: false,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,6 +60,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
         rule: values.rule,
         ...(values.website.trim() && { website: values.website }),
         is_active: values.is_active,
+        ...(rule ? {} : { is_global: values.is_global }),
       };
 
       await onSubmit(payload);
@@ -80,6 +87,8 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
           <TextInput label="Website" placeholder="e.g., https://twitter.com (optional)" {...form.getInputProps('website')} />
 
           <Checkbox label="Active" {...form.getInputProps('is_active', { type: 'checkbox' })} />
+
+          {!rule && isAdmin && <Checkbox label="Global Rule (visible to all users)" {...form.getInputProps('is_global', { type: 'checkbox' })} />}
 
           <Group justify="flex-end" mt="md">
             <Button variant="light" onClick={handleClose}>

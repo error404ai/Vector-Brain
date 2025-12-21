@@ -139,6 +139,22 @@ export class AuthService {
     };
   }
 
+  async getProfile(userId: number): Promise<ApiResponse> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId, deletedAt: undefined },
+      select: ['id', 'name', 'email', 'phone', 'role', 'isActive', 'created_at', 'updated_at'],
+    });
+
+    if (!user) {
+      throw new UnauthorizedError('User not found');
+    }
+
+    return {
+      message: 'Profile retrieved successfully',
+      data: user,
+    };
+  }
+
   async logout(userId?: number, refreshTokenString?: string): Promise<ApiResponse> {
     let tokenToRevoke = refreshTokenString;
 
@@ -156,21 +172,6 @@ export class AuthService {
 
     return {
       message: 'Logged out successfully',
-    };
-  }
-
-  async getProfile(userId: number): Promise<ApiResponse> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId, deletedAt: undefined },
-    });
-
-    if (!user) {
-      throw new UnauthorizedError('User not found');
-    }
-
-    return {
-      message: 'Profile retrieved successfully',
-      data: user,
     };
   }
 

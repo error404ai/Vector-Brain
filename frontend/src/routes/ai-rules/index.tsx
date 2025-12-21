@@ -332,6 +332,16 @@ function AiRules() {
       width: 100,
     },
     {
+      accessor: 'scope',
+      title: 'Scope',
+      render: (rule) => (
+        <Badge color={rule.user_id ? 'blue' : 'green'} variant="light">
+          {rule.user_id ? 'User' : 'Global'}
+        </Badge>
+      ),
+      width: 100,
+    },
+    {
       accessor: 'vector_exist',
       title: 'Vectorized',
       render: (rule) => (

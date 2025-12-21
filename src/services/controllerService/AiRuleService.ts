@@ -1,4 +1,5 @@
 import { AiRule } from '@/entities/AiRule';
+import { Role, User } from '@/entities/User';
 import { AccessControllerHelper } from '@/helpers/AccessControllerHelper';
 import AppError, { ForbiddenError } from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -27,10 +28,22 @@ export class AiRuleService {
 
     const { page = 1, limit = 10, search, sortField, sortDirection } = request;
 
-    const where: FindOptionsWhere<AiRule> = {};
+    const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+    const isAdmin = user?.role === Role.ADMIN;
+
+    let where: FindOptionsWhere<AiRule> | FindOptionsWhere<AiRule>[] = isAdmin
+      ? {} // Admins see all rules
+      : [{ user_id: userId }, { user_id: null }]; // Users see their rules and global rules
 
     if (search) {
-      where.name = Like(`%${search}%`);
+      if (isAdmin) {
+        where = { name: Like(`%${search}%`) };
+      } else {
+        where = [
+          { user_id: userId, name: Like(`%${search}%`) },
+          { user_id: null, name: Like(`%${search}%`) },
+        ];
+      }
     }
 
     const order: any = {};
@@ -87,8 +100,12 @@ export class AiRuleService {
       throw new ForbiddenError('Unauthorized to create AI rule');
     }
 
+    if (request.is_global && !(await AccessControllerHelper.canManageAiRules(userId))) {
+      throw new ForbiddenError('Only admins can create global AI rules');
+    }
+
     const aiRule = this.aiRuleRepository.create({
-      user_id: userId,
+      user_id: request.is_global ? null : userId,
       name: request.name,
       rule: request.rule,
       website: request.website,
@@ -281,16 +298,31 @@ export class AiRuleService {
 
     const { ids } = request;
 
-    const where: FindOptionsWhere<AiRule> = { user_id: userId };
+    let rules: AiRule[];
 
     if (ids && ids.length > 0) {
-      where.id = In(ids);
-    }
+      // For selected rules, check permissions
+      const accessibleIds: number[] = [];
+      for (const id of ids) {
+        if (await AccessControllerHelper.canViewAiRule(userId, id)) {
+          accessibleIds.push(id);
+        }
+      }
+      rules = await this.aiRuleRepository.find({
+        where: { id: In(accessibleIds) },
+        select: ['name', 'rule', 'website', 'is_active'],
+      });
+    } else {
+      // Export all accessible rules
+      const user = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+      const isAdmin = user?.role === Role.ADMIN;
 
-    const rules = await this.aiRuleRepository.find({
-      where,
-      select: ['name', 'rule', 'website', 'is_active'], // Exclude user_id, timestamps
-    });
+      const where: FindOptionsWhere<AiRule> | FindOptionsWhere<AiRule>[] = isAdmin ? {} : [{ user_id: userId }, { user_id: null }];
+      rules = await this.aiRuleRepository.find({
+        where,
+        select: ['name', 'rule', 'website', 'is_active'],
+      });
+    }
 
     return {
       message: 'AI rules exported successfully',
