@@ -30,9 +30,14 @@ export class AiService {
       const schema = z.object({ isRelated: z.boolean() });
       const structuredModel = this.chatModel.withStructuredOutput(schema);
 
-      const response = await structuredModel.invoke([{ role: 'user', content: `Determine if the user prompt is related to the website "${website}". The prompt must: 1) Explicitly include the website "${website}". 2) Indicate an intention to perform an action or task on that website. If both conditions are met, return true; otherwise, return false. Prompt: "${prompt}"` }]);
+      const response = await structuredModel.invoke([{ role: 'user', content: `Determine if the user prompt is related to the website "${website}". The prompt must indicate an intention to perform an action or task on that website, and reference the website (by name, domain, or URL). If the prompt is about doing something on the website, return true; otherwise, false. Prompt: "${prompt}"` }]);
 
       console.log('related', response.isRelated);
+      console.log({
+        prompt,
+        website,
+        isReladed: response.isRelated,
+      });
 
       return response.isRelated;
     } catch (error) {
