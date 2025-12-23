@@ -30,7 +30,7 @@ export class AiService {
       const schema = z.object({ isRelated: z.boolean() });
       const structuredModel = this.chatModel.withStructuredOutput(schema);
 
-      const response = await structuredModel.invoke([{ role: 'user', content: `Is the following user prompt related to the website "${website}"? Prompt: "${prompt}"` }]);
+      const response = await structuredModel.invoke([{ role: 'user', content: `Determine if the user prompt is related to the website "${website}". The prompt must: 1) Explicitly include the website "${website}". 2) Indicate an intention to perform an action or task on that website. If both conditions are met, return true; otherwise, return false. Prompt: "${prompt}"` }]);
 
       console.log('related', response.isRelated);
 
@@ -46,7 +46,7 @@ export class AiService {
       throw new Error('AI service not configured');
     }
 
-    const systemPrompt = await this.settingService.getSettingValue('systemPromptForEnhancement') as string;
+    const systemPrompt = (await this.settingService.getSettingValue('systemPromptForEnhancement')) as string;
 
     const response = await this.chatModel.invoke([
       { role: 'system', content: systemPrompt },
