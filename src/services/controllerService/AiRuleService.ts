@@ -115,7 +115,7 @@ export class AiRuleService {
     const savedAiRule = await this.aiRuleRepository.save(aiRule);
 
     if (savedAiRule.rule && savedAiRule.rule.trim()) {
-      await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
+      await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.website ? `${savedAiRule.website} ${savedAiRule.rule} ${savedAiRule.website}` : savedAiRule.rule, {
         name: savedAiRule.name,
         website: savedAiRule.website,
         is_active: savedAiRule.is_active,
@@ -144,7 +144,7 @@ export class AiRuleService {
     if (data.rule !== undefined) {
       try {
         if (aiRule.rule && aiRule.rule.trim()) {
-          await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.rule, {
+          await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.website ? `${aiRule.website} ${aiRule.rule} ${aiRule.website}` : aiRule.rule, {
             name: aiRule.name,
             website: aiRule.website,
             is_active: aiRule.is_active,
@@ -238,27 +238,23 @@ export class AiRuleService {
     const rulesToCheck = rules.filter((rule) => rule.rule && rule.rule.trim());
 
     const rulesToBackfillPromises = rulesToCheck.map(async (rule) => {
-      const exists = await this.aiEmbeddingService.vectorExists(rule.id);
-      return exists
-        ? null
-        : {
-            id: rule.id,
-            rule: rule.rule,
-            metadata: {
-              name: rule.name,
-              website: rule.website,
-              is_active: rule.is_active,
-            },
-          };
+      return {
+        id: rule.id,
+        rule: rule.website ? `${rule.website} ${rule.rule} ${rule.website}` : rule.rule,
+        metadata: {
+          name: rule.name,
+          website: rule.website,
+          is_active: rule.is_active,
+        },
+      };
     });
 
-    const rulesToBackfillResults = await Promise.all(rulesToBackfillPromises);
-    const rulesToBackfill = rulesToBackfillResults.filter((rule) => rule !== null);
+    const rulesToBackfill = await Promise.all(rulesToBackfillPromises);
 
     await this.aiEmbeddingService.backfillVectors(rulesToBackfill);
 
     return {
-      message: `Backfilled vectors for ${rulesToBackfill.length} rules`,
+      message: `Backfilled/updated vectors for ${rulesToBackfill.length} rules`,
       data: { count: rulesToBackfill.length },
     };
   }
@@ -282,7 +278,7 @@ export class AiRuleService {
       throw new AppError('AI rule is already vectorized', 400);
     }
 
-    await this.aiEmbeddingService.storeVector(id, aiRule.rule, {
+    await this.aiEmbeddingService.storeVector(id, aiRule.website ? `${aiRule.website} ${aiRule.rule} ${aiRule.website}` : aiRule.rule, {
       name: aiRule.name,
       website: aiRule.website,
       is_active: aiRule.is_active,
