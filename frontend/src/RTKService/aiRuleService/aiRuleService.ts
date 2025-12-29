@@ -113,6 +113,23 @@ export interface BackfillResponse {
 }
 
 /**
+ * Recreate vectors response (full rebuild)
+ */
+export interface RecreateVectorsResponseData {
+  totalActiveRules: number;
+  processed: number;
+  failed: number;
+  skipped: number;
+  details: {
+    maxDetails: number;
+    truncated: boolean;
+    processed: Array<{ id: number; name: string; embeddedText: string }>;
+    failed: Array<{ id: number; name: string; embeddedText: string; error: string }>;
+    skipped: Array<{ id: number; name: string; reason: string }>;
+  };
+}
+
+/**
  * Export AI rules parameters
  */
 export interface ExportAiRulesParams {
@@ -221,7 +238,7 @@ const aiRuleApi = baseApi.injectEndpoints({
     }),
 
     // Recreate vectors from scratch - matches /ai-rules/recreate-vectors endpoint
-    recreateVectors: builder.mutation<ApiResponse<{ count: number }>, void>({
+    recreateVectors: builder.mutation<ApiResponse<RecreateVectorsResponseData>, void>({
       query: () => ({
         url: '/ai-rules/recreate-vectors',
         method: 'POST',

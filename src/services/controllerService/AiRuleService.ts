@@ -254,12 +254,77 @@ export class AiRuleService {
     }
 
     await this.aiEmbeddingService.initialize();
+    if (!this.aiEmbeddingService.isConfigured()) {
+      throw new AppError('Embedding service not configured', 400);
+    }
+
+    const rules = await this.aiRuleRepository.find({
+      where: { is_active: true },
+      select: ['id', 'name', 'intent', 'website', 'is_active'],
+    });
+
     await this.aiEmbeddingService.recreateCollection();
 
-    const result = await this.backfillAllVectors(userId);
+    const MAX_DETAILS = 200;
+    let processed = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    const processedDetails: Array<{ id: number; name: string; embeddedText: string }> = [];
+    const failedDetails: Array<{ id: number; name: string; embeddedText: string; error: string }> = [];
+    const skippedDetails: Array<{ id: number; name: string; reason: string }> = [];
+
+    for (const rule of rules) {
+      const intent = (rule.intent ?? '').trim();
+      const website = (rule.website ?? '').trim();
+
+      if (!intent) {
+        skipped += 1;
+        if (skippedDetails.length < MAX_DETAILS) {
+          skippedDetails.push({ id: rule.id, name: rule.name, reason: 'Missing/blank intent' });
+        }
+        continue;
+      }
+
+      const embeddedText = [website, intent, website].filter((part) => part && part.trim().length > 0).join(' ');
+
+      try {
+        await this.aiEmbeddingService.storeVector(rule.id, embeddedText, {
+          name: rule.name,
+          website: rule.website,
+          is_active: rule.is_active,
+        });
+
+        processed += 1;
+        if (processedDetails.length < MAX_DETAILS) {
+          processedDetails.push({ id: rule.id, name: rule.name, embeddedText });
+        }
+      } catch (error) {
+        failed += 1;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (failedDetails.length < MAX_DETAILS) {
+          failedDetails.push({ id: rule.id, name: rule.name, embeddedText, error: errorMessage });
+        }
+      }
+    }
+
+    const truncated = processedDetails.length === MAX_DETAILS || failedDetails.length === MAX_DETAILS || skippedDetails.length === MAX_DETAILS;
+
     return {
-      message: `Recreated vectors. ${result.message}`,
-      data: result.data,
+      message: `Recreated vectors: processed ${processed}, failed ${failed}, skipped ${skipped}${truncated ? ` (details truncated to ${MAX_DETAILS})` : ''}`,
+      data: {
+        totalActiveRules: rules.length,
+        processed,
+        failed,
+        skipped,
+        details: {
+          maxDetails: MAX_DETAILS,
+          truncated,
+          processed: processedDetails,
+          failed: failedDetails,
+          skipped: skippedDetails,
+        },
+      },
     };
   }
 
