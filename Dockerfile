@@ -25,4 +25,4 @@ RUN pnpm run build
 EXPOSE 3000 5173
 
 # Start the development server
-CMD ["pnpm", "run", "dev"]
+CMD ["sh", "-c", "pnpm run migrate:run && pnpm run dev"]
