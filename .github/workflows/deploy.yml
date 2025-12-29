@@ -36,5 +36,7 @@ jobs:
             docker compose -f docker-compose-prod.yml down --timeout 30 --remove-orphans || true
             docker builder prune -f
             docker compose -f docker-compose-prod.yml build
+            # Run migrations before starting services
+            docker compose -f docker-compose-prod.yml run --rm app npm run migrate:run
             docker compose -f docker-compose-prod.yml up -d
           EOF

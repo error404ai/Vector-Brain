@@ -15,10 +15,10 @@ export class AiRule {
   @Column({ type: 'varchar', length: 255 })
   name: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text' })
   rule: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text' })
   intent: string | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
