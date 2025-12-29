@@ -220,6 +220,14 @@ const aiRuleApi = baseApi.injectEndpoints({
       }),
     }),
 
+    // Recreate vectors from scratch - matches /ai-rules/recreate-vectors endpoint
+    recreateVectors: builder.mutation<ApiResponse<{ count: number }>, void>({
+      query: () => ({
+        url: '/ai-rules/recreate-vectors',
+        method: 'POST',
+      }),
+    }),
+
     // Vectorize single AI rule - matches /ai-rules/vectorize/:id endpoint
     vectorizeAiRule: builder.mutation<ApiResponse, number>({
       query: (id) => ({
@@ -260,6 +268,6 @@ const aiRuleApi = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useRecreateVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
 
 export default aiRuleApi;

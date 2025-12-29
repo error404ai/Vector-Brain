@@ -50,6 +50,11 @@ export class AiRuleController {
     return this.aiRuleService.backfillAllVectors(user.userId);
   }
 
+  @Post('/recreate-vectors')
+  async recreateVectors(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.recreateAllVectors(user.userId);
+  }
+
   @Post('/vectorize/:id')
   async vectorize(@Param('id') id: number) {
     return this.aiRuleService.vectorizeSingle(id);

@@ -45,12 +45,14 @@ function AiRules() {
     handleSemanticSearch,
     handleClearSemanticSearch,
     handleBackfillVectors,
+    handleRecreateVectors,
     handleVectorizeAiRule,
     handleExportAiRules,
     handleImportAiRules,
     isExporting,
     handleBulkDeleteAiRules,
     isBulkDeleting,
+    isRecreatingVectors,
   } = useAiRulesDataTable();
 
   // Local semantic search input state
@@ -183,6 +185,33 @@ function AiRules() {
         icon: <IconX size={16} />,
       });
     }
+  };
+
+  const handleRecreate = () => {
+    modals.openConfirmModal({
+      title: 'Recreate Vectors',
+      children: <Text size="sm">This will delete all existing vectors and rebuild them from scratch. Continue?</Text>,
+      labels: { confirm: 'Recreate', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        try {
+          const result = await handleRecreateVectors();
+          notifications.show({
+            title: 'Recreate Complete',
+            message: result.message,
+            color: 'green',
+            icon: <IconCheck size={16} />,
+          });
+        } catch (error) {
+          notifications.show({
+            title: 'Recreate Error',
+            message: 'Failed to recreate vectors',
+            color: 'red',
+            icon: <IconX size={16} />,
+          });
+        }
+      },
+    });
   };
 
   // Handle vectorize single rule
@@ -390,6 +419,9 @@ function AiRules() {
           <Group>
             <Button variant="light" leftSection={<IconDatabase size={16} />} onClick={handleBackfill} loading={isBackfilling}>
               Backfill Vectors
+            </Button>
+            <Button variant="light" color="red" leftSection={<IconDatabase size={16} />} onClick={handleRecreate} loading={isRecreatingVectors}>
+              Recreate Vectors
             </Button>
             <Button variant="outline" onClick={() => handleExport(false)} loading={isExporting} disabled={selectedRules.length === 0}>
               Export Selected ({selectedRules.length})

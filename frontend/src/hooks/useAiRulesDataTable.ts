@@ -1,5 +1,24 @@
 import type { SortParams } from '@/components/datatable';
-import { useBackfillVectorsMutation, useBulkDeleteAiRulesMutation, useCreateAiRuleMutation, useDeleteAiRuleMutation, useGetAiRulesQuery, useImportAiRulesMutation, useLazyExportAiRulesQuery, useSearchAiRulesMutation, useUpdateAiRuleMutation, useVectorizeAiRuleMutation, type AiRule, type AiRuleSearchResult, type CreateAiRulePayload, type ExportAiRulesParams, type GetAiRulesParams, type ImportAiRulesPayload, type UpdateAiRulePayload } from '@/RTKService/aiRuleService/aiRuleService';
+import {
+  useBackfillVectorsMutation,
+  useBulkDeleteAiRulesMutation,
+  useCreateAiRuleMutation,
+  useDeleteAiRuleMutation,
+  useGetAiRulesQuery,
+  useImportAiRulesMutation,
+  useLazyExportAiRulesQuery,
+  useRecreateVectorsMutation,
+  useSearchAiRulesMutation,
+  useUpdateAiRuleMutation,
+  useVectorizeAiRuleMutation,
+  type AiRule,
+  type AiRuleSearchResult,
+  type CreateAiRulePayload,
+  type ExportAiRulesParams,
+  type GetAiRulesParams,
+  type ImportAiRulesPayload,
+  type UpdateAiRulePayload,
+} from '@/RTKService/aiRuleService/aiRuleService';
 import { useCallback, useState } from 'react';
 
 export function useAiRulesDataTable() {
@@ -40,6 +59,7 @@ export function useAiRulesDataTable() {
   // Semantic search mutations
   const [searchAiRules, { isLoading: isSearching }] = useSearchAiRulesMutation();
   const [backfillVectors, { isLoading: isBackfilling }] = useBackfillVectorsMutation();
+  const [recreateVectors, { isLoading: isRecreatingVectors }] = useRecreateVectorsMutation();
   const [vectorizeAiRule, { isLoading: isVectorizing }] = useVectorizeAiRuleMutation();
 
   // Export/Import mutations
@@ -120,6 +140,11 @@ export function useAiRulesDataTable() {
     return result;
   }, [backfillVectors]);
 
+  const handleRecreateVectors = useCallback(async () => {
+    const result = await recreateVectors().unwrap();
+    return result;
+  }, [recreateVectors]);
+
   // Vectorize single rule handler
   const handleVectorizeAiRule = useCallback(
     async (ruleId: number) => {
@@ -174,6 +199,7 @@ export function useAiRulesDataTable() {
     isDeleting,
     isSearching,
     isBackfilling,
+    isRecreatingVectors,
     isVectorizing,
     isExporting,
     isImporting,
@@ -199,6 +225,7 @@ export function useAiRulesDataTable() {
     handleSemanticSearch,
     handleClearSemanticSearch,
     handleBackfillVectors,
+    handleRecreateVectors,
     handleVectorizeAiRule,
     handleExportAiRules,
     handleImportAiRules,

@@ -248,6 +248,21 @@ export class AiRuleService {
     };
   }
 
+  async recreateAllVectors(userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canManageAiRules(userId))) {
+      throw new ForbiddenError('Unauthorized to manage AI rules');
+    }
+
+    await this.aiEmbeddingService.initialize();
+    await this.aiEmbeddingService.recreateCollection();
+
+    const result = await this.backfillAllVectors(userId);
+    return {
+      message: `Recreated vectors. ${result.message}`,
+      data: result.data,
+    };
+  }
+
   async vectorizeSingle(id: number): Promise<ApiResponse> {
     const aiRule = await this.aiRuleRepository.findOne({
       where: { id },

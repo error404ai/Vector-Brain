@@ -208,6 +208,26 @@ export class AiEmbeddingService {
     }
   }
 
+  async recreateCollection(): Promise<void> {
+    try {
+      const collections = await this.qdrantClient.getCollections();
+      const exists = collections.collections.some((c) => c.name === this.collectionName);
+
+      if (exists) {
+        await this.qdrantClient.deleteCollection(this.collectionName);
+        Logger.info(`Dropped Qdrant collection: ${this.collectionName}`);
+      } else {
+        Logger.info(`Qdrant collection does not exist, skipping drop: ${this.collectionName}`);
+      }
+
+      await this.ensureCollectionExists();
+      Logger.info(`Recreated Qdrant collection: ${this.collectionName}`);
+    } catch (error) {
+      Logger.error(`Failed to recreate Qdrant collection ${this.collectionName}:`, error);
+      throw error;
+    }
+  }
+
   async backfillVectors(rules: Array<{ id: number; rule: string; metadata?: Record<string, unknown> }>): Promise<void> {
     if (!this.isConfigured()) {
       throw new Error('Embedding service not configured');
