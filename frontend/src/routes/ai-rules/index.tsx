@@ -320,6 +320,15 @@ function AiRules() {
       sortable: true,
     },
     {
+      accessor: 'intent',
+      title: 'Intent',
+      render: (rule) => (
+        <Text size="sm" lineClamp={2} title={rule.intent}>
+          {rule.intent}
+        </Text>
+      ),
+    },
+    {
       accessor: 'website',
       title: 'Website',
       render: (rule) => rule.website || 'N/A',

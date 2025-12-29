@@ -29,6 +29,17 @@ export function AiRuleDetailModal({ rule, opened, onClose }: AiRuleDetailModalPr
           <Text size="sm">{rule.name}</Text>
         </Box>
 
+        {rule.intent && (
+          <Box>
+            <Text size="sm" c="dimmed" mb="xs">
+              Intent
+            </Text>
+            <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {rule.intent}
+            </Text>
+          </Box>
+        )}
+
         {rule.website && (
           <Box>
             <Text size="sm" c="dimmed" mb="xs">
