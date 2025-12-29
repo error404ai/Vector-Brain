@@ -108,19 +108,19 @@ export class AiRuleService {
       user_id: request.is_global ? null : userId,
       name: request.name,
       rule: request.rule,
+      intent: request.intent,
       website: request.website,
       is_active: request.is_active ?? true,
     });
 
     const savedAiRule = await this.aiRuleRepository.save(aiRule);
 
-    if (savedAiRule.rule && savedAiRule.rule.trim()) {
-      await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.website ? `${savedAiRule.website} ${savedAiRule.rule} ${savedAiRule.website}` : savedAiRule.rule, {
-        name: savedAiRule.name,
-        website: savedAiRule.website,
-        is_active: savedAiRule.is_active,
-      });
-    }
+    const vectorText = savedAiRule.website ? `${savedAiRule.website} ${savedAiRule.intent} ${savedAiRule.website}` : savedAiRule.intent;
+    await this.aiEmbeddingService.storeVector(savedAiRule.id, vectorText, {
+      name: savedAiRule.name,
+      website: savedAiRule.website,
+      is_active: savedAiRule.is_active,
+    });
 
     return { message: 'AI rule created successfully', data: savedAiRule };
   }
@@ -141,22 +141,13 @@ export class AiRuleService {
     Object.assign(aiRule, data);
     await this.aiRuleRepository.save(aiRule);
 
-    if (data.rule !== undefined) {
-      try {
-        if (aiRule.rule && aiRule.rule.trim()) {
-          await this.aiEmbeddingService.storeVector(aiRule.id, aiRule.website ? `${aiRule.website} ${aiRule.rule} ${aiRule.website}` : aiRule.rule, {
-            name: aiRule.name,
-            website: aiRule.website,
-            is_active: aiRule.is_active,
-          });
-        } else {
-          // Remove vector if rule text is cleared
-          await this.aiEmbeddingService.deleteVector(aiRule.id);
-        }
-      } catch (error) {
-        Logger.error(`Failed to update vector for rule ${id}:`, error);
-        // Don't fail the request if vector update fails
-      }
+    if (data.intent !== undefined) {
+      const vectorText = aiRule.website ? `${aiRule.website} ${aiRule.intent} ${aiRule.website}` : aiRule.intent;
+      await this.aiEmbeddingService.storeVector(aiRule.id, vectorText, {
+        name: aiRule.name,
+        website: aiRule.website,
+        is_active: aiRule.is_active,
+      });
     }
 
     return { message: 'AI rule updated successfully', data: aiRule };
@@ -234,13 +225,11 @@ export class AiRuleService {
       where: { is_active: true },
     });
 
-    // Filter rules that have content and are not already vectorized
-    const rulesToCheck = rules.filter((rule) => rule.rule && rule.rule.trim());
-
-    const rulesToBackfillPromises = rulesToCheck.map(async (rule) => {
+    const rulesToBackfillPromises = rules.map(async (rule) => {
+      const vectorText = rule.website ? `${rule.website} ${rule.intent} ${rule.website}` : rule.intent;
       return {
         id: rule.id,
-        rule: rule.website ? `${rule.website} ${rule.rule} ${rule.website}` : rule.rule,
+        rule: vectorText,
         metadata: {
           name: rule.name,
           website: rule.website,
@@ -268,17 +257,14 @@ export class AiRuleService {
       throw new AppError('AI rule not found', 404);
     }
 
-    if (!aiRule.rule || !aiRule.rule.trim()) {
-      throw new AppError('AI rule has no content to vectorize', 400);
-    }
-
     // Check if already vectorized
     const exists = await this.aiEmbeddingService.vectorExists(id);
     if (exists) {
       throw new AppError('AI rule is already vectorized', 400);
     }
 
-    await this.aiEmbeddingService.storeVector(id, aiRule.website ? `${aiRule.website} ${aiRule.rule} ${aiRule.website}` : aiRule.rule, {
+    const vectorText = aiRule.website ? `${aiRule.website} ${aiRule.intent} ${aiRule.website}` : aiRule.intent;
+    await this.aiEmbeddingService.storeVector(id, vectorText, {
       name: aiRule.name,
       website: aiRule.website,
       is_active: aiRule.is_active,
@@ -306,7 +292,7 @@ export class AiRuleService {
         // Admins can export any rules
         rules = await this.aiRuleRepository.find({
           where: { id: In(ids) },
-          select: ['name', 'rule', 'website', 'is_active'],
+          select: ['name', 'rule', 'intent', 'website', 'is_active'],
         });
       } else {
         // Non-admins can only export rules they can view
@@ -318,7 +304,7 @@ export class AiRuleService {
         }
         rules = await this.aiRuleRepository.find({
           where: { id: In(accessibleIds) },
-          select: ['name', 'rule', 'website', 'is_active'],
+          select: ['name', 'rule', 'intent', 'website', 'is_active'],
         });
       }
     } else {
@@ -329,7 +315,7 @@ export class AiRuleService {
       const where: FindOptionsWhere<AiRule> | FindOptionsWhere<AiRule>[] = isAdmin ? {} : [{ user_id: userId }, { user_id: null }];
       rules = await this.aiRuleRepository.find({
         where,
-        select: ['name', 'rule', 'website', 'is_active'],
+        select: ['name', 'rule', 'intent', 'website', 'is_active'],
       });
     }
 
@@ -363,24 +349,19 @@ export class AiRuleService {
           user_id: userId,
           name: ruleData.name,
           rule: ruleData.rule,
+          intent: ruleData.intent,
           website: ruleData.website,
           is_active: ruleData.is_active ?? true,
         });
 
         const savedAiRule = await this.aiRuleRepository.save(aiRule);
 
-        if (savedAiRule.rule && savedAiRule.rule.trim()) {
-          try {
-            await this.aiEmbeddingService.storeVector(savedAiRule.id, savedAiRule.rule, {
-              name: savedAiRule.name,
-              website: savedAiRule.website,
-              is_active: savedAiRule.is_active,
-            });
-          } catch (error) {
-            Logger.error(`Failed to create vector for imported rule ${savedAiRule.id}:`, error);
-            // Don't fail the import
-          }
-        }
+        const vectorText = savedAiRule.website ? `${savedAiRule.website} ${savedAiRule.intent} ${savedAiRule.website}` : savedAiRule.intent;
+        await this.aiEmbeddingService.storeVector(savedAiRule.id, vectorText, {
+          name: savedAiRule.name,
+          website: savedAiRule.website,
+          is_active: savedAiRule.is_active,
+        });
 
         importedRules.push(savedAiRule);
       } catch (error) {

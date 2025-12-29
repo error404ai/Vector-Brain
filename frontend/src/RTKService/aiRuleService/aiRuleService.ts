@@ -6,6 +6,7 @@ export interface AiRule {
   user_id: number | null;
   name: string;
   rule?: string;
+  intent?: string;
   website?: string;
   is_active: boolean;
   created_at: string;
@@ -54,6 +55,7 @@ export interface GetAiRulesParams {
 export interface CreateAiRulePayload {
   name: string;
   rule: string;
+  intent: string;
   website?: string;
   is_active?: boolean;
   is_global?: boolean;
@@ -65,6 +67,7 @@ export interface CreateAiRulePayload {
 export interface UpdateAiRulePayload {
   name?: string;
   rule?: string;
+  intent?: string;
   website?: string;
   is_active?: boolean;
 }
@@ -84,6 +87,7 @@ export interface AiRuleSearchResult {
   id: number;
   name: string;
   rule: string | null;
+  intent: string | null;
   website: string | null;
   is_active: boolean;
   similarity_score: number;

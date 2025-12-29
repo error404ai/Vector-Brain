@@ -18,6 +18,9 @@ export class AiRule {
   @Column({ type: 'text', nullable: true })
   rule: string;
 
+  @Column({ type: 'text', nullable: true })
+  intent: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   website: string | null;
 

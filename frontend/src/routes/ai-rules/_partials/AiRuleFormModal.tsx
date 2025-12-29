@@ -20,6 +20,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     initialValues: {
       name: rule?.name || '',
       rule: rule?.rule || '',
+      intent: rule?.intent || '',
       website: rule?.website || '',
       is_active: rule?.is_active ?? true,
       is_global: false,
@@ -27,6 +28,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
     validate: {
       name: (value: string) => (value.length < 1 ? 'Name is required' : null),
       rule: (value: string) => (value.length < 1 ? 'Rule is required' : null),
+      intent: (value: string) => (value.length < 1 ? 'Intent is required' : null),
       website: (value: string) => {
         if (!value.trim()) return null;
         try {
@@ -45,6 +47,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
       form.setValues({
         name: rule?.name || '',
         rule: rule?.rule || '',
+        intent: rule?.intent || '',
         website: rule?.website || '',
         is_active: rule?.is_active ?? true,
         is_global: false,
@@ -58,6 +61,7 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
       const payload: CreateAiRulePayload | UpdateAiRulePayload = {
         name: values.name,
         rule: values.rule,
+        intent: values.intent,
         ...(values.website.trim() && { website: values.website }),
         is_active: values.is_active,
         ...(rule ? {} : { is_global: values.is_global }),
@@ -81,6 +85,8 @@ export function AiRuleFormModal({ rule, opened, onClose, onSubmit, loading }: Ai
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
           <TextInput label="Name" placeholder="Enter rule name" required {...form.getInputProps('name')} />
+
+          <Textarea label="Intent" placeholder="Describe when and how this rule should be applied (e.g., 'Handle customer refund requests for online purchases')" description="This helps match the rule to relevant prompts, like SEO for rules" required minRows={2} maxRows={4} autosize {...form.getInputProps('intent')} />
 
           <Textarea label="Rule" placeholder="Enter the AI rule text" required minRows={3} maxRows={6} autosize {...form.getInputProps('rule')} />
 

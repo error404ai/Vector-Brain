@@ -10,6 +10,7 @@ const coerceNumber = (fieldName: string) =>
 export const CreateAiRuleValidation = z.object({
   name: z.string({ required_error: 'Name is required' }).min(1, 'Name is required'),
   rule: z.string({ required_error: 'Rule is required' }).min(1, 'Rule is required'),
+  intent: z.string({ required_error: 'Intent is required' }).min(1, 'Intent is required'),
   website: z.string().url().optional(),
   is_active: z.boolean().optional(),
   is_global: z.boolean().optional(),
@@ -19,6 +20,7 @@ export const CreateAiRuleValidation = z.object({
 export const UpdateAiRuleValidation = z.object({
   name: z.string().min(1, 'Name cannot be empty').optional(),
   rule: z.string().min(1, 'Rule cannot be empty').optional(),
+  intent: z.string().min(1, 'Intent cannot be empty').optional(),
   website: z.string().url().optional(),
   is_active: z.boolean().optional(),
 });
@@ -49,6 +51,7 @@ export const ImportAiRulesValidation = z.object({
     z.object({
       name: z.string().min(1, 'Name is required'),
       rule: z.string().min(1, 'Rule is required'),
+      intent: z.string().min(1, 'Intent is required'),
       website: z.union([z.string().url(), z.null()]),
       is_active: z.boolean().optional(),
     })
