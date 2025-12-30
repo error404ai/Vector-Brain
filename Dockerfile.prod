@@ -30,6 +30,9 @@ ENV NODE_ENV=production
 RUN groupadd -g 1001 nodejs && \
     useradd -u 1001 -g nodejs -s /bin/bash nodejs
 
+RUN mkdir -p /home/nodejs/.cache/node/corepack && \
+    chown -R nodejs:nodejs /home/nodejs
+
 RUN chown -R nodejs:nodejs /app
 
 USER nodejs
