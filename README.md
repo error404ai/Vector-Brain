@@ -163,7 +163,7 @@ The server serves:
 | `npm run install:all`      | Install all dependencies (backend + frontend) |
 | `npm run db:sync`          | Sync database schema                          |
 | `npm run db:drop`          | Drop all tables                               |
-| `npm run db:fresh`         | Drop, sync, and seed database                 |
+| `npm run db:fresh`         | Drop, migrate, and seed database              |
 | `npm run migrate:generate` | Generate migration from entity changes        |
 | `npm run migrate:run`      | Run pending migrations                        |
 | `npm run lint`             | Run ESLint                                    |

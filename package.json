@@ -29,7 +29,7 @@
     "db:drop-vectors": "cross-env NODE_ENV=development node --import ./scripts/ts-node-loader.mjs scripts/dropVectors.ts",
     "db:sync": "cross-env NODE_ENV=development node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js schema:sync --dataSource src/loaders/database.ts",
     "db:seed": "cross-env NODE_ENV=development node --import ./scripts/ts-node-loader.mjs src/seeders/index.ts",
-    "db:fresh": "cross-env NODE_ENV=development npm run db:drop-vectors && cross-env NODE_ENV=development npm run db:drop && cross-env NODE_ENV=development npm run db:sync && cross-env NODE_ENV=development npm run db:seed",
+    "db:fresh": "cross-env NODE_ENV=development npm run db:drop-vectors && cross-env NODE_ENV=development npm run db:drop && cross-env NODE_ENV=development npm run migrate:run && cross-env NODE_ENV=development npm run db:seed",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
