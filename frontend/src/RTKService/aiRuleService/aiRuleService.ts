@@ -182,6 +182,16 @@ const aiRuleApi = baseApi.injectEndpoints({
       providesTags: [TAGS.AI_RULES],
     }),
 
+    // List only user's own AI rules - matches /ai-rules/my-rules endpoint
+    getMyAiRules: builder.query<PaginatedResponse<AiRule>, GetAiRulesParams | void>({
+      query: (params) => ({
+        url: '/ai-rules/my-rules',
+        method: 'GET',
+        params: params || {},
+      }),
+      providesTags: [TAGS.AI_RULES],
+    }),
+
     // Get single AI rule details - matches /ai-rules/details/:id endpoint
     getAiRule: builder.query<{ message: string; data: AiRule }, number>({
       query: (id) => ({
@@ -285,6 +295,6 @@ const aiRuleApi = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useRecreateVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
+export const { useGetAiRulesQuery, useLazyGetAiRulesQuery, useGetMyAiRulesQuery, useLazyGetMyAiRulesQuery, useGetAiRuleQuery, useLazyGetAiRuleQuery, useCreateAiRuleMutation, useUpdateAiRuleMutation, useDeleteAiRuleMutation, useSearchAiRulesMutation, useBackfillVectorsMutation, useRecreateVectorsMutation, useVectorizeAiRuleMutation, useLazyExportAiRulesQuery, useImportAiRulesMutation, useBulkDeleteAiRulesMutation } = aiRuleApi;
 
 export default aiRuleApi;

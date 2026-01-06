@@ -1,5 +1,5 @@
 import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
-import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers, IconUserStar } from '@tabler/icons-react';
 import { Link, useLocation } from '@tanstack/react-router';
 
 const mainNavItems = [
@@ -26,6 +26,12 @@ const mainNavItems = [
     icon: IconBrain,
     href: '/ai-rules',
     badge: null,
+  },
+  {
+    label: 'My Rules',
+    icon: IconUserStar,
+    href: '/my-rules',
+    badge: { label: 'NEW', color: 'teal' },
   },
 ];
 

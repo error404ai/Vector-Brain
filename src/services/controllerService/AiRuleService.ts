@@ -79,6 +79,53 @@ export class AiRuleService {
     };
   }
 
+  async myRules(request: z.infer<typeof AiRuleListValidation>, userId: number): Promise<ApiResponse> {
+    if (!(await AccessControllerHelper.canCreateAiRule(userId))) {
+      throw new ForbiddenError('Unauthorized to view AI rules');
+    }
+
+    const { page = 1, limit = 10, search, sortField, sortDirection } = request;
+
+    // Only show user's own rules (not global rules)
+    let where: FindOptionsWhere<AiRule> = { user_id: userId };
+
+    if (search) {
+      where = { user_id: userId, name: Like(`%${search}%`) };
+    }
+
+    const order: any = {};
+    if (sortField) {
+      order[sortField] = sortDirection || 'asc';
+    } else {
+      order.created_at = 'desc'; // Default sort by created_at descending
+    }
+
+    const [items, totalCount] = await this.aiRuleRepository.findAndCount({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      order,
+    });
+
+    // Hydrate to add vector_exist
+    await (this.aiRuleRepository as any).hydrateEntities(items);
+
+    const totalPages = Math.ceil(totalCount / limit);
+
+    return {
+      message: 'My AI rules fetched successfully',
+      data: items,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        pageSize: limit,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+    };
+  }
+
   async details(id: number, userId: number): Promise<ApiResponse> {
     if (!(await AccessControllerHelper.canViewAiRule(userId, id))) {
       throw new ForbiddenError('Unauthorized to view this AI rule');
@@ -120,6 +167,7 @@ export class AiRuleService {
       name: savedAiRule.name,
       website: savedAiRule.website,
       is_active: savedAiRule.is_active,
+      user_id: savedAiRule.user_id,
     });
 
     return { message: 'AI rule created successfully', data: savedAiRule };
@@ -147,6 +195,7 @@ export class AiRuleService {
         name: aiRule.name,
         website: aiRule.website,
         is_active: aiRule.is_active,
+        user_id: aiRule.user_id,
       });
     }
 
@@ -178,10 +227,11 @@ export class AiRuleService {
     return { message: 'AI rule deleted successfully' };
   }
 
-  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>): Promise<ApiResponse> {
+  async searchByPrompt(request: z.infer<typeof SearchAiRulesValidation>, userId?: number): Promise<ApiResponse> {
     const { prompt, limit = 10 } = request;
 
-    const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit, { is_active: true });
+    // Fetch more results to allow for prioritization
+    const searchResults = await this.aiEmbeddingService.searchSimilar(prompt, limit * 2, { is_active: true });
 
     if (searchResults.length === 0) {
       return { message: 'No matching rules found', data: [] };
@@ -203,12 +253,26 @@ export class AiRuleService {
     const rulesWithScores = filteredRules
       .map((rule) => {
         const searchResult = searchResults.find((r) => r.id === rule.id);
+        const baseScore = searchResult?.score || 0;
+        // Boost user-created rules by adding a priority bonus
+        // User's own rules get highest priority, then global rules
+        const priorityBonus = userId && rule.user_id === userId ? 0.1 : 0;
         return {
           ...rule,
-          similarity_score: searchResult?.score || 0,
+          similarity_score: baseScore + priorityBonus,
+          is_user_rule: rule.user_id === userId,
         };
       })
-      .sort((a, b) => b.similarity_score - a.similarity_score);
+      .sort((a, b) => {
+        // First sort by user ownership (user rules first)
+        if (userId) {
+          if (a.user_id === userId && b.user_id !== userId) return -1;
+          if (a.user_id !== userId && b.user_id === userId) return 1;
+        }
+        // Then sort by similarity score
+        return b.similarity_score - a.similarity_score;
+      })
+      .slice(0, limit); // Limit to requested count after prioritization
 
     return {
       message: 'Rules retrieved successfully',
@@ -234,6 +298,7 @@ export class AiRuleService {
           name: rule.name,
           website: rule.website,
           is_active: rule.is_active,
+          user_id: rule.user_id,
         },
       };
     });
@@ -260,7 +325,7 @@ export class AiRuleService {
 
     const rules = await this.aiRuleRepository.find({
       where: { is_active: true },
-      select: ['id', 'name', 'intent', 'website', 'is_active'],
+      select: ['id', 'name', 'intent', 'website', 'is_active', 'user_id'],
     });
 
     await this.aiEmbeddingService.recreateCollection();
@@ -293,6 +358,7 @@ export class AiRuleService {
           name: rule.name,
           website: rule.website,
           is_active: rule.is_active,
+          user_id: rule.user_id,
         });
 
         processed += 1;
@@ -441,6 +507,7 @@ export class AiRuleService {
           name: savedAiRule.name,
           website: savedAiRule.website,
           is_active: savedAiRule.is_active,
+          user_id: savedAiRule.user_id,
         });
 
         importedRules.push(savedAiRule);

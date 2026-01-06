@@ -17,6 +17,12 @@ export class AiRuleController {
     return this.aiRuleService.list(query, user.userId);
   }
 
+  @Get('/my-rules')
+  @UseBefore(zodValidationMiddleware(AiRuleListValidation))
+  async myRules(@QueryParams() query: any, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiRuleService.myRules(query, user.userId);
+  }
+
   @Get('/details/:id')
   async details(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.aiRuleService.details(id, user.userId);
@@ -41,8 +47,8 @@ export class AiRuleController {
 
   @Post('/search')
   @UseBefore(zodValidationMiddleware(SearchAiRulesValidation))
-  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>) {
-    return this.aiRuleService.searchByPrompt(request);
+  async search(@Body() request: z.infer<typeof SearchAiRulesValidation>, @CurrentUser() user?: { userId: number }) {
+    return this.aiRuleService.searchByPrompt(request, user?.userId);
   }
 
   @Post('/backfill-vectors')
