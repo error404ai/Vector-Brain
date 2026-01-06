@@ -15,6 +15,11 @@ services:
       # Update this to wherever you want VS Code to mount the folder of your project
       - ..:/app:cached
 
+      # Persist VS Code Server + remote extensions across container rebuilds.
+      # VS Code installs remote extensions under ~/.vscode-server inside the container.
+      - vscode-server-root:/root/.vscode-server
+      - vscode-server-node:/home/node/.vscode-server
+
     # Uncomment the next four lines if you will use a ptrace-based debugger like C++, Go, and Rust.
     # cap_add:
     #   - SYS_PTRACE
@@ -23,4 +28,8 @@ services:
 
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
+
+volumes:
+  vscode-server-root:
+  vscode-server-node:
  
