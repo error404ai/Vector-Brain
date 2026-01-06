@@ -21,9 +21,6 @@ RUN cd frontend && pnpm install
 # Copy source code
 COPY . .
 
-# Build the application
-RUN pnpm run build
-
 # Expose the ports
 EXPOSE 3000 5173
 
