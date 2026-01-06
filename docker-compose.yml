@@ -13,6 +13,7 @@ services:
       - .:/app
       - /app/node_modules
       - /app/frontend/node_modules
+      - ~/.ssh:/root/.ssh
     depends_on:
       db:
         condition: service_healthy
