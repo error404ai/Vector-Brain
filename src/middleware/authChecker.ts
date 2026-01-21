@@ -4,6 +4,7 @@ import { Action } from 'routing-controllers';
 interface UserPayload {
   userId: number;
   email: string;
+  role: string;
 }
 
 export function authorizationChecker(action: Action, roles: string[]): boolean {
@@ -28,9 +29,14 @@ export function authorizationChecker(action: Action, roles: string[]): boolean {
     return true;
   }
 
-  // Check if user has required role (if you implement roles later)
-  // For now, just return true if authenticated
-  return true;
+  // Check if user has required role
+  const userRole = (payload as UserPayload).role;
+  if (!userRole) {
+    return false;
+  }
+
+  // Check if user's role is in the required roles list
+  return roles.includes(userRole);
 }
 
 export function currentUserChecker(action: Action): UserPayload | undefined {

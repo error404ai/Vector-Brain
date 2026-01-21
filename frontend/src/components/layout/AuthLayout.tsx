@@ -1,9 +1,11 @@
 import { useGetProfileQuery, useLogoutMutation } from '@/RTKService/authService/authService';
+import { useAppDispatch } from '@/store/hooks';
+import { setUser } from '@/store/authSlice';
 import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Logo from '../ui/Logo';
 import { Sidebar } from './Sidebar';
 
@@ -12,11 +14,19 @@ interface AuthLayoutProps {
 }
 
 export function AuthLayout({ children }: AuthLayoutProps) {
+  const dispatch = useAppDispatch();
   const [opened, { toggle }] = useDisclosure();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { data: profile } = useGetProfileQuery();
   const user = profile?.data;
   const [logout] = useLogoutMutation();
+
+  // Update Redux store when profile is loaded
+  useEffect(() => {
+    if (user) {
+      dispatch(setUser(user));
+    }
+  }, [user, dispatch]);
 
   const handleLogout = async () => {
     console.log('logging out');
@@ -83,8 +93,12 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                       <Text fw={500} size="sm" lh={1}>
                         {user.name}
                       </Text>
-                      <Badge size="xs" variant="light" color="vector">
-                        Admin
+                      <Badge
+                        size="xs"
+                        variant="light"
+                        color={user.role === 'admin' ? 'vector' : user.role === 'user' ? 'teal' : 'gray'}
+                      >
+                        {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                       </Badge>
                     </Group>
                   ) : (

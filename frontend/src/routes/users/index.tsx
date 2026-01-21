@@ -1,12 +1,13 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useUsersDataTable, type CreateUserPayload, type UpdateUserPayload, type User } from '@/hooks/useUsersDataTable';
+import { store } from '@/store';
 import { Badge, Box, Button, Group, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconCheck, IconUserPlus, IconX } from '@tabler/icons-react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { UserActions } from './_partials/UserActions';
@@ -14,6 +15,13 @@ import { UserFormModal } from './_partials/UserFormModal';
 import { UserStatusBadge } from './_partials/UserStatusBadge';
 
 export const Route = createFileRoute('/users/')({
+  beforeLoad: () => {
+    const state = store.getState();
+    const user = state.auth.user;
+    if (user?.role !== 'admin') {
+      throw redirect({ to: '/dashboard' });
+    }
+  },
   component: Users,
 });
 

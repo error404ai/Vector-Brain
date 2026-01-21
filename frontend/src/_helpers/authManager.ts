@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { baseApi, TAGS } from '@/RTKService/baseApi';
-import { setTokenExpired } from '@/store/authSlice';
+import { setTokenExpired, setUser } from '@/store/authSlice';
 import { clearNetworkError, setNetworkOffline, setServerUnreachable } from '@/store/networkStatusSlice';
 import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
 import type { FetchBaseQueryError, FetchBaseQueryMeta, QueryReturnValue } from '@reduxjs/toolkit/query';
@@ -51,6 +51,12 @@ const authManager = {
       if (token) {
         this.saveAccessToken(token);
       }
+
+      const user = data?.data?.user;
+      if (user) {
+        dispatch(setUser(user));
+      }
+
       try {
         const allTags = Object.values(TAGS)
           .filter(Boolean)

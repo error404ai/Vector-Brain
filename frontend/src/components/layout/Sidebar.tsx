@@ -1,6 +1,8 @@
 import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
 import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers, IconUserStar } from '@tabler/icons-react';
 import { Link, useLocation } from '@tanstack/react-router';
+import { useAppSelector } from '@/store/hooks';
+import type { RootState } from '@/store';
 
 const mainNavItems = [
   {
@@ -8,30 +10,35 @@ const mainNavItems = [
     icon: IconDashboard,
     href: '/dashboard',
     badge: null,
+    roles: ['admin', 'user', 'guest'], // All users can see dashboard
   },
   {
     label: 'Users',
     icon: IconUsers,
     href: '/users',
     badge: { label: 'NEW', color: 'cyan' },
+    roles: ['admin'], // Only admins can see users
   },
   {
     label: 'Agent Tasks',
     icon: IconRobot,
     href: '/agent-tasks',
     badge: null,
+    roles: ['admin', 'user', 'guest'], // All users can see agent tasks
   },
   {
     label: 'AI Rules',
     icon: IconBrain,
     href: '/ai-rules',
     badge: null,
+    roles: ['admin'], // Only admins can see AI rules (global + all rules)
   },
   {
     label: 'My Rules',
     icon: IconUserStar,
     href: '/my-rules',
     badge: { label: 'NEW', color: 'teal' },
+    roles: ['admin', 'user', 'guest'], // All users can see their own rules
   },
 ];
 
@@ -41,6 +48,7 @@ const systemItems = [
     icon: IconSettings,
     href: '/settings',
     badge: null,
+    roles: ['admin', 'user', 'guest'], // All users can see settings
   },
 ];
 
@@ -54,6 +62,7 @@ interface NavSectionProps {
     icon: React.ComponentType<{ size?: string | number }>;
     href: string;
     badge?: { label: string; color: string } | null;
+    roles: string[];
   }>;
   collapsed: boolean;
 }
@@ -101,6 +110,13 @@ function NavSection({ items, collapsed }: NavSectionProps) {
 }
 
 export function Sidebar({ collapsed = false }: SidebarProps) {
+  const user = useAppSelector((state: RootState) => state.auth.user);
+  const userRole = user?.role || 'guest';
+
+  // Filter menu items based on user role
+  const filteredMainNavItems = mainNavItems.filter((item) => item.roles.includes(userRole));
+  const filteredSystemItems = systemItems.filter((item) => item.roles.includes(userRole));
+
   return (
     <Box
       style={{
@@ -119,7 +135,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
                 Main Menu
               </Text>
             )}
-            <NavSection items={mainNavItems} collapsed={collapsed} />
+            <NavSection items={filteredMainNavItems} collapsed={collapsed} />
           </Box>
 
           <Box>
@@ -128,7 +144,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
                 System
               </Text>
             )}
-            <NavSection items={systemItems} collapsed={collapsed} />
+            <NavSection items={filteredSystemItems} collapsed={collapsed} />
           </Box>
         </Stack>
       </ScrollArea>

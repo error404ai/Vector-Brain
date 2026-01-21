@@ -3,12 +3,13 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useAiRulesDataTable, type AiRule, type CreateAiRulePayload, type UpdateAiRulePayload } from '@/hooks/useAiRulesDataTable';
+import { store } from '@/store';
 import { Badge, Box, Button, Card, Group, Progress, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconCheck, IconDatabase, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { AiRuleActions } from './_partials/AiRuleActions';
@@ -16,6 +17,13 @@ import { AiRuleDetailModal } from './_partials/AiRuleDetailModal';
 import { AiRuleFormModal } from './_partials/AiRuleFormModal';
 
 export const Route = createFileRoute('/ai-rules/')({
+  beforeLoad: () => {
+    const state = store.getState();
+    const user = state.auth.user;
+    if (user?.role !== 'admin') {
+      throw redirect({ to: '/dashboard' });
+    }
+  },
   component: AiRules,
 });
 

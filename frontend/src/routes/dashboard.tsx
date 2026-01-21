@@ -1,4 +1,6 @@
 import { useGetDashboardSummaryQuery, type RecentActivity } from '@/RTKService/dashboardService/dashboardService';
+import { useAppSelector } from '@/store/hooks';
+import type { RootState } from '@/store';
 import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconRobot, IconUser, IconUsers } from '@tabler/icons-react';
 import { createFileRoute } from '@tanstack/react-router';
@@ -10,17 +12,20 @@ export const Route = createFileRoute('/dashboard')({
 
 function Dashboard() {
   const { data: summaryResponse, isLoading } = useGetDashboardSummaryQuery();
+  const user = useAppSelector((state: RootState) => state.auth.user);
+  const isAdmin = user?.role === 'admin';
   const summary = summaryResponse?.data;
   const stats = summary?.stats;
   const recentActivity = summary?.recentActivity ?? [];
 
-  const statCards = [
+  const allStatCards = [
     {
       title: 'Total Users',
       value: stats?.totalUsers ?? 0,
       diff: 12,
       icon: IconUsers,
       color: 'vector',
+      adminOnly: true,
     },
     {
       title: 'Active Users',
@@ -28,6 +33,7 @@ function Dashboard() {
       diff: 5,
       icon: IconUser,
       color: 'cyan',
+      adminOnly: true,
     },
     {
       title: 'Total Agent Tasks',
@@ -35,6 +41,7 @@ function Dashboard() {
       diff: 28,
       icon: IconRobot,
       color: 'teal',
+      adminOnly: false,
     },
     {
       title: 'Total AI Rules',
@@ -42,8 +49,12 @@ function Dashboard() {
       diff: 10,
       icon: IconBrain,
       color: 'orange',
+      adminOnly: false,
     },
   ];
+
+  // Filter stat cards based on user role
+  const statCards = isAdmin ? allStatCards : allStatCards.filter((card) => !card.adminOnly);
 
   const getActivityIcon = (type: RecentActivity['type']) => {
     switch (type) {
@@ -233,15 +244,19 @@ function Dashboard() {
                   }
                 />
                 <Stack gap="xs" w="100%">
-                  <Group justify="space-between">
-                    <Text size="sm" c="dimmed">
-                      Active Users
-                    </Text>
-                    {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.activeUsers ?? 0}</Text>}
-                  </Group>
-                  <Progress value={stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0} color="vector" size="sm" />
+                  {isAdmin && (
+                    <>
+                      <Group justify="space-between">
+                        <Text size="sm" c="dimmed">
+                          Active Users
+                        </Text>
+                        {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.activeUsers ?? 0}</Text>}
+                      </Group>
+                      <Progress value={stats ? (stats.activeUsers / Math.max(stats.totalUsers, 1)) * 100 : 0} color="vector" size="sm" />
+                    </>
+                  )}
 
-                  <Group justify="space-between" mt="xs">
+                  <Group justify="space-between" mt={isAdmin ? 'xs' : undefined}>
                     <Text size="sm" c="dimmed">
                       Recent Tasks
                     </Text>
@@ -251,7 +266,7 @@ function Dashboard() {
 
                   <Group justify="space-between" mt="xs">
                     <Text size="sm" c="dimmed">
-                      Total Tasks
+                      {isAdmin ? 'Total Tasks' : 'My Total Tasks'}
                     </Text>
                     {isLoading ? <Skeleton height={16} width={40} /> : <Text size="sm">{stats?.totalAgentTasks ?? 0}</Text>}
                   </Group>

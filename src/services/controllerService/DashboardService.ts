@@ -28,36 +28,63 @@ export class DashboardService {
   private agentTaskRepository = AppDataSource.getRepository(AgentTask);
   private aiRuleRepository = AppDataSource.getRepository(AiRule);
 
-  async getStats(): Promise<ApiResponse> {
-    // Get user statistics
-    const totalUsers = await this.userRepository.count({
-      where: { deletedAt: IsNull() },
-    });
+  async getStats(userId: number, userRole: string): Promise<ApiResponse> {
+    const isAdmin = userRole === 'admin';
 
-    const activeUsers = await this.userRepository.count({
-      where: { deletedAt: IsNull(), isActive: true },
-    });
+    let stats: DashboardStats;
 
-    // Get agent task statistics
-    const totalAgentTasks = await this.agentTaskRepository.count();
+    if (isAdmin) {
+      // Admin sees all system statistics
+      const totalUsers = await this.userRepository.count({
+        where: { deletedAt: IsNull() },
+      });
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const recentAgentTasks = await this.agentTaskRepository.count({
-      where: { created_at: MoreThan(thirtyDaysAgo) },
-    });
+      const activeUsers = await this.userRepository.count({
+        where: { deletedAt: IsNull(), isActive: true },
+      });
 
-    // Get AI rules statistics
-    const totalAiRules = await this.aiRuleRepository.count();
+      const totalAgentTasks = await this.agentTaskRepository.count();
 
-    // Calculate percentage changes (mock for now - can be enhanced with historical data)
-    const stats: DashboardStats = {
-      totalUsers,
-      activeUsers,
-      totalAgentTasks,
-      recentAgentTasks,
-      totalAiRules,
-    };
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const recentAgentTasks = await this.agentTaskRepository.count({
+        where: { created_at: MoreThan(thirtyDaysAgo) },
+      });
+
+      const totalAiRules = await this.aiRuleRepository.count();
+
+      stats = {
+        totalUsers,
+        activeUsers,
+        totalAgentTasks,
+        recentAgentTasks,
+        totalAiRules,
+      };
+    } else {
+      // Regular users see only their own statistics
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const userAgentTasks = await this.agentTaskRepository.count({
+        where: { user_id: userId },
+      });
+
+      const recentAgentTasks = await this.agentTaskRepository.count({
+        where: { user_id: userId, created_at: MoreThan(thirtyDaysAgo) },
+      });
+
+      const userAiRules = await this.aiRuleRepository.count({
+        where: { user_id: userId },
+      });
+
+      stats = {
+        totalUsers: 0,
+        activeUsers: 0,
+        totalAgentTasks: userAgentTasks,
+        recentAgentTasks,
+        totalAiRules: userAiRules,
+      };
+    }
 
     return {
       message: 'Dashboard stats retrieved successfully',
@@ -65,38 +92,59 @@ export class DashboardService {
     };
   }
 
-  async getRecentActivity(): Promise<ApiResponse> {
+  async getRecentActivity(userId: number, userRole: string): Promise<ApiResponse> {
     const activities: RecentActivity[] = [];
+    const isAdmin = userRole === 'admin';
 
-    const recentUsers = await this.userRepository.find({
-      where: { deletedAt: IsNull() },
-      order: { created_at: 'DESC' },
-      take: 5,
-    });
-
-    for (const user of recentUsers) {
-      activities.push({
-        id: user.id,
-        type: 'user',
-        title: 'New user registered',
-        description: `${user.name} joined the platform`,
-        createdAt: user.created_at,
+    if (isAdmin) {
+      // Admin sees all recent activities
+      const recentUsers = await this.userRepository.find({
+        where: { deletedAt: IsNull() },
+        order: { created_at: 'DESC' },
+        take: 5,
       });
-    }
 
-    const recentTasks = await this.agentTaskRepository.find({
-      order: { created_at: 'DESC' },
-      take: 5,
-    });
+      for (const user of recentUsers) {
+        activities.push({
+          id: user.id,
+          type: 'user',
+          title: 'New user registered',
+          description: `${user.name} joined the platform`,
+          createdAt: user.created_at,
+        });
+      }
 
-    for (const task of recentTasks) {
-      activities.push({
-        id: task.id,
-        type: 'agent_task',
-        title: 'Agent task created',
-        description: task.prompt.substring(0, 50) + (task.prompt.length > 50 ? '...' : ''),
-        createdAt: task.created_at,
+      const recentTasks = await this.agentTaskRepository.find({
+        order: { created_at: 'DESC' },
+        take: 5,
       });
+
+      for (const task of recentTasks) {
+        activities.push({
+          id: task.id,
+          type: 'agent_task',
+          title: 'Agent task created',
+          description: task.prompt.substring(0, 50) + (task.prompt.length > 50 ? '...' : ''),
+          createdAt: task.created_at,
+        });
+      }
+    } else {
+      // Regular users see only their own activities
+      const recentTasks = await this.agentTaskRepository.find({
+        where: { user_id: userId },
+        order: { created_at: 'DESC' },
+        take: 10,
+      });
+
+      for (const task of recentTasks) {
+        activities.push({
+          id: task.id,
+          type: 'agent_task',
+          title: 'Agent task created',
+          description: task.prompt.substring(0, 50) + (task.prompt.length > 50 ? '...' : ''),
+          createdAt: task.created_at,
+        });
+      }
     }
 
     activities.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -108,8 +156,11 @@ export class DashboardService {
     };
   }
 
-  async getSummary(): Promise<ApiResponse> {
-    const [statsResponse, activityResponse] = await Promise.all([this.getStats(), this.getRecentActivity()]);
+  async getSummary(userId: number, userRole: string): Promise<ApiResponse> {
+    const [statsResponse, activityResponse] = await Promise.all([
+      this.getStats(userId, userRole),
+      this.getRecentActivity(userId, userRole),
+    ]);
 
     return {
       message: 'Dashboard summary retrieved successfully',
