@@ -2,7 +2,7 @@ import { useLoginMutation } from '@/RTKService/authService/authService';
 import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
-import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { Helmet } from 'react-helmet-async';
 
 export const Route = createFileRoute('/')({
@@ -80,6 +80,13 @@ function LoginPage() {
             </Button>
           </Stack>
         </form>
+
+        <Text c="dimmed" size="sm" ta="center">
+          Do not have an account?{' '}
+          <Anchor c="vector" component={Link} to="/signup">
+            Sign up
+          </Anchor>
+        </Text>
       </Stack>
     </>
   );
