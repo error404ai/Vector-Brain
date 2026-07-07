@@ -21,19 +21,12 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
-COPY --from=builder /app .
+RUN groupadd -g 1001 nodejs && \
+    useradd -u 1001 -g nodejs -m -s /bin/bash nodejs
 
-RUN pnpm install --frozen-lockfile --prod=false
+COPY --from=builder --chown=nodejs:nodejs /app .
 
 ENV NODE_ENV=production
-
-RUN groupadd -g 1001 nodejs && \
-    useradd -u 1001 -g nodejs -s /bin/bash nodejs
-
-RUN mkdir -p /home/nodejs/.cache/node/corepack && \
-    chown -R nodejs:nodejs /home/nodejs
-
-RUN chown -R nodejs:nodejs /app
 
 USER nodejs
 
