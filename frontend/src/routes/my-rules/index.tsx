@@ -14,6 +14,11 @@ import { MyRuleActions } from './_partials/-MyRuleActions';
 import { MyRuleDetailModal } from './_partials/-MyRuleDetailModal';
 import { MyRuleFormModal } from './_partials/-MyRuleFormModal';
 
+const getApiErrorMessage = (error: unknown, fallback: string) => {
+  const apiError = error as { data?: { message?: string }; message?: string };
+  return apiError?.data?.message || apiError?.message || fallback;
+};
+
 export const Route = createFileRoute('/my-rules/')({
   component: MyRules,
 });
@@ -136,7 +141,7 @@ function MyRules() {
     } catch (error) {
       notifications.show({
         title: 'Vectorization Error',
-        message: 'Failed to vectorize the rule',
+        message: getApiErrorMessage(error, 'Failed to vectorize the rule'),
         color: 'red',
         icon: <IconX size={16} />,
       });

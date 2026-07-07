@@ -88,6 +88,16 @@ export class AiEmbeddingService {
     return this.isInitialized && this.embeddingProvider !== null;
   }
 
+  private async ensureReady(): Promise<void> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
+    if (!this.embeddingProvider) {
+      throw new Error('Embedding provider is not configured. Set EMBEDDING_API_KEY and embedding provider settings.');
+    }
+  }
+
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.embeddingProvider) {
       throw new Error('Embedding provider not configured');
@@ -96,15 +106,13 @@ export class AiEmbeddingService {
   }
 
   async storeVector(ruleId: number, text: string, metadata?: Record<string, unknown>): Promise<void> {
-    if (!this.isConfigured()) {
-      Logger.warn('Embedding service not configured, skipping vector storage');
-      return;
-    }
+    await this.ensureReady();
 
     try {
       const vector = await this.generateEmbedding(text);
 
       await this.qdrantClient.upsert(this.collectionName, {
+        wait: true,
         points: [
           {
             id: ruleId,
@@ -117,7 +125,12 @@ export class AiEmbeddingService {
         ],
       });
 
-      Logger.info(`Stored vector for rule ID: ${ruleId}`);
+      const stored = await this.vectorExists(ruleId);
+      if (!stored) {
+        throw new Error(`Qdrant upsert completed but vector was not found for rule ID ${ruleId}`);
+      }
+
+      Logger.info(`Stored and verified vector for rule ID: ${ruleId}`);
     } catch (error) {
       Logger.error(`Failed to store vector for rule ID ${ruleId}:`, error);
       throw error;

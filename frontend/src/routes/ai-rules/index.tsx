@@ -16,6 +16,11 @@ import { AiRuleActions } from './_partials/AiRuleActions';
 import { AiRuleDetailModal } from './_partials/AiRuleDetailModal';
 import { AiRuleFormModal } from './_partials/AiRuleFormModal';
 
+const getApiErrorMessage = (error: unknown, fallback: string) => {
+  const apiError = error as { data?: { message?: string }; message?: string };
+  return apiError?.data?.message || apiError?.message || fallback;
+};
+
 export const Route = createFileRoute('/ai-rules/')({
   beforeLoad: () => {
     const state = store.getState();
@@ -235,7 +240,7 @@ function AiRules() {
     } catch (error) {
       notifications.show({
         title: 'Vectorization Error',
-        message: 'Failed to vectorize the rule',
+        message: getApiErrorMessage(error, 'Failed to vectorize the rule'),
         color: 'red',
         icon: <IconX size={16} />,
       });
