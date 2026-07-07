@@ -2,7 +2,7 @@
 FROM node:24-alpine
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Install git
 RUN apk add --no-cache git
@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
-COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./frontend/
 
 # Install dependencies
 RUN pnpm install

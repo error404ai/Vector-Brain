@@ -1,14 +1,14 @@
 # -- Stage 1: Build ---------------------------------------------------------
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
 ENV NODE_OPTIONS=--max-old-space-size=2048
 
 COPY package.json pnpm-lock.yaml ./
-COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./frontend/
 
 RUN pnpm install --frozen-lockfile
 RUN cd frontend && pnpm install --frozen-lockfile
@@ -21,7 +21,7 @@ RUN cd frontend && pnpm run build
 # -- Stage 2: Production ----------------------------------------------------
 FROM node:24-alpine AS production
 
-RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
