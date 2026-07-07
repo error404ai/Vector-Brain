@@ -1,6 +1,6 @@
-FROM node:20 AS builder
+FROM node:22 AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 
 WORKDIR /app
 
@@ -15,9 +15,9 @@ COPY . .
 RUN pnpm run build
 RUN cd frontend && pnpm run build
 
-FROM node:20 AS production
+FROM node:22 AS production
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 
 WORKDIR /app
 

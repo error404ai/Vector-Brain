@@ -1,8 +1,8 @@
 # Development Dockerfile
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 
 # Install git
 RUN apk add --no-cache git

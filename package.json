@@ -2,8 +2,9 @@
   "name": "vector-brain",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "description": "Vector-Brain API Service",
   "main": "dist/app.js",
