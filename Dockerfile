@@ -1,5 +1,5 @@
 # Development Dockerfile
-FROM node:22-alpine
+FROM node:24-alpine
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@11.10.0 --activate

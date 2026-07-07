@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.0.0"
   },
   "description": "Vector-Brain API Service",
   "main": "dist/app.js",
