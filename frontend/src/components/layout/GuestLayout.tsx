@@ -1,5 +1,5 @@
 import Logo from '@/components/ui/Logo';
-import { Box, Center, Paper, Stack } from '@/components/mui/core';
+import { Box, Paper, Stack, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 
 interface GuestLayoutProps {
@@ -9,42 +9,34 @@ interface GuestLayoutProps {
 export function GuestLayout({ children }: GuestLayoutProps) {
   return (
     <Box
-      style={{
+      sx={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)',
+        background: 'linear-gradient(135deg, #f8fbff 0%, #e5f6ff 48%, #f8fbff 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '2rem',
+        px: 2,
+        py: 4,
       }}
     >
-      <Stack align="center" gap="xl" w="100%" maw={400}>
-        <Logo size={48} showText={true} />
+      <Stack alignItems="center" spacing={3} sx={{ width: '100%', maxWidth: 420 }}>
+        <Logo size={42} showText={true} />
         <Paper
-          shadow="xl"
-          p="xl"
-          radius="md"
-          w="100%"
-          style={{
+          elevation={0}
+          sx={{
+            width: '100%',
             backgroundColor: '#ffffff',
-            border: '1px solid rgba(0,0,0,0.1)',
+            border: '1px solid rgba(15, 23, 42, 0.1)',
+            borderRadius: 1,
+            boxShadow: '0 16px 40px rgba(15, 23, 42, 0.08)',
+            p: { xs: 3, sm: 4 },
           }}
         >
           {children}
         </Paper>
-        <Center>
-          <Box
-            component="a"
-            href="#"
-            c="dimmed"
-            style={{
-              fontSize: '0.75rem',
-              textDecoration: 'none',
-            }}
-          >
-            © 2025 Vector Brain. All rights reserved.
-          </Box>
-        </Center>
+        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+          © 2025 Vector Brain. All rights reserved.
+        </Typography>
       </Stack>
     </Box>
   );

@@ -1,7 +1,7 @@
 import { useLoginMutation } from '@/RTKService/authService/authService';
-import { Anchor, Button, Checkbox, Group, PasswordInput, Stack, Text, TextInput, Title } from '@/components/mui/core';
 import { useForm } from '@/components/mui/form';
 import { notifications } from '@/components/mui/notifications';
+import { Box, Button, Checkbox, CircularProgress, FormControlLabel, Link as MuiLink, Stack, TextField, Typography } from '@mui/material';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
@@ -45,44 +45,78 @@ export default function LoginPage() {
     }
   };
 
+  const emailInput = form.getInputProps('email');
+  const passwordInput = form.getInputProps('password');
+  const rememberMeInput = form.getInputProps('rememberMe', { type: 'checkbox' });
+
   return (
     <>
       <Helmet>
         <title>Login - Vector Brain</title>
       </Helmet>
-      <Stack gap="lg">
-        <Stack gap="xs" align="center">
-          <Title order={2}>Welcome Back</Title>
-          <Text c="dimmed" size="sm">
+      <Stack spacing={3}>
+        <Stack spacing={0.75} alignItems="center" textAlign="center">
+          <Typography variant="h4" component="h1" sx={{ fontSize: { xs: 28, sm: 30 }, fontWeight: 800, lineHeight: 1.15 }}>
+            Welcome Back
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: 15, lineHeight: 1.45 }}>
             Sign in to access your Vector Brain dashboard
-          </Text>
+          </Typography>
         </Stack>
 
         <form onSubmit={form.onSubmit(handleSubmit)}>
-          <Stack gap="md">
-            <TextInput label="Email" placeholder="your@email.com" required {...form.getInputProps('email')} />
+          <Stack spacing={2.25}>
+            <TextField
+              label="Email"
+              placeholder="your@email.com"
+              required
+              fullWidth
+              autoComplete="email"
+              value={emailInput.value}
+              onChange={emailInput.onChange}
+              error={Boolean(emailInput.error)}
+              helperText={emailInput.error || undefined}
+            />
 
-            <PasswordInput label="Password" placeholder="Your password" required {...form.getInputProps('password')} />
+            <TextField
+              label="Password"
+              placeholder="Your password"
+              required
+              fullWidth
+              type="password"
+              autoComplete="current-password"
+              value={passwordInput.value}
+              onChange={passwordInput.onChange}
+              error={Boolean(passwordInput.error)}
+              helperText={passwordInput.error || undefined}
+            />
 
-            <Group justify="space-between">
-              <Checkbox label="Remember me" {...form.getInputProps('rememberMe', { type: 'checkbox' })} />
-              <Anchor c="vector" size="sm" href="#">
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+              <FormControlLabel
+                control={<Checkbox checked={Boolean(rememberMeInput.checked)} onChange={rememberMeInput.onChange} size="small" />}
+                label="Remember me"
+                sx={{
+                  m: 0,
+                  '& .MuiFormControlLabel-label': { fontSize: 14, color: 'text.primary' },
+                }}
+              />
+              <MuiLink href="#" underline="hover" sx={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap' }}>
                 Forgot password?
-              </Anchor>
-            </Group>
+              </MuiLink>
+            </Box>
 
-            <Button type="submit" fullWidth color="vector" mt="md" loading={isLoading}>
-              Sign In
+            <Button type="submit" fullWidth variant="contained" size="large" disabled={isLoading} sx={{ height: 44, fontSize: 15, fontWeight: 700, boxShadow: 'none' }}>
+              {isLoading ? <CircularProgress size={20} color="inherit" /> : 'Sign In'}
             </Button>
           </Stack>
         </form>
 
-        <Text c="dimmed" size="sm" ta="center">
+        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ fontSize: 14 }}>
           Do not have an account?{' '}
-          <Anchor c="vector" component={Link} to="/signup">
+          <MuiLink component={Link} to="/signup" underline="hover" sx={{ fontWeight: 500 }}>
             Sign up
-          </Anchor>
-        </Text>
+          </MuiLink>
+        </Typography>
       </Stack>
     </>
   );

@@ -55,7 +55,7 @@ Vector-Brain/
 ### Prerequisites
 
 - Node.js >= 20.0.0
-- MySQL database
+- Docker / Docker Compose for local dependencies
 
 ### Installation
 
@@ -80,35 +80,52 @@ Vector-Brain/
 
    ```bash
    cp .env.example .env
-   # Edit .env with your database credentials
+   # Edit .env with your local credentials/API keys
    ```
 
-4. Sync database schema:
+4. Start local dependencies:
+
+   ```bash
+   npm run dev:deps
+   ```
+
+   This starts MySQL, phpMyAdmin, and Qdrant. The app itself still runs on your machine.
+
+5. Sync database schema:
 
    ```bash
    npm run db:sync
    ```
 
-5. Start development servers:
+6. Start development servers:
    ```bash
    npm run dev
    ```
 
 The backend API will be available at `http://localhost:3000/api`  
 The frontend will be available at `http://localhost:5173`
+phpMyAdmin will be available at `http://localhost:8080`  
+Qdrant will be available at `http://localhost:6333`
 
 ## Development Workflow
 
 ### Run Both Frontend and Backend
 
 ```bash
+npm run dev:deps
 npm run dev
 ```
 
-This starts:
+This starts dependencies in Docker and runs:
 
 - Backend on `http://localhost:3000`
 - Frontend on `http://localhost:5173` (with API proxy)
+
+Stop local dependencies:
+
+```bash
+npm run dev:deps:down
+```
 
 ### Run Separately
 
@@ -153,6 +170,9 @@ The server serves:
 
 | Script                     | Description                                   |
 | -------------------------- | --------------------------------------------- |
+| `npm run dev:deps`         | Start local Docker dependencies               |
+| `npm run dev:deps:down`    | Stop local Docker dependencies                |
+| `npm run dev:deps:logs`    | Tail local dependency logs                    |
 | `npm run dev`              | Start both backend & frontend dev servers     |
 | `npm run dev:backend`      | Start backend development server only         |
 | `npm run dev:frontend`     | Start frontend development server only        |

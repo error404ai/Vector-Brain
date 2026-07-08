@@ -11,6 +11,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - MYSQLHOST=db
+      - MYSQLPORT=3306
+      - QDRANT_URL=http://qdrant:6333
     depends_on:
       db:
         condition: service_healthy

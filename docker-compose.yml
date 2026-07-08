@@ -1,66 +1,51 @@
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: vector-brain-dev
+  mysql:
+    image: mysql:8.4
+    container_name: vector-brain-mysql
     restart: unless-stopped
-    env_file: .env
-    ports:
-      - '${PORT:-3000}:3000'
-      - '5173:5173'
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/frontend/node_modules
-      - ~/.ssh:/root/.ssh
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - vector-brain-network
-
-  db:
-    image: mysql:8.0
-    container_name: vector-brain-mysql-dev
-    restart: unless-stopped
-    ports:
-      - '${MYSQL_EXTERNAL_PORT:-3306}:3306'
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQLPASSWORD:-password}
-      - MYSQL_DATABASE=${DATABASE:-vector_brain}
+      MYSQL_ROOT_PASSWORD: ${MYSQLPASSWORD:-password}
+      MYSQL_DATABASE: ${DATABASE:-vector_brain}
+    ports:
+      - '${MYSQL_EXTERNAL_PORT:-3307}:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQLPASSWORD:-password}']
+      test:
+        [
+          'CMD',
+          'mysqladmin',
+          'ping',
+          '-h',
+          'localhost',
+          '-u',
+          'root',
+          '-p${MYSQLPASSWORD:-password}',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - vector-brain-network
 
   phpmyadmin:
-    image: phpmyadmin:latest
-    container_name: vector-brain-phpmyadmin-dev
+    image: phpmyadmin:5
+    container_name: vector-brain-phpmyadmin
     restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQLPASSWORD:-password}
+      UPLOAD_LIMIT: 100M
     ports:
       - '${PHPMYADMIN_PORT:-8080}:80'
-    environment:
-      - PMA_HOST=db
-      - PMA_PORT=3306
-      - PMA_USER=${MYSQLUSERNAME:-root}
-      - PMA_PASSWORD=${MYSQLPASSWORD:-password}
-      - UPLOAD_LIMIT=100M
     depends_on:
-      db:
+      mysql:
         condition: service_healthy
-    networks:
-      - vector-brain-network
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: vector-brain-qdrant-dev
+    container_name: vector-brain-qdrant
     restart: unless-stopped
     ports:
       - '${QDRANT_PORT:-6333}:6333'
@@ -68,27 +53,8 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
-      - QDRANT__SERVICE__HTTP_PORT=6333
-    healthcheck:
-      test:
-        - CMD
-        - bash
-        - -lc
-        - >
-          exec 3<>/dev/tcp/127.0.0.1/6333 &&
-          printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
-          head -n 1 <&3 | grep -q '200'
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - vector-brain-network
+      QDRANT__SERVICE__HTTP_PORT: 6333
 
 volumes:
   mysql_data:
   qdrant_data:
-
-networks:
-  vector-brain-network:
-    driver: bridge

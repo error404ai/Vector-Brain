@@ -1,7 +1,7 @@
 import { useSignupMutation } from '@/RTKService/authService/authService';
-import { Anchor, Button, PasswordInput, Stack, Text, TextInput, Title } from '@/components/mui/core';
 import { useForm } from '@/components/mui/form';
 import { notifications } from '@/components/mui/notifications';
+import { Button, CircularProgress, Link as MuiLink, Stack, TextField, Typography } from '@mui/material';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
@@ -52,43 +52,102 @@ export default function SignupPage() {
     }
   };
 
+  const nameInput = form.getInputProps('name');
+  const emailInput = form.getInputProps('email');
+  const phoneInput = form.getInputProps('phone');
+  const passwordInput = form.getInputProps('password');
+  const confirmPasswordInput = form.getInputProps('confirmPassword');
+
   return (
     <>
       <Helmet>
         <title>Sign Up - Vector Brain</title>
       </Helmet>
-      <Stack gap="lg">
-        <Stack gap="xs" align="center">
-          <Title order={2}>Create Account</Title>
-          <Text c="dimmed" size="sm">
+      <Stack spacing={3}>
+        <Stack spacing={0.75} alignItems="center" textAlign="center">
+          <Typography variant="h4" component="h1" sx={{ fontSize: { xs: 28, sm: 30 }, fontWeight: 800, lineHeight: 1.15 }}>
+            Create Account
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: 15, lineHeight: 1.45 }}>
             Sign up to get started with Vector Brain
-          </Text>
+          </Typography>
         </Stack>
 
         <form onSubmit={form.onSubmit(handleSubmit)}>
-          <Stack gap="md">
-            <TextInput label="Full Name" placeholder="John Doe" required {...form.getInputProps('name')} />
+          <Stack spacing={2.25}>
+            <TextField
+              label="Full Name"
+              placeholder="John Doe"
+              required
+              fullWidth
+              autoComplete="name"
+              value={nameInput.value}
+              onChange={nameInput.onChange}
+              error={Boolean(nameInput.error)}
+              helperText={nameInput.error || undefined}
+            />
 
-            <TextInput label="Email" placeholder="your@email.com" required {...form.getInputProps('email')} />
+            <TextField
+              label="Email"
+              placeholder="your@email.com"
+              required
+              fullWidth
+              autoComplete="email"
+              value={emailInput.value}
+              onChange={emailInput.onChange}
+              error={Boolean(emailInput.error)}
+              helperText={emailInput.error || undefined}
+            />
 
-            <TextInput label="Phone (optional)" placeholder="+1 234 567 890" {...form.getInputProps('phone')} />
+            <TextField
+              label="Phone (optional)"
+              placeholder="+1 234 567 890"
+              fullWidth
+              autoComplete="tel"
+              value={phoneInput.value}
+              onChange={phoneInput.onChange}
+              error={Boolean(phoneInput.error)}
+              helperText={phoneInput.error || undefined}
+            />
 
-            <PasswordInput label="Password" placeholder="Your password" required {...form.getInputProps('password')} />
+            <TextField
+              label="Password"
+              placeholder="Your password"
+              required
+              fullWidth
+              type="password"
+              autoComplete="new-password"
+              value={passwordInput.value}
+              onChange={passwordInput.onChange}
+              error={Boolean(passwordInput.error)}
+              helperText={passwordInput.error || undefined}
+            />
 
-            <PasswordInput label="Confirm Password" placeholder="Confirm your password" required {...form.getInputProps('confirmPassword')} />
+            <TextField
+              label="Confirm Password"
+              placeholder="Confirm your password"
+              required
+              fullWidth
+              type="password"
+              autoComplete="new-password"
+              value={confirmPasswordInput.value}
+              onChange={confirmPasswordInput.onChange}
+              error={Boolean(confirmPasswordInput.error)}
+              helperText={confirmPasswordInput.error || undefined}
+            />
 
-            <Button type="submit" fullWidth color="vector" mt="md" loading={isLoading}>
-              Create Account
+            <Button type="submit" fullWidth variant="contained" size="large" disabled={isLoading} sx={{ height: 44, fontSize: 15, fontWeight: 700, boxShadow: 'none' }}>
+              {isLoading ? <CircularProgress size={20} color="inherit" /> : 'Create Account'}
             </Button>
           </Stack>
         </form>
 
-        <Text c="dimmed" size="sm" ta="center">
+        <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ fontSize: 14 }}>
           Already have an account?{' '}
-          <Anchor c="vector" component={Link} to="/login">
+          <MuiLink component={Link} to="/login" underline="hover" sx={{ fontWeight: 500 }}>
             Sign in
-          </Anchor>
-        </Text>
+          </MuiLink>
+        </Typography>
       </Stack>
     </>
   );
