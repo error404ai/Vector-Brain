@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
 import { Provider } from 'react-redux';
 import App from './App';
-import { MantineAppProvider } from './components/providers/MantineProvider';
+import { MUIProvider } from './components/providers/MUIProvider';
 import './index.css';
 import { store } from './store/store';
 
@@ -11,9 +11,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HelmetProvider>
       <Provider store={store}>
-        <MantineAppProvider>
+        <MUIProvider>
           <App />
-        </MantineAppProvider>
+        </MUIProvider>
       </Provider>
     </HelmetProvider>
   </StrictMode>

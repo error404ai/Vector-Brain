@@ -2,14 +2,14 @@ import authManager from '@/_helpers/authManager';
 import { useGetProfileQuery } from '@/RTKService/authService/authService';
 import { setTokenExpired } from '@/store/authSlice';
 import type { RootState } from '@/store/store';
-import { useLocation, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const publicRoutes = ['/login', '/signup', '/'];
 
 export default function useAuthRedirect(skip: boolean = false) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
   const authInitialized = useSelector((state: RootState) => state.auth.authInitialized);
@@ -37,7 +37,7 @@ export default function useAuthRedirect(skip: boolean = false) {
       }
       redirectTimerRef.current = setTimeout(() => setIsRedirecting(false), 2000);
       dispatch(setTokenExpired(false));
-      router.navigate({ to: path });
+      navigate(path);
     };
     if (skip) {
       return;
@@ -53,7 +53,7 @@ export default function useAuthRedirect(skip: boolean = false) {
       performRedirect('/dashboard');
       return;
     }
-  }, [authInitialized, isPublicRoute, router, hasToken, dispatch, skip]);
+  }, [authInitialized, isPublicRoute, navigate, hasToken, dispatch, skip]);
 
   useEffect(
     () => () => {

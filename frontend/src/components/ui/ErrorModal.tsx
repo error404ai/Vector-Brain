@@ -1,7 +1,7 @@
 import { clearError } from '@/store/authSlice';
 import type { RootState } from '@/store/store';
-import { Button, Code, Modal, ScrollArea, Stack, Text } from '@mantine/core';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { Button, Code, Modal, ScrollArea, Stack, Text } from '@/components/mui/core';
+import { IconAlertCircle } from '@/components/mui/icons';
 import { useDispatch, useSelector } from 'react-redux';
 
 export function ErrorModal() {

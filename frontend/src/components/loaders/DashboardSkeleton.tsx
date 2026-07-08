@@ -1,4 +1,4 @@
-import { Skeleton, Stack } from '@mantine/core';
+import { Skeleton, Stack } from '@/components/mui/core';
 
 export function DashboardSkeleton() {
   return (

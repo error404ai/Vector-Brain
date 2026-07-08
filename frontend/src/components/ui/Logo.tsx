@@ -1,5 +1,5 @@
-import { Box, Group, Text } from '@mantine/core';
-import { IconBrain } from '@tabler/icons-react';
+import { Box, Group, Text } from '@/components/mui/core';
+import { IconBrain } from '@/components/mui/icons';
 
 interface LogoProps {
   size?: number;

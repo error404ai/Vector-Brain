@@ -1,6 +1,6 @@
-import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
-import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers, IconUserStar } from '@tabler/icons-react';
-import { Link, useLocation } from '@tanstack/react-router';
+import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@/components/mui/core';
+import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers, IconUserStar } from '@/components/mui/icons';
+import { Link, useLocation } from 'react-router-dom';
 import { useAppSelector } from '@/store/hooks';
 import type { RootState } from '@/store';
 

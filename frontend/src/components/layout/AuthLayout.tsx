@@ -1,11 +1,14 @@
 import { useGetProfileQuery, useLogoutMutation } from '@/RTKService/authService/authService';
-import { useAppDispatch } from '@/store/hooks';
 import { setUser } from '@/store/authSlice';
-import { ActionIcon, AppShell, Avatar, Badge, Burger, Group, Menu, rem, Skeleton, Text, UnstyledButton } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { IconLogout, IconMenu2, IconMenuDeep, IconSettings, IconUser } from '@tabler/icons-react';
+import { useAppDispatch } from '@/store/hooks';
+import LogoutIcon from '@mui/icons-material/Logout';
+import MenuIcon from '@mui/icons-material/Menu';
+import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+import PersonIcon from '@mui/icons-material/Person';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { AppBar, Avatar, Badge, Box, Divider, Drawer, IconButton, ListItemIcon, Menu, MenuItem, Skeleton, Stack, Toolbar, Typography, useMediaQuery, useTheme } from '@mui/material';
 import type { ReactNode } from 'react';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Logo from '../ui/Logo';
 import { Sidebar } from './Sidebar';
 
@@ -13,15 +16,20 @@ interface AuthLayoutProps {
   children: ReactNode;
 }
 
+const EXPANDED_WIDTH = 280;
+const COLLAPSED_WIDTH = 80;
+
 export function AuthLayout({ children }: AuthLayoutProps) {
   const dispatch = useAppDispatch();
-  const [opened, { toggle }] = useDisclosure();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const { data: profile } = useGetProfileQuery();
   const user = profile?.data;
   const [logout] = useLogoutMutation();
 
-  // Update Redux store when profile is loaded
   useEffect(() => {
     if (user) {
       dispatch(setUser(user));
@@ -29,103 +37,89 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   }, [user, dispatch]);
 
   const handleLogout = async () => {
-    console.log('logging out');
     try {
       await logout().unwrap();
-      console.log('logout successful, navigation will be handled by useAuthRedirect');
-    } catch (error) {
-      console.error('Logout failed:', error);
+    } catch {
+      // Logout mutation clears local auth state even if the API request fails.
     }
   };
 
+  const drawerWidth = sidebarCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+
+  const drawer = <Sidebar collapsed={sidebarCollapsed && !isMobile} />;
+
   return (
-    <AppShell
-      header={{ height: 60 }}
-      navbar={{
-        width: sidebarCollapsed ? 80 : 280,
-        breakpoint: 'sm',
-        collapsed: { mobile: !opened },
-      }}
-      padding="md"
-      layout="default"
-      styles={{
-        main: {
-          backgroundColor: '#f8fafc',
-          minHeight: '100vh',
-        },
-        header: {
-          backgroundColor: '#ffffff',
-          borderBottom: '1px solid rgba(0,0,0,0.1)',
-        },
-        navbar: {
-          backgroundColor: '#f1f5f9',
-          borderRight: '1px solid rgba(0,0,0,0.1)',
-        },
-      }}
-    >
-      <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
-          <Group>
-            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
-            <ActionIcon variant="subtle" size="lg" visibleFrom="sm" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} color="gray">
-              {sidebarCollapsed ? <IconMenu2 size="1.2rem" /> : <IconMenuDeep size="1.2rem" />}
-            </ActionIcon>
-            <Logo size={28} showText={true} />
-          </Group>
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+      <AppBar position="fixed" color="inherit" elevation={0} sx={{ borderBottom: '1px solid rgba(0,0,0,0.1)', zIndex: (theme) => theme.zIndex.drawer + 1 }}>
+        <Toolbar sx={{ justifyContent: 'space-between' }}>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <IconButton edge="start" onClick={() => (isMobile ? setMobileOpen(true) : setSidebarCollapsed((value) => !value))}>
+              {sidebarCollapsed && !isMobile ? <MenuIcon /> : <MenuOpenIcon />}
+            </IconButton>
+            <Logo size={28} showText />
+          </Stack>
 
-          <Menu shadow="md" width={200}>
-            <Menu.Target>
-              <UnstyledButton>
-                <Group gap={7}>
-                  {user ? (
-                    <Avatar src={undefined} alt={user.name} size={32} radius="xl" color="vector">
-                      {user.name
-                        .split(' ')
-                        .map((s: string) => s[0])
-                        .slice(0, 2)
-                        .join('')}
-                    </Avatar>
-                  ) : (
-                    <Avatar size={32} radius="xl" color="vector" />
-                  )}
-                  {user ? (
-                    <Group gap="xs" align="center" visibleFrom="sm">
-                      <Text fw={500} size="sm" lh={1}>
-                        {user.name}
-                      </Text>
-                      <Badge
-                        size="xs"
-                        variant="light"
-                        color={user.role === 'admin' ? 'vector' : user.role === 'user' ? 'teal' : 'gray'}
-                      >
-                        {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                      </Badge>
-                    </Group>
-                  ) : (
-                    <Skeleton height={16} width={80} radius="sm" />
-                  )}
-                </Group>
-              </UnstyledButton>
-            </Menu.Target>
+          <Stack direction="row" spacing={1} alignItems="center" component="button" onClick={(event) => setMenuAnchor(event.currentTarget)} sx={{ border: 0, bgcolor: 'transparent', cursor: 'pointer' }}>
+            {user ? (
+              <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }}>
+                {user.name
+                  .split(' ')
+                  .map((part) => part[0])
+                  .slice(0, 2)
+                  .join('')}
+              </Avatar>
+            ) : (
+              <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }} />
+            )}
+            {user ? (
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ display: { xs: 'none', sm: 'flex' } }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {user.name}
+                </Typography>
+                <Badge color={user.role === 'admin' ? 'primary' : user.role === 'user' ? 'success' : 'default'} badgeContent={user.role.charAt(0).toUpperCase() + user.role.slice(1)} />
+              </Stack>
+            ) : (
+              <Skeleton width={80} height={16} sx={{ display: { xs: 'none', sm: 'block' } }} />
+            )}
+          </Stack>
 
-            <Menu.Dropdown>
-              <Menu.Item leftSection={<IconUser style={{ width: rem(16), height: rem(16) }} />}>Profile</Menu.Item>
-              <Menu.Item leftSection={<IconSettings style={{ width: rem(16), height: rem(16) }} />}>Settings</Menu.Item>
-              <Menu.Divider />
-              <Menu.Item leftSection={<IconLogout style={{ width: rem(16), height: rem(16) }} />} onClick={handleLogout} color="red">
-                Logout
-              </Menu.Item>
-            </Menu.Dropdown>
+          <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+            <MenuItem onClick={() => setMenuAnchor(null)}>
+              <ListItemIcon>
+                <PersonIcon fontSize="small" />
+              </ListItemIcon>
+              Profile
+            </MenuItem>
+            <MenuItem onClick={() => setMenuAnchor(null)}>
+              <ListItemIcon>
+                <SettingsIcon fontSize="small" />
+              </ListItemIcon>
+              Settings
+            </MenuItem>
+            <Divider />
+            <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
+              <ListItemIcon>
+                <LogoutIcon fontSize="small" color="error" />
+              </ListItemIcon>
+              Logout
+            </MenuItem>
           </Menu>
-        </Group>
-      </AppShell.Header>
+        </Toolbar>
+      </AppBar>
 
-      <AppShell.Navbar>
-        <Sidebar collapsed={sidebarCollapsed} />
-      </AppShell.Navbar>
+      <Box component="nav" sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}>
+        <Drawer variant="temporary" open={mobileOpen} onClose={() => setMobileOpen(false)} ModalProps={{ keepMounted: true }} sx={{ display: { xs: 'block', sm: 'none' }, '& .MuiDrawer-paper': { width: EXPANDED_WIDTH, bgcolor: '#f1f5f9' } }}>
+          {drawer}
+        </Drawer>
+        <Drawer variant="permanent" open sx={{ display: { xs: 'none', sm: 'block' }, '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box', mt: '64px', height: 'calc(100% - 64px)', bgcolor: '#f1f5f9', borderRight: '1px solid rgba(0,0,0,0.1)' } }}>
+          {drawer}
+        </Drawer>
+      </Box>
 
-      <AppShell.Main>{children}</AppShell.Main>
-    </AppShell>
+      <Box component="main" sx={{ ml: { sm: `${drawerWidth}px` }, pt: '84px', px: 3, pb: 3, minHeight: '100vh' }}>
+        {children}
+      </Box>
+    </Box>
   );
 }
 

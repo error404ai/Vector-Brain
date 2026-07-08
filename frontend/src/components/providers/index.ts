@@ -1,1 +1,1 @@
-export { ColorSchemeScript, MantineAppProvider } from './MantineProvider';
+export { MUIProvider } from './MUIProvider';

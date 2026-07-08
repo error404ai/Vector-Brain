@@ -1,5 +1,5 @@
 import Logo from '@/components/ui/Logo';
-import { Box, Center, Paper, Stack } from '@mantine/core';
+import { Box, Center, Paper, Stack } from '@/components/mui/core';
 import type { ReactNode } from 'react';
 
 interface GuestLayoutProps {

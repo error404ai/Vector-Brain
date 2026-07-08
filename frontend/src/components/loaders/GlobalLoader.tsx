@@ -1,4 +1,4 @@
-import { Center, Loader, Stack } from '@mantine/core';
+import { Center, Loader, Stack } from '@/components/mui/core';
 
 export function GlobalLoader() {
   return (
