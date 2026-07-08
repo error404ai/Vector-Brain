@@ -29,10 +29,10 @@ export class GlobalErrorHandler implements ExpressErrorMiddlewareInterface {
     };
 
     console.error(`API Error (${processedError.statusCode}):`, error);
-    if (!response.headersSent) {
-      response.status(processedError.statusCode).json(errorResponse);
-    } else {
-      next(error);
+    if (response.headersSent) {
+      return;
     }
+
+    response.status(processedError.statusCode).json(errorResponse);
   }
 }

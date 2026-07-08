@@ -18,7 +18,9 @@ export default function useAuthRedirect(skip: boolean = false) {
   const hasToken = !!authManager.getAccessToken();
 
   // Use getProfile to initialize auth if token exists but auth not initialized
-  const { isLoading: isProfileLoading } = useGetProfileQuery(undefined);
+  const { isLoading: isProfileLoading } = useGetProfileQuery(undefined, {
+    skip: !hasToken || isPublicRoute,
+  });
 
   const [isRedirecting, setIsRedirecting] = useState(false);
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -42,14 +44,20 @@ export default function useAuthRedirect(skip: boolean = false) {
     if (skip) {
       return;
     }
-    if (!authInitialized) {
+    if (!hasToken && isPublicRoute) {
       return;
     }
 
     if (!hasToken && !isPublicRoute) {
       performRedirect('/login');
       return;
-    } else if (hasToken && isPublicRoute) {
+    }
+
+    if (!authInitialized) {
+      return;
+    }
+
+    if (hasToken && isPublicRoute) {
       performRedirect('/dashboard');
       return;
     }

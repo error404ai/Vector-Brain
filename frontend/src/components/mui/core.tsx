@@ -33,6 +33,14 @@ import { Link as RouterLink } from 'react-router-dom';
 
 type Spacing = number | string | undefined;
 
+const spacingMap: Record<string, number> = {
+  xs: 0.5,
+  sm: 1,
+  md: 2,
+  lg: 3,
+  xl: 4,
+};
+
 const colorMap: Record<string, string> = {
   vector: 'primary',
   green: 'success',
@@ -49,6 +57,9 @@ function mappedColor(color?: string) {
 }
 
 function spacing(value: Spacing) {
+  if (typeof value === 'string' && value in spacingMap) {
+    return spacingMap[value];
+  }
   return value;
 }
 
@@ -74,7 +85,7 @@ export function Box({ component, c, style, sx, ...props }: { component?: React.E
 
 export function Stack({ gap = 'md', align, justify, children, style, sx, ...props }: { gap?: Spacing; align?: string; justify?: string; children?: ReactNode; style?: CSSProperties; sx?: SxProps<Theme>; [key: string]: unknown }) {
   return (
-    <MuiStack spacing={gap === 'xs' ? 0.75 : gap === 'sm' ? 1 : gap === 'md' ? 2 : gap === 'lg' ? 3 : gap === 'xl' ? 4 : gap} alignItems={align} justifyContent={justify} sx={{ ...commonSx(props), ...(sx as object) }} style={style}>
+    <MuiStack spacing={spacing(gap)} alignItems={align} justifyContent={justify} sx={{ ...commonSx(props), ...(sx as object) }} style={style}>
       {children}
     </MuiStack>
   );
@@ -82,7 +93,7 @@ export function Stack({ gap = 'md', align, justify, children, style, sx, ...prop
 
 export function Group({ gap = 'md', align = 'center', justify, children, style, sx, ...props }: { gap?: Spacing; align?: string; justify?: string; children?: ReactNode; style?: CSSProperties; sx?: SxProps<Theme>; [key: string]: unknown }) {
   return (
-    <MuiStack direction="row" spacing={gap === 'xs' ? 0.75 : gap === 'sm' ? 1 : gap === 'md' ? 2 : gap === 'lg' ? 3 : gap} alignItems={align} justifyContent={justify} sx={{ flexWrap: 'wrap', ...commonSx(props), ...(sx as object) }} style={style}>
+    <MuiStack direction="row" spacing={spacing(gap)} alignItems={align} justifyContent={justify} sx={{ flexWrap: 'wrap', ...commonSx(props), ...(sx as object) }} style={style}>
       {children}
     </MuiStack>
   );
@@ -115,7 +126,7 @@ export function Text({ children, c, fw, fz, size, ta, tt, lineClamp, style, ...p
 }
 
 export function Title({ order = 2, children, ...props }: { order?: 1 | 2 | 3 | 4 | 5 | 6; children?: ReactNode; [key: string]: unknown }) {
-  const variant = order <= 2 ? 'h4' : order === 3 ? 'h5' : order === 4 ? 'h6' : 'subtitle1';
+  const variant = order === 1 ? 'h4' : order === 2 ? 'h5' : order === 3 ? 'h6' : order === 4 ? 'subtitle1' : 'subtitle2';
   return (
     <Typography variant={variant} fontWeight={700} sx={commonSx(props)}>
       {children}

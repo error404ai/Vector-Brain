@@ -6,6 +6,7 @@ import authManager from './authManager';
 import Global from './global';
 
 const REFRESH_TOKEN_ENDPOINT = '/auth/refresh-token';
+const AUTH_ENDPOINTS_WITHOUT_REFRESH = ['/auth/login', '/auth/signup', REFRESH_TOKEN_ENDPOINT];
 
 const refreshBaseQuery = fetchBaseQuery({
   baseUrl: Global.BASE_API_PATH,
@@ -50,8 +51,8 @@ class RefreshTokenManager {
     return '';
   }
 
-  private static isRefreshEndpoint(url: string): boolean {
-    return url.includes(REFRESH_TOKEN_ENDPOINT.toLowerCase());
+  private static isAuthEndpointWithoutRefresh(url: string): boolean {
+    return AUTH_ENDPOINTS_WITHOUT_REFRESH.some((endpoint) => url.includes(endpoint.toLowerCase()));
   }
 
   private static shouldRefresh(result: BaseQueryResult, requestArgs: any): boolean {
@@ -65,7 +66,7 @@ class RefreshTokenManager {
     }
 
     const requestUrl = this.getRequestUrl(requestArgs).toLowerCase();
-    if (!requestUrl || this.isRefreshEndpoint(requestUrl)) {
+    if (!requestUrl || this.isAuthEndpointWithoutRefresh(requestUrl)) {
       return false;
     }
 
