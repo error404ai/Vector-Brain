@@ -180,7 +180,7 @@ export default function AgentTasks() {
       <Helmet>
         <title>Agent Tasks - Vector Brain</title>
       </Helmet>
-      <Box>
+      <Box p="md">
         {/* Page Header */}
         <Group justify="space-between" mb="xl">
           <div>

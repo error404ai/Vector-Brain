@@ -144,7 +144,7 @@ export default function Users() {
       <Helmet>
         <title>Users - Vector Brain</title>
       </Helmet>
-      <Box>
+      <Box p="md">
         {/* Page Header */}
         <Group justify="space-between" mb="xl">
           <div>

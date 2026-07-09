@@ -1,7 +1,7 @@
 import { useGetDashboardSummaryQuery, type RecentActivity } from '@/RTKService/dashboardService/dashboardService';
 import { useAppSelector } from '@/store/hooks';
 import type { RootState } from '@/store';
-import { Badge, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@/components/mui/core';
+import { Badge, Box, Card, Grid, Group, Paper, Progress, RingProgress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Title } from '@/components/mui/core';
 import { IconArrowDownRight, IconArrowUpRight, IconBrain, IconRobot, IconUser, IconUsers } from '@/components/mui/icons';
 
 import { Helmet } from 'react-helmet-async';
@@ -134,7 +134,8 @@ export default function Dashboard() {
       <Helmet>
         <title>Dashboard - Vector Brain</title>
       </Helmet>
-      <Stack gap="lg">
+      <Box p="md">
+        <Stack gap="lg">
         {/* Page Header */}
         <Group justify="space-between" align="center">
           <div>
@@ -273,6 +274,7 @@ export default function Dashboard() {
           </Grid.Col>
         </Grid>
       </Stack>
-    </>
-  );
+    </Box>
+  </>
+);
 }

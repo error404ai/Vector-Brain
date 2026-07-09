@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { useGetSettingsQuery, useUpdateSettingMutation } from '@/RTKService/settingService/settingService';
-import { Button, Card, Group, Stack, Text, Textarea, Title } from '@/components/mui/core';
+import { Button, Box, Card, Group, Stack, Text, Textarea, Title } from '@/components/mui/core';
 import { useForm } from '@/components/mui/form';
 import { notifications } from '@/components/mui/notifications';
 import { IconSettings } from '@/components/mui/icons';
@@ -63,7 +63,8 @@ export default function SettingsPage() {
       <Helmet>
         <title>Settings - Vector Brain</title>
       </Helmet>
-      <Stack gap="lg">
+      <Box p="md">
+        <Stack gap="lg">
         <div>
           <Title order={2}>Settings</Title>
           <Text c="dimmed" size="sm">
@@ -90,6 +91,7 @@ export default function SettingsPage() {
           </Stack>
         </Card>
       </Stack>
-    </>
-  );
+    </Box>
+  </>
+);
 }

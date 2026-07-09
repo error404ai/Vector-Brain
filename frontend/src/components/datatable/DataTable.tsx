@@ -186,7 +186,17 @@ export function DataTable<T extends object>({
                     </TableCell>
                   ) : null}
                   {columns.map((column) => (
-                    <TableCell key={String(column.accessor)} align={column.textAlign}>
+                    <TableCell
+                      key={String(column.accessor)}
+                      align={column.textAlign}
+                      sx={{
+                        width: column.width,
+                        maxWidth: column.width,
+                        whiteSpace: (column.accessor === 'prompt' || column.accessor === 'intent' || column.accessor === 'description') ? 'normal' : 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
                       {column.render ? column.render(record, rowIndex) : getRecordValue(record, column.accessor)}
                     </TableCell>
                   ))}

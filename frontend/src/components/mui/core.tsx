@@ -27,6 +27,7 @@ import {
   type SxProps,
   type Theme,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
 import { createContext, isValidElement, useContext, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
@@ -39,6 +40,14 @@ const spacingMap: Record<string, number> = {
   md: 2,
   lg: 3,
   xl: 4,
+};
+
+const radiusMap: Record<string, string | number> = {
+  xs: '4px',
+  sm: '8px',
+  md: '12px',
+  lg: '16px',
+  xl: '24px',
 };
 
 const colorMap: Record<string, string> = {
@@ -60,14 +69,17 @@ function spacing(value: Spacing) {
   if (typeof value === 'string' && value in spacingMap) {
     return spacingMap[value];
   }
+  if (typeof value === 'number') {
+    return `${value}px`;
+  }
   return value;
 }
 
-function commonSx(props: Record<string, unknown>): SxProps<Theme> {
+function commonSx(props: Record<string, unknown>): Record<string, any> {
   const sx: Record<string, unknown> = {};
-  if (props.w !== undefined) sx.width = props.w;
-  if (props.maw !== undefined) sx.maxWidth = props.maw;
-  if (props.h !== undefined) sx.height = props.h;
+  if (props.w !== undefined) sx.width = typeof props.w === 'number' ? `${props.w}px` : props.w;
+  if (props.maw !== undefined) sx.maxWidth = typeof props.maw === 'number' ? `${props.maw}px` : props.maw;
+  if (props.h !== undefined) sx.height = typeof props.h === 'number' ? `${props.h}px` : props.h;
   if (props.p !== undefined) sx.p = spacing(props.p as Spacing);
   if (props.px !== undefined) sx.px = spacing(props.px as Spacing);
   if (props.py !== undefined) sx.py = spacing(props.py as Spacing);
@@ -76,6 +88,11 @@ function commonSx(props: Record<string, unknown>): SxProps<Theme> {
   if (props.mb !== undefined) sx.mb = spacing(props.mb as Spacing);
   if (props.ml !== undefined) sx.ml = spacing(props.ml as Spacing);
   if (props.mr !== undefined) sx.mr = spacing(props.mr as Spacing);
+  
+  if (props.radius !== undefined) {
+    const r = props.radius as string | number;
+    sx.borderRadius = typeof r === 'string' && r in radiusMap ? radiusMap[r] : r;
+  }
   return sx;
 }
 
@@ -185,7 +202,7 @@ export function Anchor({ component, to, href, children, ...props }: { component?
 
 export function Paper({ children, withBorder, padding, p, style, sx, ...props }: { children?: ReactNode; withBorder?: boolean; padding?: Spacing; p?: Spacing; style?: CSSProperties; sx?: SxProps<Theme>; [key: string]: unknown }) {
   return (
-    <MuiPaper sx={{ p: padding ?? p, border: withBorder ? '1px solid rgba(0,0,0,0.12)' : undefined, ...commonSx(props), ...(sx as object) }} style={style}>
+    <MuiPaper sx={{ p: spacing(padding ?? p), border: withBorder ? '1px solid rgba(0,0,0,0.12)' : undefined, ...commonSx(props), ...(sx as object) }} style={style}>
       {children}
     </MuiPaper>
   );
@@ -193,25 +210,119 @@ export function Paper({ children, withBorder, padding, p, style, sx, ...props }:
 
 export function Card({ children, withBorder, padding, p, style, sx, ...props }: { children?: ReactNode; withBorder?: boolean; padding?: Spacing; p?: Spacing; style?: CSSProperties; sx?: SxProps<Theme>; [key: string]: unknown }) {
   return (
-    <MuiCard sx={{ p: padding ?? p, border: withBorder ? '1px solid rgba(0,0,0,0.12)' : undefined, ...commonSx(props), ...(sx as object) }} style={style}>
+    <MuiCard sx={{ p: spacing(padding ?? p), border: withBorder ? '1px solid rgba(0,0,0,0.12)' : undefined, ...commonSx(props), ...(sx as object) }} style={style}>
       {children}
     </MuiCard>
   );
 }
 
-export function Badge({ children, color, variant: _variant, ...props }: { children?: ReactNode; color?: string; variant?: string; [key: string]: unknown }) {
-  return <Chip color={mappedColor(color) as 'primary'} label={children} size="small" variant="outlined" {...props} />;
+export function Badge({ children, color, variant = 'light', size, ...props }: { children?: ReactNode; color?: string; variant?: string; size?: string; [key: string]: unknown }) {
+  const mColor = mappedColor(color) as 'primary' | 'success' | 'warning' | 'error' | 'info' | 'default';
+  const isSmall = size === 'xs' || size === 'sm';
+  
+  return (
+    <Chip
+      label={children}
+      size={isSmall ? 'small' : 'medium'}
+      sx={(theme) => {
+        const hasColor = mColor && mColor !== 'default';
+        const pal = theme.palette as any;
+        if (variant === 'light' && hasColor && pal[mColor]) {
+          const mainColor = pal[mColor].main;
+          return {
+            color: mainColor,
+            bgcolor: alpha(mainColor, 0.12),
+            border: 'none',
+            fontWeight: 700,
+            fontSize: isSmall ? '10px' : '12px',
+            height: isSmall ? '18px' : '24px',
+            '& .MuiChip-label': {
+              px: 1.2,
+            }
+          };
+        }
+        return {
+          fontWeight: 600,
+          fontSize: isSmall ? '10px' : '12px',
+          height: isSmall ? '18px' : '24px',
+          ...commonSx(props),
+        };
+      }}
+      {...props}
+    />
+  );
 }
 
 export function Progress({ value, color, ...props }: { value?: number; color?: string; [key: string]: unknown }) {
   return <LinearProgress variant="determinate" value={value ?? 0} color={mappedColor(color) as 'primary'} sx={{ width: '100%', borderRadius: 999, ...commonSx(props) }} />;
 }
 
-export function RingProgress({ value, label, sections, size = 120 }: { value?: number; label?: ReactNode; sections?: Array<{ value: number; color?: string }>; size?: number; roundCaps?: boolean; thickness?: number }) {
-  const computed = value ?? sections?.[0]?.value ?? 0;
+export function RingProgress({ value, label, sections, size = 120, thickness = 4 }: { value?: number; label?: ReactNode; sections?: Array<{ value: number; color?: string }>; size?: number; roundCaps?: boolean; thickness?: number }) {
+  if (sections && sections.length > 0) {
+    return (
+      <MuiBox position="relative" display="inline-flex" style={{ width: size, height: size }}>
+        {/* Render a background track */}
+        <CircularProgress
+          variant="determinate"
+          value={100}
+          size={size}
+          thickness={thickness}
+          sx={{ color: 'action.hover' }}
+        />
+        {/* Render each section stacked */}
+        {sections.map((section, index) => {
+          let rotation = -90; // Start at top
+          let accumulatedValue = 0;
+          for (let i = 0; i < index; i++) {
+            accumulatedValue += sections[i].value;
+          }
+          rotation += (accumulatedValue / 100) * 360;
+          
+          return (
+            <CircularProgress
+              key={index}
+              variant="determinate"
+              value={section.value}
+              size={size}
+              thickness={thickness}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                transform: `rotate(${rotation}deg)`,
+                color: section.color,
+              }}
+            />
+          );
+        })}
+        <MuiBox position="absolute" sx={{ inset: 0 }} display="flex" alignItems="center" justifyContent="center">
+          {label}
+        </MuiBox>
+      </MuiBox>
+    );
+  }
+
+  const computed = value ?? 0;
   return (
-    <MuiBox position="relative" display="inline-flex">
-      <CircularProgress variant="determinate" value={computed} size={size} thickness={4} />
+    <MuiBox position="relative" display="inline-flex" style={{ width: size, height: size }}>
+      <CircularProgress
+        variant="determinate"
+        value={100}
+        size={size}
+        thickness={thickness}
+        sx={{ color: 'action.hover' }}
+      />
+      <CircularProgress
+        variant="determinate"
+        value={computed}
+        size={size}
+        thickness={thickness}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+        }}
+      />
       <MuiBox position="absolute" sx={{ inset: 0 }} display="flex" alignItems="center" justifyContent="center">
         {label}
       </MuiBox>
@@ -240,8 +351,22 @@ export function Skeleton(props: Record<string, unknown>) {
 }
 
 export function ThemeIcon({ children, color, ...props }: { children?: ReactNode; color?: string; [key: string]: any }) {
+  const mColor = mappedColor(color);
   return (
-    <MuiBox color={`${mappedColor(color)}.main`} display="inline-flex" alignItems="center" justifyContent="center" bgcolor="action.hover" borderRadius={1} p={1} {...props}>
+    <MuiBox
+      display="inline-flex"
+      alignItems="center"
+      justifyContent="center"
+      sx={(theme) => ({
+        color: mColor ? `${mColor}.main` : 'text.primary',
+        bgcolor: mColor 
+          ? alpha((theme.palette as any)[mColor]?.main ?? theme.palette.primary.main, 0.12)
+          : 'action.hover',
+        borderRadius: '8px',
+        p: 1,
+        ...commonSx(props),
+      })}
+    >
       {children}
     </MuiBox>
   );
@@ -342,9 +467,32 @@ export const Menu = Object.assign(MenuRoot, { Target: MenuTarget, Dropdown: Menu
 
 export function NavLink({ component: Component = RouterLink, to, label, leftSection, active, ...props }: { component?: React.ElementType; to?: string; label?: ReactNode; leftSection?: ReactNode; active?: boolean; [key: string]: unknown }) {
   return (
-    <ListItemButton component={Component} to={to} selected={active} {...props}>
-      {leftSection ? <MuiBox mr={1} display="inline-flex">{leftSection}</MuiBox> : null}
-      {label}
+    <ListItemButton 
+      component={Component} 
+      to={to} 
+      selected={active} 
+      sx={{
+        py: 1,
+        px: 2,
+        borderRadius: '8px',
+        mb: 0.5,
+        '&.Mui-selected': {
+          bgcolor: 'primary.light',
+          color: 'primary.contrastText',
+          '&:hover': {
+            bgcolor: 'primary.light',
+          },
+          '& .MuiBox-root': {
+            color: 'inherit',
+          }
+        },
+      }}
+      {...props}
+    >
+      {leftSection ? <MuiBox mr={1.5} display="inline-flex" alignItems="center">{leftSection}</MuiBox> : null}
+      <MuiBox sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', width: '100%' }}>
+        {label}
+      </MuiBox>
     </ListItemButton>
   );
 }

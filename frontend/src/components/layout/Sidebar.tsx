@@ -90,7 +90,7 @@ function NavSection({ items, collapsed }: NavSectionProps) {
           component={Link}
           to={item.href}
           label={
-            <Box style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
               <span>{item.label}</span>
               {item.badge && (
                 <Badge size="xs" variant="light" color={item.badge.color}>
