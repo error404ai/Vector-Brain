@@ -1,166 +1,131 @@
-import { Badge, Box, NavLink, ScrollArea, Stack, Text, Tooltip } from '@/components/mui/core';
-import { IconBrain, IconDashboard, IconRobot, IconSettings, IconUsers, IconUserStar } from '@/components/mui/icons';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import GroupIcon from '@mui/icons-material/Group';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import SettingsIcon from '@mui/icons-material/Settings';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import { alpha, Box, Chip, Divider, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography, useTheme } from '@mui/material';
 import { Link, useLocation } from 'react-router-dom';
 import { useAppSelector } from '@/store/hooks';
 import type { RootState } from '@/store';
 
-const mainNavItems = [
-  {
-    label: 'Dashboard',
-    icon: IconDashboard,
-    href: '/dashboard',
-    badge: null,
-    roles: ['admin', 'user', 'guest'], // All users can see dashboard
-  },
-  {
-    label: 'Users',
-    icon: IconUsers,
-    href: '/users',
-    badge: { label: 'NEW', color: 'cyan' },
-    roles: ['admin'], // Only admins can see users
-  },
-  {
-    label: 'Agent Tasks',
-    icon: IconRobot,
-    href: '/agent-tasks',
-    badge: null,
-    roles: ['admin', 'user', 'guest'], // All users can see agent tasks
-  },
-  {
-    label: 'AI Rules',
-    icon: IconBrain,
-    href: '/ai-rules',
-    badge: null,
-    roles: ['admin'], // Only admins can see AI rules (global + all rules)
-  },
-  {
-    label: 'My Rules',
-    icon: IconUserStar,
-    href: '/my-rules',
-    badge: { label: 'NEW', color: 'teal' },
-    roles: ['admin', 'user', 'guest'], // All users can see their own rules
-  },
-];
-
-const systemItems = [
-  {
-    label: 'Settings',
-    icon: IconSettings,
-    href: '/settings',
-    badge: null,
-    roles: ['admin', 'user', 'guest'], // All users can see settings
-  },
-];
-
 interface SidebarProps {
   collapsed?: boolean;
+  onNavigate?: () => void;
 }
 
-interface NavSectionProps {
-  items: Array<{
-    label: string;
-    icon: React.ComponentType<{ size?: string | number }>;
-    href: string;
-    badge?: { label: string; color: string } | null;
-    roles: string[];
-  }>;
-  collapsed: boolean;
+interface NavItem {
+  label: string;
+  icon: React.ReactNode;
+  href: string;
+  roles: string[];
+  badge?: string;
+  color: string;
 }
 
-function NavSection({ items, collapsed }: NavSectionProps) {
+const mainItems: NavItem[] = [
+  { label: 'Dashboard', icon: <DashboardIcon />, href: '/dashboard', roles: ['admin', 'user', 'guest'], color: '#2563eb' },
+  { label: 'Users', icon: <GroupIcon />, href: '/users', roles: ['admin'], badge: 'Admin', color: '#7c3aed' },
+  { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
+  { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },
+  { label: 'My Rules', icon: <ManageAccountsIcon />, href: '/my-rules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#059669' },
+];
+
+const systemItems: NavItem[] = [
+  { label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' },
+];
+
+function NavSection({ title, items, collapsed, onNavigate }: { title: string; items: NavItem[]; collapsed: boolean; onNavigate?: () => void }) {
+  const theme = useTheme();
   const location = useLocation();
 
-  if (collapsed) {
-    return (
-      <Stack gap="xs">
-        {items.map((item) => (
-          <Tooltip key={item.href} label={item.label} position="right" withArrow>
-            <NavLink component={Link} to={item.href} leftSection={<item.icon size="1.2rem" />} active={location.pathname === item.href} variant="light" color="vector" />
-          </Tooltip>
-        ))}
-      </Stack>
-    );
-  }
-
   return (
-    <Stack gap="xs">
-      {items.map((item) => (
-        <NavLink
-          key={item.href}
-          component={Link}
-          to={item.href}
-          label={
-            <Box style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-              <span>{item.label}</span>
-              {item.badge && (
-                <Badge size="xs" variant="light" color={item.badge.color}>
-                  {item.badge.label}
-                </Badge>
-              )}
-            </Box>
-          }
-          leftSection={<item.icon size="1.2rem" />}
-          active={location.pathname === item.href}
-          variant="light"
-          color="vector"
-        />
-      ))}
-    </Stack>
+    <Box sx={{ px: 1.25, py: 1 }}>
+      {!collapsed ? (
+        <Typography variant="caption" sx={{ display: 'block', px: 1.25, pb: 0.75, color: 'text.secondary', fontWeight: 800, textTransform: 'uppercase' }}>
+          {title}
+        </Typography>
+      ) : null}
+      <List disablePadding sx={{ display: 'grid', gap: 0.5 }}>
+        {items.map((item) => {
+          const active = location.pathname === item.href;
+          const button = (
+            <ListItemButton
+              key={item.href}
+              component={Link}
+              to={item.href}
+              onClick={onNavigate}
+              selected={active}
+              sx={{
+                minHeight: 42,
+                borderRadius: 2,
+                px: collapsed ? 1.25 : 1.5,
+                justifyContent: collapsed ? 'center' : 'flex-start',
+                color: active ? 'primary.main' : 'text.secondary',
+                '&.Mui-selected': {
+                  bgcolor: alpha(theme.palette.primary.main, 0.1),
+                  color: 'primary.main',
+                  '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.14) },
+                },
+              }}
+            >
+              <ListItemIcon
+                sx={{
+                  minWidth: collapsed ? 0 : 36,
+                  color: active ? 'primary.main' : item.color,
+                  justifyContent: 'center',
+                  '& svg': { fontSize: 21 },
+                }}
+              >
+                {item.icon}
+              </ListItemIcon>
+              {!collapsed ? (
+                <>
+                  <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 800 : 650 }} />
+                  {item.badge ? <Chip label={item.badge} size="small" sx={{ height: 20, fontSize: 10 }} /> : null}
+                </>
+              ) : null}
+            </ListItemButton>
+          );
+
+          return collapsed ? (
+            <Tooltip key={item.href} title={item.label} placement="right">
+              {button}
+            </Tooltip>
+          ) : (
+            button
+          );
+        })}
+      </List>
+    </Box>
   );
 }
 
-export function Sidebar({ collapsed = false }: SidebarProps) {
+export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const user = useAppSelector((state: RootState) => state.auth.user);
-  const userRole = user?.role || 'guest';
-
-  // Filter menu items based on user role
-  const filteredMainNavItems = mainNavItems.filter((item) => item.roles.includes(userRole));
-  const filteredSystemItems = systemItems.filter((item) => item.roles.includes(userRole));
+  const role = user?.role ?? 'guest';
+  const visibleMain = mainItems.filter((item) => item.roles.includes(role));
+  const visibleSystem = systemItems.filter((item) => item.roles.includes(role));
 
   return (
-    <Box
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        backgroundColor: '#f1f5f9',
-      }}
-    >
-      {/* Navigation */}
-      <ScrollArea flex={1} p="md">
-        <Stack gap="lg">
-          <Box>
-            {!collapsed && (
-              <Text size="xs" c="dimmed" mb="xs" tt="uppercase" fw={500}>
-                Main Menu
-              </Text>
-            )}
-            <NavSection items={filteredMainNavItems} collapsed={collapsed} />
-          </Box>
-
-          <Box>
-            {!collapsed && (
-              <Text size="xs" c="dimmed" mb="xs" tt="uppercase" fw={500}>
-                System
-              </Text>
-            )}
-            <NavSection items={filteredSystemItems} collapsed={collapsed} />
-          </Box>
-        </Stack>
-      </ScrollArea>
-
-      {/* Footer */}
-      <Box p="md" style={{ borderTop: '1px solid rgba(0,0,0,0.1)' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.paper' }}>
+      <Box sx={{ flex: 1, overflowY: 'auto', py: 1 }}>
+        <NavSection title="Main" items={visibleMain} collapsed={collapsed} onNavigate={onNavigate} />
+        <Divider sx={{ my: 1.25 }} />
+        <NavSection title="System" items={visibleSystem} collapsed={collapsed} onNavigate={onNavigate} />
+      </Box>
+      <Box sx={{ p: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
         {collapsed ? (
-          <Tooltip label="Vector Brain v1.0" position="right" withArrow>
-            <Box style={{ display: 'flex', justifyContent: 'center' }}>
-              <IconBrain size={20} color="#0B69C6" />
+          <Tooltip title="Vector Brain v1.0" placement="right">
+            <Box sx={{ display: 'grid', placeItems: 'center', color: 'primary.main' }}>
+              <AutoAwesomeIcon fontSize="small" />
             </Box>
           </Tooltip>
         ) : (
-          <Text size="xs" c="dimmed" ta="center">
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', fontWeight: 700 }}>
             Vector Brain v1.0
-          </Text>
+          </Typography>
         )}
       </Box>
     </Box>

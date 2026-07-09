@@ -2,11 +2,14 @@ import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useUsersDataTable, type CreateUserPayload, type UpdateUserPayload, type User } from '@/hooks/useUsersDataTable';
 
-import { Badge, Box, Button, Group, Text, Title } from '@/components/mui/core';
+import PageHeader, { HeaderActions } from '@/components/ui/PageHeader';
+import DeleteIcon from '@mui/icons-material/Delete';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import { Button, Chip, Typography } from '@mui/material';
 import { useDisclosure } from '@/components/mui/hooks';
 import { modals } from '@/components/mui/modals';
 import { notifications } from '@/components/mui/notifications';
-import { IconCheck, IconUserPlus, IconX } from '@/components/mui/icons';
+import { IconCheck, IconX } from '@/components/mui/icons';
 
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
@@ -106,17 +109,13 @@ export default function Users() {
       accessor: 'phone',
       title: 'Phone',
       sortable: false,
-      render: (user) => <Text size="sm">{user.phone || '-'}</Text>,
+      render: (user) => <Typography variant="body2">{user.phone || '-'}</Typography>,
     },
     {
       accessor: 'role',
       title: 'Role',
       sortable: true,
-      render: (user) => (
-        <Badge color={user.role === 'admin' ? 'red' : user.role === 'user' ? 'blue' : 'gray'} variant="light" size="sm">
-          {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-        </Badge>
-      ),
+      render: (user) => <Chip label={user.role.charAt(0).toUpperCase() + user.role.slice(1)} size="small" color={user.role === 'admin' ? 'error' : user.role === 'user' ? 'primary' : 'default'} variant="outlined" />,
     },
     {
       accessor: 'isActive',
@@ -128,7 +127,7 @@ export default function Users() {
       accessor: 'createdAt',
       title: 'Created',
       sortable: true,
-      render: (user) => <Text size="sm">{new Date(user.createdAt).toLocaleDateString()}</Text>,
+      render: (user) => <Typography variant="body2">{new Date(user.createdAt).toLocaleDateString()}</Typography>,
     },
     {
       accessor: 'actions',
@@ -144,66 +143,58 @@ export default function Users() {
       <Helmet>
         <title>Users - Vector Brain</title>
       </Helmet>
-      <Box p="md">
-        {/* Page Header */}
-        <Group justify="space-between" mb="xl">
-          <div>
-            <Title order={2}>Users Management</Title>
-            <Text c="dimmed" size="sm">
-              Manage user accounts and permissions
-            </Text>
-          </div>
-          <Group>
+      <PageHeader
+        title="Users Management"
+        subtitle="Manage user accounts and permissions."
+        action={
+          <HeaderActions>
             {selectedUsers.length > 0 && (
-              <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
+              <Button variant="outlined" color="error" onClick={handleBulkDelete} disabled={isDeleting} startIcon={<DeleteIcon />}>
                 Delete Selected ({selectedUsers.length})
               </Button>
             )}
-            <Button leftSection={<IconUserPlus size="1rem" />} onClick={openCreateModal}>
+            <Button variant="contained" startIcon={<PersonAddIcon />} onClick={openCreateModal}>
               Add New User
             </Button>
-          </Group>
-        </Group>
+          </HeaderActions>
+        }
+      />
 
-        {/* DataTable */}
-        <DataTable<User>
-          columns={columns}
-          data={users}
-          loading={isLoading}
-          withTableBorder
-          striped
-          highlightOnHover
-          withRowSelection
-          selectedRecords={selectedUsers}
-          onSelectionChange={setSelectedUsers}
-          sortable
-          onSortStatusChange={handleSortChange}
-          searchable
-          searchValue={search}
-          onSearchChange={setSearch}
-          searchPlaceholder="Search users by name or email..."
-          pagination
-          page={pagination?.currentPage ?? page}
-          recordsPerPage={pagination?.pageSize ?? limit}
-          totalRecords={pagination?.totalCount ?? 0}
-          totalPages={pagination?.totalPages}
-          hasPreviousPage={pagination?.hasPreviousPage}
-          hasNextPage={pagination?.hasNextPage}
-          onPageChange={setPage}
-          onRecordsPerPageChange={setLimit}
-          recordsPerPageOptions={[5, 10, 20, 50]}
-          noRecordsText="No users found"
-          loadingText="Loading users..."
-          minHeight={300}
-          verticalSpacing="sm"
-        />
+      <DataTable<User>
+        columns={columns}
+        data={users}
+        loading={isLoading}
+        withTableBorder
+        striped
+        highlightOnHover
+        withRowSelection
+        selectedRecords={selectedUsers}
+        onSelectionChange={setSelectedUsers}
+        sortable
+        onSortStatusChange={handleSortChange}
+        searchable
+        searchValue={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search users by name or email..."
+        pagination
+        page={pagination?.currentPage ?? page}
+        recordsPerPage={pagination?.pageSize ?? limit}
+        totalRecords={pagination?.totalCount ?? 0}
+        totalPages={pagination?.totalPages}
+        hasPreviousPage={pagination?.hasPreviousPage}
+        hasNextPage={pagination?.hasNextPage}
+        onPageChange={setPage}
+        onRecordsPerPageChange={setLimit}
+        recordsPerPageOptions={[5, 10, 20, 50]}
+        noRecordsText="No users found"
+        loadingText="Loading users..."
+        minHeight={300}
+        verticalSpacing="sm"
+      />
 
-        {/* Create User Modal */}
-        <UserFormModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} title="Create New User" />
+      <UserFormModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} title="Create New User" />
 
-        {/* Edit User Modal */}
-        <UserFormModal user={editingUser} opened={editModalOpened} onClose={handleCloseEditModal} onSubmit={handleUpdateSubmit} isLoading={isUpdating} title="Edit User" />
-      </Box>
+      <UserFormModal user={editingUser} opened={editModalOpened} onClose={handleCloseEditModal} onSubmit={handleUpdateSubmit} isLoading={isUpdating} title="Edit User" />
     </>
   );
 }

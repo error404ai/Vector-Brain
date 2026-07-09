@@ -2,11 +2,13 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useMyRulesDataTable, type AiRule, type CreateAiRulePayload, type UpdateAiRulePayload } from '@/hooks/useMyRulesDataTable';
-import { Badge, Box, Button, Group, Stack, Text, Title } from '@/components/mui/core';
+import PageHeader from '@/components/ui/PageHeader';
+import AddIcon from '@mui/icons-material/Add';
+import { Button, Chip, Typography } from '@mui/material';
 import { useDisclosure } from '@/components/mui/hooks';
 import { modals } from '@/components/mui/modals';
 import { notifications } from '@/components/mui/notifications';
-import { IconCheck, IconPlus, IconX } from '@/components/mui/icons';
+import { IconCheck, IconX } from '@/components/mui/icons';
 
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
@@ -100,7 +102,7 @@ export default function MyRules() {
   const handleDeleteRule = async (rule: AiRule) => {
     modals.openConfirmModal({
       title: 'Delete Rule',
-      children: <Text size="sm">Are you sure you want to delete the rule "{rule.name}"? This action cannot be undone.</Text>,
+      children: <Typography variant="body2">Are you sure you want to delete the rule "{rule.name}"? This action cannot be undone.</Typography>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -161,9 +163,9 @@ export default function MyRules() {
       accessor: 'intent',
       title: 'Intent',
       render: (rule) => (
-        <Text size="sm" lineClamp={2} title={rule.intent}>
+        <Typography variant="body2" title={rule.intent} sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {rule.intent}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -181,11 +183,7 @@ export default function MyRules() {
     {
       accessor: 'vector_exist',
       title: 'Vectorized',
-      render: (rule) => (
-        <Badge color={rule.vector_exist ? 'green' : 'red'} variant="light">
-          {rule.vector_exist ? 'Yes' : 'No'}
-        </Badge>
-      ),
+      render: (rule) => <Chip label={rule.vector_exist ? 'Yes' : 'No'} size="small" color={rule.vector_exist ? 'success' : 'error'} variant="outlined" />,
       width: 100,
     },
     {
@@ -209,43 +207,39 @@ export default function MyRules() {
         <title>My Rules - Vector Brain</title>
       </Helmet>
 
-      <Box p="md">
-        <Stack gap="md">
-          <Group justify="space-between">
-            <div>
-              <Title order={2}>My Rules</Title>
-              <Text c="dimmed">Create and manage your personal AI rules. These rules will be prioritized when searching.</Text>
-            </div>
-            <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
-              Create Rule
-            </Button>
-          </Group>
+      <PageHeader
+        title="My Rules"
+        subtitle="Create and manage your personal AI rules. These rules are prioritized during search."
+        action={
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateRule} disabled={isCreating}>
+            Create Rule
+          </Button>
+        }
+      />
 
-          <DataTable
-            data={myRules}
-            columns={columns}
-            loading={isLoading}
-            pagination
-            page={pagination?.currentPage ?? page}
-            recordsPerPage={pagination?.pageSize ?? limit}
-            totalRecords={pagination?.totalCount ?? 0}
-            totalPages={pagination?.totalPages}
-            onPageChange={setPage}
-            onRecordsPerPageChange={setLimit}
-            recordsPerPageOptions={[5, 10, 20, 50]}
-            searchable
-            searchValue={search}
-            onSearchChange={setSearch}
-            searchPlaceholder="Search my rules..."
-            sortable
-            onSortStatusChange={handleSortChange}
-            noRecordsText="You haven't created any rules yet. Click 'Create Rule' to get started."
-            loadingText="Loading your rules..."
-            minHeight={300}
-            verticalSpacing="sm"
-          />
-        </Stack>
-      </Box>
+      <DataTable
+        data={myRules}
+        columns={columns}
+        loading={isLoading}
+        pagination
+        page={pagination?.currentPage ?? page}
+        recordsPerPage={pagination?.pageSize ?? limit}
+        totalRecords={pagination?.totalCount ?? 0}
+        totalPages={pagination?.totalPages}
+        onPageChange={setPage}
+        onRecordsPerPageChange={setLimit}
+        recordsPerPageOptions={[5, 10, 20, 50]}
+        searchable
+        searchValue={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search my rules..."
+        sortable
+        onSortStatusChange={handleSortChange}
+        noRecordsText="You haven't created any rules yet. Click 'Create Rule' to get started."
+        loadingText="Loading your rules..."
+        minHeight={300}
+        verticalSpacing="sm"
+      />
 
       {/* Modals */}
       <MyRuleFormModal opened={formModalOpened} onClose={handleCloseFormModal} onSubmit={handleFormSubmit} rule={editingRule} loading={isCreating || isUpdating} />

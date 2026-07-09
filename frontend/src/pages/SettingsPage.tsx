@@ -1,97 +1,85 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { useGetSettingsQuery, useUpdateSettingMutation } from '@/RTKService/settingService/settingService';
-import { Button, Box, Card, Group, Stack, Text, Textarea, Title } from '@/components/mui/core';
-import { useForm } from '@/components/mui/form';
-import { notifications } from '@/components/mui/notifications';
-import { IconSettings } from '@/components/mui/icons';
-
-import React from 'react';
+import PageHeader from '@/components/ui/PageHeader';
+import SaveIcon from '@mui/icons-material/Save';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { Alert, Box, Button, CircularProgress, Paper, Stack, TextField, Typography } from '@mui/material';
+import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
+import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
   const { data: settings, isLoading } = useGetSettingsQuery();
   const [updateSetting, { isLoading: isUpdating }] = useUpdateSettingMutation();
+  const systemPromptSetting = settings?.find((setting) => setting.key === 'systemPromptForEnhancement');
+  const [systemPrompt, setSystemPrompt] = useState('');
 
-  const systemPromptSetting = settings?.find((s) => s.key === 'systemPromptForEnhancement');
-
-  const form = useForm({
-    initialValues: {
-      systemPrompt: (systemPromptSetting?.value as string) || '',
-    },
-  });
-
-  // Update form when settings load
-  React.useEffect(() => {
+  useEffect(() => {
     if (systemPromptSetting) {
-      form.setValues({
-        systemPrompt: systemPromptSetting.value as string,
-      });
+      setSystemPrompt(String(systemPromptSetting.value ?? ''));
     }
-  }, [systemPromptSetting, form]);
+  }, [systemPromptSetting]);
 
-  const handleSubmit = async (values: typeof form.values) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     try {
-      await updateSetting({
-        key: 'systemPromptForEnhancement',
-        value: values.systemPrompt,
-      }).unwrap();
-      notifications.show({
-        title: 'Success',
-        message: 'System prompt updated successfully',
-        color: 'green',
-      });
-    } catch (error) {
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to update system prompt',
-        color: 'red',
-      });
+      await updateSetting({ key: 'systemPromptForEnhancement', value: systemPrompt }).unwrap();
+      toast.success('System prompt updated successfully');
+    } catch {
+      toast.error('Failed to update system prompt');
     }
   };
-
-  const cardStyle = {
-    backgroundColor: '#ffffff',
-    border: '1px solid rgba(0,0,0,0.1)',
-  };
-
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
 
   return (
     <>
       <Helmet>
         <title>Settings - Vector Brain</title>
       </Helmet>
-      <Box p="md">
-        <Stack gap="lg">
-        <div>
-          <Title order={2}>Settings</Title>
-          <Text c="dimmed" size="sm">
-            Manage your system settings
-          </Text>
-        </div>
 
-        <Card padding="lg" radius="md" style={cardStyle}>
-          <Stack gap="md">
-            <Group>
-              <IconSettings size="1.5rem" />
-              <Title order={4}>AI Settings</Title>
-            </Group>
-            <form onSubmit={form.onSubmit(handleSubmit)}>
-              <Stack gap="md">
-                <Textarea label="System Prompt for Prompt Enhancement" description="This prompt is used to enhance user prompts for better AI responses" placeholder="Enter system prompt..." minRows={4} {...form.getInputProps('systemPrompt')} />
-                <Group justify="flex-end">
-                  <Button type="submit" color="vector" loading={isUpdating}>
+      <PageHeader title="Settings" subtitle="Manage the AI configuration used across your workspace." />
+
+      <Paper sx={{ p: { xs: 2, md: 2.5 }, maxWidth: 920 }}>
+        <Stack spacing={2.25}>
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <Box sx={{ width: 40, height: 40, borderRadius: 2, display: 'grid', placeItems: 'center', bgcolor: 'primary.main', color: '#fff' }}>
+              <SettingsIcon />
+            </Box>
+            <Box>
+              <Typography variant="h6">AI Settings</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Configure the prompt enhancer behavior.
+              </Typography>
+            </Box>
+          </Stack>
+
+          {isLoading ? (
+            <Stack alignItems="center" sx={{ py: 5 }}>
+              <CircularProgress size={24} />
+            </Stack>
+          ) : (
+            <Box component="form" onSubmit={handleSubmit}>
+              <Stack spacing={2}>
+                <Alert severity="info" variant="outlined">
+                  This prompt is used to improve user prompts before they are sent to the AI workflow.
+                </Alert>
+                <TextField
+                  label="System Prompt for Prompt Enhancement"
+                  value={systemPrompt}
+                  onChange={(event) => setSystemPrompt(event.target.value)}
+                  placeholder="Enter system prompt..."
+                  multiline
+                  minRows={8}
+                  fullWidth
+                />
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button type="submit" variant="contained" startIcon={<SaveIcon />} disabled={isUpdating}>
                     Save
                   </Button>
-                </Group>
+                </Box>
               </Stack>
-            </form>
-          </Stack>
-        </Card>
-      </Stack>
-    </Box>
-  </>
-);
+            </Box>
+          )}
+        </Stack>
+      </Paper>
+    </>
+  );
 }

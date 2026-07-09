@@ -21,6 +21,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { useEffect, useMemo, useState } from 'react';
 import type { DataTableColumn, DataTableProps, SortParams } from './types';
 
@@ -33,7 +34,7 @@ export function DataTable<T extends object>({
   data = [],
   loading = false,
   withTableBorder = true,
-  striped = true,
+  striped = false,
   highlightOnHover = true,
   withRowSelection = false,
   selectedRecords = [],
@@ -54,7 +55,7 @@ export function DataTable<T extends object>({
   recordsPerPageOptions = [5, 10, 20, 50],
   noRecordsText = 'No records found',
   loadingText = 'Loading...',
-  minHeight = 200,
+  minHeight = 240,
   className,
   style,
 }: DataTableProps<T>) {
@@ -88,28 +89,29 @@ export function DataTable<T extends object>({
   };
 
   const handleSelectAll = (checked: boolean) => {
-    if (!onSelectionChange) return;
-    onSelectionChange(checked ? data : []);
+    onSelectionChange?.(checked ? data : []);
   };
 
   const handleSelectRecord = (record: T, checked: boolean) => {
     if (!onSelectionChange) return;
-    if (checked) {
-      onSelectionChange([...selectedRecords, record]);
-      return;
-    }
-    onSelectionChange(selectedRecords.filter((selected) => selected !== record));
+    onSelectionChange(checked ? [...selectedRecords, record] : selectedRecords.filter((selected) => selected !== record));
   };
 
   return (
-    <Box className={className} style={style}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" spacing={2} mb={2}>
+    <Paper className={className} style={style} sx={{ overflow: 'hidden', border: withTableBorder ? undefined : 0 }}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        alignItems={{ xs: 'stretch', md: 'center' }}
+        justifyContent="space-between"
+        spacing={1.5}
+        sx={{ p: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}
+      >
         {searchable ? (
           <TextField
             placeholder={searchPlaceholder}
             value={internalSearchValue}
             onChange={(event) => setInternalSearchValue(event.target.value)}
-            sx={{ minWidth: { sm: 280 } }}
+            sx={{ maxWidth: { md: 360 }, width: '100%' }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -121,16 +123,15 @@ export function DataTable<T extends object>({
         ) : (
           <Box />
         )}
-
         {sortStatus ? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
             Sorted by {sortStatus.field} ({sortStatus.direction})
           </Typography>
         ) : null}
       </Stack>
 
-      <TableContainer component={Paper} sx={{ border: withTableBorder ? '1px solid rgba(0,0,0,0.08)' : 0, minHeight }}>
-        <Table size="small">
+      <TableContainer sx={{ minHeight, maxWidth: '100%' }}>
+        <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>
               {withRowSelection ? (
@@ -138,24 +139,32 @@ export function DataTable<T extends object>({
                   <Checkbox checked={allSelected} indeterminate={someSelected} onChange={(event) => handleSelectAll(event.target.checked)} />
                 </TableCell>
               ) : null}
-              {columns.map((column) => (
-                <TableCell key={String(column.accessor)} align={column.textAlign} sx={{ width: column.width, fontWeight: 700, whiteSpace: 'nowrap', cursor: sortable && column.sortable !== false ? 'pointer' : undefined }} onClick={() => handleSort(column)}>
-                  <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={column.textAlign === 'right' ? 'flex-end' : column.textAlign === 'center' ? 'center' : 'flex-start'}>
-                    <span>{column.title ?? String(column.accessor)}</span>
-                    {sortable && column.sortable !== false ? (
-                      <Tooltip title="Sort">
-                        <SortIcon fontSize="small" color={sortStatus?.field === String(column.accessor) ? 'primary' : 'disabled'} />
-                      </Tooltip>
-                    ) : null}
-                  </Stack>
-                </TableCell>
-              ))}
+              {columns.map((column) => {
+                const isSortable = sortable && column.sortable !== false;
+                return (
+                  <TableCell
+                    key={String(column.accessor)}
+                    align={column.textAlign}
+                    sx={{ width: column.width, whiteSpace: 'nowrap', cursor: isSortable ? 'pointer' : undefined }}
+                    onClick={() => handleSort(column)}
+                  >
+                    <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={column.textAlign === 'right' ? 'flex-end' : column.textAlign === 'center' ? 'center' : 'flex-start'}>
+                      <Box component="span">{column.title ?? String(column.accessor)}</Box>
+                      {isSortable ? (
+                        <Tooltip title="Sort">
+                          <SortIcon fontSize="small" color={sortStatus?.field === String(column.accessor) ? 'primary' : 'disabled'} />
+                        </Tooltip>
+                      ) : null}
+                    </Stack>
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={columns.length + (withRowSelection ? 1 : 0)} align="center" sx={{ py: 6 }}>
+                <TableCell colSpan={columns.length + (withRowSelection ? 1 : 0)} align="center" sx={{ py: 8 }}>
                   <Stack alignItems="center" spacing={1}>
                     <CircularProgress size={24} />
                     <Typography variant="body2" color="text.secondary">
@@ -166,8 +175,10 @@ export function DataTable<T extends object>({
               </TableRow>
             ) : data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length + (withRowSelection ? 1 : 0)} align="center" sx={{ py: 6, color: 'text.secondary' }}>
-                  {noRecordsText}
+                <TableCell colSpan={columns.length + (withRowSelection ? 1 : 0)} align="center" sx={{ py: 8 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {noRecordsText}
+                  </Typography>
                 </TableCell>
               </TableRow>
             ) : (
@@ -176,9 +187,11 @@ export function DataTable<T extends object>({
                   key={rowIndex}
                   hover={highlightOnHover}
                   selected={selectedSet.has(record)}
-                  sx={{
-                    bgcolor: striped && rowIndex % 2 === 1 ? 'action.hover' : undefined,
-                  }}
+                  sx={(theme) => ({
+                    bgcolor: striped && rowIndex % 2 === 1 ? alpha(theme.palette.primary.main, 0.018) : undefined,
+                    '&.Mui-selected': { bgcolor: alpha(theme.palette.primary.main, 0.08) },
+                    '& td': { borderBottomColor: 'divider' },
+                  })}
                 >
                   {withRowSelection ? (
                     <TableCell padding="checkbox">
@@ -191,10 +204,11 @@ export function DataTable<T extends object>({
                       align={column.textAlign}
                       sx={{
                         width: column.width,
-                        maxWidth: column.width,
-                        whiteSpace: (column.accessor === 'prompt' || column.accessor === 'intent' || column.accessor === 'description') ? 'normal' : 'nowrap',
+                        maxWidth: column.width ?? 360,
+                        whiteSpace: column.accessor === 'prompt' || column.accessor === 'intent' || column.accessor === 'description' ? 'normal' : 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
+                        py: 1.1,
                       }}
                     >
                       {column.render ? column.render(record, rowIndex) : getRecordValue(record, column.accessor)}
@@ -208,8 +222,8 @@ export function DataTable<T extends object>({
       </TableContainer>
 
       {pagination ? (
-        <Stack direction={{ xs: 'column', sm: 'row' }} alignItems="center" justifyContent="space-between" spacing={2} mt={2}>
-          <FormControl size="small">
+        <Stack direction={{ xs: 'column', sm: 'row' }} alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ px: 1.5, py: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
             <Select value={recordsPerPage} onChange={(event) => onRecordsPerPageChange?.(Number(event.target.value))}>
               {recordsPerPageOptions.map((option) => (
                 <MenuItem key={option} value={option}>
@@ -226,9 +240,10 @@ export function DataTable<T extends object>({
             rowsPerPageOptions={[]}
             onPageChange={(_event, nextPage) => onPageChange?.(nextPage + 1)}
             onRowsPerPageChange={(event) => onRecordsPerPageChange?.(Number(event.target.value))}
+            sx={{ border: 0 }}
           />
         </Stack>
       ) : null}
-    </Box>
+    </Paper>
   );
 }

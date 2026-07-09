@@ -1,41 +1,43 @@
-import { Box, Group, Text } from '@/components/mui/core';
-import { IconBrain } from '@/components/mui/icons';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import { Box, Stack, Typography } from '@mui/material';
 
 interface LogoProps {
   size?: number;
   showText?: boolean;
 }
 
-export function Logo({ size = 32, showText = true }: LogoProps) {
+export function Logo({ size = 34, showText = true }: LogoProps) {
   return (
-    <Group gap="xs" align="center">
+    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
       <Box
-        style={{
+        sx={{
           width: size,
           height: size,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'linear-gradient(135deg, #0B69C6 0%, #22D3EE 100%)',
-          borderRadius: 6,
+          display: 'grid',
+          placeItems: 'center',
+          flexShrink: 0,
+          borderRadius: 2,
+          color: '#ffffff',
+          bgcolor: 'primary.main',
+          boxShadow: '0 10px 22px rgba(37, 99, 235, 0.22)',
         }}
       >
-        <IconBrain size={size * 0.65} color="white" />
+        <AutoAwesomeIcon sx={{ fontSize: Math.round(size * 0.58) }} />
       </Box>
-      {showText && (
-        <Text
-          fw={700}
-          size="lg"
-          style={{
-            background: 'linear-gradient(90deg, #0B69C6 0%, #22D3EE 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
+      {showText ? (
+        <Typography
+          variant="subtitle1"
+          noWrap
+          sx={{
+            fontWeight: 900,
+            color: 'text.primary',
+            letterSpacing: 0,
           }}
         >
           Vector Brain
-        </Text>
-      )}
-    </Group>
+        </Typography>
+      ) : null}
+    </Stack>
   );
 }
 

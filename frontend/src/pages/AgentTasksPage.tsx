@@ -1,11 +1,14 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useAgentTasksDataTable, type AgentTask, type CreateAgentTaskPayload } from '@/hooks/useAgentTasksDataTable';
-import { Box, Button, Group, Text, Title } from '@/components/mui/core';
+import PageHeader, { HeaderActions } from '@/components/ui/PageHeader';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import { Button, Chip, Typography } from '@mui/material';
 import { useDisclosure } from '@/components/mui/hooks';
 import { modals } from '@/components/mui/modals';
 import { notifications } from '@/components/mui/notifications';
-import { IconCheck, IconPlus, IconX } from '@/components/mui/icons';
+import { IconCheck, IconX } from '@/components/mui/icons';
 
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
@@ -93,9 +96,9 @@ export default function AgentTasks() {
       title: 'Prompt',
       sortable: true,
       render: (task) => (
-        <Text size="sm" lineClamp={2} style={{ maxWidth: 400 }}>
+        <Typography variant="body2" sx={{ maxWidth: 440, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {task.prompt}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -103,9 +106,9 @@ export default function AgentTasks() {
       title: 'Steps',
       sortable: false,
       render: (task) => (
-        <Text size="sm" c={task.steps ? 'inherit' : 'dimmed'}>
+        <Typography variant="body2" color={task.steps ? 'text.primary' : 'text.secondary'}>
           {task.steps ? `${task.steps.substring(0, 50)}...` : 'No steps'}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -113,9 +116,9 @@ export default function AgentTasks() {
       title: 'Logs',
       sortable: false,
       render: (task) => (
-        <Text size="sm" c={task.logs ? 'inherit' : 'dimmed'}>
+        <Typography variant="body2" color={task.logs ? 'text.primary' : 'text.secondary'}>
           {task.logs ? `${task.logs.substring(0, 50)}...` : 'No logs'}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -123,9 +126,9 @@ export default function AgentTasks() {
       title: 'Provider',
       sortable: true,
       render: (task) => (
-        <Text size="sm" c={task.provider ? 'inherit' : 'dimmed'}>
+        <Typography variant="body2" color={task.provider ? 'text.primary' : 'text.secondary'}>
           {task.provider || 'N/A'}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -133,38 +136,34 @@ export default function AgentTasks() {
       title: 'Model',
       sortable: true,
       render: (task) => (
-        <Text size="sm" c={task.model ? 'inherit' : 'dimmed'}>
+        <Typography variant="body2" color={task.model ? 'text.primary' : 'text.secondary'}>
           {task.model || 'N/A'}
-        </Text>
+        </Typography>
       ),
     },
     {
       accessor: 'success',
       title: 'Success',
       sortable: true,
-      render: (task) => (
-        <Text size="sm" c={task.success ? 'green' : 'red'}>
-          {task.success ? 'Yes' : 'No'}
-        </Text>
-      ),
+      render: (task) => <Chip label={task.success ? 'Yes' : 'No'} size="small" color={task.success ? 'success' : 'error'} variant="outlined" />,
     },
     {
       accessor: 'total_steps',
       title: 'Total Steps',
       sortable: true,
-      render: (task) => <Text size="sm">{task.total_steps}</Text>,
+      render: (task) => <Typography variant="body2">{task.total_steps}</Typography>,
     },
     {
       accessor: 'total_duration_seconds',
       title: 'Duration (s)',
       sortable: true,
-      render: (task) => <Text size="sm">{task.total_duration_seconds.toFixed(2)}</Text>,
+      render: (task) => <Typography variant="body2">{task.total_duration_seconds.toFixed(2)}</Typography>,
     },
     {
       accessor: 'created_at',
       title: 'Created',
       sortable: true,
-      render: (task) => <Text size="sm">{new Date(task.created_at).toLocaleDateString()}</Text>,
+      render: (task) => <Typography variant="body2">{new Date(task.created_at).toLocaleDateString()}</Typography>,
     },
     {
       accessor: 'actions',
@@ -180,64 +179,56 @@ export default function AgentTasks() {
       <Helmet>
         <title>Agent Tasks - Vector Brain</title>
       </Helmet>
-      <Box p="md">
-        {/* Page Header */}
-        <Group justify="space-between" mb="xl">
-          <div>
-            <Title order={2}>Agent Tasks</Title>
-            <Text c="dimmed" size="sm">
-              Manage AI agent tasks and their execution logs
-            </Text>
-          </div>
-          <Group>
+      <PageHeader
+        title="Agent Tasks"
+        subtitle="Manage AI agent tasks and their execution logs."
+        action={
+          <HeaderActions>
             {selectedTasks.length > 0 && (
-              <Button variant="light" color="red" onClick={handleBulkDelete} loading={isDeleting}>
+              <Button variant="outlined" color="error" onClick={handleBulkDelete} disabled={isDeleting} startIcon={<DeleteIcon />}>
                 Delete Selected ({selectedTasks.length})
               </Button>
             )}
-            <Button leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={openCreateModal}>
               New Task
             </Button>
-          </Group>
-        </Group>
+          </HeaderActions>
+        }
+      />
 
-        {/* DataTable */}
-        <DataTable<AgentTask>
-          columns={columns}
-          data={agentTasks}
-          loading={isLoading}
-          withTableBorder
-          striped
-          highlightOnHover
-          withRowSelection
-          selectedRecords={selectedTasks}
-          onSelectionChange={setSelectedTasks}
-          sortable
-          onSortStatusChange={handleSortChange}
-          searchable
-          searchValue={search}
-          onSearchChange={setSearch}
-          searchPlaceholder="Search tasks by prompt..."
-          pagination
-          page={pagination?.currentPage ?? page}
-          recordsPerPage={pagination?.pageSize ?? limit}
-          totalRecords={pagination?.totalCount ?? 0}
-          totalPages={pagination?.totalPages}
-          onPageChange={setPage}
-          onRecordsPerPageChange={setLimit}
-          recordsPerPageOptions={[5, 10, 20, 50]}
-          noRecordsText="No agent tasks found"
-          loadingText="Loading agent tasks..."
-          minHeight={300}
-          verticalSpacing="sm"
-        />
+      <DataTable<AgentTask>
+        columns={columns}
+        data={agentTasks}
+        loading={isLoading}
+        withTableBorder
+        striped
+        highlightOnHover
+        withRowSelection
+        selectedRecords={selectedTasks}
+        onSelectionChange={setSelectedTasks}
+        sortable
+        onSortStatusChange={handleSortChange}
+        searchable
+        searchValue={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search tasks by prompt..."
+        pagination
+        page={pagination?.currentPage ?? page}
+        recordsPerPage={pagination?.pageSize ?? limit}
+        totalRecords={pagination?.totalCount ?? 0}
+        totalPages={pagination?.totalPages}
+        onPageChange={setPage}
+        onRecordsPerPageChange={setLimit}
+        recordsPerPageOptions={[5, 10, 20, 50]}
+        noRecordsText="No agent tasks found"
+        loadingText="Loading agent tasks..."
+        minHeight={300}
+        verticalSpacing="sm"
+      />
 
-        {/* Create Agent Task Modal */}
-        <CreateAgentTaskModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} />
+      <CreateAgentTaskModal opened={createModalOpened} onClose={closeCreateModal} onSubmit={handleCreateSubmit} isLoading={isCreating} />
 
-        {/* Agent Task Detail Modal */}
-        <AgentTaskDetailModal task={viewingTask} opened={detailModalOpened} onClose={handleCloseDetailModal} />
-      </Box>
+      <AgentTaskDetailModal task={viewingTask} opened={detailModalOpened} onClose={handleCloseDetailModal} />
     </>
   );
 }

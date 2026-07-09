@@ -4,13 +4,20 @@ import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useAiRulesDataTable, type AiRule, type CreateAiRulePayload, type UpdateAiRulePayload } from '@/hooks/useAiRulesDataTable';
 
-import { Badge, Box, Button, Card, Group, Progress, Stack, Text, TextInput, Title } from '@/components/mui/core';
+import PageHeader, { HeaderActions } from '@/components/ui/PageHeader';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import DownloadIcon from '@mui/icons-material/Download';
+import SearchIcon from '@mui/icons-material/Search';
+import StorageIcon from '@mui/icons-material/Storage';
+import UploadIcon from '@mui/icons-material/Upload';
+import { Button, Card, Chip, LinearProgress, Paper, Stack, TextField, Typography } from '@mui/material';
 import { useDisclosure } from '@/components/mui/hooks';
 import { modals } from '@/components/mui/modals';
 import { notifications } from '@/components/mui/notifications';
-import { IconCheck, IconDatabase, IconPlus, IconSearch, IconX } from '@/components/mui/icons';
+import { IconCheck, IconX } from '@/components/mui/icons';
 
-import { useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { AiRuleActions } from '@/components/ai-rules/AiRuleActions';
 import { AiRuleDetailModal } from '@/components/ai-rules/AiRuleDetailModal';
@@ -127,7 +134,7 @@ export default function AiRules() {
   const handleDeleteRule = async (rule: AiRule) => {
     modals.openConfirmModal({
       title: 'Delete AI Rule',
-      children: <Text size="sm">Are you sure you want to delete the AI rule "{rule.name}"? This action cannot be undone.</Text>,
+      children: <Typography variant="body2">Are you sure you want to delete the AI rule "{rule.name}"? This action cannot be undone.</Typography>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -192,7 +199,7 @@ export default function AiRules() {
   const handleRecreate = () => {
     modals.openConfirmModal({
       title: 'Recreate Vectors',
-      children: <Text size="sm">This will delete all existing vectors and rebuild them from scratch. Continue?</Text>,
+      children: <Typography variant="body2">This will delete all existing vectors and rebuild them from scratch. Continue?</Typography>,
       labels: { confirm: 'Recreate', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -297,7 +304,7 @@ export default function AiRules() {
     if (selectedRules.length === 0) return;
     modals.openConfirmModal({
       title: 'Delete Selected AI Rules',
-      children: <Text size="sm">Are you sure you want to delete {selectedRules.length} selected AI rule(s)? This action cannot be undone.</Text>,
+      children: <Typography variant="body2">Are you sure you want to delete {selectedRules.length} selected AI rule(s)? This action cannot be undone.</Typography>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -354,9 +361,9 @@ export default function AiRules() {
       accessor: 'intent',
       title: 'Intent',
       render: (rule) => (
-        <Text size="sm" lineClamp={2} title={rule.intent}>
+        <Typography variant="body2" title={rule.intent} sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {rule.intent}
-        </Text>
+        </Typography>
       ),
     },
     {
@@ -374,21 +381,13 @@ export default function AiRules() {
     {
       accessor: 'scope',
       title: 'Scope',
-      render: (rule) => (
-        <Badge color={rule.user_id ? 'blue' : 'green'} variant="light">
-          {rule.user_id ? 'User' : 'Global'}
-        </Badge>
-      ),
+      render: (rule) => <Chip label={rule.user_id ? 'User' : 'Global'} size="small" color={rule.user_id ? 'primary' : 'success'} variant="outlined" />,
       width: 100,
     },
     {
       accessor: 'vector_exist',
       title: 'Vectorized',
-      render: (rule) => (
-        <Badge color={rule.vector_exist ? 'green' : 'red'} variant="light">
-          {rule.vector_exist ? 'Yes' : 'No'}
-        </Badge>
-      ),
+      render: (rule) => <Chip label={rule.vector_exist ? 'Yes' : 'No'} size="small" color={rule.vector_exist ? 'success' : 'error'} variant="outlined" />,
       width: 100,
     },
     {
@@ -412,57 +411,63 @@ export default function AiRules() {
         <title>AI Rules - Vector Brain</title>
       </Helmet>
 
-      <Box p="md">
-        <Group justify="space-between" mb="md">
-          <div>
-            <Title order={2}>AI Rules</Title>
-            <Text c="dimmed">Manage AI rules for your agent tasks</Text>
-          </div>
-          <Group>
-            <Button variant="light" leftSection={<IconDatabase size={16} />} onClick={handleBackfill} loading={isBackfilling}>
+      <PageHeader
+        title="AI Rules"
+        subtitle="Manage global AI rules, vector status, and semantic retrieval."
+        action={
+          <HeaderActions>
+            <Button variant="outlined" startIcon={<StorageIcon />} onClick={handleBackfill} disabled={isBackfilling}>
               Backfill Vectors
             </Button>
-            <Button variant="light" color="red" leftSection={<IconDatabase size={16} />} onClick={handleRecreate} loading={isRecreatingVectors}>
+            <Button variant="outlined" color="error" startIcon={<StorageIcon />} onClick={handleRecreate} disabled={isRecreatingVectors}>
               Recreate Vectors
             </Button>
-            <Button variant="outline" onClick={() => handleExport(false)} loading={isExporting} disabled={selectedRules.length === 0}>
+            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => handleExport(false)} disabled={isExporting || selectedRules.length === 0}>
               Export Selected ({selectedRules.length})
             </Button>
-            <Button variant="outline" onClick={() => handleExport(true)} loading={isExporting}>
+            <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => handleExport(true)} disabled={isExporting}>
               Export All
             </Button>
-            <Button variant="outline" color="red" onClick={handleBulkDelete} loading={isBulkDeleting} disabled={selectedRules.length === 0}>
+            <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={handleBulkDelete} disabled={isBulkDeleting || selectedRules.length === 0}>
               Delete Selected ({selectedRules.length})
             </Button>
-            <Button variant="outline" onClick={() => handleFileImport(false)} loading={isImportingNormal}>
+            <Button variant="outlined" startIcon={<UploadIcon />} onClick={() => handleFileImport(false)} disabled={isImportingNormal}>
               Import
             </Button>
-            <Button variant="outline" color="red" onClick={() => handleFileImport(true)} loading={isImportingReplace}>
+            <Button variant="outlined" color="error" startIcon={<UploadIcon />} onClick={() => handleFileImport(true)} disabled={isImportingReplace}>
               Import (Replace All)
             </Button>
-            <Button leftSection={<IconPlus size={16} />} onClick={handleCreateRule} loading={isCreating}>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateRule} disabled={isCreating}>
               Create AI Rule
             </Button>
-          </Group>
-        </Group>
+          </HeaderActions>
+        }
+      />
 
-        {/* Semantic Search Section */}
-        <Card withBorder mb="md" p="md">
-          <Text fw={500} mb="sm">
+      <Stack spacing={2.5}>
+        <Paper sx={{ p: { xs: 2, md: 2.5 } }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 0.5 }}>
             Semantic Search
-          </Text>
-          <Text size="sm" c="dimmed" mb="md">
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Enter a natural language prompt to retrieve the most semantically related AI rules using vector similarity.
-          </Text>
-          <Group>
-            <TextInput placeholder="e.g., rules about user authentication..." value={semanticInput} onChange={(e: ChangeEvent<HTMLInputElement>) => setSemanticInput(e.target.value)} onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSemanticSearchSubmit()} style={{ flex: 1 }} leftSection={<IconSearch size={16} />} />
-            <Button onClick={handleSemanticSearchSubmit} loading={isSearching}>
+          </Typography>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25}>
+            <TextField
+              placeholder="e.g., rules about user authentication..."
+              value={semanticInput}
+              onChange={(event) => setSemanticInput(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && handleSemanticSearchSubmit()}
+              fullWidth
+              InputProps={{ startAdornment: <SearchIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }}
+            />
+            <Button variant="contained" onClick={handleSemanticSearchSubmit} disabled={isSearching}>
               Search
             </Button>
             {isSemanticMode && (
               <Button
-                variant="subtle"
-                color="gray"
+                variant="outlined"
+                color="inherit"
                 onClick={() => {
                   setSemanticInput('');
                   handleClearSemanticSearch();
@@ -471,40 +476,35 @@ export default function AiRules() {
                 Clear
               </Button>
             )}
-          </Group>
-        </Card>
+          </Stack>
+        </Paper>
 
-        {/* Semantic Search Results */}
         {isSemanticMode && (
-          <Card withBorder mb="md" p="md">
-            <Text fw={500} mb="sm">
+          <Paper sx={{ p: { xs: 2, md: 2.5 } }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
               Search Results ({semanticResults.length} matches)
-            </Text>
+            </Typography>
             {semanticResults.length === 0 ? (
-              <Text c="dimmed" size="sm">
+              <Typography variant="body2" color="text.secondary">
                 No matching rules found
-              </Text>
+              </Typography>
             ) : (
-              <Stack gap="sm">
+              <Stack spacing={1}>
                 {semanticResults.map((result) => (
-                  <Card key={result.id} withBorder p="sm">
-                    <Group justify="space-between" mb="xs">
-                      <Group>
-                        <Text fw={500}>{result.name}</Text>
-                        <Badge color={result.is_active ? 'green' : 'gray'} size="sm">
-                          {result.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </Group>
-                      <Badge color="blue" variant="light" size="sm">
-                        {(result.similarity_score * 100).toFixed(1)}% match
-                      </Badge>
-                    </Group>
-                    <Progress value={result.similarity_score * 100} size="xs" mb="xs" color="blue" />
+                  <Card key={result.id} variant="outlined" sx={{ p: 1.5 }}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" sx={{ mb: 1 }}>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>{result.name}</Typography>
+                        <Chip label={result.is_active ? 'Active' : 'Inactive'} color={result.is_active ? 'success' : 'default'} size="small" variant="outlined" />
+                      </Stack>
+                      <Chip color="primary" variant="outlined" size="small" label={`${(result.similarity_score * 100).toFixed(1)}% match`} />
+                    </Stack>
+                    <LinearProgress variant="determinate" value={result.similarity_score * 100} sx={{ height: 6, borderRadius: 99 }} />
                   </Card>
                 ))}
               </Stack>
             )}
-          </Card>
+          </Paper>
         )}
 
         <DataTable
@@ -533,7 +533,7 @@ export default function AiRules() {
           selectedRecords={aiRules.filter((rule) => selectedRules.includes(rule.id))}
           onSelectionChange={(selected) => setSelectedRules(selected.map((r) => r.id))}
         />
-      </Box>
+      </Stack>
 
       {/* Modals */}
       <AiRuleFormModal opened={formModalOpened} onClose={handleCloseFormModal} onSubmit={handleFormSubmit} rule={editingRule} loading={isCreating || isUpdating} />
