@@ -74,7 +74,10 @@ useExpressServer(app, {
 
 app.use(express.static(join(__dirname, '..', 'public')));
 
-app.get('*', (req, res) => {
+app.get('*', (req, res, next) => {
+  if (res.headersSent) {
+    return next();
+  }
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API endpoint not found' });
   }
