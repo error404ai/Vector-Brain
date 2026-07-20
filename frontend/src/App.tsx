@@ -8,6 +8,7 @@ import GlobalLoader from './components/loaders/GlobalLoader';
 import useAuthRedirect from './hooks/useAuthRedirect';
 import AgentTasksPage from './pages/AgentTasksPage';
 import AiRulesPage from './pages/AiRulesPage';
+import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
 import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
@@ -98,6 +99,14 @@ const router = createBrowserRouter([
             element: (
               <AdminOnly>
                 <AiRulesPage />
+              </AdminOnly>
+            ),
+          },
+          {
+            path: '/browserworker-errors',
+            element: (
+              <AdminOnly>
+                <BrowserWorkerErrorsPage />
               </AdminOnly>
             ),
           },

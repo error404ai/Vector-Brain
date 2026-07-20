@@ -1,4 +1,5 @@
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import BugReportIcon from '@mui/icons-material/BugReport';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import GroupIcon from '@mui/icons-material/Group';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
@@ -29,12 +30,11 @@ const mainItems: NavItem[] = [
   { label: 'Users', icon: <GroupIcon />, href: '/users', roles: ['admin'], badge: 'Admin', color: '#7c3aed' },
   { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },
+  { label: 'BrowserWorker Errors', icon: <BugReportIcon />, href: '/browserworker-errors', roles: ['admin'], badge: 'Admin', color: '#dc2626' },
   { label: 'My Rules', icon: <ManageAccountsIcon />, href: '/my-rules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#059669' },
 ];
 
-const systemItems: NavItem[] = [
-  { label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' },
-];
+const systemItems: NavItem[] = [{ label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' }];
 
 function NavSection({ title, items, collapsed, onNavigate }: { title: string; items: NavItem[]; collapsed: boolean; onNavigate?: () => void }) {
   const theme = useTheme();

@@ -23,6 +23,7 @@ const __dirname = dirname(__filename);
 import { AgentTaskController } from './controllers/AgentTaskController';
 import { AiRuleController } from './controllers/AiRuleController';
 import { AuthController } from './controllers/AuthController';
+import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorController';
 import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
@@ -56,7 +57,7 @@ app.use(requestContextMiddleware);
 
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [AgentTaskController, AiRuleController, AuthController, DashboardController, HealthController, PromptController, SettingController, UserController],
+  controllers: [AgentTaskController, AiRuleController, AuthController, BrowserWorkerErrorController, DashboardController, HealthController, PromptController, SettingController, UserController],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
@@ -65,7 +66,7 @@ useExpressServer(app, {
   },
   classTransformer: true,
   cors: {
-    origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5123', 'https://app.vectoragent.io'],
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5123', 'https://app.vectoragent.in', 'https://app.vectoragent.io', /^chrome-extension:\/\//, /^moz-extension:\/\//],
     credentials: true,
   },
   authorizationChecker,

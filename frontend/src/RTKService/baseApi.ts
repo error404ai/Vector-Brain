@@ -13,6 +13,7 @@ export const TAGS = {
   USERS: 'Users',
   AGENT_TASK: 'AgentTask',
   AGENT_TASKS: 'AgentTasks',
+  BROWSERWORKER_ERRORS: 'BrowserWorkerErrors',
   AI_RULE: 'AiRule',
   AI_RULES: 'AiRules',
   DASHBOARD: 'Dashboard',
