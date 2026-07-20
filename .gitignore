@@ -36,6 +36,7 @@ coverage/
 # Misc
 *.bak
 *.tmp
+*.dmp
 
 public/assets
 public/index.html

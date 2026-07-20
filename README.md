@@ -186,8 +186,22 @@ The server serves:
 | `npm run db:fresh`         | Drop, migrate, and seed database              |
 | `npm run migrate:generate` | Generate migration from entity changes        |
 | `npm run migrate:run`      | Run pending migrations                        |
+| `pnpm create:superadmin`   | Interactively create an administrator account |
 | `npm run lint`             | Run ESLint                                    |
 | `npm run format`           | Format code with Prettier                     |
+
+### Administrator bootstrap
+
+The `admin` role is the highest-access role in Vector Brain. Create a new
+administrator interactively using the same command pattern as the Rofasware
+applications:
+
+```bash
+pnpm create:superadmin
+```
+
+The command prompts for the email, name, password, and password confirmation.
+It only creates a fresh account and refuses an email that already exists.
 
 ## API Endpoints
 
