@@ -10,7 +10,7 @@ import z from 'zod';
 
 type ErrorEvent = z.infer<typeof ReportBrowserWorkerErrorsValidation>['events'][number];
 
-function sanitizeDiagnosticText(value: string | undefined, maxLength: number, preserveLines = false) {
+function sanitizeDiagnosticText(value: string | undefined, maxLength: number) {
   if (!value) return undefined;
 
   return value
@@ -19,15 +19,56 @@ function sanitizeDiagnosticText(value: string | undefined, maxLength: number, pr
     .replace(/https?:\/\/[^\s)\]}>'"]+/gi, '[url]')
     .replace(/(?:chrome|moz)-extension:\/\/[^/\s]+/gi, 'extension://[redacted]')
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]')
-    .replace(preserveLines ? /[^\S\r\n]+/g : /\s+/g, ' ')
-    .replace(preserveLines ? /(?:\r?\n){3,}/g : /$^/, '\n\n')
+    .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);
 }
 
+function sanitizeDiagnosticIdentifier(value: string | undefined, maxLength: number) {
+  if (!value) return undefined;
+
+  return value
+    .replace(/[^A-Za-z0-9._:/+-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
+function sanitizeExtensionStack(value: string | undefined) {
+  if (!value) return undefined;
+
+  const frames = value
+    .split('\n')
+    .flatMap((line) => {
+      const normalized = line.replace(/(?:chrome|moz)-extension:\/\/[^/\s)]+/gi, 'extension://[redacted]').trim();
+      return /^at extension:\/\/\[redacted\]\/[A-Za-z0-9._/:+-]{1,400}$/.test(normalized) ? [normalized] : [];
+    })
+    .slice(0, 20);
+
+  return frames.length > 0 ? frames.join('\n').slice(0, 8000) : undefined;
+}
+
+function diagnosticMessage(errorCode: string) {
+  const messages: Record<string, string> = {
+    BACKGROUND_WORKER_INTERRUPTED: 'A browser automation task was interrupted when the extension background worker stopped.',
+    BACKGROUND_COMMUNICATION_ERROR: 'The BrowserWorker interface could not communicate with the extension background worker.',
+    PANEL_RENDER_ERROR: 'The BrowserWorker side panel encountered a rendering error.',
+    AGENT_RUNTIME_ERROR: 'The browser automation agent encountered a runtime error.',
+    TASK_FAILED: 'A user-requested browser automation task failed.',
+    UNHANDLED_REJECTION: 'BrowserWorker encountered an unhandled asynchronous error.',
+    UNHANDLED_ERROR: 'BrowserWorker encountered an unhandled extension error.',
+    TIMEOUT: 'A BrowserWorker operation timed out.',
+    PERMISSION_ERROR: 'A BrowserWorker operation could not access a required browser capability.',
+    NETWORK_ERROR: 'A BrowserWorker network operation failed.',
+    STORAGE_ERROR: 'A BrowserWorker local storage operation failed.',
+  };
+
+  return messages[errorCode] || 'BrowserWorker encountered an unexpected extension error.';
+}
+
 function serverFingerprint(event: ErrorEvent) {
-  const message = sanitizeDiagnosticText(event.message, 1000)?.replace(/\b\d+\b/g, '#') || 'unknown';
-  const stack = sanitizeDiagnosticText(event.stack, 8000, true)?.split('\n').slice(0, 5).join('\n') || '';
+  const message = diagnosticMessage(event.error_code);
+  const stack = sanitizeExtensionStack(event.stack)?.split('\n').slice(0, 5).join('\n') || '';
 
   return createHash('sha256')
     .update([event.error_code, event.phase, event.extension_version, event.browser, event.provider || '', event.tool || '', message, stack].join('|'))
@@ -52,12 +93,12 @@ export class BrowserWorkerErrorService {
 
     for (const event of request.events) {
       const fingerprint = serverFingerprint(event);
-      const message = sanitizeDiagnosticText(event.message, 1000) || 'Unknown extension error';
-      const stack = sanitizeDiagnosticText(event.stack, 8000, true);
-      const browserVersion = sanitizeDiagnosticText(event.browser_version, 50);
-      const provider = sanitizeDiagnosticText(event.provider, 50);
-      const model = sanitizeDiagnosticText(event.model, 100);
-      const tool = sanitizeDiagnosticText(event.tool, 100);
+      const message = diagnosticMessage(event.error_code);
+      const stack = sanitizeExtensionStack(event.stack);
+      const browserVersion = sanitizeDiagnosticIdentifier(event.browser_version, 50);
+      const provider = sanitizeDiagnosticIdentifier(event.provider, 50);
+      const model = sanitizeDiagnosticIdentifier(event.model, 100);
+      const tool = sanitizeDiagnosticIdentifier(event.tool, 100);
 
       await this.browserWorkerErrorRepository.query(
         `INSERT INTO \`browserworker_errors\` (

@@ -20,10 +20,22 @@ export const BrowserWorkerErrorEventValidation = z
       .trim()
       .regex(/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$/),
     browser: z.enum(['chrome', 'firefox', 'edge', 'other']),
-    browser_version: OptionalShortText(50),
-    provider: OptionalShortText(50),
-    model: OptionalShortText(100),
-    tool: OptionalShortText(100),
+    browser_version: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._+-]{1,50}$/)
+      .optional(),
+    provider: z.enum(['openai', 'deepseek', 'openrouter', 'local']).optional(),
+    model: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._:/+-]{1,100}$/)
+      .optional(),
+    tool: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._:/+-]{1,100}$/)
+      .optional(),
     step: z.number().int().min(0).max(10_000).optional(),
     task_duration_ms: z.number().int().min(0).max(86_400_000).optional(),
     occurrences: z.number().int().min(1).max(100).optional().default(1),

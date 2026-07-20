@@ -1,13 +1,16 @@
 import { NextFunction, Request, Response } from 'express';
+import { createHmac, randomBytes } from 'node:crypto';
 
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_BATCHES_PER_WINDOW = 30;
 const clients = new Map<string, { count: number; resetAt: number }>();
+const clientKeySecret = randomBytes(32);
 
 function clientKey(req: Request) {
   const cloudflareIp = req.header('cf-connecting-ip');
   const forwardedIp = req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  return cloudflareIp || forwardedIp || req.ip || 'unknown';
+  const networkAddress = cloudflareIp || forwardedIp || req.ip || 'unknown';
+  return createHmac('sha256', clientKeySecret).update(networkAddress).digest('hex');
 }
 
 export function browserWorkerErrorRateLimit(req: Request, res: Response, next: NextFunction) {
