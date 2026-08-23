@@ -21,7 +21,7 @@ export class BrowserWorkerErrorController {
   @Authorized(['admin'])
   @Get('/list')
   @UseBefore(zodValidationMiddleware(BrowserWorkerErrorListValidation))
-  async list(@QueryParams() request: z.infer<typeof BrowserWorkerErrorListValidation>) {
+  async list(@QueryParams() request: any) {
     return this.browserWorkerErrorService.list(request);
   }
 
