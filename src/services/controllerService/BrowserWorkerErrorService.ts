@@ -50,6 +50,11 @@ function sanitizeExtensionStack(value: string | undefined) {
 
 function diagnosticMessage(errorCode: string) {
   const messages: Record<string, string> = {
+    AUTH_ERROR: 'The AI provider rejected the request due to an invalid or missing API key.',
+    MODEL_NOT_FOUND: 'The requested AI model was not found or is unavailable on this provider.',
+    RATE_LIMIT_ERROR: 'The AI provider rate limit or account quota was exceeded.',
+    CONTEXT_LENGTH_EXCEEDED: 'The conversation or page content exceeded the model’s maximum context limit.',
+    TAB_CLOSED: 'The browser tab was closed while automation was in progress.',
     BACKGROUND_WORKER_INTERRUPTED: 'A browser automation task was interrupted when the extension background worker stopped.',
     BACKGROUND_COMMUNICATION_ERROR: 'The BrowserWorker interface could not communicate with the extension background worker.',
     PANEL_RENDER_ERROR: 'The BrowserWorker side panel encountered a rendering error.',
