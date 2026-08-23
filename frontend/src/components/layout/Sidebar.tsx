@@ -3,6 +3,7 @@ import BugReportIcon from '@mui/icons-material/BugReport';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import GroupIcon from '@mui/icons-material/Group';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -27,6 +28,8 @@ interface NavItem {
 
 const mainItems: NavItem[] = [
   { label: 'Dashboard', icon: <DashboardIcon />, href: '/dashboard', roles: ['admin', 'user', 'guest'], color: '#2563eb' },
+  { label: 'Android Agent', icon: <SmartToyIcon />, href: '/android-agent', roles: ['admin', 'user', 'guest'], badge: 'Live', color: '#6366f1' },
+  { label: 'Android Devices', icon: <PhoneAndroidIcon />, href: '/android-devices', roles: ['admin', 'user', 'guest'], color: '#10b981' },
   { label: 'Users', icon: <GroupIcon />, href: '/users', roles: ['admin'], badge: 'Admin', color: '#7c3aed' },
   { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },

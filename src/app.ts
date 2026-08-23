@@ -22,6 +22,8 @@ const __dirname = dirname(__filename);
 // Controllers - Add your controllers here
 import { AgentTaskController } from './controllers/AgentTaskController';
 import { AiRuleController } from './controllers/AiRuleController';
+import { AndroidAgentController } from './controllers/AndroidAgentController';
+import { AndroidDeviceController } from './controllers/AndroidDeviceController';
 import { AuthController } from './controllers/AuthController';
 import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorController';
 import { DashboardController } from './controllers/DashboardController';
@@ -32,6 +34,7 @@ import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 import { AiEmbeddingService } from './services/AiEmbeddingService';
+import { initializeWebSocketServer } from './loaders/websocket';
 
 dotenv.config();
 
@@ -57,7 +60,19 @@ app.use(requestContextMiddleware);
 
 useExpressServer(app, {
   routePrefix: '/api',
-  controllers: [AgentTaskController, AiRuleController, AuthController, BrowserWorkerErrorController, DashboardController, HealthController, PromptController, SettingController, UserController],
+  controllers: [
+    AgentTaskController,
+    AiRuleController,
+    AndroidAgentController,
+    AndroidDeviceController,
+    AuthController,
+    BrowserWorkerErrorController,
+    DashboardController,
+    HealthController,
+    PromptController,
+    SettingController,
+    UserController,
+  ],
   middlewares: [GlobalErrorHandler],
   defaultErrorHandler: false,
   validation: {
@@ -86,6 +101,9 @@ app.get('*', (req, res, next) => {
 });
 
 const server = http.createServer(app);
+
+// Initialize real-time WebSocket Gateway for Android Companion & Web Live View
+initializeWebSocketServer(server);
 
 AppDataSource.initialize()
   .then(async () => {

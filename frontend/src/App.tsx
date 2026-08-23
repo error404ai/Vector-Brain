@@ -8,6 +8,8 @@ import GlobalLoader from './components/loaders/GlobalLoader';
 import useAuthRedirect from './hooks/useAuthRedirect';
 import AgentTasksPage from './pages/AgentTasksPage';
 import AiRulesPage from './pages/AiRulesPage';
+import AndroidAgentPage from './pages/AndroidAgentPage';
+import AndroidDevicesPage from './pages/AndroidDevicesPage';
 import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
 import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
@@ -83,6 +85,8 @@ const router = createBrowserRouter([
         Component: ProtectedShell,
         children: [
           { path: '/dashboard', Component: DashboardPage },
+          { path: '/android-agent', Component: AndroidAgentPage },
+          { path: '/android-devices', Component: AndroidDevicesPage },
           { path: '/agent-tasks', Component: AgentTasksPage },
           { path: '/my-rules', Component: MyRulesPage },
           { path: '/settings', Component: SettingsPage },

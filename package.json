@@ -25,10 +25,11 @@
     "dev:deps:logs": "docker compose logs -f mysql qdrant phpmyadmin",
     "install:frontend": "cd frontend && npm install",
     "install:all": "npm install && npm run install:frontend",
-    "migrate:generate": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:generate ./src/migrations/auto-generated --dataSource src/loaders/database.ts",
+    "migrate:generate": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:generate ./src/migrations/${npm_config_name:-auto-generated} --dataSource src/loaders/database.ts",
     "migrate:create": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:create ./src/migrations/migration",
     "migrate:run": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:run --dataSource src/loaders/database.ts",
     "migrate:revert": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:revert --dataSource src/loaders/database.ts",
+    "db:check": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js migration:generate ./src/migrations/SchemaSyncCheck --dataSource src/loaders/database.ts --check",
     "db:drop": "node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js schema:drop --dataSource src/loaders/database.ts",
     "db:drop-vectors": "cross-env NODE_ENV=development node --import ./scripts/ts-node-loader.mjs scripts/dropVectors.ts",
     "db:sync": "cross-env NODE_ENV=development node --import ./scripts/ts-node-loader.mjs ./node_modules/typeorm/cli.js schema:sync --dataSource src/loaders/database.ts",
@@ -72,6 +73,7 @@
     "typeorm-transactional": "^0.5.0",
     "uuid": "^11.0.5",
     "winston": "^3.18.3",
+    "ws": "^8.21.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -84,6 +86,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.1",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^6.19.1",
     "@typescript-eslint/parser": "^6.19.1",
     "chokidar-cli": "^3.0.0",
