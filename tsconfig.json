@@ -42,5 +42,5 @@
     "verbose": false
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/globals.d.ts.old"],
-  "exclude": ["node_modules", "dist", "test"]
+  "exclude": ["node_modules", "dist", "test", "src/**/*.test.ts"]
 }

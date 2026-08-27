@@ -1,6 +1,7 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
+import { AutomationAction } from '@/services/android/AndroidProtocol';
 import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation } from '@/validations/AndroidDeviceValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
@@ -51,6 +52,8 @@ export class AndroidDeviceController {
   @Authorized()
   @Delete('/:id')
   async unpairDevice(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    const device = await this.deviceService.getDeviceById(id, user.userId);
+    this.gatewayService.disconnectDevice(device.device_id);
     return this.deviceService.unpairDevice(id, user.userId);
   }
 
@@ -65,7 +68,7 @@ export class AndroidDeviceController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     const device = await this.deviceService.getDeviceById(request.device_id, user.userId);
-    const result = await this.gatewayService.executeAction(device.device_id, request.action);
+    const result = await this.gatewayService.executeAction(device.device_id, request.action as AutomationAction);
     return {
       message: 'Direct action executed',
       data: result,

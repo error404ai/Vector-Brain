@@ -62,6 +62,12 @@ const envConfig = {
   embeddingBaseUrl: process.env.EMBEDDING_BASE_URL, // For custom providers like DeepSeek
   embeddingDimensions: parseInt(process.env.EMBEDDING_DIMENSIONS || '1536'),
 
+  // Android multimodal planner (falls back to the existing OpenAI key)
+  androidAgentApiKey:
+    process.env.ANDROID_AGENT_API_KEY ||
+    ((process.env.EMBEDDING_PROVIDER || 'openai') === 'openai' ? process.env.EMBEDDING_API_KEY : undefined),
+  androidAgentModel: process.env.ANDROID_AGENT_MODEL || 'gpt-4o-mini',
+
   // Qdrant Vector Database Configuration
   qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
   qdrantApiKey: process.env.QDRANT_API_KEY, // Optional, for production auth

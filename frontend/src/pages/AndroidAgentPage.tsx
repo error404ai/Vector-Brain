@@ -3,6 +3,7 @@ import {
   useGetAndroidDevicesQuery,
   useRunAndroidTaskMutation,
 } from '@/RTKService/androidService/androidService';
+import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -25,19 +26,23 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useSearchParams } from 'react-router-dom';
 
 interface StepUpdate {
   stepIndex: number;
   thought: string;
-  action?: any;
+  action?: { type?: string; packageName?: string; [key: string]: unknown };
   screenshot?: string;
   foregroundApp?: string;
   durationMs?: number;
   status?: 'EXECUTING' | 'SUCCESS' | 'FAILED';
   result?: string;
+}
+
+interface ApiMutationError {
+  data?: { message?: string };
 }
 
 export function AndroidAgentPage() {
@@ -46,7 +51,7 @@ export function AndroidAgentPage() {
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
 
   const { data: devicesData } = useGetAndroidDevicesQuery();
-  const devices = devicesData?.data || [];
+  const devices = useMemo(() => devicesData?.data || [], [devicesData?.data]);
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
@@ -61,23 +66,15 @@ export function AndroidAgentPage() {
   const wsRef = useRef<WebSocket | null>(null);
   const stepsEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Set default selected device
-  useEffect(() => {
-    if (!selectedDeviceId && devices.length > 0) {
-      const onlineDev = devices.find((d) => d.status === 'ONLINE');
-      setSelectedDeviceId(onlineDev ? onlineDev.id : devices[0].id);
-    }
-  }, [devices, selectedDeviceId]);
+  const effectiveSelectedDeviceId =
+    selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
 
   // Connect to Vector-Brain WebSocket for live reactive streaming
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/android?type=web&token=web_session`;
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
+    const handleMessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
 
@@ -98,12 +95,29 @@ export function AndroidAgentPage() {
               action: step.action,
               screenshot: step.screenshot,
               foregroundApp: step.foregroundApp,
-              status: 'SUCCESS',
+              status: 'EXECUTING',
             },
           ]);
+        } else if (msg.event === 'task:step_result') {
+          const result = msg.payload;
+          setSteps((previous) =>
+            previous.map((step) =>
+              step.stepIndex === result.stepIndex
+                ? {
+                    ...step,
+                    status: result.status,
+                    result: result.result || result.error,
+                  }
+                : step,
+            ),
+          );
         } else if (msg.event === 'task:completed') {
           setIsRunning(false);
-          toast.success(msg.payload.message || 'Task completed successfully');
+          if (msg.payload.success) {
+            toast.success(msg.payload.message || 'Task completed successfully');
+          } else {
+            toast.error(msg.payload.message || 'Task did not complete');
+          }
         } else if (msg.event === 'task:cancelled') {
           setIsRunning(false);
           toast('Task was cancelled', { icon: '🛑' });
@@ -116,8 +130,32 @@ export function AndroidAgentPage() {
       }
     };
 
+    const scheduleReconnect = () => {
+      if (!disposed) reconnectTimer = setTimeout(connect, 2_000);
+    };
+
+    const connect = () => {
+      const token = authManager.getAccessToken();
+      if (!token) {
+        scheduleReconnect();
+        return;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      ws.onmessage = handleMessage;
+      ws.onclose = scheduleReconnect;
+    };
+
+    connect();
+
     return () => {
-      ws.close();
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, []);
 
@@ -127,7 +165,7 @@ export function AndroidAgentPage() {
   }, [steps]);
 
   const handleStartTask = async () => {
-    if (!selectedDeviceId) {
+    if (!effectiveSelectedDeviceId) {
       toast.error('Please select an Android device');
       return;
     }
@@ -140,15 +178,15 @@ export function AndroidAgentPage() {
       setSteps([]);
       setIsRunning(true);
       const res = await runTask({
-        device_id: selectedDeviceId,
+        device_id: effectiveSelectedDeviceId,
         prompt: promptInput,
       }).unwrap();
 
       setActiveTaskId(res.data.taskId);
       toast.success('Agent autonomous loop started');
-    } catch (err: any) {
+    } catch (err: unknown) {
       setIsRunning(false);
-      toast.error(err?.data?.message || 'Failed to start task');
+      toast.error((err as ApiMutationError)?.data?.message || 'Failed to start task');
     }
   };
 
@@ -157,12 +195,12 @@ export function AndroidAgentPage() {
     try {
       await cancelTask(activeTaskId).unwrap();
       setIsRunning(false);
-    } catch (err: any) {
-      toast.error(err?.data?.message || 'Failed to cancel task');
+    } catch (err: unknown) {
+      toast.error((err as ApiMutationError)?.data?.message || 'Failed to cancel task');
     }
   };
 
-  const selectedDevice = devices.find((d) => d.id === selectedDeviceId);
+  const selectedDevice = devices.find((d) => d.id === effectiveSelectedDeviceId);
   const isDeviceOnline = selectedDevice?.status === 'ONLINE';
 
   return (
@@ -186,7 +224,7 @@ export function AndroidAgentPage() {
               <Select
                 size="small"
                 fullWidth
-                value={selectedDeviceId || ''}
+                value={effectiveSelectedDeviceId || ''}
                 onChange={(e) => setSelectedDeviceId(Number(e.target.value))}
                 displayEmpty
                 disabled={isRunning}
@@ -332,7 +370,7 @@ export function AndroidAgentPage() {
               >
                 {latestScreenshot ? (
                   <img
-                    src={`data:image/jpeg;base64,${latestScreenshot}`}
+                    src={`data:image/png;base64,${latestScreenshot}`}
                     alt="Android Screen Frame"
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   />
@@ -411,9 +449,9 @@ export function AndroidAgentPage() {
 
                         <Chip
                           icon={<CheckCircleOutlineIcon />}
-                          label="Executed"
+                          label={step.status === 'EXECUTING' ? 'Executing' : step.status === 'FAILED' ? 'Failed' : 'Executed'}
                           size="small"
-                          color="success"
+                          color={step.status === 'FAILED' ? 'error' : step.status === 'EXECUTING' ? 'warning' : 'success'}
                           variant="outlined"
                           sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
                         />
@@ -427,6 +465,11 @@ export function AndroidAgentPage() {
                       {step.foregroundApp && (
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
                           App: <code>{step.foregroundApp}</code>
+                        </Typography>
+                      )}
+                      {step.result && (
+                        <Typography variant="caption" color={step.status === 'FAILED' ? 'error' : 'text.secondary'} sx={{ display: 'block', mt: 0.5 }}>
+                          Result: {step.result}
                         </Typography>
                       )}
                     </Paper>

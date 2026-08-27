@@ -30,10 +30,18 @@ export function initializeWebSocketServer(server: http.Server): WebSocketServer 
     try {
       const secret = process.env.JWT_SECRET || 'vector-android-secret';
       const decoded = jwt.verify(token, secret) as any;
+      const resolvedClientType = clientType || (decoded.type === 'android_companion' ? 'device' : 'web');
+
+      if (resolvedClientType === 'device' && (decoded.type !== 'android_companion' || !decoded.deviceId)) {
+        throw new Error('Token is not an Android companion token');
+      }
+      if (resolvedClientType === 'web' && (!decoded.userId || decoded.type === 'android_companion')) {
+        throw new Error('Token is not a web user token');
+      }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
         (ws as any).clientInfo = decoded;
-        (ws as any).clientType = clientType || (decoded.deviceId ? 'device' : 'web');
+        (ws as any).clientType = resolvedClientType;
         wss.emit('connection', ws, request);
       });
     } catch (err: any) {
@@ -54,23 +62,22 @@ export function initializeWebSocketServer(server: http.Server): WebSocketServer 
       if (userId) {
         gatewayService.registerWebClient(userId, ws);
       }
-    } else if (clientType === 'device') {
-      const deviceId = clientInfo.deviceId;
-      if (deviceId) {
-        gatewayService.registerDevice(deviceId, ws, clientInfo);
-      }
     }
 
     ws.on('message', (data) => {
       const str = data.toString();
       if (clientType === 'device') {
-        gatewayService.handleDeviceMessage(ws, str);
+        void gatewayService.handleDeviceMessage(ws, str, clientInfo.deviceId).catch((error) => {
+          Logger.error('[WebSocket] Device message handler failed:', error);
+        });
       }
     });
 
     ws.on('close', () => {
       if (clientType === 'device') {
-        gatewayService.handleDeviceDisconnect(ws);
+        void gatewayService.handleDeviceDisconnect(ws).catch((error) => {
+          Logger.error('[WebSocket] Device disconnect handler failed:', error);
+        });
       }
     });
 

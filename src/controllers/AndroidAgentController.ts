@@ -1,4 +1,6 @@
+import { AgentTask } from '@/entities/AgentTask';
 import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
+import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
@@ -12,6 +14,7 @@ import z from 'zod';
 @JsonController('/android/agent')
 export class AndroidAgentController {
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
+  private agentTaskRepo = AppDataSource.getRepository(AgentTask);
 
   constructor(private plannerService: AndroidPlannerService) {}
 
@@ -39,7 +42,10 @@ export class AndroidAgentController {
    * Get step-by-step logs and screenshots for an Android task.
    */
   @Get('/logs/:taskId')
-  async getTaskLogs(@Param('taskId') taskId: number) {
+  async getTaskLogs(@Param('taskId') taskId: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId } });
+    if (!task) throw new AppError('Task not found', 404);
+
     const logs = await this.taskLogRepo.find({
       where: { agent_task_id: taskId },
       order: { step_index: 'ASC' },

@@ -36,7 +36,6 @@ if (!dataSource) {
       migrationsRun: false,
       logging: false,
       timezone: 'Z',
-      dateStrings: ['DATETIME'],
       extra: {
         connectionLimit: 10,
         connectTimeout: 30000,

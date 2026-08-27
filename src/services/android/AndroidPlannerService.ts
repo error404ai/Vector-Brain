@@ -19,6 +19,7 @@ const DecisionSchema = z.object({
   isFinished: z.boolean().describe('True if the user goal has been fully accomplished or cannot proceed'),
   finishStatus: z.enum(['SUCCESS', 'FAILED']).optional(),
   finishMessage: z.string().optional(),
+  safetyLevel: z.enum(['LOW', 'USER_CONFIRMATION_REQUIRED', 'BLOCKED']).default('LOW'),
   action: z
     .discriminatedUnion('type', [
       z.object({
@@ -56,8 +57,17 @@ const DecisionSchema = z.object({
         durationMillis: z.number().default(1000),
       }),
     ])
-    .optional()
-    .describe('Atomic Android action to execute next'),
+    .describe('Atomic Android action to execute next; use Wait when isFinished is true because the action will be ignored'),
+}).superRefine((decision, context) => {
+  if (decision.isFinished && !decision.finishStatus) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['finishStatus'], message: 'A finish status is required when the goal is finished' });
+  }
+  if (decision.action?.type === 'ClickNode' && !decision.action.nodePath && !decision.action.viewId && !decision.action.text) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['action'], message: 'ClickNode requires a selector' });
+  }
+  if (decision.action?.type === 'SetText' && !decision.action.nodePath && !decision.action.viewId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['action'], message: 'SetText requires a nodePath or viewId' });
+  }
 });
 
 type AgentDecision = z.infer<typeof DecisionSchema>;
@@ -67,16 +77,17 @@ export class AndroidPlannerService {
   private agentTaskRepo = AppDataSource.getRepository(AgentTask);
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
   private chatModel: ChatOpenAI | null = null;
-  private activeTasks = new Map<number, { cancelled: boolean }>();
+  private activeTasks = new Map<number, { cancelled: boolean; deviceId: string }>();
+  private activeDeviceTasks = new Map<string, number>();
 
   constructor(
     private deviceService: AndroidDeviceService,
     private gatewayService: AndroidGatewayService,
   ) {
-    if (envConfig.embeddingApiKey) {
+    if (envConfig.androidAgentApiKey) {
       this.chatModel = new ChatOpenAI({
-        openAIApiKey: envConfig.embeddingApiKey,
-        modelName: 'gpt-4o-mini',
+        openAIApiKey: envConfig.androidAgentApiKey,
+        modelName: envConfig.androidAgentModel,
         temperature: 0.1,
       });
     }
@@ -91,13 +102,16 @@ export class AndroidPlannerService {
     if (!this.gatewayService.isDeviceConnected(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is currently offline. Please open the companion app on the device.`, 400);
     }
+    if (this.activeDeviceTasks.has(device.device_id)) {
+      throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
+    }
 
     // 1. Create AgentTask record
     const agentTask = this.agentTaskRepo.create({
       user_id: userId,
       prompt,
       provider: 'openai',
-      model: 'gpt-4o-mini',
+      model: envConfig.androidAgentModel,
       success: false,
       total_steps: 0,
       total_duration_seconds: 0,
@@ -105,7 +119,8 @@ export class AndroidPlannerService {
     });
     await this.agentTaskRepo.save(agentTask);
 
-    this.activeTasks.set(agentTask.id, { cancelled: false });
+    this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id });
+    this.activeDeviceTasks.set(device.device_id, agentTask.id);
     const startTime = Date.now();
 
     // Notify web clients that task has begun
@@ -139,6 +154,7 @@ export class AndroidPlannerService {
     const active = this.activeTasks.get(taskId);
     if (active) {
       active.cancelled = true;
+      this.gatewayService.cancelDeviceActions(active.deviceId);
     }
 
     task.message = 'Task cancelled by user';
@@ -159,6 +175,8 @@ export class AndroidPlannerService {
     startTime: number,
   ) {
     let stepCount = 0;
+    let finished = false;
+    let wasCancelled = false;
     const history: Array<{ thought: string; action: any; result: string }> = [];
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
@@ -168,6 +186,7 @@ export class AndroidPlannerService {
       while (stepCount < maxSteps) {
         if (this.activeTasks.get(agentTask.id)?.cancelled) {
           Logger.info(`[AndroidPlanner] Task ${agentTask.id} was cancelled.`);
+          wasCancelled = true;
           break;
         }
 
@@ -178,8 +197,15 @@ export class AndroidPlannerService {
         const treeResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' });
         const screenResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
 
-        const uiTree: UiTreeSnapshot | undefined = (treeResult as any).uiTree;
-        const screenCapture = (screenResult as any).screenCapture;
+        if (treeResult.status !== 'SUCCESS') {
+          const detail = treeResult.status === 'FAILURE'
+            ? `${treeResult.code}: ${treeResult.message}`
+            : 'capture was cancelled';
+          throw new Error(`Unable to inspect the Android screen: ${detail}`);
+        }
+
+        const uiTree: UiTreeSnapshot | undefined = treeResult.uiTree;
+        const screenCapture = screenResult.status === 'SUCCESS' ? screenResult.screenCapture : undefined;
         const screenshotBase64 = screenCapture?.base64Data;
 
         // 2. Format UI tree for AI context
@@ -222,12 +248,18 @@ export class AndroidPlannerService {
 
           agentTask.success = decision.finishStatus !== 'FAILED';
           agentTask.message = decision.finishMessage || 'Goal accomplished successfully';
+          finished = true;
           break;
         }
 
         // 6. Execute action on device
         if (decision.action) {
-          const actionResult = await this.gatewayService.executeAction(hardwareDeviceId, decision.action as AutomationAction);
+          const actionResult = await this.gatewayService.executeAction(
+            hardwareDeviceId,
+            decision.action as AutomationAction,
+            15000,
+            decision.safetyLevel,
+          );
           const duration = Date.now() - stepStartTime;
 
           taskLog.duration_ms = duration;
@@ -239,22 +271,44 @@ export class AndroidPlannerService {
             taskLog.status = AndroidStepStatus.FAILED;
             taskLog.error_message = `${actionResult.code}: ${actionResult.message}`;
             history.push({ thought: decision.thought, action: decision.action, result: `Failed: ${actionResult.message}` });
+          } else {
+            taskLog.status = AndroidStepStatus.CANCELLED;
+            taskLog.result_message = 'Action cancelled by user';
           }
+          await this.taskLogRepo.save(taskLog);
+
+          this.gatewayService.broadcastToUser(userId, 'task:step_result', {
+            taskId: agentTask.id,
+            stepIndex: stepCount,
+            status: taskLog.status,
+            result: taskLog.result_message,
+            error: taskLog.error_message,
+          });
+        } else {
+          taskLog.status = AndroidStepStatus.FAILED;
+          taskLog.error_message = 'Planner did not return an action';
+          taskLog.duration_ms = Date.now() - stepStartTime;
           await this.taskLogRepo.save(taskLog);
         }
       }
 
       // Finalize task
+      if (!finished && !wasCancelled) {
+        agentTask.success = false;
+        agentTask.message = `Task stopped after reaching the ${maxSteps}-step limit.`;
+      }
       agentTask.total_steps = stepCount;
       agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
       await this.agentTaskRepo.save(agentTask);
 
-      this.gatewayService.broadcastToUser(userId, 'task:completed', {
-        taskId: agentTask.id,
-        success: agentTask.success,
-        message: agentTask.message,
-        totalSteps: stepCount,
-      });
+      if (!wasCancelled) {
+        this.gatewayService.broadcastToUser(userId, 'task:completed', {
+          taskId: agentTask.id,
+          success: agentTask.success,
+          message: agentTask.message,
+          totalSteps: stepCount,
+        });
+      }
     } catch (err: any) {
       Logger.error(`[AndroidPlanner] Error during task loop:`, err);
       agentTask.success = false;
@@ -263,6 +317,9 @@ export class AndroidPlannerService {
       this.gatewayService.broadcastToUser(userId, 'task:error', { taskId: agentTask.id, error: err.message });
     } finally {
       this.activeTasks.delete(agentTask.id);
+      if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
+        this.activeDeviceTasks.delete(hardwareDeviceId);
+      }
     }
   }
 
@@ -279,6 +336,8 @@ export class AndroidPlannerService {
         isFinished: true,
         finishStatus: 'FAILED',
         finishMessage: 'OpenAI API key is missing in server configuration.',
+        safetyLevel: 'LOW',
+        action: { type: 'Wait', durationMillis: 1 },
       };
     }
 
@@ -300,8 +359,10 @@ RULES:
 1. Always analyze the current screen UI tree and foreground package first.
 2. If the target app is not open, use OpenApp first.
 3. Use ClickNode or SetText with the correct nodePath or viewId from the visible UI hierarchy.
-4. When the goal is completed, return isFinished = true with finishStatus = "SUCCESS".
-5. If the screen is loading, use Wait.`;
+4. When the goal is completed, return isFinished = true with finishStatus = "SUCCESS" and a Wait action (finished actions are ignored).
+5. If the screen is loading, use Wait.
+6. Mark actions that send messages, place orders, make payments, delete data, or commit an external change as USER_CONFIRMATION_REQUIRED.
+7. Mark dangerous or clearly unauthorized actions as BLOCKED. Never type into password fields.`;
 
     const userContent: any[] = [
       {
@@ -321,7 +382,7 @@ ${uiTreeText}`,
       userContent.push({
         type: 'image_url',
         image_url: {
-          url: `data:image/jpeg;base64,${screenshotBase64}`,
+          url: `data:image/png;base64,${screenshotBase64}`,
         },
       });
     }
@@ -334,9 +395,12 @@ ${uiTreeText}`,
     } catch (error) {
       Logger.error(`[AndroidPlanner] LLM invocation error:`, error);
       return {
-        thought: 'Failed to parse model output. Retrying with home action.',
-        isFinished: false,
-        action: { type: 'Global', action: 'HOME' },
+        thought: 'The planner could not produce a valid next action.',
+        isFinished: true,
+        finishStatus: 'FAILED',
+        finishMessage: error instanceof Error ? error.message : 'The AI planner returned an invalid response.',
+        safetyLevel: 'LOW',
+        action: { type: 'Wait', durationMillis: 1 },
       };
     }
   }

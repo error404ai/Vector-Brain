@@ -51,4 +51,4 @@ if (seederName === '--help' || seederName === '-h') {
   process.exit(0);
 }
 
-runSeeders(seederName);
+void runSeeders(seederName);

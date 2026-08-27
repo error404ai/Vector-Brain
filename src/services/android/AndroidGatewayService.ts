@@ -7,8 +7,8 @@ import { WebSocket } from 'ws';
 
 interface PendingRequest {
   resolve: (result: ActionResult) => void;
-  reject: (error: Error) => void;
   timeoutId: NodeJS.Timeout;
+  deviceId: string;
 }
 
 @Service()
@@ -84,17 +84,26 @@ export class AndroidGatewayService {
   /**
    * Handles incoming WebSocket messages from Android Companion devices.
    */
-  async handleDeviceMessage(ws: WebSocket, rawData: string) {
+  async handleDeviceMessage(ws: WebSocket, rawData: string, authenticatedDeviceId: string) {
     try {
       const msg: AndroidWsClientMessage = JSON.parse(rawData);
 
       switch (msg.event) {
         case 'device:register':
+          if (msg.payload.deviceId !== authenticatedDeviceId) {
+            Logger.warn(`[AndroidGateway] Device token ${authenticatedDeviceId} attempted to register as ${msg.payload.deviceId}`);
+            ws.close(1008, 'Device ID does not match authenticated token');
+            return;
+          }
           await this.registerDevice(msg.payload.deviceId, ws, msg.payload);
           break;
 
         case 'device:heartbeat':
-          const devId = this.socketToDeviceId.get(ws) || msg.payload.deviceId;
+          if (msg.payload.deviceId !== authenticatedDeviceId) {
+            ws.close(1008, 'Device ID does not match authenticated token');
+            return;
+          }
+          const devId = this.socketToDeviceId.get(ws) || authenticatedDeviceId;
           await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, msg.payload.capabilities);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ event: 'server:heartbeat_ack', timestamp: Date.now() }));
@@ -138,9 +147,26 @@ export class AndroidGatewayService {
     const deviceId = this.socketToDeviceId.get(ws);
     if (!deviceId) return;
 
+    this.socketToDeviceId.delete(ws);
+
+    // A replaced socket may close after the new connection is registered.
+    // Only mark the device offline when this is still its active socket.
+    if (this.deviceSockets.get(deviceId) !== ws) return;
+
     Logger.info(`[AndroidGateway] Device disconnected: ${deviceId}`);
     this.deviceSockets.delete(deviceId);
-    this.socketToDeviceId.delete(ws);
+
+    for (const [requestId, pending] of this.pendingRequests) {
+      if (pending.deviceId !== deviceId) continue;
+      clearTimeout(pending.timeoutId);
+      this.pendingRequests.delete(requestId);
+      pending.resolve({
+        status: 'FAILURE',
+        code: 'INTERNAL_ERROR',
+        message: `Device ${deviceId} disconnected while executing the action`,
+        recoverable: true,
+      });
+    }
 
     // Update DB status to OFFLINE
     await this.deviceService.updateDeviceStatus(deviceId, AndroidDeviceStatus.OFFLINE);
@@ -157,7 +183,12 @@ export class AndroidGatewayService {
   /**
    * Sends an atomic action to the Android device and waits for the ActionResult.
    */
-  async executeAction(deviceId: string, action: AutomationAction, timeoutMillis = 15000): Promise<ActionResult> {
+  async executeAction(
+    deviceId: string,
+    action: AutomationAction,
+    timeoutMillis = 15000,
+    safetyLevel: 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED' = 'LOW',
+  ): Promise<ActionResult> {
     const ws = this.deviceSockets.get(deviceId);
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return {
@@ -176,10 +207,11 @@ export class AndroidGatewayService {
       payload: {
         action,
         timeoutMillis,
+        safetyLevel,
       },
     };
 
-    return new Promise<ActionResult>((resolve, reject) => {
+    return new Promise<ActionResult>((resolve) => {
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(requestId);
         resolve({
@@ -190,7 +222,7 @@ export class AndroidGatewayService {
         });
       }, timeoutMillis + 2000); // 2s buffer over device timeout
 
-      this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
+      this.pendingRequests.set(requestId, { resolve, timeoutId, deviceId });
 
       try {
         ws.send(JSON.stringify(message));
@@ -231,5 +263,23 @@ export class AndroidGatewayService {
   isDeviceConnected(deviceId: string): boolean {
     const ws = this.deviceSockets.get(deviceId);
     return !!ws && ws.readyState === WebSocket.OPEN;
+  }
+
+
+  disconnectDevice(deviceId: string, reason = 'Device unpaired') {
+    this.deviceSockets.get(deviceId)?.close(1008, reason);
+  }
+
+  cancelDeviceActions(deviceId: string) {
+    const ws = this.deviceSockets.get(deviceId);
+    for (const [requestId, pending] of this.pendingRequests) {
+      if (pending.deviceId !== deviceId) continue;
+      clearTimeout(pending.timeoutId);
+      this.pendingRequests.delete(requestId);
+      pending.resolve({ status: 'CANCELLED' });
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ event: 'server:cancel_action', requestId }));
+      }
+    }
   }
 }

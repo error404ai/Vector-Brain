@@ -102,7 +102,7 @@ Vector-Brain/
    npm run dev
    ```
 
-The backend API will be available at `http://localhost:3000/api`  
+The backend API will be available at `http://localhost:3002/api`.
 The frontend will be available at `http://localhost:5173`
 phpMyAdmin will be available at `http://localhost:8080`  
 Qdrant will be available at `http://localhost:6333`
@@ -118,7 +118,7 @@ npm run dev
 
 This starts dependencies in Docker and runs:
 
-- Backend on `http://localhost:3000`
+- Backend on `http://localhost:3002`
 - Frontend on `http://localhost:5173` (with API proxy)
 
 Stop local dependencies:
@@ -160,6 +160,26 @@ The server serves:
 
 - API endpoints at `/api/*`
 - Frontend static files for all other routes
+
+## Android Automation (local Docker test)
+
+Vector-Brain includes an Android device pairing API, authenticated WebSocket gateway, multimodal planner loop, task logs, and a web control console. The companion application lives in the sibling `AndroidAutomation` repository.
+
+Start the complete backend stack:
+
+```bash
+docker compose -f docker-compose-prod.yml up -d --build
+```
+
+The default host endpoints are:
+
+- Vector-Brain web/API/WebSocket: `http://localhost:3002`
+- MySQL: `localhost:3306`
+- Qdrant: `localhost:6333`
+
+For an Android Studio emulator, pair against `http://10.0.2.2:3002`; `localhost` inside the emulator refers to the emulator itself. For a physical phone, use the development Mac's reachable LAN IP. Generate the six-character code from **Android Devices**, enter it in the companion app, enable Accessibility and screen capture, and use **Android Agent** to submit a prompt.
+
+The app container runs database migrations before starting. Configure `ANDROID_AGENT_API_KEY` for the planner; when the embedding provider is OpenAI, it can also reuse `EMBEDDING_API_KEY`. Sensitive actions are rejected until the Android companion has an explicit confirmation UI.
 
 ## Routing
 

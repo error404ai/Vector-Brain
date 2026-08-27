@@ -36,7 +36,41 @@ export const DispatchAndroidPromptValidation = z.object({
   max_steps: z.number().min(1).max(50).default(15),
 });
 
+const nodeSelectorShape = {
+  nodePath: z.string().min(1).optional(),
+  viewId: z.string().min(1).optional(),
+  text: z.string().min(1).optional(),
+};
+
+export const AutomationActionValidation = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('OpenApp'), packageName: z.string().min(1).max(255) }),
+  z.object({ type: z.literal('ClickNode'), ...nodeSelectorShape }),
+  z.object({ type: z.literal('Tap'), x: z.number().nonnegative(), y: z.number().nonnegative() }),
+  z.object({
+    type: z.literal('SetText'),
+    nodePath: z.string().min(1).optional(),
+    viewId: z.string().min(1).optional(),
+    text: z.string().max(10_000),
+  }),
+  z.object({
+    type: z.literal('Swipe'),
+    direction: z.enum(['UP', 'DOWN', 'LEFT', 'RIGHT']),
+    durationMillis: z.number().int().min(50).max(10_000).optional(),
+  }),
+  z.object({ type: z.literal('Global'), action: z.enum(['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS']) }),
+  z.object({ type: z.literal('Wait'), durationMillis: z.number().int().min(1).max(60_000) }),
+  z.object({ type: z.literal('ReadUiTree') }),
+  z.object({ type: z.literal('CaptureScreen') }),
+]).superRefine((action, context) => {
+  if (action.type === 'ClickNode' && !action.nodePath && !action.viewId && !action.text) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'ClickNode requires a nodePath, viewId, or text' });
+  }
+  if (action.type === 'SetText' && !action.nodePath && !action.viewId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'SetText requires a nodePath or viewId' });
+  }
+});
+
 export const DirectActionValidation = z.object({
   device_id: z.number(),
-  action: z.any(),
+  action: AutomationActionValidation,
 });
