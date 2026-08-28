@@ -44,6 +44,7 @@ const nodeSelectorShape = {
 
 export const AutomationActionValidation = z.discriminatedUnion('type', [
   z.object({ type: z.literal('OpenApp'), packageName: z.string().min(1).max(255) }),
+  z.object({ type: z.literal('OpenUrl'), url: z.string().url().refine((url) => /^https?:\/\//i.test(url), 'URL must use http or https') }),
   z.object({ type: z.literal('ClickNode'), ...nodeSelectorShape }),
   z.object({ type: z.literal('Tap'), x: z.number().nonnegative(), y: z.number().nonnegative() }),
   z.object({

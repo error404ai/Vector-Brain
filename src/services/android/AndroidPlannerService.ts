@@ -1,5 +1,4 @@
 import { AgentTask } from '@/entities/AgentTask';
-import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { AndroidStepStatus, AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -25,6 +24,10 @@ const DecisionSchema = z.object({
       z.object({
         type: z.literal('OpenApp'),
         packageName: z.string().describe('Android application package name e.g. com.google.android.youtube'),
+      }),
+      z.object({
+        type: z.literal('OpenUrl'),
+        url: z.string().url().describe('An http or https URL to open in the default browser'),
       }),
       z.object({
         type: z.literal('ClickNode'),
@@ -97,6 +100,13 @@ export class AndroidPlannerService {
    * Main autonomous reasoning loop for Android task execution.
    */
   async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 15): Promise<ApiResponse> {
+    if (!this.chatModel) {
+      throw new AppError('Android Agent is not configured. Set ANDROID_AGENT_API_KEY in the server environment.', 503);
+    }
+    if (!this.isActionablePrompt(prompt)) {
+      throw new AppError('Please enter a concrete Android task, for example: "Open Chrome and go to google.com".', 400);
+    }
+
     const device = await this.deviceService.getDeviceById(deviceId, userId);
 
     if (!this.gatewayService.isDeviceConnected(device.device_id)) {
@@ -105,6 +115,8 @@ export class AndroidPlannerService {
     if (this.activeDeviceTasks.has(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
     }
+
+    await this.assertDeviceReady(device.device_id);
 
     // 1. Create AgentTask record
     const agentTask = this.agentTaskRepo.create({
@@ -178,6 +190,8 @@ export class AndroidPlannerService {
     let finished = false;
     let wasCancelled = false;
     const history: Array<{ thought: string; action: any; result: string }> = [];
+    let previousUiFingerprint: string | null = null;
+    let unchangedWaitCount = 0;
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
@@ -203,6 +217,12 @@ export class AndroidPlannerService {
             : 'capture was cancelled';
           throw new Error(`Unable to inspect the Android screen: ${detail}`);
         }
+        if (screenResult.status !== 'SUCCESS') {
+          const detail = screenResult.status === 'FAILURE'
+            ? `${screenResult.code}: ${screenResult.message}`
+            : 'capture was cancelled';
+          throw new Error(`Unable to capture the Android screen: ${detail}`);
+        }
 
         const uiTree: UiTreeSnapshot | undefined = treeResult.uiTree;
         const screenCapture = screenResult.status === 'SUCCESS' ? screenResult.screenCapture : undefined;
@@ -213,7 +233,27 @@ export class AndroidPlannerService {
         const foregroundApp = uiTree?.packageName || 'unknown';
 
         // 3. Ask Multimodal LLM for next decision
-        const decision = await this.queryModel(prompt, compactTree, foregroundApp, screenshotBase64, history);
+        let decision = await this.queryModel(prompt, compactTree, foregroundApp, screenshotBase64, history);
+        decision = { ...decision, safetyLevel: this.enforceSafetyLevel(decision) };
+
+        const uiFingerprint = `${foregroundApp}\n${compactTree}`;
+        if (!decision.isFinished && decision.action?.type === 'Wait' && uiFingerprint === previousUiFingerprint) {
+          unchangedWaitCount += 1;
+        } else {
+          unchangedWaitCount = 0;
+        }
+        previousUiFingerprint = uiFingerprint;
+
+        if (unchangedWaitCount >= 2) {
+          decision = {
+            thought: `${decision.thought} The screen has not changed after repeated waits, so the task is stopping instead of consuming more AI calls.`,
+            isFinished: true,
+            finishStatus: 'FAILED',
+            finishMessage: 'The device screen did not change after three consecutive wait decisions.',
+            safetyLevel: 'LOW',
+            action: { type: 'Wait', durationMillis: 1 },
+          };
+        }
 
         // 4. Record step log in DB
         const taskLog = this.taskLogRepo.create({
@@ -257,7 +297,7 @@ export class AndroidPlannerService {
           const actionResult = await this.gatewayService.executeAction(
             hardwareDeviceId,
             decision.action as AutomationAction,
-            15000,
+            decision.safetyLevel === 'USER_CONFIRMATION_REQUIRED' ? 60_000 : 15_000,
             decision.safetyLevel,
           );
           const duration = Date.now() - stepStartTime;
@@ -348,6 +388,7 @@ Your goal is to accomplish the user's task step-by-step.
 
 AVAILABLE ACTIONS:
 - OpenApp: { type: "OpenApp", packageName: "package.name" }
+- OpenUrl: { type: "OpenUrl", url: "https://example.com" } (prefer this for website/browser goals)
 - ClickNode: { type: "ClickNode", nodePath: "0/1/2", text: "exact text", viewId: "com.app:id/btn" }
 - SetText: { type: "SetText", nodePath: "0/1/2", text: "content to type" }
 - Tap: { type: "Tap", x: 500, y: 800 }
@@ -403,6 +444,48 @@ ${uiTreeText}`,
         action: { type: 'Wait', durationMillis: 1 },
       };
     }
+  }
+
+  private isActionablePrompt(prompt: string): boolean {
+    const normalized = prompt.trim().toLowerCase();
+    if (normalized.length < 4) return false;
+
+    return !/^(hi|hello|hey|test|help|thanks|thank you)[.!?\s]*$/.test(normalized);
+  }
+
+  private async assertDeviceReady(hardwareDeviceId: string): Promise<void> {
+    const treeResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' });
+    if (treeResult.status !== 'SUCCESS') {
+      const detail = treeResult.status === 'FAILURE' ? treeResult.message : 'UI inspection was cancelled';
+      throw new AppError(
+        `Accessibility is not ready on the Android device. Open Android Automation, enable its accessibility service, then try again. ${detail}`,
+        400,
+      );
+    }
+
+    const captureResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
+    if (captureResult.status !== 'SUCCESS' || !captureResult.screenCapture?.base64Data) {
+      const detail = captureResult.status === 'FAILURE' ? captureResult.message : 'No screen frame was returned';
+      throw new AppError(
+        `Screen capture is not ready on the Android device. Open Android Automation, tap "Enable screen capture", approve Android's prompt, then try again. ${detail}`,
+        400,
+      );
+    }
+  }
+
+  private enforceSafetyLevel(decision: AgentDecision): AgentDecision['safetyLevel'] {
+    if (decision.safetyLevel === 'BLOCKED' || decision.safetyLevel === 'USER_CONFIRMATION_REQUIRED') {
+      return decision.safetyLevel;
+    }
+
+    if (decision.action?.type === 'ClickNode') {
+      const target = `${decision.action.text || ''} ${decision.action.viewId || ''}`;
+      if (/\b(send|submit|confirm|buy|purchase|pay|place.?order|delete|remove|publish|post)\b/i.test(target)) {
+        return 'USER_CONFIRMATION_REQUIRED';
+      }
+    }
+
+    return 'LOW';
   }
 
   private formatUiTree(node?: UiNodeSnapshot, depth = 0): string {

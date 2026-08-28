@@ -179,7 +179,7 @@ The default host endpoints are:
 
 For an Android Studio emulator, pair against `http://10.0.2.2:3002`; `localhost` inside the emulator refers to the emulator itself. For a physical phone, use the development Mac's reachable LAN IP. Generate the six-character code from **Android Devices**, enter it in the companion app, enable Accessibility and screen capture, and use **Android Agent** to submit a prompt.
 
-The app container runs database migrations before starting. Configure `ANDROID_AGENT_API_KEY` for the planner; when the embedding provider is OpenAI, it can also reuse `EMBEDDING_API_KEY`. Sensitive actions are rejected until the Android companion has an explicit confirmation UI.
+The app container runs database migrations before starting. Configure `ANDROID_AGENT_API_KEY` explicitly for the Android planner; embedding credentials are never reused automatically. Sensitive actions pause until they are approved in the Android companion app.
 
 ## Routing
 

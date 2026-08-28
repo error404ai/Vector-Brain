@@ -12,6 +12,11 @@ describe('Android action validation', () => {
     expect(AutomationActionValidation.safeParse({ type: 'SetText', text: 'hello' }).success).toBe(false);
   });
 
+  it('accepts secure web URLs and rejects unsupported URL schemes', () => {
+    expect(AutomationActionValidation.safeParse({ type: 'OpenUrl', url: 'https://www.google.com' }).success).toBe(true);
+    expect(AutomationActionValidation.safeParse({ type: 'OpenUrl', url: 'javascript:alert(1)' }).success).toBe(false);
+  });
+
   it('rejects unsupported or unsafe direct-action payload shapes', () => {
     expect(
       DirectActionValidation.safeParse({

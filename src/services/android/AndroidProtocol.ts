@@ -6,6 +6,7 @@ export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
 
 export type AutomationAction =
   | { type: 'OpenApp'; packageName: string }
+  | { type: 'OpenUrl'; url: string }
   | { type: 'ClickNode'; nodePath?: string; viewId?: string; text?: string }
   | { type: 'Tap'; x: number; y: number }
   | { type: 'SetText'; nodePath?: string; viewId?: string; text: string }

@@ -64,6 +64,14 @@ export class AndroidDeviceService {
       throw new AppError('Pairing code has expired. Please generate a new one from the dashboard.', 400);
     }
 
+    // A physical companion can move to a different account after the user unpairs it locally.
+    // Remove the previous ownership record before claiming the unique hardware ID. Historical
+    // task logs retain safely because their device relation uses ON DELETE SET NULL.
+    const previousDevice = await this.deviceRepo.findOne({ where: { device_id: request.device_id } });
+    if (previousDevice && previousDevice.id !== device.id) {
+      await this.deviceRepo.remove(previousDevice);
+    }
+
     // Generate permanent device token
     const secret = process.env.JWT_SECRET || 'vector-android-secret';
     const deviceToken = jwt.sign(

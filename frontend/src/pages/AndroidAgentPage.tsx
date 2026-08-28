@@ -11,6 +11,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import {
+  Alert,
   alpha,
   Box,
   Button,
@@ -50,7 +51,7 @@ export function AndroidAgentPage() {
   const [searchParams] = useSearchParams();
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
 
-  const { data: devicesData } = useGetAndroidDevicesQuery();
+  const { data: devicesData } = useGetAndroidDevicesQuery(undefined, { pollingInterval: 5_000 });
   const devices = useMemo(() => devicesData?.data || [], [devicesData?.data]);
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
@@ -68,6 +69,11 @@ export function AndroidAgentPage() {
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
+  const selectedDevice = devices.find((device) => device.id === effectiveSelectedDeviceId);
+  const isDeviceOnline = selectedDevice?.status === 'ONLINE';
+  const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
+  const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
+  const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
 
   // Connect to Vector-Brain WebSocket for live reactive streaming
   useEffect(() => {
@@ -82,6 +88,10 @@ export function AndroidAgentPage() {
           setIsRunning(true);
           setActiveTaskId(msg.payload.taskId);
           setSteps([]);
+          setLatestScreenshot(null);
+        } else if (msg.event === 'device:perception_update') {
+          const capture = msg.payload?.result?.screenCapture?.base64Data;
+          if (capture) setLatestScreenshot(capture);
         } else if (msg.event === 'task:step') {
           const step = msg.payload;
           if (step.screenshot) {
@@ -176,6 +186,7 @@ export function AndroidAgentPage() {
 
     try {
       setSteps([]);
+      setLatestScreenshot(null);
       setIsRunning(true);
       const res = await runTask({
         device_id: effectiveSelectedDeviceId,
@@ -199,9 +210,6 @@ export function AndroidAgentPage() {
       toast.error((err as ApiMutationError)?.data?.message || 'Failed to cancel task');
     }
   };
-
-  const selectedDevice = devices.find((d) => d.id === effectiveSelectedDeviceId);
-  const isDeviceOnline = selectedDevice?.status === 'ONLINE';
 
   return (
     <Box sx={{ maxWidth: 1400, mx: 'auto', p: { xs: 1, sm: 2 } }}>
@@ -254,7 +262,7 @@ export function AndroidAgentPage() {
                 value={promptInput}
                 onChange={(e) => setPromptInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !isRunning && isDeviceOnline) {
+                  if (e.key === 'Enter' && !e.shiftKey && !isRunning && deviceReady) {
                     e.preventDefault();
                     handleStartTask();
                   }
@@ -283,7 +291,7 @@ export function AndroidAgentPage() {
                   variant="contained"
                   startIcon={isStartingTask ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
                   onClick={handleStartTask}
-                  disabled={!isDeviceOnline || isStartingTask || !promptInput.trim()}
+                  disabled={!deviceReady || isStartingTask || !promptInput.trim()}
                   sx={{
                     borderRadius: 2,
                     fontWeight: 700,
@@ -295,6 +303,16 @@ export function AndroidAgentPage() {
               )}
             </Box>
           </Box>
+
+          {selectedDevice && !deviceReady && (
+            <Alert severity={isDeviceOnline ? 'warning' : 'error'} sx={{ mt: 2 }}>
+              {!isDeviceOnline
+                ? 'Open Android Automation on the phone and connect it to Vector-Brain.'
+                : !hasAccessibility
+                  ? 'Enable the Android Automation accessibility service on the phone before running an agent.'
+                  : 'Tap Enable screen capture in Android Automation and approve Android’s capture prompt.'}
+            </Alert>
+          )}
 
           {/* Quick suggestions */}
           <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }}>
@@ -378,14 +396,18 @@ export function AndroidAgentPage() {
                   <Stack spacing={1.5} alignItems="center" sx={{ p: 3, textAlign: 'center' }}>
                     <PhoneAndroidIcon sx={{ fontSize: 48, color: 'text.disabled' }} />
                     <Typography variant="caption" color="text.secondary">
-                      {isDeviceOnline ? 'Screen capture will appear when task starts' : 'Device is offline'}
+                      {!isDeviceOnline
+                        ? 'Device is offline'
+                        : !hasScreenCapture
+                          ? 'Enable screen capture in the companion app'
+                          : 'A current frame will appear when the agent inspects the screen'}
                     </Typography>
                   </Stack>
                 )}
               </Box>
 
               <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-                High-fidelity frames received via MediaProjection WebSocket stream
+                On-demand frames captured securely with Android MediaProjection
               </Typography>
             </CardContent>
           </Card>
