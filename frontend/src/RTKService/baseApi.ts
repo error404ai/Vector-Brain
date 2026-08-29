@@ -18,7 +18,10 @@ export const TAGS = {
   AI_RULES: 'AiRules',
   DASHBOARD: 'Dashboard',
   SETTING: 'Setting',
+  AI_CONFIG: 'AiConfig',
+  AI_CONFIGS: 'AiConfigs',
 } as const;
+
 
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
   const rawBaseQuery = fetchBaseQuery({

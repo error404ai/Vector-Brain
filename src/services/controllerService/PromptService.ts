@@ -5,7 +5,8 @@ import { Service } from 'typedi';
 export class PromptService {
   constructor(private aiService: AiService) {}
 
-  async enhancePrompt(prompt: string): Promise<string> {
-    return this.aiService.enhancePrompt(prompt);
+  async enhancePrompt(prompt: string, userId?: number): Promise<string> {
+    return this.aiService.enhancePrompt(prompt, userId);
   }
 }
+

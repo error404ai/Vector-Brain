@@ -3,11 +3,13 @@ import {
   useGetAndroidDevicesQuery,
   useRunAndroidTaskMutation,
 } from '@/RTKService/androidService/androidService';
+import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import {
@@ -29,7 +31,8 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
 
 interface StepUpdate {
   stepIndex: number;
@@ -48,11 +51,15 @@ interface ApiMutationError {
 
 export function AndroidAgentPage() {
   const theme = useTheme();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
 
   const { data: devicesData } = useGetAndroidDevicesQuery(undefined, { pollingInterval: 5_000 });
   const devices = useMemo(() => devicesData?.data || [], [devicesData?.data]);
+
+  const { data: aiConfigsData } = useGetAiConfigsQuery();
+  const activeAiConfig = useMemo(() => aiConfigsData?.data?.find((c) => c.is_active), [aiConfigsData?.data]);
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
@@ -126,7 +133,7 @@ export function AndroidAgentPage() {
           if (msg.payload.success) {
             toast.success(msg.payload.message || 'Task completed successfully');
           } else {
-            toast.error(msg.payload.message || 'Task did not complete');
+            toast.error(msg.payload.message || 'Task ended');
           }
         } else if (msg.event === 'task:cancelled') {
           setIsRunning(false);
@@ -175,6 +182,11 @@ export function AndroidAgentPage() {
   }, [steps]);
 
   const handleStartTask = async () => {
+    if (!activeAiConfig && !aiConfigsData?.data?.length) {
+      toast.error('Please configure your AI provider in Settings first');
+      navigate('/settings');
+      return;
+    }
     if (!effectiveSelectedDeviceId) {
       toast.error('Please select an Android device');
       return;
@@ -213,9 +225,50 @@ export function AndroidAgentPage() {
 
   return (
     <Box sx={{ maxWidth: 1400, mx: 'auto', p: { xs: 1, sm: 2 } }}>
+      {/* Missing AI Config Warning */}
+      {!activeAiConfig && aiConfigsData && (
+        <Alert
+          severity="warning"
+          variant="filled"
+          sx={{ mb: 2, borderRadius: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => navigate('/settings')}>
+              Configure Now
+            </Button>
+          }
+        >
+          No active AI Provider configured. Please add and activate your AI model in Settings to execute automation tasks.
+        </Alert>
+      )}
+
       {/* Control Header Card */}
       <Card sx={{ mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
         <CardContent sx={{ p: 2.5 }}>
+          {/* Active AI Config Indicator Banner */}
+          {activeAiConfig && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2, pb: 1.5, borderBottom: '1px dashed', borderColor: 'divider' }}>
+              <PsychologyIcon fontSize="small" color="primary" />
+              <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                Active AI Model:
+              </Typography>
+              <Chip
+                label={`${activeAiConfig.provider.toUpperCase()} (${activeAiConfig.model})`}
+                size="small"
+                color="primary"
+                variant="outlined"
+                sx={{ height: 22, fontWeight: 700, fontSize: '0.75rem' }}
+              />
+              <Chip
+                label={activeAiConfig.config_type === 'vision' ? 'Vision Capable' : 'Text-Only'}
+                size="small"
+                sx={{ height: 22, fontSize: '0.7rem' }}
+              />
+              <Button size="small" sx={{ fontSize: '0.75rem', p: 0, minWidth: 'auto', ml: 'auto' }} onClick={() => navigate('/settings')}>
+                Change
+              </Button>
+            </Stack>
+          )}
+
           <Box
             sx={{
               display: 'grid',

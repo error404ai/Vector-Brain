@@ -4,14 +4,16 @@ import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
-import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { Runnable } from '@langchain/core/runnables';
 import { Service } from 'typedi';
 import * as z from 'zod';
-import envConfig from '@/config/envConfig';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { ActionResult, AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from './AndroidProtocol';
+import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfigService';
+import { AiConfigType } from '@/entities/AiConfig';
+
 
 const DecisionSchema = z.object({
   thought: z.string().describe('Analysis of current screen and reasoning for the next step'),
@@ -79,29 +81,25 @@ type AgentDecision = z.infer<typeof DecisionSchema>;
 export class AndroidPlannerService {
   private agentTaskRepo = AppDataSource.getRepository(AgentTask);
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
-  private chatModel: ChatOpenAI | null = null;
   private activeTasks = new Map<number, { cancelled: boolean; deviceId: string }>();
   private activeDeviceTasks = new Map<string, number>();
 
   constructor(
     private deviceService: AndroidDeviceService,
     private gatewayService: AndroidGatewayService,
-  ) {
-    if (envConfig.androidAgentApiKey) {
-      this.chatModel = new ChatOpenAI({
-        openAIApiKey: envConfig.androidAgentApiKey,
-        modelName: envConfig.androidAgentModel,
-        temperature: 0.1,
-      });
-    }
-  }
+    private aiConfigService: AiConfigService,
+  ) {}
 
   /**
    * Main autonomous reasoning loop for Android task execution.
    */
   async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 15): Promise<ApiResponse> {
-    if (!this.chatModel) {
-      throw new AppError('Android Agent is not configured. Set ANDROID_AGENT_API_KEY in the server environment.', 503);
+    const aiConfig = await this.aiConfigService.resolveActiveConfig(userId);
+    if (!aiConfig) {
+      throw new AppError(
+        'No active AI configuration found. Please add and activate an AI provider (OpenAI, Gemini, DeepSeek, Groq, Anthropic, OpenRouter) in Settings.',
+        400,
+      );
     }
     if (!this.isActionablePrompt(prompt)) {
       throw new AppError('Please enter a concrete Android task, for example: "Open Chrome and go to google.com".', 400);
@@ -118,16 +116,16 @@ export class AndroidPlannerService {
 
     await this.assertDeviceReady(device.device_id);
 
-    // 1. Create AgentTask record
+    // 1. Create AgentTask record with user's configured provider & model
     const agentTask = this.agentTaskRepo.create({
       user_id: userId,
       prompt,
-      provider: 'openai',
-      model: envConfig.androidAgentModel,
+      provider: aiConfig.provider,
+      model: aiConfig.model,
       success: false,
       total_steps: 0,
       total_duration_seconds: 0,
-      logs: 'Starting Android automation task...\n',
+      logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model})...\n`,
     });
     await this.agentTaskRepo.save(agentTask);
 
@@ -140,10 +138,12 @@ export class AndroidPlannerService {
       taskId: agentTask.id,
       deviceId: device.id,
       prompt,
+      model: aiConfig.model,
+      provider: aiConfig.provider,
     });
 
-    // Run the execution loop in the background or await
-    this.executeLoop(agentTask, device.device_id, userId, prompt, maxSteps, startTime).catch((err) => {
+    // Run the execution loop in the background
+    this.executeLoop(agentTask, device.device_id, userId, prompt, maxSteps, startTime, aiConfig).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
     });
 
@@ -152,9 +152,12 @@ export class AndroidPlannerService {
       data: {
         taskId: agentTask.id,
         status: 'RUNNING',
+        provider: aiConfig.provider,
+        model: aiConfig.model,
       },
     };
   }
+
 
   /**
    * Cancels a running task.
@@ -185,6 +188,7 @@ export class AndroidPlannerService {
     prompt: string,
     maxSteps: number,
     startTime: number,
+    aiConfig: DecryptedAiConfig,
   ) {
     let stepCount = 0;
     let finished = false;
@@ -195,6 +199,16 @@ export class AndroidPlannerService {
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
+
+    // Instantiate model once per task execution loop
+    const chatModel = this.aiConfigService.createChatModel({
+      provider: aiConfig.provider,
+      model: aiConfig.model,
+      api_key: aiConfig.api_key,
+      base_url: aiConfig.base_url,
+      temperature: 0.1,
+    });
+    const structuredLlm = chatModel.withStructuredOutput(DecisionSchema);
 
     try {
       while (stepCount < maxSteps) {
@@ -207,9 +221,11 @@ export class AndroidPlannerService {
         stepCount++;
         const stepStartTime = Date.now();
 
-        // 1. Capture current UI Tree & Screen
-        const treeResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' });
-        const screenResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
+        // 1. Capture current UI Tree & Screen in parallel for lower latency
+        const [treeResult, screenResult] = await Promise.all([
+          this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' }),
+          this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' }),
+        ]);
 
         if (treeResult.status !== 'SUCCESS') {
           const detail = treeResult.status === 'FAILURE'
@@ -232,8 +248,8 @@ export class AndroidPlannerService {
         const compactTree = this.formatUiTree(uiTree?.root);
         const foregroundApp = uiTree?.packageName || 'unknown';
 
-        // 3. Ask Multimodal LLM for next decision
-        let decision = await this.queryModel(prompt, compactTree, foregroundApp, screenshotBase64, history);
+        // 3. Ask LLM for next decision using user's active AI configuration
+        let decision = await this.queryModel(prompt, compactTree, foregroundApp, screenshotBase64, history, aiConfig, structuredLlm);
         decision = { ...decision, safetyLevel: this.enforceSafetyLevel(decision) };
 
         const uiFingerprint = `${foregroundApp}\n${compactTree}`;
@@ -369,21 +385,12 @@ export class AndroidPlannerService {
     foregroundApp: string,
     screenshotBase64: string | undefined,
     history: Array<{ thought: string; action: any; result: string }>,
+    aiConfig: DecryptedAiConfig,
+    structuredLlm: Runnable,
   ): Promise<AgentDecision> {
-    if (!this.chatModel) {
-      return {
-        thought: 'No AI model configured. Executing dummy wait.',
-        isFinished: true,
-        finishStatus: 'FAILED',
-        finishMessage: 'OpenAI API key is missing in server configuration.',
-        safetyLevel: 'LOW',
-        action: { type: 'Wait', durationMillis: 1 },
-      };
-    }
 
-    const structuredLlm = this.chatModel.withStructuredOutput(DecisionSchema);
-
-    const systemPrompt = `You are Vector-Brain, an expert autonomous AI agent controlling an Android mobile device.
+    try {
+      const systemPrompt = `You are Vector-Brain, an expert autonomous AI agent controlling an Android mobile device.
 Your goal is to accomplish the user's task step-by-step.
 
 AVAILABLE ACTIONS:
@@ -405,10 +412,10 @@ RULES:
 6. Mark actions that send messages, place orders, make payments, delete data, or commit an external change as USER_CONFIRMATION_REQUIRED.
 7. Mark dangerous or clearly unauthorized actions as BLOCKED. Never type into password fields.`;
 
-    const userContent: any[] = [
-      {
-        type: 'text',
-        text: `USER GOAL: "${goalPrompt}"
+      const userContent: any[] = [
+        {
+          type: 'text',
+          text: `USER GOAL: "${goalPrompt}"
 CURRENT FOREGROUND PACKAGE: ${foregroundApp}
 
 RECENT HISTORY:
@@ -416,25 +423,42 @@ ${history.map((h, i) => `Step ${i + 1}: ${h.thought} -> Action: ${JSON.stringify
 
 CURRENT VISIBLE UI NODES:
 ${uiTreeText}`,
-      },
-    ];
-
-    if (screenshotBase64) {
-      userContent.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:image/png;base64,${screenshotBase64}`,
         },
-      });
-    }
+      ];
 
-    const messages = [new SystemMessage(systemPrompt), new HumanMessage({ content: userContent })];
+      // Only attach screenshot image if image is present and model is vision-capable
+      const hasImage = Boolean(screenshotBase64 && aiConfig.config_type !== AiConfigType.TEXT);
+      if (hasImage && screenshotBase64) {
+        userContent.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:image/png;base64,${screenshotBase64}`,
+          },
+        });
+      }
 
-    try {
-      const response = await structuredLlm.invoke(messages);
-      return response as AgentDecision;
+      const messages = [new SystemMessage(systemPrompt), new HumanMessage({ content: userContent })];
+
+      try {
+        const response = await structuredLlm.invoke(messages);
+        return response as AgentDecision;
+      } catch (invokeError: any) {
+        // If provider rejects image input (e.g. text-only model or OpenRouter 404 image endpoint), fallback to text-only
+        if (hasImage) {
+          Logger.warn(
+            `[AndroidPlanner] Model (${aiConfig.provider}/${aiConfig.model}) does not accept image input (${invokeError.message}). Falling back to text-only UI tree reasoning.`,
+          );
+          const textOnlyMessages = [
+            new SystemMessage(systemPrompt),
+            new HumanMessage({ content: [{ type: 'text', text: userContent[0].text }] }),
+          ];
+          const fallbackResponse = await structuredLlm.invoke(textOnlyMessages);
+          return fallbackResponse as AgentDecision;
+        }
+        throw invokeError;
+      }
     } catch (error) {
-      Logger.error(`[AndroidPlanner] LLM invocation error:`, error);
+      Logger.error(`[AndroidPlanner] LLM invocation error (${aiConfig.provider}/${aiConfig.model}):`, error);
       return {
         thought: 'The planner could not produce a valid next action.',
         isFinished: true,
@@ -446,6 +470,7 @@ ${uiTreeText}`,
     }
   }
 
+
   private isActionablePrompt(prompt: string): boolean {
     const normalized = prompt.trim().toLowerCase();
     if (normalized.length < 4) return false;
@@ -454,7 +479,11 @@ ${uiTreeText}`,
   }
 
   private async assertDeviceReady(hardwareDeviceId: string): Promise<void> {
-    const treeResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' });
+    const [treeResult, captureResult] = await Promise.all([
+      this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' }),
+      this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' }),
+    ]);
+
     if (treeResult.status !== 'SUCCESS') {
       const detail = treeResult.status === 'FAILURE' ? treeResult.message : 'UI inspection was cancelled';
       throw new AppError(
@@ -463,7 +492,6 @@ ${uiTreeText}`,
       );
     }
 
-    const captureResult = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
     if (captureResult.status !== 'SUCCESS' || !captureResult.screenCapture?.base64Data) {
       const detail = captureResult.status === 'FAILURE' ? captureResult.message : 'No screen frame was returned';
       throw new AppError(
@@ -472,6 +500,7 @@ ${uiTreeText}`,
       );
     }
   }
+
 
   private enforceSafetyLevel(decision: AgentDecision): AgentDecision['safetyLevel'] {
     if (decision.safetyLevel === 'BLOCKED' || decision.safetyLevel === 'USER_CONFIRMATION_REQUIRED') {
