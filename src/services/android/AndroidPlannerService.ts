@@ -14,6 +14,8 @@ import { AndroidAgent } from './eko/AndroidAgent';
 
 // Configure Eko framework defaults for Android mobile automation
 config.platform = 'linux';
+config.compressThreshold = 100;
+config.compressTokensThreshold = 200000;
 
 const ANDROID_PLANNER_SYSTEM = `You are an expert autonomous AI Planner for Android mobile devices.
 
