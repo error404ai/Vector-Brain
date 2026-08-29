@@ -32,8 +32,8 @@ if (!dataSource) {
       username: envConfig.mysqlUsername,
       password: envConfig.mysqlPassword,
       database: envConfig.database,
-      synchronize: envConfig.synchronize,
-      migrationsRun: false,
+      synchronize: false,
+      migrationsRun: true,
       logging: false,
       timezone: 'Z',
       extra: {

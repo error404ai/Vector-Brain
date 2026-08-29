@@ -30,7 +30,7 @@ export class AndroidTaskLog {
   @Column({ type: 'json', nullable: true })
   action_payload: any;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   thought_reasoning: string;
 
   @Column({ type: 'enum', enum: AndroidStepStatus, default: AndroidStepStatus.PENDING })
@@ -45,10 +45,10 @@ export class AndroidTaskLog {
   @Column({ type: 'int', default: 0 })
   duration_ms: number;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   result_message: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   error_message: string;
 
   @CreateDateColumn({ type: 'datetime' })

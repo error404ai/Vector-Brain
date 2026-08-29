@@ -33,6 +33,7 @@ export const DeviceListValidation = z.object({
 export const DispatchAndroidPromptValidation = z.object({
   device_id: z.number({ required_error: 'Target device ID is required' }),
   prompt: z.string().min(1, 'Prompt cannot be empty'),
+  task_id: z.number().optional(),
   max_steps: z.number().min(1).max(50).default(15),
 });
 

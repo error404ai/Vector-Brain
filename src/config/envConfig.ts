@@ -33,7 +33,7 @@ const envConfig = {
   mysqlUsername: process.env.MYSQLUSERNAME,
   mysqlPassword: process.env.MYSQLPASSWORD,
   database: process.env.DATABASE,
-  synchronize: process.env.DBSYNC === 'true',
+  synchronize: false,
 
   // JWT
   jwtSecret: process.env.JWT_SECRET,

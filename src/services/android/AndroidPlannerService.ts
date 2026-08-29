@@ -4,84 +4,115 @@ import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { Runnable } from '@langchain/core/runnables';
 import { Service } from 'typedi';
-import * as z from 'zod';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidGatewayService } from './AndroidGatewayService';
-import { ActionResult, AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from './AndroidProtocol';
 import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfigService';
-import { AiConfigType } from '@/entities/AiConfig';
+import { AiProvider } from '@/entities/AiConfig';
+import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
+import { AndroidAgent } from './eko/AndroidAgent';
 
+// Configure Eko framework defaults for Android mobile automation
+config.platform = 'linux';
 
-const DecisionSchema = z.object({
-  thought: z.string().describe('Analysis of current screen and reasoning for the next step'),
-  isFinished: z.boolean().describe('True if the user goal has been fully accomplished or cannot proceed'),
-  finishStatus: z.enum(['SUCCESS', 'FAILED']).optional(),
-  finishMessage: z.string().optional(),
-  safetyLevel: z.enum(['LOW', 'USER_CONFIRMATION_REQUIRED', 'BLOCKED']).default('LOW'),
-  action: z
-    .discriminatedUnion('type', [
-      z.object({
-        type: z.literal('OpenApp'),
-        packageName: z.string().describe('Android application package name e.g. com.google.android.youtube'),
-      }),
-      z.object({
-        type: z.literal('OpenUrl'),
-        url: z.string().url().describe('An http or https URL to open in the default browser'),
-      }),
-      z.object({
-        type: z.literal('ClickNode'),
-        nodePath: z.string().optional().describe('Path index in the UI tree like 0/1/3'),
-        viewId: z.string().optional().describe('Resource ID of the target view'),
-        text: z.string().optional().describe('Text label on the button/view'),
-      }),
-      z.object({
-        type: z.literal('Tap'),
-        x: z.number().describe('X coordinate on screen in pixels'),
-        y: z.number().describe('Y coordinate on screen in pixels'),
-      }),
-      z.object({
-        type: z.literal('SetText'),
-        nodePath: z.string().optional(),
-        viewId: z.string().optional(),
-        text: z.string().describe('Text content to type into the input field'),
-      }),
-      z.object({
-        type: z.literal('Swipe'),
-        direction: z.enum(['UP', 'DOWN', 'LEFT', 'RIGHT']),
-        durationMillis: z.number().default(400),
-      }),
-      z.object({
-        type: z.literal('Global'),
-        action: z.enum(['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS']),
-      }),
-      z.object({
-        type: z.literal('Wait'),
-        durationMillis: z.number().default(1000),
-      }),
-    ])
-    .describe('Atomic Android action to execute next; use Wait when isFinished is true because the action will be ignored'),
-}).superRefine((decision, context) => {
-  if (decision.isFinished && !decision.finishStatus) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['finishStatus'], message: 'A finish status is required when the goal is finished' });
-  }
-  if (decision.action?.type === 'ClickNode' && !decision.action.nodePath && !decision.action.viewId && !decision.action.text) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['action'], message: 'ClickNode requires a selector' });
-  }
-  if (decision.action?.type === 'SetText' && !decision.action.nodePath && !decision.action.viewId) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['action'], message: 'SetText requires a nodePath or viewId' });
-  }
-});
+const ANDROID_PLANNER_SYSTEM = `You are an expert autonomous AI Planner for Android mobile devices.
 
-type AgentDecision = z.infer<typeof DecisionSchema>;
+## Task Description
+Your task is to understand the user's requirements and create an execution workflow plan for the Android device.
+- The ONLY agent available in the environment is **AndroidAgent**.
+- You MUST ALWAYS assign all subtasks to \`<agent name="AndroidAgent">\`. NEVER fabricate or use other agent names like Browser, Computer, File, etc.
+- Break down the user's mobile goal into sequential, high-level milestone nodes (e.g. opening the needed app or website, navigating, typing text or searching, clicking buttons/links, scrolling to locate elements, and verifying results).
+- Strictly follow the output XML format.
+
+## Agent list
+{{agents}}
+
+## Output Rules and Format
+<root>
+  <name>Task Name (Short)</name>
+  <thought>Your high-level thought process on accomplishing the mobile task</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>High-level mobile task description</task>
+      <nodes>
+        <node>First key step on the device</node>
+        <node>Second key step on the device</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+{{examples}}`;
+
+const ANDROID_PLANNER_EXAMPLES = `
+## Example 1 (App or Web Navigation)
+User: Open target application or website and view specific content
+Output result:
+<root>
+  <name>Open and view content</name>
+  <thought>The user wants to access an application or website and view content on the Android mobile device.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Open the app or website and navigate to the requested content</task>
+      <nodes>
+        <node>Launch the requested application or open the web URL in browser</node>
+        <node>Inspect screen and handle any initial dialogs or prompts</node>
+        <node>Navigate to and display the requested view or content</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+## Example 2 (Search and Interaction)
+User: Search for a query and select an item from the results
+Output result:
+<root>
+  <name>Search and select item</name>
+  <thought>The user wants to search for an item and interact with the results on mobile.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Perform search and select the item</task>
+      <nodes>
+        <node>Open the relevant app or web page</node>
+        <node>Type the search query into the search input field and submit</node>
+        <node>Select the target item from the search results</node>
+        <node>Verify that the item details are displayed</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+## Example 3 (Multi-step Mobile Interaction)
+User: Fill in information or adjust device/app options
+Output result:
+<root>
+  <name>Configure or interact with mobile options</name>
+  <thought>The user wants to adjust settings, fill in form fields, or perform actions across screens on the device.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Navigate screens and perform the requested actions</task>
+      <nodes>
+        <node>Open the required screen or application</node>
+        <node>Scroll or navigate to locate the relevant options/fields</node>
+        <node>Input required values or toggle settings</node>
+        <node>Confirm completion</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+`;
+
+global.prompts.set(GlobalPromptKey.planner_system, ANDROID_PLANNER_SYSTEM);
+global.prompts.set(GlobalPromptKey.planner_example, ANDROID_PLANNER_EXAMPLES);
 
 @Service()
 export class AndroidPlannerService {
   private agentTaskRepo = AppDataSource.getRepository(AgentTask);
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
-  private activeTasks = new Map<number, { cancelled: boolean; deviceId: string }>();
+  private activeTasks = new Map<
+    number,
+    { cancelled: boolean; deviceId: string; eko?: Eko; ekoTaskId?: string }
+  >();
   private activeDeviceTasks = new Map<string, number>();
 
   constructor(
@@ -91,9 +122,10 @@ export class AndroidPlannerService {
   ) {}
 
   /**
-   * Main autonomous reasoning loop for Android task execution.
+   * Main autonomous reasoning loop for Android task execution powered by @eko-ai/eko.
+   * Supports multi-turn conversational follow-ups by passing existingTaskId.
    */
-  async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 15): Promise<ApiResponse> {
+  async runTask(prompt: string, deviceId: number, userId: number, _maxSteps = 15, existingTaskId?: number): Promise<ApiResponse> {
     const aiConfig = await this.aiConfigService.resolveActiveConfig(userId);
     if (!aiConfig) {
       throw new AppError(
@@ -114,36 +146,85 @@ export class AndroidPlannerService {
       throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
     }
 
-    await this.assertDeviceReady(device.device_id);
+    const initialScreenshot = await this.assertDeviceReady(device.device_id, userId);
 
-    // 1. Create AgentTask record with user's configured provider & model
-    const agentTask = this.agentTaskRepo.create({
-      user_id: userId,
-      prompt,
-      provider: aiConfig.provider,
-      model: aiConfig.model,
-      success: false,
-      total_steps: 0,
-      total_duration_seconds: 0,
-      logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model})...\n`,
-    });
-    await this.agentTaskRepo.save(agentTask);
+    let agentTask: AgentTask;
+    let executionPrompt = prompt;
+
+    if (existingTaskId) {
+      const existing = await this.agentTaskRepo.findOne({ where: { id: existingTaskId, user_id: userId } });
+      if (existing) {
+        agentTask = existing;
+        agentTask.provider = aiConfig.provider;
+        agentTask.model = aiConfig.model;
+        agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
+        await this.agentTaskRepo.save(agentTask);
+
+        const recentLogs = await this.taskLogRepo.find({
+          where: { agent_task_id: existingTaskId },
+          order: { step_index: 'ASC' },
+          take: 20,
+        });
+
+        const historySnippet = recentLogs.length
+          ? recentLogs
+              .map((l) => `- Step ${l.step_index} (${l.action_type}): ${l.thought_reasoning} -> Result: ${l.result_message || l.status}`)
+              .join('\n')
+          : 'No prior steps recorded.';
+
+        executionPrompt = `Continue the existing mobile automation session.
+Original goal: ${existing.prompt}
+
+User follow-up instruction:
+${prompt}
+
+Recent steps executed:
+${historySnippet}
+
+Use the current visible Android screen and UI state as context. Continue from where the previous actions left off. Accomplish the user follow-up instruction step-by-step.`;
+      } else {
+        agentTask = this.agentTaskRepo.create({
+          user_id: userId,
+          prompt,
+          provider: aiConfig.provider,
+          model: aiConfig.model,
+          success: false,
+          total_steps: 0,
+          total_duration_seconds: 0,
+          logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
+        });
+        await this.agentTaskRepo.save(agentTask);
+      }
+    } else {
+      agentTask = this.agentTaskRepo.create({
+        user_id: userId,
+        prompt,
+        provider: aiConfig.provider,
+        model: aiConfig.model,
+        success: false,
+        total_steps: 0,
+        total_duration_seconds: 0,
+        logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
+      });
+      await this.agentTaskRepo.save(agentTask);
+    }
 
     this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id });
     this.activeDeviceTasks.set(device.device_id, agentTask.id);
     const startTime = Date.now();
 
-    // Notify web clients that task has begun
+    // Notify web clients that task has begun and send initial screen frame
     this.gatewayService.broadcastToUser(userId, 'task:started', {
       taskId: agentTask.id,
       deviceId: device.id,
       prompt,
       model: aiConfig.model,
       provider: aiConfig.provider,
+      screenshot: initialScreenshot,
     });
 
     // Run the execution loop in the background
-    this.executeLoop(agentTask, device.device_id, userId, prompt, maxSteps, startTime, aiConfig).catch((err) => {
+    this.executeLoop(agentTask, device.device_id, userId, executionPrompt, startTime, aiConfig, initialScreenshot).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
     });
 
@@ -158,7 +239,6 @@ export class AndroidPlannerService {
     };
   }
 
-
   /**
    * Cancels a running task.
    */
@@ -169,6 +249,13 @@ export class AndroidPlannerService {
     const active = this.activeTasks.get(taskId);
     if (active) {
       active.cancelled = true;
+      if (active.eko && active.ekoTaskId) {
+        try {
+          active.eko.abortTask(active.ekoTaskId, 'Task cancelled by user');
+        } catch (err) {
+          Logger.warn(`[AndroidPlanner] Failed to abort Eko task ${active.ekoTaskId}:`, err);
+        }
+      }
       this.gatewayService.cancelDeviceActions(active.deviceId);
     }
 
@@ -181,178 +268,186 @@ export class AndroidPlannerService {
     return { message: 'Task cancellation requested' };
   }
 
+  private buildEkoLlms(aiConfig: DecryptedAiConfig): LLMs {
+    let provider: any = aiConfig.provider;
+    const defaultBaseUrl = this.aiConfigService.getDefaultBaseUrl(aiConfig.provider);
+    const baseURL = aiConfig.base_url?.trim() || defaultBaseUrl || undefined;
+
+    switch (aiConfig.provider) {
+      case AiProvider.DEEPSEEK:
+      case AiProvider.GROQ:
+      case AiProvider.CUSTOM:
+        provider = 'openai-compatible';
+        break;
+      case AiProvider.GOOGLE:
+        provider = 'google';
+        break;
+      case AiProvider.ANTHROPIC:
+        provider = 'anthropic';
+        break;
+      case AiProvider.OPENROUTER:
+        provider = 'openrouter';
+        break;
+      case AiProvider.OPENAI:
+      default:
+        provider = 'openai';
+        break;
+    }
+
+    return {
+      default: {
+        provider,
+        model: aiConfig.model,
+        apiKey: aiConfig.api_key,
+        config: {
+          baseURL,
+          temperature: 0.1,
+        },
+      },
+    };
+  }
+
   private async executeLoop(
     agentTask: AgentTask,
     hardwareDeviceId: string,
     userId: number,
     prompt: string,
-    maxSteps: number,
     startTime: number,
     aiConfig: DecryptedAiConfig,
+    initialScreenshot?: string,
   ) {
-    let stepCount = 0;
-    let finished = false;
+    const lastLog = await this.taskLogRepo.findOne({
+      where: { agent_task_id: agentTask.id },
+      order: { step_index: 'DESC' },
+    });
+    let stepCount = lastLog ? lastLog.step_index : 0;
+    let stepStartTime = Date.now();
     let wasCancelled = false;
-    const history: Array<{ thought: string; action: any; result: string }> = [];
-    let previousUiFingerprint: string | null = null;
-    let unchangedWaitCount = 0;
+    let currentThought = '';
+    let currentTaskLog: AndroidTaskLog | null = null;
+    let lastScreenshot: string | undefined = initialScreenshot;
+    let lastUiTree: string | undefined;
+    let lastForegroundApp: string | undefined;
+    let finalMessage = '';
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
+    const ekoTaskId = `android-task-${agentTask.id}`;
 
-    // Instantiate model once per task execution loop
-    const chatModel = this.aiConfigService.createChatModel({
-      provider: aiConfig.provider,
-      model: aiConfig.model,
-      api_key: aiConfig.api_key,
-      base_url: aiConfig.base_url,
-      temperature: 0.1,
+    const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
+      onStepExecuted: (info) => {
+        if (info.screenshotBase64) {
+          lastScreenshot = info.screenshotBase64;
+          this.gatewayService.broadcastToUser(userId, 'device:screen_capture', {
+            deviceId: hardwareDeviceId,
+            result: { screenCapture: { base64Data: info.screenshotBase64 } },
+          });
+        }
+        if (info.uiTree) lastUiTree = info.uiTree;
+        if (info.foregroundApp) lastForegroundApp = info.foregroundApp;
+      },
     });
-    const structuredLlm = chatModel.withStructuredOutput(DecisionSchema);
+
+    const eko = new Eko({
+      llms: this.buildEkoLlms(aiConfig),
+      agents: [androidAgent],
+      callback: {
+        onMessage: async (message: AgentStreamMessage) => {
+          if (this.activeTasks.get(agentTask.id)?.cancelled) {
+            wasCancelled = true;
+            return;
+          }
+
+          if (message.type === 'thinking' || message.type === 'text') {
+            if (message.text) {
+              currentThought = (currentThought ? `${currentThought} ${message.text}` : message.text).trim();
+            }
+          } else if (message.type === 'tool_use') {
+            stepCount++;
+            stepStartTime = Date.now();
+            const toolName = message.toolName;
+            const toolParams = message.params || {};
+
+            currentTaskLog = this.taskLogRepo.create({
+              agent_task_id: agentTask.id,
+              device_id: deviceDbId,
+              step_index: stepCount,
+              action_type: toolName,
+              action_payload: toolParams,
+              thought_reasoning: currentThought || `Executing ${toolName}`,
+              status: AndroidStepStatus.EXECUTING,
+              screenshot_base64: lastScreenshot,
+              ui_tree_snapshot: lastUiTree,
+            });
+            await this.taskLogRepo.save(currentTaskLog);
+
+            this.gatewayService.broadcastToUser(userId, 'task:step', {
+              taskId: agentTask.id,
+              stepIndex: stepCount,
+              thought: currentThought || `Executing ${toolName}`,
+              action: { type: toolName, ...toolParams },
+              screenshot: lastScreenshot,
+              foregroundApp: lastForegroundApp,
+            });
+
+            currentThought = '';
+          } else if (message.type === 'tool_result') {
+            const toolResult = message.toolResult;
+            const isError = toolResult?.isError;
+            const textPart = toolResult?.content?.find((c) => c.type === 'text');
+            const textContent = (textPart && 'text' in textPart ? textPart.text : '') || '';
+
+            if (currentTaskLog) {
+              currentTaskLog.status = isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS;
+              currentTaskLog.result_message = textContent;
+              currentTaskLog.duration_ms = Date.now() - stepStartTime;
+              currentTaskLog.screenshot_base64 = lastScreenshot || currentTaskLog.screenshot_base64;
+              currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
+              await this.taskLogRepo.save(currentTaskLog);
+            }
+
+            this.gatewayService.broadcastToUser(userId, 'task:step_result', {
+              taskId: agentTask.id,
+              stepIndex: stepCount,
+              status: isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS,
+              result: textContent,
+              error: isError ? textContent : undefined,
+              screenshot: lastScreenshot,
+              foregroundApp: lastForegroundApp,
+            });
+          } else if (message.type === 'agent_result') {
+            finalMessage = message.result || '';
+          }
+        },
+      },
+    });
+
+    const activeTaskEntry = this.activeTasks.get(agentTask.id);
+    if (activeTaskEntry) {
+      activeTaskEntry.eko = eko;
+      activeTaskEntry.ekoTaskId = ekoTaskId;
+    }
 
     try {
-      while (stepCount < maxSteps) {
-        if (this.activeTasks.get(agentTask.id)?.cancelled) {
-          Logger.info(`[AndroidPlanner] Task ${agentTask.id} was cancelled.`);
-          wasCancelled = true;
-          break;
-        }
+      const result = await eko.run(prompt, ekoTaskId);
+      const isSuccess = !wasCancelled && result?.success !== false;
 
-        stepCount++;
-        const stepStartTime = Date.now();
-
-        // 1. Capture current UI Tree & Screen in parallel for lower latency
-        const [treeResult, screenResult] = await Promise.all([
-          this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' }),
-          this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' }),
-        ]);
-
-        if (treeResult.status !== 'SUCCESS') {
-          const detail = treeResult.status === 'FAILURE'
-            ? `${treeResult.code}: ${treeResult.message}`
-            : 'capture was cancelled';
-          throw new Error(`Unable to inspect the Android screen: ${detail}`);
-        }
-        if (screenResult.status !== 'SUCCESS') {
-          const detail = screenResult.status === 'FAILURE'
-            ? `${screenResult.code}: ${screenResult.message}`
-            : 'capture was cancelled';
-          throw new Error(`Unable to capture the Android screen: ${detail}`);
-        }
-
-        const uiTree: UiTreeSnapshot | undefined = treeResult.uiTree;
-        const screenCapture = screenResult.status === 'SUCCESS' ? screenResult.screenCapture : undefined;
-        const screenshotBase64 = screenCapture?.base64Data;
-
-        // 2. Format UI tree for AI context
-        const compactTree = this.formatUiTree(uiTree?.root);
-        const foregroundApp = uiTree?.packageName || 'unknown';
-
-        // 3. Ask LLM for next decision using user's active AI configuration
-        let decision = await this.queryModel(prompt, compactTree, foregroundApp, screenshotBase64, history, aiConfig, structuredLlm);
-        decision = { ...decision, safetyLevel: this.enforceSafetyLevel(decision) };
-
-        const uiFingerprint = `${foregroundApp}\n${compactTree}`;
-        if (!decision.isFinished && decision.action?.type === 'Wait' && uiFingerprint === previousUiFingerprint) {
-          unchangedWaitCount += 1;
-        } else {
-          unchangedWaitCount = 0;
-        }
-        previousUiFingerprint = uiFingerprint;
-
-        if (unchangedWaitCount >= 2) {
-          decision = {
-            thought: `${decision.thought} The screen has not changed after repeated waits, so the task is stopping instead of consuming more AI calls.`,
-            isFinished: true,
-            finishStatus: 'FAILED',
-            finishMessage: 'The device screen did not change after three consecutive wait decisions.',
-            safetyLevel: 'LOW',
-            action: { type: 'Wait', durationMillis: 1 },
-          };
-        }
-
-        // 4. Record step log in DB
-        const taskLog = this.taskLogRepo.create({
-          agent_task_id: agentTask.id,
-          device_id: deviceDbId,
-          step_index: stepCount,
-          action_type: decision.action?.type || (decision.isFinished ? 'FINISH' : 'WAIT'),
-          action_payload: decision.action || null,
-          thought_reasoning: decision.thought,
-          status: AndroidStepStatus.EXECUTING,
-          screenshot_base64: screenshotBase64,
-          ui_tree_snapshot: compactTree,
-        });
-        await this.taskLogRepo.save(taskLog);
-
-        // Broadcast step to user Web UI
-        this.gatewayService.broadcastToUser(userId, 'task:step', {
-          taskId: agentTask.id,
-          stepIndex: stepCount,
-          thought: decision.thought,
-          action: decision.action,
-          screenshot: screenshotBase64,
-          foregroundApp,
-        });
-
-        // 5. Check if goal is achieved
-        if (decision.isFinished) {
-          taskLog.status = decision.finishStatus === 'FAILED' ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS;
-          taskLog.result_message = decision.finishMessage || 'Task completed';
-          taskLog.duration_ms = Date.now() - stepStartTime;
-          await this.taskLogRepo.save(taskLog);
-
-          agentTask.success = decision.finishStatus !== 'FAILED';
-          agentTask.message = decision.finishMessage || 'Goal accomplished successfully';
-          finished = true;
-          break;
-        }
-
-        // 6. Execute action on device
-        if (decision.action) {
-          const actionResult = await this.gatewayService.executeAction(
-            hardwareDeviceId,
-            decision.action as AutomationAction,
-            decision.safetyLevel === 'USER_CONFIRMATION_REQUIRED' ? 60_000 : 15_000,
-            decision.safetyLevel,
-          );
-          const duration = Date.now() - stepStartTime;
-
-          taskLog.duration_ms = duration;
-          if (actionResult.status === 'SUCCESS') {
-            taskLog.status = AndroidStepStatus.SUCCESS;
-            taskLog.result_message = actionResult.summary;
-            history.push({ thought: decision.thought, action: decision.action, result: actionResult.summary });
-          } else if (actionResult.status === 'FAILURE') {
-            taskLog.status = AndroidStepStatus.FAILED;
-            taskLog.error_message = `${actionResult.code}: ${actionResult.message}`;
-            history.push({ thought: decision.thought, action: decision.action, result: `Failed: ${actionResult.message}` });
-          } else {
-            taskLog.status = AndroidStepStatus.CANCELLED;
-            taskLog.result_message = 'Action cancelled by user';
-          }
-          await this.taskLogRepo.save(taskLog);
-
-          this.gatewayService.broadcastToUser(userId, 'task:step_result', {
-            taskId: agentTask.id,
-            stepIndex: stepCount,
-            status: taskLog.status,
-            result: taskLog.result_message,
-            error: taskLog.error_message,
+      // Final live screenshot capture to reflect exact terminal screen state
+      try {
+        const finalScreen = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
+        if (finalScreen.status === 'SUCCESS' && finalScreen.screenCapture?.base64Data) {
+          lastScreenshot = finalScreen.screenCapture.base64Data;
+          this.gatewayService.broadcastToUser(userId, 'device:screen_capture', {
+            deviceId: hardwareDeviceId,
+            result: { screenCapture: { base64Data: lastScreenshot } },
           });
-        } else {
-          taskLog.status = AndroidStepStatus.FAILED;
-          taskLog.error_message = 'Planner did not return an action';
-          taskLog.duration_ms = Date.now() - stepStartTime;
-          await this.taskLogRepo.save(taskLog);
         }
+      } catch {
+        // Best-effort final frame capture
       }
 
-      // Finalize task
-      if (!finished && !wasCancelled) {
-        agentTask.success = false;
-        agentTask.message = `Task stopped after reaching the ${maxSteps}-step limit.`;
-      }
+      agentTask.success = isSuccess;
+      agentTask.message = finalMessage || (isSuccess ? 'Goal accomplished successfully' : 'Task completed with errors');
       agentTask.total_steps = stepCount;
       agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
       await this.agentTaskRepo.save(agentTask);
@@ -363,14 +458,21 @@ export class AndroidPlannerService {
           success: agentTask.success,
           message: agentTask.message,
           totalSteps: stepCount,
+          screenshot: lastScreenshot,
         });
       }
     } catch (err: any) {
-      Logger.error(`[AndroidPlanner] Error during task loop:`, err);
-      agentTask.success = false;
-      agentTask.message = err.message || 'Task failed with internal error';
-      await this.agentTaskRepo.save(agentTask);
-      this.gatewayService.broadcastToUser(userId, 'task:error', { taskId: agentTask.id, error: err.message });
+      if (this.activeTasks.get(agentTask.id)?.cancelled) {
+        Logger.info(`[AndroidPlanner] Task ${agentTask.id} was cancelled during execution.`);
+      } else {
+        Logger.error(`[AndroidPlanner] Error during Eko task loop:`, err);
+        agentTask.success = false;
+        agentTask.message = err.message || 'Task failed with internal error';
+        agentTask.total_steps = stepCount;
+        agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
+        await this.agentTaskRepo.save(agentTask);
+        this.gatewayService.broadcastToUser(userId, 'task:error', { taskId: agentTask.id, error: err.message });
+      }
     } finally {
       this.activeTasks.delete(agentTask.id);
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
@@ -379,98 +481,6 @@ export class AndroidPlannerService {
     }
   }
 
-  private async queryModel(
-    goalPrompt: string,
-    uiTreeText: string,
-    foregroundApp: string,
-    screenshotBase64: string | undefined,
-    history: Array<{ thought: string; action: any; result: string }>,
-    aiConfig: DecryptedAiConfig,
-    structuredLlm: Runnable,
-  ): Promise<AgentDecision> {
-
-    try {
-      const systemPrompt = `You are Vector-Brain, an expert autonomous AI agent controlling an Android mobile device.
-Your goal is to accomplish the user's task step-by-step.
-
-AVAILABLE ACTIONS:
-- OpenApp: { type: "OpenApp", packageName: "package.name" }
-- OpenUrl: { type: "OpenUrl", url: "https://example.com" } (prefer this for website/browser goals)
-- ClickNode: { type: "ClickNode", nodePath: "0/1/2", text: "exact text", viewId: "com.app:id/btn" }
-- SetText: { type: "SetText", nodePath: "0/1/2", text: "content to type" }
-- Tap: { type: "Tap", x: 500, y: 800 }
-- Swipe: { type: "Swipe", direction: "UP" | "DOWN" | "LEFT" | "RIGHT" }
-- Global: { type: "Global", action: "BACK" | "HOME" | "RECENTS" | "NOTIFICATIONS" }
-- Wait: { type: "Wait", durationMillis: 1000 }
-
-RULES:
-1. Always analyze the current screen UI tree and foreground package first.
-2. If the target app is not open, use OpenApp first.
-3. Use ClickNode or SetText with the correct nodePath or viewId from the visible UI hierarchy.
-4. When the goal is completed, return isFinished = true with finishStatus = "SUCCESS" and a Wait action (finished actions are ignored).
-5. If the screen is loading, use Wait.
-6. Mark actions that send messages, place orders, make payments, delete data, or commit an external change as USER_CONFIRMATION_REQUIRED.
-7. Mark dangerous or clearly unauthorized actions as BLOCKED. Never type into password fields.`;
-
-      const userContent: any[] = [
-        {
-          type: 'text',
-          text: `USER GOAL: "${goalPrompt}"
-CURRENT FOREGROUND PACKAGE: ${foregroundApp}
-
-RECENT HISTORY:
-${history.map((h, i) => `Step ${i + 1}: ${h.thought} -> Action: ${JSON.stringify(h.action)} -> Result: ${h.result}`).join('\n')}
-
-CURRENT VISIBLE UI NODES:
-${uiTreeText}`,
-        },
-      ];
-
-      // Only attach screenshot image if image is present and model is vision-capable
-      const hasImage = Boolean(screenshotBase64 && aiConfig.config_type !== AiConfigType.TEXT);
-      if (hasImage && screenshotBase64) {
-        userContent.push({
-          type: 'image_url',
-          image_url: {
-            url: `data:image/png;base64,${screenshotBase64}`,
-          },
-        });
-      }
-
-      const messages = [new SystemMessage(systemPrompt), new HumanMessage({ content: userContent })];
-
-      try {
-        const response = await structuredLlm.invoke(messages);
-        return response as AgentDecision;
-      } catch (invokeError: any) {
-        // If provider rejects image input (e.g. text-only model or OpenRouter 404 image endpoint), fallback to text-only
-        if (hasImage) {
-          Logger.warn(
-            `[AndroidPlanner] Model (${aiConfig.provider}/${aiConfig.model}) does not accept image input (${invokeError.message}). Falling back to text-only UI tree reasoning.`,
-          );
-          const textOnlyMessages = [
-            new SystemMessage(systemPrompt),
-            new HumanMessage({ content: [{ type: 'text', text: userContent[0].text }] }),
-          ];
-          const fallbackResponse = await structuredLlm.invoke(textOnlyMessages);
-          return fallbackResponse as AgentDecision;
-        }
-        throw invokeError;
-      }
-    } catch (error) {
-      Logger.error(`[AndroidPlanner] LLM invocation error (${aiConfig.provider}/${aiConfig.model}):`, error);
-      return {
-        thought: 'The planner could not produce a valid next action.',
-        isFinished: true,
-        finishStatus: 'FAILED',
-        finishMessage: error instanceof Error ? error.message : 'The AI planner returned an invalid response.',
-        safetyLevel: 'LOW',
-        action: { type: 'Wait', durationMillis: 1 },
-      };
-    }
-  }
-
-
   private isActionablePrompt(prompt: string): boolean {
     const normalized = prompt.trim().toLowerCase();
     if (normalized.length < 4) return false;
@@ -478,7 +488,7 @@ ${uiTreeText}`,
     return !/^(hi|hello|hey|test|help|thanks|thank you)[.!?\s]*$/.test(normalized);
   }
 
-  private async assertDeviceReady(hardwareDeviceId: string): Promise<void> {
+  private async assertDeviceReady(hardwareDeviceId: string, userId?: number): Promise<string | undefined> {
     const [treeResult, captureResult] = await Promise.all([
       this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' }),
       this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' }),
@@ -499,52 +509,16 @@ ${uiTreeText}`,
         400,
       );
     }
-  }
 
-
-  private enforceSafetyLevel(decision: AgentDecision): AgentDecision['safetyLevel'] {
-    if (decision.safetyLevel === 'BLOCKED' || decision.safetyLevel === 'USER_CONFIRMATION_REQUIRED') {
-      return decision.safetyLevel;
+    const base64 = captureResult.screenCapture.base64Data;
+    if (userId && base64) {
+      this.gatewayService.broadcastToUser(userId, 'device:screen_capture', {
+        deviceId: hardwareDeviceId,
+        result: { screenCapture: { base64Data: base64 } },
+      });
     }
 
-    if (decision.action?.type === 'ClickNode') {
-      const target = `${decision.action.text || ''} ${decision.action.viewId || ''}`;
-      if (/\b(send|submit|confirm|buy|purchase|pay|place.?order|delete|remove|publish|post)\b/i.test(target)) {
-        return 'USER_CONFIRMATION_REQUIRED';
-      }
-    }
-
-    return 'LOW';
-  }
-
-  private formatUiTree(node?: UiNodeSnapshot, depth = 0): string {
-    if (!node || depth > 8) return '';
-    const parts: string[] = [];
-
-    const isInteractive = node.clickable || node.editable;
-    const hasText = node.text || node.contentDescription;
-
-    if (isInteractive || hasText) {
-      const desc = [
-        `path: ${node.path}`,
-        node.viewId ? `id: ${node.viewId}` : null,
-        node.text ? `text: "${node.text}"` : null,
-        node.contentDescription ? `desc: "${node.contentDescription}"` : null,
-        node.clickable ? 'clickable' : null,
-        node.editable ? 'editable' : null,
-        `bounds: [${node.bounds.left},${node.bounds.top},${node.bounds.right},${node.bounds.bottom}]`,
-      ]
-        .filter(Boolean)
-        .join(' | ');
-
-      parts.push(`${'  '.repeat(depth)}- ${desc}`);
-    }
-
-    for (const child of node.children || []) {
-      const childFormatted = this.formatUiTree(child, depth + 1);
-      if (childFormatted) parts.push(childFormatted);
-    }
-
-    return parts.join('\n');
+    return base64;
   }
 }
+

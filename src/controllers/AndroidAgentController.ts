@@ -27,7 +27,7 @@ export class AndroidAgentController {
     @Body() request: z.infer<typeof DispatchAndroidPromptValidation>,
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
-    return this.plannerService.runTask(request.prompt, request.device_id, user.userId, request.max_steps);
+    return this.plannerService.runTask(request.prompt, request.device_id, user.userId, request.max_steps, request.task_id);
   }
 
   /**

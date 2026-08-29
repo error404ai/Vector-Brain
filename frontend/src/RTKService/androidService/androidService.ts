@@ -44,6 +44,7 @@ export interface RequestPairingPayload {
 export interface DispatchAndroidPromptPayload {
   device_id: number;
   prompt: string;
+  task_id?: number;
   max_steps?: number;
 }
 

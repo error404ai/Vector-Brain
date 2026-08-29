@@ -6,15 +6,19 @@ import {
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ClearAllIcon from '@mui/icons-material/ClearAll';
+import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import SendIcon from '@mui/icons-material/Send';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import {
   Alert,
   alpha,
+  Avatar,
   Box,
   Button,
   Card,
@@ -29,12 +33,12 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-
-interface StepUpdate {
+export interface StepUpdate {
   stepIndex: number;
   thought: string;
   action?: { type?: string; packageName?: string; [key: string]: unknown };
@@ -43,6 +47,17 @@ interface StepUpdate {
   durationMs?: number;
   status?: 'EXECUTING' | 'SUCCESS' | 'FAILED';
   result?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  steps?: StepUpdate[];
+  status?: 'running' | 'done' | 'error' | 'cancelled';
+  screenshot?: string;
+  taskId?: number;
 }
 
 interface ApiMutationError {
@@ -65,14 +80,17 @@ export function AndroidAgentPage() {
   const [promptInput, setPromptInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [steps, setSteps] = useState<StepUpdate[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
+
+  // Conversational Chat Messages List (BrowserWorker Style)
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [runTask, { isLoading: isStartingTask }] = useRunAndroidTaskMutation();
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
 
   const wsRef = useRef<WebSocket | null>(null);
-  const stepsEndRef = useRef<HTMLDivElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
@@ -81,6 +99,11 @@ export function AndroidAgentPage() {
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
   const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // Connect to Vector-Brain WebSocket for live reactive streaming
   useEffect(() => {
@@ -94,9 +117,10 @@ export function AndroidAgentPage() {
         if (msg.event === 'task:started') {
           setIsRunning(true);
           setActiveTaskId(msg.payload.taskId);
-          setSteps([]);
-          setLatestScreenshot(null);
-        } else if (msg.event === 'device:perception_update') {
+          if (msg.payload.screenshot) {
+            setLatestScreenshot(msg.payload.screenshot);
+          }
+        } else if (msg.event === 'device:screen_capture') {
           const capture = msg.payload?.result?.screenCapture?.base64Data;
           if (capture) setLatestScreenshot(capture);
         } else if (msg.event === 'task:step') {
@@ -104,42 +128,141 @@ export function AndroidAgentPage() {
           if (step.screenshot) {
             setLatestScreenshot(step.screenshot);
           }
-          setSteps((prev) => [
-            ...prev,
-            {
-              stepIndex: step.stepIndex,
-              thought: step.thought,
-              action: step.action,
-              screenshot: step.screenshot,
-              foregroundApp: step.foregroundApp,
-              status: 'EXECUTING',
-            },
-          ]);
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            const lastMsg = updated[lastIdx];
+
+            if (lastMsg.role === 'assistant') {
+              const currentSteps = lastMsg.steps || [];
+              const exists = currentSteps.find((s) => s.stepIndex === step.stepIndex);
+              const newSteps = exists
+                ? currentSteps.map((s) => (s.stepIndex === step.stepIndex ? { ...s, ...step, status: 'EXECUTING' as const } : s))
+                : [
+                    ...currentSteps,
+                    {
+                      stepIndex: step.stepIndex,
+                      thought: step.thought,
+                      action: step.action,
+                      screenshot: step.screenshot,
+                      foregroundApp: step.foregroundApp,
+                      status: 'EXECUTING' as const,
+                    },
+                  ];
+
+              updated[lastIdx] = {
+                ...lastMsg,
+                steps: newSteps,
+                screenshot: step.screenshot || lastMsg.screenshot,
+                status: 'running',
+              };
+            }
+            return updated;
+          });
         } else if (msg.event === 'task:step_result') {
           const result = msg.payload;
-          setSteps((previous) =>
-            previous.map((step) =>
-              step.stepIndex === result.stepIndex
-                ? {
-                    ...step,
-                    status: result.status,
-                    result: result.result || result.error,
-                  }
-                : step,
-            ),
-          );
+          if (result.screenshot) {
+            setLatestScreenshot(result.screenshot);
+          }
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            const lastMsg = updated[lastIdx];
+
+            if (lastMsg.role === 'assistant' && lastMsg.steps) {
+              const updatedSteps = lastMsg.steps.map((s) =>
+                s.stepIndex === result.stepIndex
+                  ? {
+                      ...s,
+                      status: result.status,
+                      result: result.result || result.error,
+                      screenshot: result.screenshot || s.screenshot,
+                    }
+                  : s,
+              );
+
+              updated[lastIdx] = {
+                ...lastMsg,
+                steps: updatedSteps,
+                screenshot: result.screenshot || lastMsg.screenshot,
+              };
+            }
+            return updated;
+          });
         } else if (msg.event === 'task:completed') {
+          if (msg.payload.screenshot) {
+            setLatestScreenshot(msg.payload.screenshot);
+          }
           setIsRunning(false);
+          setActiveTaskId(null);
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            const lastMsg = updated[lastIdx];
+
+            if (lastMsg.role === 'assistant') {
+              updated[lastIdx] = {
+                ...lastMsg,
+                content: msg.payload.message || (msg.payload.success ? 'Task completed successfully.' : 'Task ended.'),
+                status: msg.payload.success ? 'done' : 'error',
+                screenshot: msg.payload.screenshot || lastMsg.screenshot,
+              };
+            }
+            return updated;
+          });
+
           if (msg.payload.success) {
             toast.success(msg.payload.message || 'Task completed successfully');
           } else {
-            toast.error(msg.payload.message || 'Task ended');
+            toast.error(msg.payload.message || 'Task completed with errors');
           }
         } else if (msg.event === 'task:cancelled') {
           setIsRunning(false);
+          setActiveTaskId(null);
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            const lastMsg = updated[lastIdx];
+
+            if (lastMsg.role === 'assistant') {
+              updated[lastIdx] = {
+                ...lastMsg,
+                content: 'Task was cancelled by user.',
+                status: 'cancelled',
+              };
+            }
+            return updated;
+          });
+
           toast('Task was cancelled', { icon: '🛑' });
         } else if (msg.event === 'task:error') {
           setIsRunning(false);
+          setActiveTaskId(null);
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            const lastMsg = updated[lastIdx];
+
+            if (lastMsg.role === 'assistant') {
+              updated[lastIdx] = {
+                ...lastMsg,
+                content: `Error: ${msg.payload.error || 'Execution failed'}`,
+                status: 'error',
+              };
+            }
+            return updated;
+          });
+
           toast.error(msg.payload.error || 'Task failed');
         }
       } catch (err) {
@@ -176,12 +299,10 @@ export function AndroidAgentPage() {
     };
   }, []);
 
-  // Auto-scroll trajectory logs
-  useEffect(() => {
-    stepsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [steps]);
+  const handleSendPrompt = async (textToSend?: string) => {
+    const text = (textToSend ?? promptInput).trim();
+    if (!text) return;
 
-  const handleStartTask = async () => {
     if (!activeAiConfig && !aiConfigsData?.data?.length) {
       toast.error('Please configure your AI provider in Settings first');
       navigate('/settings');
@@ -191,41 +312,86 @@ export function AndroidAgentPage() {
       toast.error('Please select an Android device');
       return;
     }
-    if (!promptInput.trim()) {
-      toast.error('Please enter a task prompt');
+    if (!deviceReady) {
+      toast.error('Selected device is not ready for automation');
       return;
     }
 
+    const userMsgId = `user-${Date.now()}`;
+    const assistantMsgId = `asst-${Date.now() + 1}`;
+
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+    };
+
+    const assistantPlaceholder: ChatMessage = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: 'Planning and executing workflow on device...',
+      timestamp: Date.now(),
+      steps: [],
+      status: 'running',
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
+    setPromptInput('');
+    setIsRunning(true);
+
     try {
-      setSteps([]);
-      setLatestScreenshot(null);
-      setIsRunning(true);
       const res = await runTask({
         device_id: effectiveSelectedDeviceId,
-        prompt: promptInput,
+        prompt: text,
+        task_id: activeTaskId || undefined,
       }).unwrap();
 
       setActiveTaskId(res.data.taskId);
-      toast.success('Agent autonomous loop started');
     } catch (err: unknown) {
       setIsRunning(false);
-      toast.error((err as ApiMutationError)?.data?.message || 'Failed to start task');
+      const errMsg = (err as ApiMutationError)?.data?.message || 'Failed to dispatch task';
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantMsgId ? { ...m, content: `Error: ${errMsg}`, status: 'error' } : m)),
+      );
+      toast.error(errMsg);
     }
   };
 
-  const handleCancelTask = async () => {
-    if (!activeTaskId) return;
+  const handleCancel = async () => {
+    if (!activeTaskId) {
+      setIsRunning(false);
+      return;
+    }
     try {
       await cancelTask(activeTaskId).unwrap();
       setIsRunning(false);
+      setActiveTaskId(null);
+      toast.success('Task stopped');
     } catch (err: unknown) {
+      setIsRunning(false);
+      setActiveTaskId(null);
       toast.error((err as ApiMutationError)?.data?.message || 'Failed to cancel task');
     }
   };
 
+  const handleClearChat = () => {
+    if (isRunning) {
+      toast.error('Cannot clear conversation while task is running');
+      return;
+    }
+    setMessages([]);
+    setActiveTaskId(null);
+    toast.success('Conversation cleared');
+  };
+
   return (
-    <Box sx={{ maxWidth: 1400, mx: 'auto', p: { xs: 1, sm: 2 } }}>
-      {/* Missing AI Config Warning */}
+    <Box sx={{ maxWidth: 1440, mx: 'auto', p: { xs: 1, sm: 2 } }}>
+      <Helmet>
+        <title>Android Agent — Vector Brain</title>
+      </Helmet>
+
+      {/* Missing AI Config Warning Banner */}
       {!activeAiConfig && aiConfigsData && (
         <Alert
           severity="warning"
@@ -241,59 +407,36 @@ export function AndroidAgentPage() {
         </Alert>
       )}
 
-      {/* Control Header Card */}
-      <Card sx={{ mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
-        <CardContent sx={{ p: 2.5 }}>
-          {/* Active AI Config Indicator Banner */}
-          {activeAiConfig && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2, pb: 1.5, borderBottom: '1px dashed', borderColor: 'divider' }}>
-              <PsychologyIcon fontSize="small" color="primary" />
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                Active AI Model:
-              </Typography>
-              <Chip
-                label={`${activeAiConfig.provider.toUpperCase()} (${activeAiConfig.model})`}
-                size="small"
-                color="primary"
-                variant="outlined"
-                sx={{ height: 22, fontWeight: 700, fontSize: '0.75rem' }}
-              />
-              <Chip
-                label={activeAiConfig.config_type === 'vision' ? 'Vision Capable' : 'Text-Only'}
-                size="small"
-                sx={{ height: 22, fontSize: '0.7rem' }}
-              />
-              <Button size="small" sx={{ fontSize: '0.75rem', p: 0, minWidth: 'auto', ml: 'auto' }} onClick={() => navigate('/settings')}>
-                Change
-              </Button>
-            </Stack>
-          )}
-
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', md: '240px 1fr 180px' },
-              gap: 2,
-              alignItems: 'center',
-            }}
+      {/* Top Header Card */}
+      <Card sx={{ mb: 2.5, borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none' }}>
+        <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            justifyContent="space-between"
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            spacing={2}
           >
-            {/* Device Selector */}
-            <Box>
-              <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', mb: 0.5, display: 'block' }}>
-                Target Device
-              </Typography>
+            {/* Device & Status Selector */}
+            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ width: { xs: '100%', sm: 'auto' } }}>
               <Select
                 size="small"
-                fullWidth
                 value={effectiveSelectedDeviceId || ''}
                 onChange={(e) => setSelectedDeviceId(Number(e.target.value))}
                 displayEmpty
                 disabled={isRunning}
+                sx={{ minWidth: 200, fontWeight: 700, borderRadius: 2 }}
               >
                 {devices.map((d) => (
                   <MenuItem key={d.id} value={d.id}>
                     <Stack direction="row" spacing={1} alignItems="center">
-                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: d.status === 'ONLINE' ? 'success.main' : 'grey.400' }} />
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          bgcolor: d.status === 'ONLINE' ? 'success.main' : 'grey.400',
+                        }}
+                      />
                       <Typography variant="body2" fontWeight={700}>
                         {d.device_name}
                       </Typography>
@@ -301,118 +444,91 @@ export function AndroidAgentPage() {
                   </MenuItem>
                 ))}
               </Select>
-            </Box>
 
-            {/* Prompt Input */}
-            <Box>
-              <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', mb: 0.5, display: 'block' }}>
-                Autonomous Goal Prompt
-              </Typography>
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="e.g. Open YouTube and search for Synthwave mix, or Open Settings and check Battery"
-                value={promptInput}
-                onChange={(e) => setPromptInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !isRunning && deviceReady) {
-                    e.preventDefault();
-                    handleStartTask();
-                  }
-                }}
-                disabled={isRunning}
-              />
-            </Box>
+              {selectedDevice && (
+                <Chip
+                  label={deviceReady ? 'Ready' : isDeviceOnline ? 'Service Needed' : 'Offline'}
+                  size="small"
+                  color={deviceReady ? 'success' : isDeviceOnline ? 'warning' : 'default'}
+                  variant="outlined"
+                  sx={{ fontWeight: 800, height: 26 }}
+                />
+              )}
+            </Stack>
 
-            {/* Actions */}
-            <Box sx={{ pt: { md: 2.5 } }}>
+            {/* Active Model Indicator & Actions */}
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ width: { xs: '100%', sm: 'auto' } }}>
+              {activeAiConfig && (
+                <Chip
+                  icon={<PsychologyIcon fontSize="small" />}
+                  label={`${activeAiConfig.provider.toUpperCase()} : ${activeAiConfig.model}`}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  onClick={() => navigate('/settings')}
+                  sx={{ fontWeight: 700, cursor: 'pointer', height: 28 }}
+                />
+              )}
+
               {isRunning ? (
                 <Button
-                  fullWidth
                   variant="contained"
                   color="error"
-                  startIcon={isCancelling ? <CircularProgress size={16} color="inherit" /> : <StopCircleIcon />}
-                  onClick={handleCancelTask}
+                  size="small"
+                  startIcon={isCancelling ? <CircularProgress size={14} color="inherit" /> : <StopCircleIcon />}
+                  onClick={handleCancel}
                   disabled={isCancelling}
-                  sx={{ borderRadius: 2, fontWeight: 700 }}
+                  sx={{ borderRadius: 2, fontWeight: 700, px: 2 }}
                 >
                   Emergency Stop
                 </Button>
               ) : (
                 <Button
-                  fullWidth
-                  variant="contained"
-                  startIcon={isStartingTask ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
-                  onClick={handleStartTask}
-                  disabled={!deviceReady || isStartingTask || !promptInput.trim()}
-                  sx={{
-                    borderRadius: 2,
-                    fontWeight: 700,
-                    background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-                  }}
+                  variant="outlined"
+                  size="small"
+                  startIcon={<ClearAllIcon />}
+                  onClick={handleClearChat}
+                  disabled={messages.length === 0}
+                  sx={{ borderRadius: 2, fontWeight: 600 }}
                 >
-                  Run Agent
+                  New Session
                 </Button>
               )}
-            </Box>
-          </Box>
-
-          {selectedDevice && !deviceReady && (
-            <Alert severity={isDeviceOnline ? 'warning' : 'error'} sx={{ mt: 2 }}>
-              {!isDeviceOnline
-                ? 'Open Android Automation on the phone and connect it to Vector-Brain.'
-                : !hasAccessibility
-                  ? 'Enable the Android Automation accessibility service on the phone before running an agent.'
-                  : 'Tap Enable screen capture in Android Automation and approve Android’s capture prompt.'}
-            </Alert>
-          )}
-
-          {/* Quick suggestions */}
-          <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center', mr: 0.5 }}>
-              Try:
-            </Typography>
-            {[
-              'Open Settings and check Battery',
-              'Open YouTube and search for Lo-Fi Beats',
-              'Open Clock and set an alarm for 7 AM',
-            ].map((suggest) => (
-              <Chip
-                key={suggest}
-                label={suggest}
-                size="small"
-                variant="outlined"
-                clickable={!isRunning}
-                onClick={() => setPromptInput(suggest)}
-                sx={{ fontSize: 11, borderRadius: 1.5 }}
-              />
-            ))}
+            </Stack>
           </Stack>
         </CardContent>
       </Card>
 
-      {/* Main Workspace (Split View) */}
+      {/* Main Split Layout: Left Phone Mockup, Right Conversational Feed */}
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '360px 1fr' },
+          gridTemplateColumns: { xs: '1fr', lg: '380px 1fr' },
           gap: 3,
+          alignItems: 'flex-start',
         }}
       >
-        {/* Left Column: Live Screen Frame */}
-        <Box>
+        {/* Left Sticky Column: Live Phone Mockup */}
+        <Box sx={{ position: { lg: 'sticky' }, top: { lg: 20 } }}>
           <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
-            <Box sx={{ p: 2, bgcolor: alpha(theme.palette.primary.main, 0.04), borderBottom: '1px solid', borderColor: 'divider' }}>
+            <Box
+              sx={{
+                p: 2,
+                bgcolor: alpha(theme.palette.primary.main, 0.04),
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
               <Stack direction="row" justifyContent="space-between" alignItems="center">
                 <Stack direction="row" spacing={1} alignItems="center">
                   <PhoneAndroidIcon fontSize="small" color="primary" />
                   <Typography variant="subtitle2" fontWeight={800}>
-                    Device Screen View
+                    Live Screen View
                   </Typography>
                 </Stack>
                 {isRunning && (
                   <Chip
-                    label="LIVE CAPTURE"
+                    label="STREAMING"
                     size="small"
                     color="error"
                     sx={{ height: 20, fontSize: 9, fontWeight: 900, animation: 'pulse 1.5s infinite' }}
@@ -421,17 +537,17 @@ export function AndroidAgentPage() {
               </Stack>
             </Box>
 
-            <CardContent sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              {/* Phone Mockup Frame */}
+            <CardContent sx={{ p: 2.5, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              {/* Phone Frame */}
               <Box
                 sx={{
                   width: '100%',
-                  maxWidth: 290,
+                  maxWidth: 310,
                   aspectRatio: '9 / 19',
                   bgcolor: '#090a0f',
-                  borderRadius: 5,
-                  border: '6px solid #1f232e',
-                  boxShadow: '0 12px 36px rgba(0,0,0,0.3)',
+                  borderRadius: 6,
+                  border: '7px solid #1e2230',
+                  boxShadow: '0 16px 40px rgba(0,0,0,0.35)',
                   overflow: 'hidden',
                   position: 'relative',
                   display: 'flex',
@@ -442,7 +558,7 @@ export function AndroidAgentPage() {
                 {latestScreenshot ? (
                   <img
                     src={`data:image/png;base64,${latestScreenshot}`}
-                    alt="Android Screen Frame"
+                    alt="Android Live Stream"
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   />
                 ) : (
@@ -453,108 +569,334 @@ export function AndroidAgentPage() {
                         ? 'Device is offline'
                         : !hasScreenCapture
                           ? 'Enable screen capture in the companion app'
-                          : 'A current frame will appear when the agent inspects the screen'}
+                          : 'Live frame updates automatically when agent interacts'}
                     </Typography>
                   </Stack>
                 )}
               </Box>
 
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-                On-demand frames captured securely with Android MediaProjection
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+                Secure on-demand frames via MediaProjection & Accessibility
               </Typography>
             </CardContent>
           </Card>
         </Box>
 
-        {/* Right Column: AI Reasoning & Trajectory Stream */}
-        <Box>
-          <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', minHeight: 560 }}>
-            <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <AutoAwesomeIcon fontSize="small" color="primary" />
-                  <Typography variant="subtitle2" fontWeight={800}>
-                    AI Autonomous Trajectory
-                  </Typography>
-                </Stack>
-                <Typography variant="caption" color="text.secondary">
-                  {steps.length} Steps Executed
+        {/* Right Column: BrowserWorker Conversational Agent Feed */}
+        <Card
+          sx={{
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            minHeight: 650,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {/* Conversation Feed Header */}
+          <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack direction="row" spacing={1} alignItems="center">
+                <AutoAwesomeIcon fontSize="small" color="primary" />
+                <Typography variant="subtitle2" fontWeight={800}>
+                  Agent Conversation & Autonomous Steps
                 </Typography>
               </Stack>
-            </Box>
+              <Typography variant="caption" color="text.secondary">
+                {messages.length ? `${messages.length} conversation turns` : 'Ready to start'}
+              </Typography>
+            </Stack>
+          </Box>
 
-            <CardContent sx={{ p: 2.5, maxHeight: 600, overflowY: 'auto' }}>
-              {steps.length === 0 ? (
-                <Box sx={{ py: 12, textAlign: 'center' }}>
-                  <AutoAwesomeIcon sx={{ fontSize: 52, color: 'text.disabled', mb: 1.5 }} />
-                  <Typography variant="subtitle1" fontWeight={700} color="text.primary">
-                    Ready to Execute
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420, mx: 'auto', mt: 0.5 }}>
-                    Enter a prompt and launch the agent. Multimodal reasoning steps, UI tree evaluations, and atomic actions will stream live.
-                  </Typography>
-                </Box>
-              ) : (
-                <Stack spacing={2}>
-                  {steps.map((step, idx) => (
-                    <Paper
-                      key={idx}
-                      elevation={0}
+          {/* Messages Scroll Area */}
+          <Box
+            sx={{
+              p: 2.5,
+              flexGrow: 1,
+              maxHeight: 'calc(100vh - 340px)',
+              minHeight: 450,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2.5,
+            }}
+          >
+            {messages.length === 0 ? (
+              <Box sx={{ py: 8, textAlign: 'center' }}>
+                <SmartToyIcon sx={{ fontSize: 56, color: 'primary.main', mb: 1.5, opacity: 0.8 }} />
+                <Typography variant="h6" fontWeight={800} color="text.primary">
+                  How can I help with your Android phone?
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 460, mx: 'auto', mt: 1 }}>
+                  Type a goal or command below. The AI agent will inspect the live screen, execute navigation and clicks,
+                  and keep you updated step-by-step.
+                </Typography>
+
+                {/* Quick Action Suggestion Chips */}
+                <Stack direction="row" spacing={1} sx={{ mt: 3, flexWrap: 'wrap', justifyContent: 'center', gap: 1 }}>
+                  {[
+                    'Open Chrome and go to google.com',
+                    'Open YouTube and search for Lo-Fi Beats',
+                    'Open Settings and check Battery',
+                    'Open Clock and check alarms',
+                  ].map((preset) => (
+                    <Chip
+                      key={preset}
+                      label={preset}
+                      clickable={!isRunning && deviceReady}
+                      onClick={() => handleSendPrompt(preset)}
+                      variant="outlined"
                       sx={{
-                        p: 2,
-                        borderRadius: 2.5,
-                        border: '1px solid',
-                        borderColor: alpha(theme.palette.primary.main, 0.15),
-                        bgcolor: alpha(theme.palette.background.paper, 0.8),
+                        borderRadius: 2,
+                        fontWeight: 600,
+                        py: 2,
+                        '&:hover': { borderColor: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.05) },
                       }}
-                    >
-                      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }}>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <Chip label={`Step ${step.stepIndex}`} size="small" color="primary" sx={{ fontWeight: 800, height: 22 }} />
-                          {step.action?.type && (
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            ) : (
+              messages.map((msg) => (
+                <Box
+                  key={msg.id}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  }}
+                >
+                  {/* User Message Bubble */}
+                  {msg.role === 'user' ? (
+                    <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ maxWidth: '85%' }}>
+                      <Paper
+                        elevation={0}
+                        sx={{
+                          p: 2,
+                          borderRadius: '16px 16px 4px 16px',
+                          bgcolor: 'primary.main',
+                          color: 'primary.contrastText',
+                          boxShadow: '0 4px 12px rgba(79, 70, 229, 0.25)',
+                        }}
+                      >
+                        <Typography variant="body1" fontWeight={600} sx={{ whiteSpace: 'pre-wrap' }}>
+                          {msg.content}
+                        </Typography>
+                      </Paper>
+                      <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.dark' }}>
+                        <PersonIcon fontSize="small" />
+                      </Avatar>
+                    </Stack>
+                  ) : (
+                    /* Assistant Agent Card (BrowserWorker Style) */
+                    <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ width: '100%', maxWidth: '100%' }}>
+                      <Avatar sx={{ width: 32, height: 32, bgcolor: alpha(theme.palette.primary.main, 0.15), color: 'primary.main' }}>
+                        <SmartToyIcon fontSize="small" />
+                      </Avatar>
+
+                      <Paper
+                        elevation={0}
+                        sx={{
+                          p: 2.5,
+                          width: '100%',
+                          borderRadius: '16px 16px 16px 4px',
+                          border: '1px solid',
+                          borderColor: alpha(theme.palette.divider, 0.8),
+                          bgcolor: alpha(theme.palette.background.paper, 0.6),
+                        }}
+                      >
+                        {/* Status Header */}
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+                          <Typography variant="subtitle2" fontWeight={800} color="primary">
+                            Android Autonomous Agent
+                          </Typography>
+                          {msg.status === 'running' ? (
                             <Chip
-                              icon={<TouchAppIcon />}
-                              label={`${step.action.type}${step.action.packageName ? `: ${step.action.packageName}` : ''}`}
+                              icon={<CircularProgress size={12} color="inherit" />}
+                              label="Executing..."
                               size="small"
+                              color="primary"
+                              sx={{ fontWeight: 700, height: 22 }}
+                            />
+                          ) : msg.status === 'done' ? (
+                            <Chip
+                              icon={<CheckCircleIcon />}
+                              label="Completed"
+                              size="small"
+                              color="success"
                               variant="outlined"
                               sx={{ fontWeight: 700, height: 22 }}
                             />
+                          ) : msg.status === 'cancelled' ? (
+                            <Chip label="Cancelled" size="small" color="warning" variant="outlined" sx={{ fontWeight: 700, height: 22 }} />
+                          ) : (
+                            <Chip label="Failed" size="small" color="error" variant="outlined" sx={{ fontWeight: 700, height: 22 }} />
                           )}
                         </Stack>
 
-                        <Chip
-                          icon={<CheckCircleOutlineIcon />}
-                          label={step.status === 'EXECUTING' ? 'Executing' : step.status === 'FAILED' ? 'Failed' : 'Executed'}
-                          size="small"
-                          color={step.status === 'FAILED' ? 'error' : step.status === 'EXECUTING' ? 'warning' : 'success'}
-                          variant="outlined"
-                          sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
-                        />
-                      </Stack>
+                        {/* Step Execution Timeline (BrowserWorker Style Action Cards) */}
+                        {msg.steps && msg.steps.length > 0 && (
+                          <Stack spacing={1.5} sx={{ my: 1.5 }}>
+                            {msg.steps.map((step) => (
+                              <Paper
+                                key={step.stepIndex}
+                                elevation={0}
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 2,
+                                  border: '1px solid',
+                                  borderColor: alpha(theme.palette.primary.main, 0.15),
+                                  bgcolor: alpha(theme.palette.background.paper, 0.9),
+                                }}
+                              >
+                                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                  <Stack direction="row" spacing={1} alignItems="center">
+                                    <Chip
+                                      label={`Step ${step.stepIndex}`}
+                                      size="small"
+                                      color="primary"
+                                      sx={{ fontWeight: 800, height: 20, fontSize: 10 }}
+                                    />
+                                    {step.action?.type && (
+                                      <Chip
+                                        icon={<TouchAppIcon sx={{ fontSize: 13 }} />}
+                                        label={`${step.action.type}${step.action.packageName ? `: ${step.action.packageName}` : ''}`}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{ fontWeight: 700, height: 20, fontSize: 11 }}
+                                      />
+                                    )}
+                                  </Stack>
+                                  <Chip
+                                    label={step.status === 'EXECUTING' ? 'Executing' : step.status === 'FAILED' ? 'Failed' : 'Success'}
+                                    size="small"
+                                    color={step.status === 'FAILED' ? 'error' : step.status === 'EXECUTING' ? 'warning' : 'success'}
+                                    variant="outlined"
+                                    sx={{ height: 18, fontSize: 9, fontWeight: 800 }}
+                                  />
+                                </Stack>
 
-                      {/* AI Thought Bubble */}
-                      <Typography variant="body2" color="text.primary" sx={{ mt: 1, fontWeight: 500, lineHeight: 1.6 }}>
-                        💬 <strong>Reasoning:</strong> {step.thought}
-                      </Typography>
+                                {/* Reasoning thought */}
+                                <Typography variant="body2" sx={{ mt: 1, fontWeight: 500, color: 'text.primary', lineHeight: 1.5 }}>
+                                  💭 {step.thought}
+                                </Typography>
 
-                      {step.foregroundApp && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                          App: <code>{step.foregroundApp}</code>
+                                {step.result && (
+                                  <Typography variant="caption" color={step.status === 'FAILED' ? 'error' : 'text.secondary'} sx={{ display: 'block', mt: 0.5 }}>
+                                    Result: {step.result}
+                                  </Typography>
+                                )}
+                              </Paper>
+                            ))}
+                          </Stack>
+                        )}
+
+                        {/* Summary / Reply Text */}
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontWeight: 600 }}>
+                          {msg.content}
                         </Typography>
-                      )}
-                      {step.result && (
-                        <Typography variant="caption" color={step.status === 'FAILED' ? 'error' : 'text.secondary'} sx={{ display: 'block', mt: 0.5 }}>
-                          Result: {step.result}
-                        </Typography>
-                      )}
-                    </Paper>
-                  ))}
-                  <div ref={stepsEndRef} />
-                </Stack>
+                      </Paper>
+                    </Stack>
+                  )}
+                </Box>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </Box>
+
+          {/* Sticky Bottom Prompt & Follow-up Input Bar */}
+          <Box
+            sx={{
+              p: 2,
+              borderTop: '1px solid',
+              borderColor: 'divider',
+              bgcolor: alpha(theme.palette.background.paper, 0.95),
+            }}
+          >
+            {/* Suggestion Chips when in-between actions */}
+            {!isRunning && messages.length > 0 && (
+              <Stack direction="row" spacing={1} sx={{ mb: 1.5, overflowX: 'auto', pb: 0.5 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center', mr: 0.5 }}>
+                  Follow-up:
+                </Typography>
+                {[
+                  'Go to Home screen',
+                  'Scroll down',
+                  'Tap on the first search result',
+                  'Take a screenshot',
+                ].map((followup) => (
+                  <Chip
+                    key={followup}
+                    label={followup}
+                    size="small"
+                    variant="outlined"
+                    onClick={() => handleSendPrompt(followup)}
+                    sx={{ fontSize: 11, borderRadius: 1.5, cursor: 'pointer' }}
+                  />
+                ))}
+              </Stack>
+            )}
+
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <TextField
+                inputRef={inputRef}
+                fullWidth
+                size="small"
+                placeholder={
+                  isRunning
+                    ? 'Agent is currently executing actions...'
+                    : messages.length === 0
+                      ? 'Type an Android task (e.g. Open YouTube and search for Jazz mix)...'
+                      : 'Type a follow-up instruction (e.g. Now tap the second video)...'
+                }
+                value={promptInput}
+                onChange={(e) => setPromptInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !isRunning && deviceReady) {
+                    e.preventDefault();
+                    handleSendPrompt();
+                  }
+                }}
+                disabled={isRunning || !deviceReady}
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    borderRadius: 3,
+                    bgcolor: alpha(theme.palette.background.default, 0.6),
+                  },
+                }}
+              />
+
+              {isRunning ? (
+                <Button
+                  variant="contained"
+                  color="error"
+                  onClick={handleCancel}
+                  disabled={isCancelling}
+                  startIcon={isCancelling ? <CircularProgress size={16} color="inherit" /> : <StopCircleIcon />}
+                  sx={{ borderRadius: 3, px: 2.5, height: 40, fontWeight: 700 }}
+                >
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  variant="contained"
+                  onClick={() => handleSendPrompt()}
+                  disabled={!promptInput.trim() || isStartingTask || !deviceReady}
+                  endIcon={isStartingTask ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+                  sx={{
+                    borderRadius: 3,
+                    px: 2.5,
+                    height: 40,
+                    fontWeight: 700,
+                    background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                  }}
+                >
+                  Send
+                </Button>
               )}
-            </CardContent>
-          </Card>
-        </Box>
+            </Stack>
+          </Box>
+        </Card>
       </Box>
     </Box>
   );
