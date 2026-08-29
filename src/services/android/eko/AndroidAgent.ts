@@ -173,14 +173,14 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'swipe',
-        description: 'Swipe across the screen in a specified direction (UP, DOWN, LEFT, RIGHT).',
+        description: 'Swipe across the screen (direction: UP to scroll down and reveal content below, DOWN to scroll up, LEFT to scroll right, RIGHT to scroll left).',
         parameters: {
           type: 'object',
           properties: {
             direction: {
               type: 'string',
               enum: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
-              description: 'Direction to swipe',
+              description: 'Direction to swipe (UP = scroll down to see more items below, DOWN = scroll up)',
             },
             durationMillis: {
               type: 'number',
@@ -314,7 +314,7 @@ WORKFLOW & PRINCIPLES:
    - Use type_text to enter the required string into the input field.
    - Submit the search by clicking the search/submit button or selecting a suggestion item.
 5. Interact with UI elements using click_node (prefer nodePath, viewId, or exact visible text) or tap_coordinate.
-6. If the target content is off-screen, swipe (UP, DOWN, LEFT, RIGHT) to scroll into view.
+6. If the target content is off-screen, swipe with direction="UP" to scroll down and bring it into view.
 7. Use wait if a screen or network request is loading.
 8. Verify that the requested goal is reached on screen, then finish with a clear success summary.`;
   }
