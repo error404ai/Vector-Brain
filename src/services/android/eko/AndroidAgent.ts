@@ -35,7 +35,7 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
-          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ReadUiTree' });
+          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
           if (res.status !== 'SUCCESS') {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Inspection cancelled';
             return { content: [{ type: 'text', text: `Failed to read UI tree: ${errorMsg}` }], isError: true };
@@ -46,6 +46,7 @@ export class AndroidAgent extends Agent {
           const pkg = this.detectPackageName(tree?.root, tree?.packageName || 'unknown');
           this.lastUiTree = formatted;
           this.lastForegroundApp = pkg;
+          this.lastScreenshotBase64 = res.screenCapture?.base64Data || this.lastScreenshotBase64;
 
           this.callbacks?.onStepExecuted?.({
             toolName: 'read_ui_tree',
@@ -53,15 +54,18 @@ export class AndroidAgent extends Agent {
             result: `Inspected UI for ${pkg}`,
             foregroundApp: pkg,
             uiTree: formatted,
+            screenshotBase64: this.lastScreenshotBase64 || undefined,
           });
 
+          const textContent = {
+            type: 'text' as const,
+            text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI NODES:\n${formatted}`,
+          };
+          const content: ToolResult['content'] = this.lastScreenshotBase64
+            ? [textContent, { type: 'image', data: this.lastScreenshotBase64, mimeType: 'image/jpeg' }]
+            : [textContent];
           return {
-            content: [
-              {
-                type: 'text',
-                text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI NODES:\n${formatted}`,
-              },
-            ],
+            content,
           };
         },
       },
@@ -93,7 +97,7 @@ export class AndroidAgent extends Agent {
           return {
             content: [
               { type: 'text', text: 'Screenshot captured successfully.' },
-              { type: 'image', data: base64, mimeType: 'image/png' },
+              { type: 'image', data: base64, mimeType: 'image/jpeg' },
             ],
           };
         },
@@ -131,6 +135,7 @@ export class AndroidAgent extends Agent {
           properties: {
             text: { type: 'string', description: 'Text string to type into the input field' },
             nodePath: { type: 'string', description: 'Optional target node path in the UI tree' },
+            viewId: { type: 'string', description: 'Optional stable resource ID of the target input' },
           },
           required: ['text'],
           additionalProperties: false,
@@ -141,6 +146,7 @@ export class AndroidAgent extends Agent {
               type: 'SetText',
               text: String(args.text || ''),
               nodePath: args.nodePath as string | undefined,
+              viewId: args.viewId as string | undefined,
             },
             'type_text',
             args,
@@ -273,6 +279,39 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'wait_for_element',
+        description: 'Wait until a UI element appears instead of guessing a fixed loading delay.',
+        parameters: {
+          type: 'object',
+          properties: {
+            nodePath: { type: 'string', description: 'Optional node path from the latest UI snapshot' },
+            viewId: { type: 'string', description: 'Optional stable resource ID' },
+            text: { type: 'string', description: 'Optional visible text or content description' },
+            timeoutMillis: { type: 'number', description: 'Maximum wait, from 250 to 15000 ms (default: 8000)' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          if (!args.nodePath && !args.viewId && !args.text) {
+            return {
+              content: [{ type: 'text', text: 'wait_for_element requires nodePath, viewId, or text' }],
+              isError: true,
+            };
+          }
+          return this.runDeviceAction(
+            {
+              type: 'WaitForNode',
+              nodePath: args.nodePath as string | undefined,
+              viewId: args.viewId as string | undefined,
+              text: args.text as string | undefined,
+              timeoutMillis: args.timeoutMillis ? Number(args.timeoutMillis) : 8000,
+            },
+            'wait_for_element',
+            args,
+          );
+        },
+      },
+      {
         name: 'wait',
         description: 'Wait for a specified duration in milliseconds to allow animations or pages to load.',
         parameters: {
@@ -315,7 +354,7 @@ WORKFLOW & PRINCIPLES:
    - Submit the search by clicking the search/submit button or selecting a suggestion item.
 5. Interact with UI elements using click_node (prefer nodePath, viewId, or exact visible text) or tap_coordinate.
 6. If the target content is off-screen, swipe with direction="UP" to scroll down and bring it into view.
-7. Use wait if a screen or network request is loading.
+7. Prefer wait_for_element for loading screens. Use a short fixed wait only when no stable target is known.
 8. Verify that the requested goal is reached on screen, then finish with a clear success summary.`;
   }
 
@@ -335,16 +374,16 @@ WORKFLOW & PRINCIPLES:
 
     // Automatically capture updated screen frame and UI tree after each interaction
     try {
-      const [screenRes, treeRes] = await Promise.all([
-        this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'CaptureScreen' }),
-        this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ReadUiTree' }),
-      ]);
-      if (screenRes.status === 'SUCCESS' && screenRes.screenCapture?.base64Data) {
-        this.lastScreenshotBase64 = screenRes.screenCapture.base64Data;
+      const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+      if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
+        this.lastScreenshotBase64 = observation.screenCapture.base64Data;
       }
-      if (treeRes.status === 'SUCCESS' && treeRes.uiTree) {
-        this.lastUiTree = this.formatUiTree(treeRes.uiTree.root);
-        this.lastForegroundApp = this.detectPackageName(treeRes.uiTree.root, treeRes.uiTree.packageName || 'unknown');
+      if (observation.status === 'SUCCESS' && observation.uiTree) {
+        this.lastUiTree = this.formatUiTree(observation.uiTree.root);
+        this.lastForegroundApp = this.detectPackageName(
+          observation.uiTree.root,
+          observation.uiTree.packageName || 'unknown',
+        );
       }
     } catch {
       // Best-effort post-action snapshot
@@ -372,7 +411,7 @@ WORKFLOW & PRINCIPLES:
           {
             type: 'image' as const,
             data: this.lastScreenshotBase64,
-            mimeType: 'image/png',
+            mimeType: 'image/jpeg',
           },
         ]
       : [textPart];
@@ -405,18 +444,17 @@ WORKFLOW & PRINCIPLES:
     return detected;
   }
 
-  private formatUiTree(node?: UiNodeSnapshot, depth = 0): string {
+  private formatUiTree(node?: UiNodeSnapshot): string {
     if (!node) return 'No visible UI elements found.';
-    const lines: string[] = [];
+    const entries: Array<{ priority: number; path: string; line: string }> = [];
 
-    const traverse = (current: UiNodeSnapshot, currentDepth: number) => {
-      const indent = '  '.repeat(currentDepth);
+    const traverse = (current: UiNodeSnapshot) => {
       const parts: string[] = [];
 
       if (current.path) parts.push(`[${current.path}]`);
       if (current.viewId) parts.push(`id=${current.viewId}`);
-      if (current.text) parts.push(`text="${current.text}"`);
-      if (current.contentDescription) parts.push(`desc="${current.contentDescription}"`);
+      if (current.text) parts.push(`text="${this.compactLabel(current.text)}"`);
+      if (current.contentDescription) parts.push(`desc="${this.compactLabel(current.contentDescription)}"`);
       if (current.clickable) parts.push('(clickable)');
       if (current.editable) parts.push('(editable)');
       if (current.bounds) {
@@ -424,19 +462,29 @@ WORKFLOW & PRINCIPLES:
       }
 
       const meaningful = current.text || current.contentDescription || current.clickable || current.editable || current.viewId;
-      if (meaningful || currentDepth === 0) {
-        lines.push(`${indent}- ${current.className || 'Node'} ${parts.join(' ')}`);
+      if (meaningful) {
+        const priority = (current.editable ? 8 : 0) + (current.clickable ? 4 : 0) +
+          (current.viewId ? 2 : 0) + (current.text || current.contentDescription ? 1 : 0);
+        entries.push({
+          priority,
+          path: current.path,
+          line: `${current.className?.split('.').pop() || 'Node'} ${parts.join(' ')}`,
+        });
       }
 
       if (current.children) {
         for (const child of current.children) {
-          traverse(child, currentDepth + 1);
+          traverse(child);
         }
       }
     };
 
-    traverse(node, depth);
-    return lines.slice(0, 120).join('\n');
+    traverse(node);
+    entries.sort((a, b) => b.priority - a.priority || a.path.localeCompare(b.path, undefined, { numeric: true }));
+    return entries.slice(0, 60).map((entry) => entry.line).join('\n');
+  }
+
+  private compactLabel(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 120).replace(/"/g, '\\"');
   }
 }
-

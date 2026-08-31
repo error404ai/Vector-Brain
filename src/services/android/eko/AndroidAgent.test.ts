@@ -29,6 +29,7 @@ describe('AndroidAgent Eko Integration', () => {
     expect(toolNames).toContain('open_app');
     expect(toolNames).toContain('open_url');
     expect(toolNames).toContain('global_action');
+    expect(toolNames).toContain('wait_for_element');
     expect(toolNames).toContain('wait');
   });
 
@@ -91,5 +92,20 @@ describe('AndroidAgent Eko Integration', () => {
       text: 'Action failed: NODE_NOT_FOUND: Node with given path was not found on screen',
     });
   });
-});
 
+  it('should wait for a stable element selector', async () => {
+    const rawAgent = agent as any;
+    const waitTool = rawAgent.tools.find((t: any) => t.name === 'wait_for_element');
+
+    const result = await waitTool.execute({ viewId: 'com.example:id/continue', timeoutMillis: 5000 });
+
+    expect(mockGatewayService.executeAction).toHaveBeenCalledWith('device-hw-123', {
+      type: 'WaitForNode',
+      viewId: 'com.example:id/continue',
+      nodePath: undefined,
+      text: undefined,
+      timeoutMillis: 5000,
+    });
+    expect(result.isError).toBe(false);
+  });
+});

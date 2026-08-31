@@ -25,6 +25,10 @@ export class AndroidGatewayService {
   // Request ID -> Pending Action promise handler
   private pendingRequests = new Map<string, PendingRequest>();
 
+  // Heartbeats arrive every five seconds. Persist periodically (or whenever
+  // capabilities change) instead of writing the same row on every heartbeat.
+  private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string }>();
+
   constructor(private deviceService: AndroidDeviceService) {}
 
   /**
@@ -44,6 +48,10 @@ export class AndroidGatewayService {
 
     // Update DB status to ONLINE
     await this.deviceService.updateDeviceStatus(deviceId, AndroidDeviceStatus.ONLINE, metadata.capabilities);
+    this.lastHeartbeatPersistence.set(deviceId, {
+      at: Date.now(),
+      capabilities: JSON.stringify(metadata.capabilities || {}),
+    });
 
     // Send confirmation back to device
     const ack: AndroidWsServerMessage = {
@@ -104,7 +112,17 @@ export class AndroidGatewayService {
             return;
           }
           const devId = this.socketToDeviceId.get(ws) || authenticatedDeviceId;
-          await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, msg.payload.capabilities);
+          const now = Date.now();
+          const capabilities = JSON.stringify(msg.payload.capabilities || {});
+          const lastPersistence = this.lastHeartbeatPersistence.get(devId);
+          if (
+            !lastPersistence ||
+            now - lastPersistence.at >= 30_000 ||
+            capabilities !== lastPersistence.capabilities
+          ) {
+            await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, msg.payload.capabilities);
+            this.lastHeartbeatPersistence.set(devId, { at: now, capabilities });
+          }
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ event: 'server:heartbeat_ack', timestamp: Date.now() }));
           }
@@ -118,18 +136,6 @@ export class AndroidGatewayService {
             pending.resolve(msg.payload);
           }
 
-          // Forward live UI tree / screenshot to connected web clients
-          const deviceId = this.socketToDeviceId.get(ws);
-          if (deviceId) {
-            const device = await this.deviceService.getDeviceByHardwareId(deviceId);
-            if (device) {
-              this.broadcastToUser(device.user_id, 'device:perception_update', {
-                deviceId,
-                requestId: msg.requestId,
-                result: msg.payload,
-              });
-            }
-          }
           break;
 
         default:
@@ -155,6 +161,7 @@ export class AndroidGatewayService {
 
     Logger.info(`[AndroidGateway] Device disconnected: ${deviceId}`);
     this.deviceSockets.delete(deviceId);
+    this.lastHeartbeatPersistence.delete(deviceId);
 
     for (const [requestId, pending] of this.pendingRequests) {
       if (pending.deviceId !== deviceId) continue;
@@ -224,9 +231,8 @@ export class AndroidGatewayService {
 
       this.pendingRequests.set(requestId, { resolve, timeoutId, deviceId });
 
-      try {
-        ws.send(JSON.stringify(message));
-      } catch (err: any) {
+      const failSend = (err: Error) => {
+        if (!this.pendingRequests.has(requestId)) return;
         clearTimeout(timeoutId);
         this.pendingRequests.delete(requestId);
         resolve({
@@ -234,6 +240,13 @@ export class AndroidGatewayService {
           code: 'INTERNAL_ERROR',
           message: `Failed to send action over WebSocket: ${err.message}`,
         });
+      };
+      try {
+        ws.send(JSON.stringify(message), (err) => {
+          if (err) failSend(err);
+        });
+      } catch (err) {
+        failSend(err instanceof Error ? err : new Error(String(err)));
       }
     });
   }
@@ -280,6 +293,26 @@ export class AndroidGatewayService {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ event: 'server:cancel_action', requestId }));
       }
+    }
+  }
+
+  /**
+   * Tell the companion when a complete AI task starts/stops. The Android side
+   * uses this to keep the device awake between individual model actions.
+   */
+  setAutomationSession(deviceId: string, active: boolean) {
+    const ws = this.deviceSockets.get(deviceId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    const message: AndroidWsServerMessage = {
+      event: 'server:automation_session',
+      payload: { active },
+    };
+    try {
+      ws.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      Logger.warn(`[AndroidGateway] Failed to update automation session for ${deviceId}:`, error);
+      return false;
     }
   }
 }

@@ -11,11 +11,19 @@ import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfi
 import { AiProvider } from '@/entities/AiConfig';
 import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';
+import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
 config.platform = 'linux';
-config.compressThreshold = 100;
-config.compressTokensThreshold = 200000;
+// Eko defaults to 500 ReAct iterations. Mobile automation must always have a
+// small outer safety ceiling; each task also enforces its requested maxSteps.
+config.maxReactNum = 50;
+config.compressThreshold = 20;
+config.compressTokensThreshold = 60000;
+
+const MAX_CONSECUTIVE_FAILURES = 3;
+const MAX_IDENTICAL_TOOL_STATES = 3;
+const MAX_UNCHANGED_OBSERVATIONS = 3;
 
 const ANDROID_PLANNER_SYSTEM = `You are an expert autonomous AI Planner for Android mobile devices.
 
@@ -116,6 +124,7 @@ export class AndroidPlannerService {
     { cancelled: boolean; deviceId: string; eko?: Eko; ekoTaskId?: string }
   >();
   private activeDeviceTasks = new Map<string, number>();
+  private startingDevices = new Set<string>();
 
   constructor(
     private deviceService: AndroidDeviceService,
@@ -127,7 +136,7 @@ export class AndroidPlannerService {
    * Main autonomous reasoning loop for Android task execution powered by @eko-ai/eko.
    * Supports multi-turn conversational follow-ups by passing existingTaskId.
    */
-  async runTask(prompt: string, deviceId: number, userId: number, _maxSteps = 15, existingTaskId?: number): Promise<ApiResponse> {
+  async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 15, existingTaskId?: number): Promise<ApiResponse> {
     const aiConfig = await this.aiConfigService.resolveActiveConfig(userId);
     if (!aiConfig) {
       throw new AppError(
@@ -144,37 +153,52 @@ export class AndroidPlannerService {
     if (!this.gatewayService.isDeviceConnected(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is currently offline. Please open the companion app on the device.`, 400);
     }
-    if (this.activeDeviceTasks.has(device.device_id)) {
+    if (this.activeDeviceTasks.has(device.device_id) || this.startingDevices.has(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
     }
+    this.startingDevices.add(device.device_id);
 
-    const initialScreenshot = await this.assertDeviceReady(device.device_id, userId);
+    const boundedMaxSteps = Math.max(1, Math.min(maxSteps, 50));
+
+    // Wake the display before the first observation in case the device was idle.
+    this.gatewayService.setAutomationSession(device.device_id, true);
+    let initialScreenshot: string | undefined;
+    try {
+      initialScreenshot = await this.assertDeviceReady(device.device_id, userId);
+    } catch (error) {
+      this.startingDevices.delete(device.device_id);
+      throw error;
+    } finally {
+      // The bounded task session is acquired again below after its DB record exists.
+      this.gatewayService.setAutomationSession(device.device_id, false);
+    }
 
     let agentTask: AgentTask;
     let executionPrompt = prompt;
 
-    if (existingTaskId) {
-      const existing = await this.agentTaskRepo.findOne({ where: { id: existingTaskId, user_id: userId } });
-      if (existing) {
-        agentTask = existing;
-        agentTask.provider = aiConfig.provider;
-        agentTask.model = aiConfig.model;
-        agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
-        await this.agentTaskRepo.save(agentTask);
+    try {
+      if (existingTaskId) {
+        const existing = await this.agentTaskRepo.findOne({ where: { id: existingTaskId, user_id: userId } });
+        if (existing) {
+          agentTask = existing;
+          agentTask.provider = aiConfig.provider;
+          agentTask.model = aiConfig.model;
+          agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
+          await this.agentTaskRepo.save(agentTask);
 
-        const recentLogs = await this.taskLogRepo.find({
-          where: { agent_task_id: existingTaskId },
-          order: { step_index: 'ASC' },
-          take: 20,
-        });
+          const recentLogs = await this.taskLogRepo.find({
+            where: { agent_task_id: existingTaskId },
+            order: { step_index: 'ASC' },
+            take: 20,
+          });
 
-        const historySnippet = recentLogs.length
-          ? recentLogs
-              .map((l) => `- Step ${l.step_index} (${l.action_type}): ${l.thought_reasoning} -> Result: ${l.result_message || l.status}`)
-              .join('\n')
-          : 'No prior steps recorded.';
+          const historySnippet = recentLogs.length
+            ? recentLogs
+                .map((l) => `- Step ${l.step_index} (${l.action_type}): ${l.thought_reasoning} -> Result: ${l.result_message || l.status}`)
+                .join('\n')
+            : 'No prior steps recorded.';
 
-        executionPrompt = `Continue the existing mobile automation session.
+          executionPrompt = `Continue the existing mobile automation session.
 Original goal: ${existing.prompt}
 
 User follow-up instruction:
@@ -184,6 +208,19 @@ Recent steps executed:
 ${historySnippet}
 
 Use the current visible Android screen and UI state as context. Continue from where the previous actions left off. Accomplish the user follow-up instruction step-by-step.`;
+        } else {
+          agentTask = this.agentTaskRepo.create({
+            user_id: userId,
+            prompt,
+            provider: aiConfig.provider,
+            model: aiConfig.model,
+            success: false,
+            total_steps: 0,
+            total_duration_seconds: 0,
+            logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
+          });
+          await this.agentTaskRepo.save(agentTask);
+        }
       } else {
         agentTask = this.agentTaskRepo.create({
           user_id: userId,
@@ -197,37 +234,46 @@ Use the current visible Android screen and UI state as context. Continue from wh
         });
         await this.agentTaskRepo.save(agentTask);
       }
-    } else {
-      agentTask = this.agentTaskRepo.create({
-        user_id: userId,
-        prompt,
-        provider: aiConfig.provider,
-        model: aiConfig.model,
-        success: false,
-        total_steps: 0,
-        total_duration_seconds: 0,
-        logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
-      });
-      await this.agentTaskRepo.save(agentTask);
+    } catch (error) {
+      this.startingDevices.delete(device.device_id);
+      throw error;
     }
 
+    // Keep the device CPU/display active for the complete automation session,
+    // including the time spent waiting for the model between device actions.
+    this.gatewayService.setAutomationSession(device.device_id, true);
     this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id });
     this.activeDeviceTasks.set(device.device_id, agentTask.id);
+    this.startingDevices.delete(device.device_id);
     const startTime = Date.now();
 
-    // Notify web clients that task has begun and send initial screen frame
+    // Notify web clients that task has begun. The readiness observation already
+    // published the initial frame through device:screen_capture.
     this.gatewayService.broadcastToUser(userId, 'task:started', {
       taskId: agentTask.id,
       deviceId: device.id,
       prompt,
       model: aiConfig.model,
       provider: aiConfig.provider,
-      screenshot: initialScreenshot,
     });
 
     // Run the execution loop in the background
-    this.executeLoop(agentTask, device.device_id, userId, executionPrompt, startTime, aiConfig, initialScreenshot).catch((err) => {
+    this.executeLoop(
+      agentTask,
+      device.device_id,
+      userId,
+      executionPrompt,
+      boundedMaxSteps,
+      startTime,
+      aiConfig,
+      initialScreenshot,
+    ).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
+      this.gatewayService.setAutomationSession(device.device_id, false);
+      this.activeTasks.delete(agentTask.id);
+      if (this.activeDeviceTasks.get(device.device_id) === agentTask.id) {
+        this.activeDeviceTasks.delete(device.device_id);
+      }
     });
 
     return {
@@ -314,6 +360,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     hardwareDeviceId: string,
     userId: number,
     prompt: string,
+    maxSteps: number,
     startTime: number,
     aiConfig: DecryptedAiConfig,
     initialScreenshot?: string,
@@ -323,6 +370,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       order: { step_index: 'DESC' },
     });
     let stepCount = lastLog ? lastLog.step_index : 0;
+    let runStepCount = 0;
     let stepStartTime = Date.now();
     let wasCancelled = false;
     let currentThought = '';
@@ -331,10 +379,30 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let lastUiTree: string | undefined;
     let lastForegroundApp: string | undefined;
     let finalMessage = '';
+    let guardStopReason: string | undefined;
+    let consecutiveFailures = 0;
+    let lastToolStateSignature: string | undefined;
+    let identicalToolStateCount = 0;
+    let lastObservationFingerprint: string | undefined;
+    let unchangedObservationCount = 0;
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
     const ekoTaskId = `android-task-${agentTask.id}`;
+
+    let eko: Eko | undefined;
+    const stopForSafety = (reason: string) => {
+      if (guardStopReason) return;
+      guardStopReason = reason;
+      if (eko) {
+        try {
+          eko.abortTask(ekoTaskId, reason);
+        } catch (error) {
+          Logger.warn(`[AndroidPlanner] Failed to stop guarded task ${ekoTaskId}:`, error);
+        }
+      }
+      this.gatewayService.cancelDeviceActions(hardwareDeviceId);
+    };
 
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
       onStepExecuted: (info) => {
@@ -347,10 +415,27 @@ Use the current visible Android screen and UI state as context. Continue from wh
         }
         if (info.uiTree) lastUiTree = info.uiTree;
         if (info.foregroundApp) lastForegroundApp = info.foregroundApp;
+
+        if (info.uiTree || info.screenshotBase64) {
+          const observationFingerprint = this.fingerprintObservation(
+            info.foregroundApp,
+            info.uiTree,
+            info.screenshotBase64,
+          );
+          if (observationFingerprint === lastObservationFingerprint) {
+            unchangedObservationCount += 1;
+          } else {
+            unchangedObservationCount = 0;
+          }
+          lastObservationFingerprint = observationFingerprint;
+          if (unchangedObservationCount >= MAX_UNCHANGED_OBSERVATIONS) {
+            stopForSafety('The visible device state did not change after repeated agent actions.');
+          }
+        }
       },
     });
 
-    const eko = new Eko({
+    const ekoInstance = new Eko({
       llms: this.buildEkoLlms(aiConfig),
       agents: [androidAgent],
       callback: {
@@ -365,20 +450,45 @@ Use the current visible Android screen and UI state as context. Continue from wh
               currentThought = (currentThought ? `${currentThought} ${message.text}` : message.text).trim();
             }
           } else if (message.type === 'tool_use') {
+            if (runStepCount >= maxSteps) {
+              const reason = `Task stopped after reaching the ${maxSteps}-step limit.`;
+              stopForSafety(reason);
+              throw new Error(reason);
+            }
+
             stepCount++;
+            runStepCount++;
             stepStartTime = Date.now();
             const toolName = message.toolName;
             const toolParams = message.params || {};
+            const persistedToolParams =
+              toolName === 'type_text' && 'text' in toolParams
+                ? { ...toolParams, text: '[REDACTED]' }
+                : toolParams;
+            const stateFingerprint = this.fingerprintObservation(lastForegroundApp, lastUiTree, lastScreenshot);
+            const toolStateSignature = this.hashText(
+              `${toolName}\n${JSON.stringify(toolParams)}\n${stateFingerprint}`,
+            );
+            if (toolStateSignature === lastToolStateSignature) {
+              identicalToolStateCount += 1;
+            } else {
+              identicalToolStateCount = 0;
+            }
+            lastToolStateSignature = toolStateSignature;
+            if (identicalToolStateCount >= MAX_IDENTICAL_TOOL_STATES) {
+              const reason = `Task stopped because ${toolName} was repeated on the same unchanged screen.`;
+              stopForSafety(reason);
+              throw new Error(reason);
+            }
 
             currentTaskLog = this.taskLogRepo.create({
               agent_task_id: agentTask.id,
               device_id: deviceDbId,
               step_index: stepCount,
               action_type: toolName,
-              action_payload: toolParams,
+              action_payload: persistedToolParams,
               thought_reasoning: currentThought || `Executing ${toolName}`,
               status: AndroidStepStatus.EXECUTING,
-              screenshot_base64: lastScreenshot,
               ui_tree_snapshot: lastUiTree,
             });
             await this.taskLogRepo.save(currentTaskLog);
@@ -388,7 +498,6 @@ Use the current visible Android screen and UI state as context. Continue from wh
               stepIndex: stepCount,
               thought: currentThought || `Executing ${toolName}`,
               action: { type: toolName, ...toolParams },
-              screenshot: lastScreenshot,
               foregroundApp: lastForegroundApp,
             });
 
@@ -399,11 +508,15 @@ Use the current visible Android screen and UI state as context. Continue from wh
             const textPart = toolResult?.content?.find((c) => c.type === 'text');
             const textContent = (textPart && 'text' in textPart ? textPart.text : '') || '';
 
+            consecutiveFailures = isError ? consecutiveFailures + 1 : 0;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              stopForSafety(`Task stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive device action failures.`);
+            }
+
             if (currentTaskLog) {
               currentTaskLog.status = isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS;
               currentTaskLog.result_message = textContent;
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
-              currentTaskLog.screenshot_base64 = lastScreenshot || currentTaskLog.screenshot_base64;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
               await this.taskLogRepo.save(currentTaskLog);
             }
@@ -414,7 +527,6 @@ Use the current visible Android screen and UI state as context. Continue from wh
               status: isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS,
               result: textContent,
               error: isError ? textContent : undefined,
-              screenshot: lastScreenshot,
               foregroundApp: lastForegroundApp,
             });
           } else if (message.type === 'agent_result') {
@@ -423,16 +535,38 @@ Use the current visible Android screen and UI state as context. Continue from wh
         },
       },
     });
+    eko = ekoInstance;
 
     const activeTaskEntry = this.activeTasks.get(agentTask.id);
     if (activeTaskEntry) {
-      activeTaskEntry.eko = eko;
+      activeTaskEntry.eko = ekoInstance;
       activeTaskEntry.ekoTaskId = ekoTaskId;
     }
 
+    const maxTaskDurationMillis = Math.min(
+      10 * 60_000,
+      Math.max(2 * 60_000, maxSteps * 30_000),
+    );
+    let rejectTaskTimeout: ((error: Error) => void) | undefined;
+    const taskTimeout = setTimeout(() => {
+      const reason = `Task stopped after exceeding ${Math.round(maxTaskDurationMillis / 1000)} seconds.`;
+      stopForSafety(reason);
+      rejectTaskTimeout?.(new Error(reason));
+    }, maxTaskDurationMillis);
+
     try {
-      const result = await eko.run(prompt, ekoTaskId);
-      const isSuccess = !wasCancelled && result?.success !== false;
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        rejectTaskTimeout = reject;
+      });
+      const result = await Promise.race([ekoInstance.run(prompt, ekoTaskId), timeoutPromise]);
+      const terminalAgentResult = (finalMessage || result.result || '').trim();
+      const agentFinished = terminalAgentResult.toLowerCase() !== 'unfinished';
+      const isSuccess =
+        !wasCancelled &&
+        !guardStopReason &&
+        agentFinished &&
+        result.success &&
+        result.stopReason === 'done';
 
       // Final live screenshot capture to reflect exact terminal screen state
       try {
@@ -449,7 +583,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
       }
 
       agentTask.success = isSuccess;
-      agentTask.message = finalMessage || (isSuccess ? 'Goal accomplished successfully' : 'Task completed with errors');
+      agentTask.message =
+        guardStopReason ||
+        (!agentFinished ? 'Task stopped before the agent confirmed completion.' : undefined) ||
+        terminalAgentResult ||
+        (isSuccess ? 'Goal accomplished successfully' : 'Task completed with errors');
       agentTask.total_steps = stepCount;
       agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
       await this.agentTaskRepo.save(agentTask);
@@ -460,7 +598,6 @@ Use the current visible Android screen and UI state as context. Continue from wh
           success: agentTask.success,
           message: agentTask.message,
           totalSteps: stepCount,
-          screenshot: lastScreenshot,
         });
       }
     } catch (err: any) {
@@ -469,18 +606,38 @@ Use the current visible Android screen and UI state as context. Continue from wh
       } else {
         Logger.error(`[AndroidPlanner] Error during Eko task loop:`, err);
         agentTask.success = false;
-        agentTask.message = err.message || 'Task failed with internal error';
+        agentTask.message = guardStopReason || err.message || 'Task failed with internal error';
         agentTask.total_steps = stepCount;
         agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
         await this.agentTaskRepo.save(agentTask);
         this.gatewayService.broadcastToUser(userId, 'task:error', { taskId: agentTask.id, error: err.message });
       }
     } finally {
+      clearTimeout(taskTimeout);
+      try {
+        ekoInstance.deleteTask(ekoTaskId);
+      } catch (error) {
+        Logger.warn(`[AndroidPlanner] Failed to release Eko task ${ekoTaskId}:`, error);
+      }
+      this.gatewayService.setAutomationSession(hardwareDeviceId, false);
       this.activeTasks.delete(agentTask.id);
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
         this.activeDeviceTasks.delete(hardwareDeviceId);
       }
     }
+  }
+
+  private hashText(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
+  }
+
+  private fingerprintObservation(foregroundApp?: string, uiTree?: string, screenshotBase64?: string): string {
+    // Hash only a small prefix/suffix of the image. This detects repeated frames
+    // without retaining or repeatedly hashing a multi-megabyte base64 payload.
+    const imageSample = screenshotBase64
+      ? `${screenshotBase64.slice(0, 2048)}:${screenshotBase64.slice(-2048)}`
+      : '';
+    return this.hashText(`${foregroundApp || ''}\n${uiTree || ''}\n${imageSample}`);
   }
 
   private isActionablePrompt(prompt: string): boolean {
@@ -491,10 +648,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
   }
 
   private async assertDeviceReady(hardwareDeviceId: string, userId?: number): Promise<string | undefined> {
-    const [treeResult, captureResult] = await Promise.all([
-      this.gatewayService.executeAction(hardwareDeviceId, { type: 'ReadUiTree' }),
-      this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' }),
-    ]);
+    const observation = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ObserveScreen' });
+    const treeResult = observation;
+    const captureResult = observation;
 
     if (treeResult.status !== 'SUCCESS') {
       const detail = treeResult.status === 'FAILURE' ? treeResult.message : 'UI inspection was cancelled';
@@ -507,7 +663,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     if (captureResult.status !== 'SUCCESS' || !captureResult.screenCapture?.base64Data) {
       const detail = captureResult.status === 'FAILURE' ? captureResult.message : 'No screen frame was returned';
       throw new AppError(
-        `Screen capture is not ready on the Android device. Open Android Automation, tap "Enable screen capture", approve Android's prompt, then try again. ${detail}`,
+        `Screen capture is not ready on the Android device. Open Android Automation and verify Accessibility is enabled. On Android 10 or older, also enable screen capture. ${detail}`,
         400,
       );
     }
@@ -523,4 +679,3 @@ Use the current visible Android screen and UI state as context. Continue from wh
     return base64;
   }
 }
-

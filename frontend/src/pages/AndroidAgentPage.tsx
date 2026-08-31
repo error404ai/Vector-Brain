@@ -557,7 +557,7 @@ export function AndroidAgentPage() {
               >
                 {latestScreenshot ? (
                   <img
-                    src={`data:image/png;base64,${latestScreenshot}`}
+                    src={`data:image/jpeg;base64,${latestScreenshot}`}
                     alt="Android Live Stream"
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   />

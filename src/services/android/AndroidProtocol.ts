@@ -13,8 +13,10 @@ export type AutomationAction =
   | { type: 'Swipe'; direction: SwipeDirection; durationMillis?: number }
   | { type: 'Global'; action: GlobalAction }
   | { type: 'Wait'; durationMillis: number }
+  | { type: 'WaitForNode'; nodePath?: string; viewId?: string; text?: string; timeoutMillis?: number }
   | { type: 'ReadUiTree' }
-  | { type: 'CaptureScreen' };
+  | { type: 'CaptureScreen' }
+  | { type: 'ObserveScreen' };
 
 export interface NodeBounds {
   left: number;
@@ -139,4 +141,10 @@ export type AndroidWsServerMessage =
   | {
       event: 'server:cancel_action';
       requestId?: string;
+    }
+  | {
+      event: 'server:automation_session';
+      payload: {
+        active: boolean;
+      };
     };
