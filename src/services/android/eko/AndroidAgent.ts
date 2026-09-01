@@ -383,7 +383,10 @@ export class AndroidAgent extends Agent {
 Your goal is to accomplish the user's task step-by-step using available tools.
 
 WORKFLOW:
-1. Call read_ui_tree to see the current screen elements with their CENTER COORDINATES.
+1. Call read_ui_tree ONLY on your very first turn or after global_action/open_app/open_url.
+   Every other action's result already includes "UPDATED SCREEN ELEMENTS" — use that
+   directly instead of calling read_ui_tree again. Redundant read_ui_tree calls waste
+   time and steps.
 2. Use tap_coordinate with the center X,Y coordinates shown in the UI tree to tap elements.
 3. For text input: first tap the input field using tap_coordinate, then use type_text.
 4. Use open_app to launch apps, open_url to open websites directly.
