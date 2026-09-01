@@ -72,7 +72,15 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 - Include explicit wait times after each navigation
 - Include handling of any popups or overlays
 - Include scroll steps if content is below the fold
-
+### STOPPING EARLY (important):
+- The nodes are a guide, NOT a checklist that must be exhausted. The moment
+  enough information exists to fully answer the user's question, STOP and
+  present the answer — skip all remaining nodes.
+- Do not open a "second source to cross-check" unless the first source was
+  ambiguous or contradictory. One good source is usually enough.
+- If a summary or TL;DR section already answers the question, that IS the
+  answer — do not scroll further looking for a longer version of it.
+  
 ## Agent list
 {{agents}}
 
