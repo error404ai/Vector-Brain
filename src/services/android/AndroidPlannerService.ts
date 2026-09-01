@@ -538,6 +538,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
                   // Genuine incremental delta or first chunk.
                   currentThought = currentThought ? `${currentThought} ${incoming}`.trim() : incoming;
                 }
+                currentThought = this.collapseRepeatingLoop(currentThought);
                 if (currentThought.length > MAX_THOUGHT_CHARS) {
                   currentThought = currentThought.slice(-MAX_THOUGHT_CHARS);
                 }
@@ -720,7 +721,29 @@ Use the current visible Android screen and UI state as context. Continue from wh
       }
     }
   }
+  private collapseRepeatingLoop(text: string, maxRepeats = 2): string {
+    const words = text.split(/\s+/);
+    if (words.length < 20) return text;
 
+    for (let winSize = 25; winSize >= 4; winSize--) {
+      for (let start = 0; start + winSize * (maxRepeats + 1) <= words.length; start++) {
+        const window = words.slice(start, start + winSize).join(' ');
+        let repeats = 1;
+        let pos = start + winSize;
+        while (
+          pos + winSize <= words.length &&
+          words.slice(pos, pos + winSize).join(' ') === window
+        ) {
+          repeats++;
+          pos += winSize;
+        }
+        if (repeats > maxRepeats) {
+          return words.slice(0, start + winSize).join(' ');
+        }
+      }
+    }
+    return text;
+  }
   private hashText(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');
   }
