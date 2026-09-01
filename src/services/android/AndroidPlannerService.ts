@@ -72,6 +72,7 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 - Include explicit wait times after each navigation
 - Include handling of any popups or overlays
 - Include scroll steps if content is below the fold
+
 ### STOPPING EARLY (important):
 - The nodes are a guide, NOT a checklist that must be exhausted. The moment
   enough information exists to fully answer the user's question, STOP and
