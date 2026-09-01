@@ -24,7 +24,8 @@ config.compressTokensThreshold = 60000;
 const MAX_CONSECUTIVE_FAILURES = 6;
 const MAX_IDENTICAL_TOOL_STATES = 3;
 const MAX_UNCHANGED_OBSERVATIONS = 3;
-
+const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
+const MAX_HISTORY_THOUGHT_CHARS = 200; // cap per-step thought when building follow-up context
 
 const ANDROID_PLANNER_SYSTEM = `You are an expert autonomous AI Planner for Android mobile devices.
 
@@ -266,9 +267,12 @@ export class AndroidPlannerService {
             take: 20,
           });
 
-          const historySnippet = recentLogs.length
+                    const historySnippet = recentLogs.length
             ? recentLogs
-                .map((l) => `- Step ${l.step_index} (${l.action_type}): ${l.thought_reasoning} -> Result: ${l.result_message || l.status}`)
+                .map((l) => {
+                  const thought = (l.thought_reasoning || '').slice(0, MAX_HISTORY_THOUGHT_CHARS);
+                  return `- Step ${l.step_index} (${l.action_type}): ${thought} -> Result: ${l.result_message || l.status}`;
+                })
                 .join('\n')
             : 'No prior steps recorded.';
 
@@ -519,9 +523,25 @@ Use the current visible Android screen and UI state as context. Continue from wh
             return;
           }
 
-          if (message.type === 'thinking' || message.type === 'text') {
+                    if (message.type === 'thinking' || message.type === 'text') {
             if (message.text) {
-              currentThought = (currentThought ? `${currentThought} ${message.text}` : message.text).trim();
+              const incoming = message.text.trim();
+              if (incoming) {
+                if (currentThought && incoming.startsWith(currentThought)) {
+                  // Provider re-sent the full cumulative reasoning-so-far (common
+                  // with DeepSeek/Eko streaming). Replace instead of appending,
+                  // or we get exponential duplication.
+                  currentThought = incoming;
+                } else if (currentThought && currentThought.includes(incoming)) {
+                  // Duplicate/no-new-content chunk — ignore it.
+                } else {
+                  // Genuine incremental delta or first chunk.
+                  currentThought = currentThought ? `${currentThought} ${incoming}`.trim() : incoming;
+                }
+                if (currentThought.length > MAX_THOUGHT_CHARS) {
+                  currentThought = currentThought.slice(-MAX_THOUGHT_CHARS);
+                }
+              }
             }
           } else if (message.type === 'tool_use') {
             if (runStepCount >= maxSteps) {
