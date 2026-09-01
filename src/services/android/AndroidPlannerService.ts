@@ -21,7 +21,7 @@ config.maxReactNum = 50;
 config.compressThreshold = 20;
 config.compressTokensThreshold = 60000;
 
-const MAX_CONSECUTIVE_FAILURES = 3;
+const MAX_CONSECUTIVE_FAILURES = 6;
 const MAX_IDENTICAL_TOOL_STATES = 3;
 const MAX_UNCHANGED_OBSERVATIONS = 3;
 
@@ -186,6 +186,7 @@ Output result:
 </root>
 `;
 
+global.prompts.set(GlobalPromptKey.planner_system, ANDROID_PLANNER_SYSTEM);
 global.prompts.set(GlobalPromptKey.planner_example, ANDROID_PLANNER_EXAMPLES);
 
 @Service()
@@ -209,7 +210,7 @@ export class AndroidPlannerService {
    * Main autonomous reasoning loop for Android task execution powered by @eko-ai/eko.
    * Supports multi-turn conversational follow-ups by passing existingTaskId.
    */
-  async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 15, existingTaskId?: number): Promise<ApiResponse> {
+  async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 40, existingTaskId?: number): Promise<ApiResponse> {
     const aiConfig = await this.aiConfigService.resolveActiveConfig(userId);
     if (!aiConfig) {
       throw new AppError(
