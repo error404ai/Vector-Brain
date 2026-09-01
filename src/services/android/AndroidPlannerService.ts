@@ -542,6 +542,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
                 } else {
                   updated = bufferValue ? `${bufferValue} ${incoming}`.trim() : incoming;
                 }
+                updated = this.collapseGrowingResends(updated);
                 updated = this.collapseRepeatingLoop(updated);
                 if (updated.length > MAX_THOUGHT_CHARS) {
                   updated = updated.slice(-MAX_THOUGHT_CHARS);
@@ -756,6 +757,30 @@ Use the current visible Android screen and UI state as context. Continue from wh
     }
     return text;
   }
+
+  private collapseGrowingResends(text: string, anchorLen = 6, maxGapWords = 400): string {
+    const words = text.split(/\s+/);
+    if (words.length < anchorLen * 2) return text;
+
+    const lastSeen = new Map<string, number>();
+    let dropStart = -1;
+    let dropEnd = -1;
+
+    for (let i = 0; i + anchorLen <= words.length; i++) {
+      const key = words.slice(i, i + anchorLen).join(' ').toLowerCase();
+      const prev = lastSeen.get(key);
+      if (prev !== undefined && i - prev <= maxGapWords) {
+        if (dropStart === -1 || prev < dropStart) dropStart = prev;
+        dropEnd = Math.max(dropEnd, i);
+      }
+      lastSeen.set(key, i);
+    }
+
+    if (dropStart === -1) return text;
+    const kept = [...words.slice(0, dropStart), ...words.slice(dropEnd)];
+    return kept.join(' ');
+  }
+
   private hashText(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');
   }
