@@ -64,6 +64,29 @@ interface ApiMutationError {
   data?: { message?: string };
 }
 
+// Approximate USD price per 1M tokens. Adjust to match your provider's actual rates.
+const MODEL_PRICING: Record<string, { in: number; out: number }> = {
+  'deepseek-v4-flash': { in: 0.28, out: 0.42 },
+  'gemini-2.5-flash': { in: 0.3, out: 2.5 },
+  'qwen3.7-flash': { in: 0.2, out: 0.6 },
+  'nemotron-3.5-lightning': { in: 0.1, out: 0.3 },
+  'minimax-m3': { in: 0.2, out: 0.6 },
+  default: { in: 0.3, out: 1.0 },
+};
+
+const priceFor = (model?: string): { in: number; out: number } => {
+  if (!model) return MODEL_PRICING.default;
+  if (model.includes(':free')) return { in: 0, out: 0 };
+  const key = Object.keys(MODEL_PRICING).find((k) => k !== 'default' && model.includes(k));
+  return key ? MODEL_PRICING[key] : MODEL_PRICING.default;
+};
+
+// Rough char-per-token ratio used for the live estimate.
+const CHARS_PER_TOKEN = 4;
+// Approximate size of the constant part of every request (system prompt + tool schemas).
+const BASE_PROMPT_CHARS = 4000;
+
+
 export function AndroidAgentPage() {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -82,6 +105,10 @@ export function AndroidAgentPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
 
+  // Live token / cost estimation for the current session
+  const [tokenStats, setTokenStats] = useState({ promptTokens: 0, completionTokens: 0 });
+  const contextCharsRef = useRef(0);
+
   // Conversational Chat Messages List (BrowserWorker Style)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -99,6 +126,15 @@ export function AndroidAgentPage() {
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
   const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
+
+  // Derived live usage estimate
+  const usageEstimate = useMemo(() => {
+    const totalTokens = tokenStats.promptTokens + tokenStats.completionTokens;
+    const price = priceFor(activeAiConfig?.model);
+    const cost =
+      (tokenStats.promptTokens / 1_000_000) * price.in + (tokenStats.completionTokens / 1_000_000) * price.out;
+    return { totalTokens, cost };
+  }, [tokenStats, activeAiConfig?.model]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -125,6 +161,16 @@ export function AndroidAgentPage() {
           if (capture) setLatestScreenshot(capture);
         } else if (msg.event === 'task:step') {
           const step = msg.payload;
+
+          // Estimate tokens: every step re-sends the accumulated context to the model.
+          const promptChars = BASE_PROMPT_CHARS + contextCharsRef.current;
+          const thoughtLen = typeof step.thought === 'string' ? step.thought.length : 0;
+          contextCharsRef.current += thoughtLen;
+          setTokenStats((prev) => ({
+            promptTokens: prev.promptTokens + Math.round(promptChars / CHARS_PER_TOKEN),
+            completionTokens: prev.completionTokens + Math.round(thoughtLen / CHARS_PER_TOKEN),
+          }));
+
           if (step.screenshot) {
             setLatestScreenshot(step.screenshot);
           }
@@ -163,6 +209,10 @@ export function AndroidAgentPage() {
           });
         } else if (msg.event === 'task:step_result') {
           const result = msg.payload;
+
+          // The tool result text becomes part of the context for every later step.
+          contextCharsRef.current += typeof result.result === 'string' ? result.result.length : 0;
+
           if (result.screenshot) {
             setLatestScreenshot(result.screenshot);
           }
@@ -382,6 +432,8 @@ export function AndroidAgentPage() {
     }
     setMessages([]);
     setActiveTaskId(null);
+    setTokenStats({ promptTokens: 0, completionTokens: 0 });
+    contextCharsRef.current = 0;
     toast.success('Conversation cleared');
   };
 
@@ -467,6 +519,17 @@ export function AndroidAgentPage() {
                   variant="outlined"
                   onClick={() => navigate('/settings')}
                   sx={{ fontWeight: 700, cursor: 'pointer', height: 28 }}
+                />
+              )}
+
+              {usageEstimate.totalTokens > 0 && (
+                <Chip
+                  label={`≈ ${(usageEstimate.totalTokens / 1000).toFixed(1)}K tok · $${usageEstimate.cost.toFixed(3)}`}
+                  size="small"
+                  variant="outlined"
+                  color={isRunning ? 'warning' : 'default'}
+                  title={`Estimated usage — prompt: ${tokenStats.promptTokens.toLocaleString()} tokens, completion: ${tokenStats.completionTokens.toLocaleString()} tokens`}
+                  sx={{ fontWeight: 700, height: 28, fontVariantNumeric: 'tabular-nums' }}
                 />
               )}
 
