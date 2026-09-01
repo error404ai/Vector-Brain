@@ -571,6 +571,6 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     };
 
     traverse(node);
-    return lines.slice(0, 80).join('\n');
+    return lines.slice(0, 60).join('\n');
   }
 }
