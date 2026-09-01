@@ -220,7 +220,7 @@ export class AndroidAgent extends Agent {
           // Block excessive scrolling
           const scrollKey = `scroll_${args.direction}`;
           const recentScrolls = this.actionHistory.filter(a => a === scrollKey).length;
-          if (recentScrolls >= 4) {
+          if (recentScrolls >= 8) {
             return {
               content: [{ type: 'text', text: `Blocked: Scrolled ${recentScrolls} times in same direction. Stop scrolling and work with visible elements or try a different approach.` }],
               isError: true,
@@ -397,12 +397,17 @@ WORKFLOW:
 CRITICAL RULES:
 - ALWAYS use tap_coordinate with center coordinates from read_ui_tree - this is the PRIMARY way to click.
 - NEVER repeat the same tap coordinate more than 2 times - try a different approach.
-- NEVER scroll in the same direction more than 3 times - work with visible elements.
+- Avoid scrolling in the same direction more than 7 times in a row - if content
+  still isn't found, try a different approach instead of scrolling further.
 - If tap_coordinate fails, try click_node with the element's visible text as fallback.
 - After typing text, always tap the search/submit button to execute.
 - For research tasks: visit multiple sources, read content from each, summarize at the end.
 - Only mark task complete when ALL requested information has been collected.
-
+- Do NOT call task_snapshot as a routine checkpoint. It is expensive, adds no
+  new information, and never advances the task. Call it at most ONCE per task,
+  and only if you are genuinely about to lose important context.
+- If you already have enough information to answer the user's question, STOP
+  and give the answer immediately instead of gathering more.
 UI TREE FORMAT:
 Each element shows: [index] type "text" [actions] center:(X,Y)
 Example: [5] input "Search Google" [tap,edit] center:(540,450)
