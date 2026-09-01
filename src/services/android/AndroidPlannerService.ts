@@ -452,6 +452,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let stepStartTime = Date.now();
     let wasCancelled = false;
     let currentThought = '';
+    let thinkingBuffer = '';
+    let textBuffer = '';
     let currentTaskLog: AndroidTaskLog | null = null;
     let lastScreenshot: string | undefined = initialScreenshot;
     let lastUiTree: string | undefined;
@@ -523,25 +525,33 @@ Use the current visible Android screen and UI state as context. Continue from wh
             return;
           }
 
-                    if (message.type === 'thinking' || message.type === 'text') {
+                              if (message.type === 'thinking' || message.type === 'text') {
             if (message.text) {
               const incoming = message.text.trim();
               if (incoming) {
-                if (currentThought && incoming.startsWith(currentThought)) {
-                  // Provider re-sent the full cumulative reasoning-so-far (common
-                  // with DeepSeek/Eko streaming). Replace instead of appending,
-                  // or we get exponential duplication.
-                  currentThought = incoming;
-                } else if (currentThought && currentThought.includes(incoming)) {
-                  // Duplicate/no-new-content chunk — ignore it.
+                // Track "thinking" and "text" as independent cumulative streams —
+                // some providers stream each separately, and merging them into one
+                // buffer causes cross-stream interleaving/duplication.
+                const isThinking = message.type === 'thinking';
+                const bufferValue = isThinking ? thinkingBuffer : textBuffer;
+                let updated: string;
+                if (bufferValue && incoming.startsWith(bufferValue)) {
+                  updated = incoming;
+                } else if (bufferValue && bufferValue.includes(incoming)) {
+                  updated = bufferValue;
                 } else {
-                  // Genuine incremental delta or first chunk.
-                  currentThought = currentThought ? `${currentThought} ${incoming}`.trim() : incoming;
+                  updated = bufferValue ? `${bufferValue} ${incoming}`.trim() : incoming;
                 }
-                currentThought = this.collapseRepeatingLoop(currentThought);
-                if (currentThought.length > MAX_THOUGHT_CHARS) {
-                  currentThought = currentThought.slice(-MAX_THOUGHT_CHARS);
+                updated = this.collapseRepeatingLoop(updated);
+                if (updated.length > MAX_THOUGHT_CHARS) {
+                  updated = updated.slice(-MAX_THOUGHT_CHARS);
                 }
+                if (isThinking) {
+                  thinkingBuffer = updated;
+                } else {
+                  textBuffer = updated;
+                }
+                currentThought = [thinkingBuffer, textBuffer].filter(Boolean).join(' ').trim();
               }
             }
           } else if (message.type === 'tool_use') {
@@ -597,6 +607,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
             });
 
             currentThought = '';
+            thinkingBuffer = '';
+            textBuffer = '';
           } else if (message.type === 'tool_result') {
             const toolResult = message.toolResult;
             const isError = toolResult?.isError;
