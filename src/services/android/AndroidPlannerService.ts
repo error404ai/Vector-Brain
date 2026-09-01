@@ -51,8 +51,22 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 - "Deep research" = minimum 5 different sources
 
 ### For SEARCH tasks:
-- Include: tap search box → type query → tap search button → wait for results → identify correct result → tap it
+- ALWAYS prefer open_url over manually tapping the address bar. Chrome may
+  resume on a previously opened page, and its address bar is not always a
+  reliable, easy-to-find tap target in the UI tree in that state.
+- For Google searches specifically, plan a node like: "Use open_url to
+  navigate directly to https://www.google.com/search?q=<url-encoded-query>"
+  — this skips the address bar entirely and lands straight on results.
+- Include: wait for results → identify correct result → tap it
 - Never combine "search and open result" into one node — split them
+
+### For multi-item lists (search results, article listings):
+- When identifying "top N" items from a scrollable list, note down each
+  item's title and source THE FIRST TIME it's seen — do not rely on
+  re-finding the same item after scrolling, since list positions shift.
+- If an item can't be relocated after scrolling, treat it as already
+  identified from the earlier observation rather than re-scrolling
+  repeatedly to visually re-confirm it.
 
 ### For NAVIGATION tasks:
 - Include explicit wait times after each navigation
