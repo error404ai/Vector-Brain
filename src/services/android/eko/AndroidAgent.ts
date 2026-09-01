@@ -436,8 +436,11 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       this.lastFailedAction = '';
     }
 
-    // Automatically capture updated screen frame and UI tree after each interaction
+        // Automatically capture updated screen frame and UI tree after each interaction.
+    // Skip for pure wait actions — the screen state is captured by the next real action.
+    const skipObservation = action.type === 'Wait';
     try {
+      if (skipObservation) throw new Error('skip');
       const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
       if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
         this.lastScreenshotBase64 = observation.screenCapture.base64Data;
@@ -474,19 +477,13 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
         : `Action succeeded: ${summary}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`,
     };
 
-    const content: ToolResult['content'] = this.lastScreenshotBase64
-      ? [
-          textPart,
-          {
-            type: 'image' as const,
-            data: this.lastScreenshotBase64,
-            mimeType: 'image/jpeg',
-          },
-        ]
-      : [textPart];
-
+        // Screenshot is intentionally NOT attached to regular action results.
+    // The text UI tree already contains everything needed (elements + center
+    // coordinates). Images on every step multiply tokens/latency/cost.
+    // The model can call read_ui_tree or capture_screen whenever it
+    // genuinely needs visual context.
     return {
-      content,
+      content: [textPart],
       isError,
     };
   }
