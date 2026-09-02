@@ -36,6 +36,26 @@ export interface AndroidTaskLog {
   created_at: string;
 }
 
+export interface AndroidAgentTask {
+  id: number;
+  device_id?: number | null;
+  prompt: string;
+  provider?: string;
+  model?: string;
+  success: boolean;
+  message?: string;
+  total_steps: number;
+  total_duration_seconds: number;
+  is_running?: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface ListAndroidTasksParams {
+  deviceId?: number;
+  limit?: number;
+}
+
 export interface RequestPairingPayload {
   device_name: string;
   device_model?: string;
@@ -110,6 +130,27 @@ const androidApi = baseApi.injectEndpoints({
         method: 'GET',
       }),
     }),
+
+    getAndroidTasks: builder.query<{ message: string; data: AndroidAgentTask[] }, ListAndroidTasksParams | void>({
+      query: (params) => {
+        const search = new URLSearchParams();
+        if (params?.deviceId !== undefined) search.set('deviceId', String(params.deviceId));
+        if (params?.limit !== undefined) search.set('limit', String(params.limit));
+        const qs = search.toString();
+        return {
+          url: qs ? `/android/agent/tasks?${qs}` : '/android/agent/tasks',
+          method: 'GET',
+        };
+      },
+      providesTags: ['AGENT_TASKS' as any],
+    }),
+
+    getActiveAndroidTask: builder.query<{ message: string; data: AndroidAgentTask | null }, number | void>({
+      query: (deviceId) => ({
+        url: deviceId !== undefined ? `/android/agent/active?deviceId=${deviceId}` : '/android/agent/active',
+        method: 'GET',
+      }),
+    }),
   }),
 });
 
@@ -122,6 +163,10 @@ export const {
   useCancelAndroidTaskMutation,
   useGetAndroidTaskLogsQuery,
   useLazyGetAndroidTaskLogsQuery,
+  useGetAndroidTasksQuery,
+  useLazyGetAndroidTasksQuery,
+  useGetActiveAndroidTaskQuery,
+  useLazyGetActiveAndroidTaskQuery,
 } = androidApi;
 
 export default androidApi;
