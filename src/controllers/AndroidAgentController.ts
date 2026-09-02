@@ -5,7 +5,7 @@ import { AppDataSource } from '@/loaders/database';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
 import { DispatchAndroidPromptValidation } from '@/validations/AndroidDeviceValidation';
-import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -39,6 +39,81 @@ export class AndroidAgentController {
   }
 
   /**
+   * List recent Android automation tasks for the current user.
+   * Optionally filtered by device, so each device can show its own history.
+   */
+  @Get('/tasks')
+  async listTasks(
+    @CurrentUser({ required: true }) user: { userId: number },
+    @QueryParam('deviceId') deviceId?: number,
+    @QueryParam('limit') limit?: number,
+  ) {
+    const take = Math.max(1, Math.min(Number(limit) || 30, 100));
+
+    const where: { user_id: number; device_id?: number } = { user_id: user.userId };
+    if (deviceId !== undefined && deviceId !== null && !Number.isNaN(Number(deviceId))) {
+      where.device_id = Number(deviceId);
+    }
+
+    const tasks = await this.agentTaskRepo.find({
+      where,
+      order: { created_at: 'DESC' },
+      take,
+      select: {
+        id: true,
+        device_id: true,
+        prompt: true,
+        provider: true,
+        model: true,
+        success: true,
+        message: true,
+        total_steps: true,
+        total_duration_seconds: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+
+    const runningTaskIds = this.plannerService.getActiveTaskIds();
+
+    return {
+      message: 'Android tasks retrieved successfully',
+      data: tasks.map((task) => ({
+        ...task,
+        is_running: runningTaskIds.includes(task.id),
+      })),
+    };
+  }
+
+  /**
+   * Get the task currently running on a device, if any.
+   * Used by the UI to re-attach to a live session after a page reload.
+   */
+  @Get('/active')
+  async getActiveTask(
+    @CurrentUser({ required: true }) user: { userId: number },
+    @QueryParam('deviceId') deviceId?: number,
+  ) {
+    const parsedDeviceId =
+      deviceId !== undefined && deviceId !== null && !Number.isNaN(Number(deviceId)) ? Number(deviceId) : undefined;
+    const taskId = this.plannerService.getActiveTaskIdForDevice(parsedDeviceId);
+
+    if (!taskId) {
+      return { message: 'No active task', data: null };
+    }
+
+    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId } });
+    if (!task) {
+      return { message: 'No active task', data: null };
+    }
+
+    return {
+      message: 'Active task retrieved successfully',
+      data: { ...task, is_running: true },
+    };
+  }
+
+  /**
    * Get step-by-step logs and screenshots for an Android task.
    */
   @Get('/logs/:taskId')
@@ -54,6 +129,16 @@ export class AndroidAgentController {
     return {
       message: 'Task logs retrieved successfully',
       data: logs,
+      task: {
+        id: task.id,
+        device_id: task.device_id,
+        prompt: task.prompt,
+        success: task.success,
+        message: task.message,
+        total_steps: task.total_steps,
+        created_at: task.created_at,
+        is_running: this.plannerService.getActiveTaskIds().includes(task.id),
+      },
     };
   }
 }
