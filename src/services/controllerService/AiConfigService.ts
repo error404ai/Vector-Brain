@@ -243,6 +243,24 @@ export class AiConfigService {
 
 
   /**
+   * Resolves one specific AI configuration owned by the user and decrypts its key.
+   * Used when a task should run on a chosen provider instead of the active one,
+   * which lets different devices run on different models at the same time.
+   */
+  async resolveConfigById(userId: number, configId: number): Promise<DecryptedAiConfig | null> {
+    const config = await this.repo.findOne({ where: { id: configId, user_id: userId } });
+    if (!config) return null;
+
+    try {
+      const apiKey = CryptoHelper.decryptAesGcm(config.encrypted_api_key);
+      return Object.assign(config, { api_key: apiKey });
+    } catch (err) {
+      Logger.error(`[AiConfigService] Failed to decrypt API key for config ${configId}:`, err);
+      return null;
+    }
+  }
+
+  /**
    * Resolves the active AI configuration for a user, decrypts the API key,
    * and falls back to system .env if configured and no user config exists.
    */
