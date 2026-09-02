@@ -1161,53 +1161,87 @@ export function AndroidAgentPage() {
                         {/* Step Execution Timeline (BrowserWorker Style Action Cards) */}
                         {msg.steps && msg.steps.length > 0 && (
                           <Stack spacing={1.5} sx={{ my: 1.5 }}>
-                            {msg.steps.map((step) => (
-                              <Paper
-                                key={step.stepIndex}
-                                elevation={0}
-                                sx={{
-                                  p: 1.5,
-                                  borderRadius: 2,
-                                  border: '1px solid',
-                                  borderColor: alpha(theme.palette.primary.main, 0.15),
-                                  bgcolor: alpha(theme.palette.background.paper, 0.9),
-                                }}
-                              >
-                                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <Chip
-                                      label={`Step ${step.stepIndex}`}
-                                      size="small"
-                                      color="primary"
-                                      sx={{ fontWeight: 800, height: 20, fontSize: 10 }}
+                            {msg.steps.map((step, stepIdx) => {
+                              const isLast = stepIdx === (msg.steps?.length ?? 0) - 1;
+                              const dotColor =
+                                step.status === 'FAILED'
+                                  ? theme.palette.error.main
+                                  : step.status === 'EXECUTING'
+                                    ? theme.palette.warning.main
+                                    : theme.palette.success.main;
+
+                              return (
+                                <Box key={step.stepIndex} sx={{ display: 'flex', gap: 1.25, position: 'relative' }}>
+                                  {/* Timeline rail */}
+                                  <Box
+                                    sx={{
+                                      width: 18,
+                                      flexShrink: 0,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      alignItems: 'center',
+                                      pt: 0.5,
+                                    }}
+                                  >
+                                    <Box
+                                      sx={{
+                                        width: 9,
+                                        height: 9,
+                                        borderRadius: '50%',
+                                        bgcolor: dotColor,
+                                        boxShadow: `0 0 0 3px ${alpha(dotColor, 0.18)}`,
+                                        flexShrink: 0,
+                                      }}
                                     />
-                                    {step.action?.type && (
-                                      <Chip
-                                        icon={<TouchAppIcon sx={{ fontSize: 13 }} />}
-                                        label={`${step.action.type}${step.action.packageName ? `: ${step.action.packageName}` : ''}`}
-                                        size="small"
-                                        variant="outlined"
-                                        sx={{ fontWeight: 700, height: 20, fontSize: 11 }}
-                                      />
+                                    {!isLast && (
+                                      <Box sx={{ width: 2, flexGrow: 1, mt: 0.5, bgcolor: 'divider', borderRadius: 1 }} />
                                     )}
-                                  </Stack>
-                                  <Chip
-                                    label={step.status === 'EXECUTING' ? 'Executing' : step.status === 'FAILED' ? 'Failed' : 'Success'}
-                                    size="small"
-                                    color={step.status === 'FAILED' ? 'error' : step.status === 'EXECUTING' ? 'warning' : 'success'}
-                                    variant="outlined"
-                                    sx={{ height: 18, fontSize: 9, fontWeight: 800 }}
-                                  />
-                                </Stack>
+                                  </Box>
 
-                                {/* Reasoning thought */}
-                                <Typography variant="body2" sx={{ mt: 1, fontWeight: 500, color: 'text.primary', lineHeight: 1.5 }}>
-                                  💭 {step.thought}
-                                </Typography>
+                                  {/* Step body */}
+                                  <Box sx={{ flexGrow: 1, minWidth: 0, pb: isLast ? 0 : 1.75 }}>
+                                    <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap">
+                                      <Typography
+                                        variant="caption"
+                                        sx={{ fontWeight: 800, color: 'text.secondary', fontSize: 10.5 }}
+                                      >
+                                        STEP {step.stepIndex}
+                                      </Typography>
+                                      {step.action?.type && (
+                                        <Typography
+                                          variant="caption"
+                                          sx={{
+                                            fontFamily: 'monospace',
+                                            fontSize: 10.5,
+                                            px: 0.75,
+                                            py: 0.125,
+                                            borderRadius: 0.75,
+                                            bgcolor: alpha(theme.palette.primary.main, 0.08),
+                                            color: 'primary.main',
+                                            fontWeight: 700,
+                                          }}
+                                        >
+                                          {step.action.type}
+                                          {step.action.packageName ? ` · ${step.action.packageName}` : ''}
+                                        </Typography>
+                                      )}
+                                      {step.status === 'EXECUTING' && <CircularProgress size={11} />}
+                                    </Stack>
 
-                                {step.result && <StepResult result={step.result} failed={step.status === 'FAILED'} />}
-                              </Paper>
-                            ))}
+                                    <Typography
+                                      variant="body2"
+                                      sx={{ mt: 0.5, color: 'text.primary', lineHeight: 1.55, fontSize: 13.5 }}
+                                    >
+                                      {step.thought}
+                                    </Typography>
+
+                                    {step.result && (
+                                      <StepResult result={step.result} failed={step.status === 'FAILED'} />
+                                    )}
+                                  </Box>
+                                </Box>
+                              );
+                            })}
                           </Stack>
                         )}
 
