@@ -66,6 +66,8 @@ export interface DispatchAndroidPromptPayload {
   prompt: string;
   task_id?: number;
   max_steps?: number;
+  /** Run with a specific AI provider instead of the active one. */
+  ai_config_id?: number;
 }
 
 export interface DirectActionPayload {
@@ -124,7 +126,10 @@ const androidApi = baseApi.injectEndpoints({
       }),
     }),
 
-    getAndroidTaskLogs: builder.query<{ message: string; data: AndroidTaskLog[] }, number>({
+    getAndroidTaskLogs: builder.query<
+      { message: string; data: AndroidTaskLog[]; task?: AndroidAgentTask },
+      number
+    >({
       query: (taskId) => ({
         url: `/android/agent/logs/${taskId}`,
         method: 'GET',
