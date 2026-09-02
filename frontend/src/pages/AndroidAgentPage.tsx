@@ -216,6 +216,11 @@ export function AndroidAgentPage() {
   const selectedDeviceIdRef = useRef<number | undefined>(undefined);
   const selectedDeviceHardwareIdRef = useRef<string | undefined>(undefined);
   const restoredKeyRef = useRef<string>('');
+  // Once the user starts or clears a session, auto-restore must never overwrite it.
+  const userOwnsChatRef = useRef(false);
+  const previousDeviceRef = useRef<number | undefined>(undefined);
+  // Task currently shown in the transcript, used to highlight the sessions rail.
+  const [viewingTaskId, setViewingTaskId] = useState<number | null>(null);
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
@@ -236,6 +241,8 @@ export function AndroidAgentPage() {
   /** Loads a stored run into the transcript by pointing the restore effect at it. */
   const openSession = (taskId: number) => {
     if (!effectiveSelectedDeviceId) return;
+    userOwnsChatRef.current = false;
+    restoredKeyRef.current = '';
     setSearchParams({ deviceId: String(effectiveSelectedDeviceId), taskId: String(taskId) });
   };
 
@@ -253,9 +260,29 @@ export function AndroidAgentPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  /** A different device means a different conversation — start it clean. */
+  useEffect(() => {
+    const previous = previousDeviceRef.current;
+    previousDeviceRef.current = effectiveSelectedDeviceId;
+    if (previous === undefined || previous === effectiveSelectedDeviceId) return;
+
+    setMessages([]);
+    setActiveTaskId(null);
+    setViewingTaskId(null);
+    setClarification(null);
+    setLatestScreenshot(null);
+    setManualControl(false);
+    userOwnsChatRef.current = false;
+    restoredKeyRef.current = '';
+  }, [effectiveSelectedDeviceId]);
+
   /** Rebuilds the chat from a stored task so history and reloads keep context. */
   useEffect(() => {
     if (!effectiveSelectedDeviceId) return;
+
+    // Opening a session from history is explicit and always allowed. Automatic
+    // restore is not: it must never clobber a conversation the user just started.
+    if (!requestedTaskId && userOwnsChatRef.current) return;
 
     const key = `${effectiveSelectedDeviceId}:${requestedTaskId ?? 'active'}`;
     if (restoredKeyRef.current === key) return;
@@ -330,7 +357,8 @@ export function AndroidAgentPage() {
             logs,
           ),
         );
-        setActiveTaskId(taskId);
+        setActiveTaskId(running ? taskId : null);
+        setViewingTaskId(taskId);
         setIsRunning(running);
         restoredKeyRef.current = key;
       } catch {
@@ -608,6 +636,7 @@ export function AndroidAgentPage() {
       }
     }
     setClarification(null);
+    userOwnsChatRef.current = true;
 
     const userMsgId = `user-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now() + 1}`;
@@ -642,6 +671,7 @@ export function AndroidAgentPage() {
       }).unwrap();
 
       setActiveTaskId(res.data.taskId);
+      setViewingTaskId(res.data.taskId);
     } catch (err: unknown) {
       setIsRunning(false);
       const errMsg = (err as ApiMutationError)?.data?.message || 'Failed to dispatch task';
@@ -676,8 +706,16 @@ export function AndroidAgentPage() {
     }
     setMessages([]);
     setActiveTaskId(null);
+    setViewingTaskId(null);
+    setClarification(null);
     setTokenStats({ promptTokens: 0, completionTokens: 0 });
     contextCharsRef.current = 0;
+    userOwnsChatRef.current = true;
+    restoredKeyRef.current = '';
+    // Drop any taskId in the URL so a refresh does not reopen the old run.
+    if (effectiveSelectedDeviceId) {
+      setSearchParams({ deviceId: String(effectiveSelectedDeviceId) });
+    }
     toast.success('Conversation cleared');
   };
 
@@ -890,7 +928,7 @@ export function AndroidAgentPage() {
                   </Typography>
                 ) : (
                   sessions.map((session) => {
-                    const isOpen = activeTaskId === session.id;
+                    const isOpen = viewingTaskId === session.id;
                     return (
                       <Box
                         key={session.id}
