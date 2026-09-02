@@ -266,11 +266,17 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'open_url',
-        description: 'Open an HTTP or HTTPS web URL directly in the device default browser.',
+        description:
+          'Open an HTTP or HTTPS web URL in the device browser. By default it replaces the current page in the SAME tab.',
         parameters: {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'Full URL (e.g. "https://google.com")' },
+            newTab: {
+              type: 'boolean',
+              description:
+                'Leave this out to reuse the current tab (default). Set true ONLY when the user explicitly wants the pages side by side in separate tabs.',
+            },
           },
           required: ['url'],
           additionalProperties: false,
@@ -282,6 +288,7 @@ export class AndroidAgent extends Agent {
             {
               type: 'OpenUrl',
               url: String(args.url || ''),
+              newTab: args.newTab === true,
             },
             'open_url',
             args,
@@ -401,11 +408,13 @@ CRITICAL RULES:
   still isn't found, try a different approach instead of scrolling further.
 - If tap_coordinate fails, try click_node with the element's visible text as fallback.
 - After typing text, always tap the search/submit button to execute.
+- open_url reuses the current browser tab by default. Only pass newTab: true when
+  the user explicitly asked for separate tabs or to compare pages side by side;
+  visiting many sites "one by one" should stay in a single tab.
 - For research tasks: visit multiple sources, read content from each, summarize at the end.
 - Only mark task complete when ALL requested information has been collected.
-- Do NOT call task_snapshot as a routine checkpoint. It is expensive, adds no
-  new information, and never advances the task. Call it at most ONCE per task,
-  and only if you are genuinely about to lose important context.
+- task_snapshot is requested by the framework, not by the user. When it is asked
+  for, answer it briefly and move on; never call it yourself as a checkpoint.
 - If you already have enough information to answer the user's question, STOP
   and give the answer immediately instead of gathering more.
 UI TREE FORMAT:
