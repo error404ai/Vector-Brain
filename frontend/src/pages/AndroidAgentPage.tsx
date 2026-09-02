@@ -10,7 +10,9 @@ import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigServi
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
+import TouchAppIcon from '@mui/icons-material/TouchApp';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
@@ -28,11 +30,13 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  IconButton,
   MenuItem,
   Paper,
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
   useTheme,
 } from '@mui/material';
@@ -166,6 +170,7 @@ export function AndroidAgentPage() {
   // Run configuration: 0 = use the account's active provider
   const [selectedConfigId, setSelectedConfigId] = useState(0);
   const [maxSteps, setMaxSteps] = useState(40);
+  const [manualControl, setManualControl] = useState(false);
 
   // The provider this run will actually use: the explicit pick, else the active one.
   const runningConfig = useMemo(
@@ -801,6 +806,19 @@ export function AndroidAgentPage() {
                     sx={{ height: 20, fontSize: 9, fontWeight: 900, animation: 'pulse 1.5s infinite' }}
                   />
                 )}
+                <Box sx={{ flexGrow: 1 }} />
+                <Tooltip title={manualControl ? 'Stop manual control' : 'Take manual control'}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      color={manualControl ? 'primary' : 'default'}
+                      disabled={!isDeviceOnline}
+                      onClick={() => setManualControl((prev) => !prev)}
+                    >
+                      <TouchAppIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </Stack>
             </Box>
 
@@ -822,12 +840,16 @@ export function AndroidAgentPage() {
                   justifyContent: 'center',
                 }}
               >
-                {latestScreenshot ? (
-                  <img
-                    src={`data:image/jpeg;base64,${latestScreenshot}`}
-                    alt="Android Live Stream"
-                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                  />
+                {latestScreenshot || manualControl ? (
+                  <Box sx={{ width: '100%', height: '100%' }}>
+                    <InteractiveDeviceScreen
+                      deviceId={effectiveSelectedDeviceId}
+                      screenshot={latestScreenshot}
+                      onScreenshot={setLatestScreenshot}
+                      controlEnabled={manualControl}
+                      isAgentRunning={isRunning}
+                    />
+                  </Box>
                 ) : (
                   <Stack spacing={1.5} alignItems="center" sx={{ p: 3, textAlign: 'center' }}>
                     <PhoneAndroidIcon sx={{ fontSize: 48, color: 'text.disabled' }} />
