@@ -7,9 +7,10 @@ import {
 } from '@/RTKService/aiConfigService/aiConfigService';
 import { useGetSettingsQuery, useUpdateSettingMutation } from '@/RTKService/settingService/settingService';
 import { AiConfigModal } from '@/components/ai-config/AiConfigModal';
+import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
+import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
 import PageHeader from '@/components/ui/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
@@ -60,12 +61,6 @@ Rules:
   and report it.
 - Never expand a request into a multi-page research task.
 - Preserve the user's intent and any names, URLs or numbers exactly.`;
-
-interface TestOutcome {
-  ok: boolean;
-  at: number;
-  detail: string;
-}
 
 export default function SettingsPage() {
   const theme = useTheme();
@@ -161,6 +156,9 @@ export default function SettingsPage() {
     return new Set(Object.keys(counts).filter((model) => counts[model] > 1));
   }, [aiConfigs]);
 
+  const activeConfig = aiConfigs.find((config) => config.is_active);
+  const otherConfigs = aiConfigs.filter((config) => !config.is_active);
+
   const getProviderColor = (provider: string) => {
     switch (provider) {
       case 'openai':
@@ -215,7 +213,9 @@ export default function SettingsPage() {
                     AI Provider Configurations
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Add your personal API keys (OpenAI, Gemini, Anthropic, DeepSeek, Groq, OpenRouter).
+                    {activeConfig
+                      ? `Currently active: ${activeConfig.model}`
+                      : 'Add your personal API keys (OpenAI, Gemini, Anthropic, DeepSeek, Groq, OpenRouter).'}
                   </Typography>
                 </Box>
               </Stack>
@@ -249,159 +249,193 @@ export default function SettingsPage() {
                 You haven&apos;t added any AI provider configurations yet. Add your OpenAI, Gemini, or DeepSeek API key to enable Android automation and AI execution.
               </Alert>
             ) : (
-              <Stack spacing={2}>
-                {aiConfigs.map((config) => {
-                  const providerColor = getProviderColor(config.provider);
-                  const isTestingThis = testingId === config.id && isTestingSaved;
+              <Stack spacing={2.5}>
+                {activeConfig ? (
+                  <ActiveProviderHero
+                    config={activeConfig}
+                    providerColor={getProviderColor(activeConfig.provider)}
+                    isDuplicate={duplicateModels.has(activeConfig.model)}
+                    testOutcome={testResults[activeConfig.id]}
+                    isTesting={testingId === activeConfig.id && isTestingSaved}
+                    onTest={handleTestSaved}
+                    onEdit={handleOpenEdit}
+                  />
+                ) : (
+                  <Alert severity="warning" variant="outlined">
+                    No active provider selected — the agent cannot run tasks. Pick one from the list below.
+                  </Alert>
+                )}
 
-                  return (
-                    <Card
-                      key={config.id}
-                      variant="outlined"
-                      sx={{
-                        borderRadius: 2.5,
-                        borderColor: config.is_active ? alpha(theme.palette.primary.main, 0.5) : undefined,
-                        bgcolor: config.is_active ? alpha(theme.palette.primary.main, 0.02) : undefined,
-                        transition: 'all 0.2s',
-                        '&:hover': {
-                          borderColor: theme.palette.primary.main,
-                        },
-                      }}
+                {otherConfigs.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant="overline"
+                      sx={{ fontWeight: 700, letterSpacing: 1, color: 'text.secondary' }}
                     >
-                      <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-                        <Stack
-                          direction={{ xs: 'column', sm: 'row' }}
-                          justifyContent="space-between"
-                          alignItems={{ xs: 'flex-start', sm: 'center' }}
-                          gap={2}
-                        >
-                          {/* Left: Info */}
-                          <Stack direction="row" spacing={2} alignItems="center">
-                            <Tooltip title={config.is_active ? 'Active Provider' : 'Click to Set Active'}>
-                              <IconButton
-                                color={config.is_active ? 'primary' : 'default'}
-                                onClick={() => !config.is_active && handleSetActive(config.id)}
-                                disabled={config.is_active || isSettingActive}
+                      Other providers ({otherConfigs.length})
+                    </Typography>
+
+                    <Stack spacing={1} sx={{ mt: 0.75 }}>
+                      {otherConfigs.map((config) => {
+                        const providerColor = getProviderColor(config.provider);
+                        const isTestingThis = testingId === config.id && isTestingSaved;
+                        const outcome = testResults[config.id];
+
+                        return (
+                          <Card
+                            key={config.id}
+                            variant="outlined"
+                            sx={{
+                              borderRadius: 2,
+                              transition: 'all 0.2s',
+                              '&:hover': {
+                                borderColor: theme.palette.primary.main,
+                                bgcolor: alpha(theme.palette.primary.main, 0.015),
+                              },
+                            }}
+                          >
+                            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                              <Stack
+                                direction={{ xs: 'column', sm: 'row' }}
+                                justifyContent="space-between"
+                                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                                gap={1.5}
                               >
-                                {config.is_active ? <CheckCircleIcon /> : <RadioButtonUncheckedIcon />}
-                              </IconButton>
-                            </Tooltip>
+                                {/* Left: Info */}
+                                <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0 }}>
+                                  <Tooltip title="Set as active provider">
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => handleSetActive(config.id)}
+                                        disabled={isSettingActive}
+                                      >
+                                        <RadioButtonUncheckedIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
 
-                            <Box>
-                              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                                <Typography variant="subtitle1" fontWeight={700}>
-                                  {config.model}
-                                </Typography>
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                                      <Typography variant="subtitle2" fontWeight={700} sx={{ wordBreak: 'break-word' }}>
+                                        {config.model}
+                                      </Typography>
 
-                                {config.label && config.label !== config.model && (
-                                  <Chip
-                                    label={config.label}
+                                      {isFreeModel(config.model) && (
+                                        <Chip
+                                          label="FREE"
+                                          size="small"
+                                          sx={{
+                                            bgcolor: alpha(theme.palette.success.main, 0.14),
+                                            color: 'success.dark',
+                                            fontWeight: 700,
+                                            height: 20,
+                                            fontSize: '0.65rem',
+                                          }}
+                                        />
+                                      )}
+
+                                      {config.label && config.label !== config.model && (
+                                        <Chip
+                                          label={config.label}
+                                          size="small"
+                                          variant="outlined"
+                                          sx={{ height: 20, fontSize: '0.65rem', maxWidth: 180 }}
+                                        />
+                                      )}
+
+                                      {duplicateModels.has(config.model) && (
+                                        <Tooltip title="Another entry uses the same model">
+                                          <Chip
+                                            label="DUPLICATE"
+                                            size="small"
+                                            color="warning"
+                                            variant="outlined"
+                                            sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }}
+                                          />
+                                        </Tooltip>
+                                      )}
+
+                                      <Chip
+                                        label={config.provider.toUpperCase()}
+                                        size="small"
+                                        sx={{
+                                          bgcolor: alpha(providerColor, 0.12),
+                                          color: providerColor,
+                                          fontWeight: 600,
+                                          height: 20,
+                                          fontSize: '0.65rem',
+                                        }}
+                                      />
+
+                                      <Chip
+                                        icon={config.config_type === 'vision' ? <VisibilityIcon fontSize="inherit" /> : <SmartToyIcon fontSize="inherit" />}
+                                        label={config.config_type === 'vision' ? 'Vision' : 'Text-Only'}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{ height: 20, fontSize: '0.65rem' }}
+                                      />
+                                    </Stack>
+
+                                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 0.25 }}>
+                                      {config.base_url && (
+                                        <Typography variant="caption" color="text.secondary">
+                                          {config.base_url}
+                                        </Typography>
+                                      )}
+                                      {outcome ? (
+                                        <Typography
+                                          variant="caption"
+                                          sx={{ fontWeight: 700, color: outcome.ok ? 'success.main' : 'error.main' }}
+                                        >
+                                          {outcome.ok ? `Tested OK · ${outcome.detail}` : `Test failed · ${outcome.detail}`}
+                                        </Typography>
+                                      ) : (
+                                        <Typography variant="caption" color="text.disabled">
+                                          Not tested this session
+                                        </Typography>
+                                      )}
+                                    </Stack>
+                                  </Box>
+                                </Stack>
+
+                                {/* Right: Actions */}
+                                <Stack direction="row" spacing={0.75} alignItems="center" alignSelf={{ xs: 'flex-end', sm: 'center' }}>
+                                  <Button
                                     size="small"
                                     variant="outlined"
-                                    sx={{ height: 22, fontSize: '0.7rem', maxWidth: 200 }}
-                                  />
-                                )}
-
-                                {duplicateModels.has(config.model) && (
-                                  <Tooltip title="Another entry uses the same model">
-                                    <Chip
-                                      label="DUPLICATE"
-                                      size="small"
-                                      color="warning"
-                                      variant="outlined"
-                                      sx={{ height: 22, fontSize: '0.65rem', fontWeight: 700 }}
-                                    />
-                                  </Tooltip>
-                                )}
-
-                                {config.is_active && (
-                                  <Chip
-                                    label="ACTIVE"
-                                    size="small"
-                                    color="primary"
-                                    sx={{ fontWeight: 700, height: 22, fontSize: '0.7rem' }}
-                                  />
-                                )}
-
-                                <Chip
-                                  label={config.provider.toUpperCase()}
-                                  size="small"
-                                  sx={{
-                                    bgcolor: alpha(providerColor, 0.12),
-                                    color: providerColor,
-                                    fontWeight: 600,
-                                    height: 22,
-                                    fontSize: '0.7rem',
-                                  }}
-                                />
-
-                                <Chip
-                                  icon={config.config_type === 'vision' ? <VisibilityIcon fontSize="inherit" /> : <SmartToyIcon fontSize="inherit" />}
-                                  label={config.config_type === 'vision' ? 'Vision' : 'Text-Only'}
-                                  size="small"
-                                  variant="outlined"
-                                  sx={{ height: 22, fontSize: '0.7rem' }}
-                                />
-                              </Stack>
-
-                              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 0.5 }}>
-                                {config.base_url && (
-                                  <Typography variant="caption" color="text.secondary">
-                                    {config.base_url}
-                                  </Typography>
-                                )}
-                                {testResults[config.id] ? (
-                                  <Typography
-                                    variant="caption"
-                                    sx={{ fontWeight: 700, color: testResults[config.id].ok ? 'success.main' : 'error.main' }}
+                                    color="secondary"
+                                    startIcon={isTestingThis ? <CircularProgress size={14} /> : <FlashOnIcon />}
+                                    onClick={() => handleTestSaved(config.id)}
+                                    disabled={isTestingThis}
                                   >
-                                    {testResults[config.id].ok
-                                      ? `Tested OK · ${testResults[config.id].detail}`
-                                      : `Test failed · ${testResults[config.id].detail}`}
-                                  </Typography>
-                                ) : (
-                                  <Typography variant="caption" color="text.disabled">
-                                    Not tested this session
-                                  </Typography>
-                                )}
+                                    Test
+                                  </Button>
+
+                                  <Tooltip title="Edit configuration">
+                                    <IconButton size="small" onClick={() => handleOpenEdit(config)}>
+                                      <EditOutlinedIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+
+                                  <Tooltip title="Delete configuration">
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={() => handleDelete(config.id, config.label || config.model)}
+                                    >
+                                      <DeleteOutlineIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Stack>
                               </Stack>
-                            </Box>
-                          </Stack>
-
-                          {/* Right: Actions */}
-                          <Stack direction="row" spacing={1} alignItems="center" alignSelf={{ xs: 'flex-end', sm: 'center' }}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              color="secondary"
-                              startIcon={isTestingThis ? <CircularProgress size={14} /> : <FlashOnIcon />}
-                              onClick={() => handleTestSaved(config.id)}
-                              disabled={isTestingThis}
-                            >
-                              Test
-                            </Button>
-
-                            <Tooltip title="Edit configuration">
-                              <IconButton size="small" onClick={() => handleOpenEdit(config)}>
-                                <EditOutlinedIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-
-                            <Tooltip title="Delete configuration">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => handleDelete(config.id, config.label || config.model)}
-                              >
-                                <DeleteOutlineIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </Stack>
+                  </Box>
+                )}
               </Stack>
             )}
           </Stack>
