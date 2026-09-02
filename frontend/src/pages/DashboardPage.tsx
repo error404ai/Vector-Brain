@@ -20,7 +20,6 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import {
   alpha,
-  Alert,
   Box,
   Button,
   Chip,
@@ -73,6 +72,12 @@ export default function Dashboard() {
   const activeAiConfig = aiConfigsResponse?.data?.find((config) => config.is_active);
 
   const isLoading = devicesLoading || tasksLoading;
+
+  /**
+   * Brand-new account: no runs yet. The dashboard's live widgets are all
+   * empty noise at this point, so show a single focused setup card instead.
+   */
+  const setupMode = !isLoading && tasks.length === 0;
 
   const metrics = useMemo(() => {
     const onlineDevices = devices.filter((device) => device.status === 'ONLINE').length;
@@ -163,40 +168,29 @@ export default function Dashboard() {
       />
 
       <Stack spacing={3}>
-        {/* New-user setup journey — hides itself once every step is complete */}
-        <OnboardingChecklist
-          devices={devices}
-          aiConfigs={aiConfigsResponse?.data ?? []}
-          tasks={tasks}
-          loading={isLoading}
-        />
-
-        {/* Setup warnings */}
-        {!activeAiConfig && (
-          <Alert
-            severity="warning"
-            action={
-              <Button size="small" color="inherit" onClick={() => navigate('/settings')}>
-                Configure
-              </Button>
-            }
-          >
-            No AI provider is active. Add your API key in Settings before running tasks.
-          </Alert>
-        )}
-        {!devicesLoading && devices.length === 0 && (
-          <Alert
-            severity="info"
-            action={
-              <Button size="small" color="inherit" onClick={() => navigate('/android-devices')}>
-                Pair device
-              </Button>
-            }
-          >
-            No Android device paired yet. Pair one to start automating.
-          </Alert>
+        {/* Setup journey. In setup mode it is the whole page; afterwards it only
+            reappears if a required piece (device / key / model) goes missing. */}
+        {setupMode ? (
+          <Box sx={{ maxWidth: 720, mx: 'auto', width: '100%', pt: { xs: 1, md: 4 } }}>
+            <OnboardingChecklist
+              devices={devices}
+              aiConfigs={aiConfigsResponse?.data ?? []}
+              tasks={tasks}
+              loading={isLoading}
+              hero
+            />
+          </Box>
+        ) : (
+          <OnboardingChecklist
+            devices={devices}
+            aiConfigs={aiConfigsResponse?.data ?? []}
+            tasks={tasks}
+            loading={isLoading}
+          />
         )}
 
+        {!setupMode && (
+          <>
         {/* Stat cards */}
         <Box
           sx={{
@@ -424,6 +418,8 @@ export default function Dashboard() {
             </Typography>
           )}
         </Paper>
+          </>
+        )}
       </Stack>
     </>
   );
