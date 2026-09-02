@@ -11,6 +11,8 @@ import {
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
+import { explainError } from '@/utils/errorExplain';
+import { verifyResultClaims } from '@/utils/verifyResult';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
@@ -100,6 +102,21 @@ const CHARS_PER_TOKEN = 4;
 // Approximate size of the constant part of every request (system prompt + tool schemas).
 const BASE_PROMPT_CHARS = 4000;
 
+/**
+ * Starter tasks shown on an empty conversation. Curated around what the agent
+ * is actually good at (concrete actions), not content extraction.
+ */
+const CURATED_SUGGESTIONS = [
+  'Open Chrome and go to google.com',
+  'Open YouTube and play Lo-Fi Beats',
+  'Set an alarm for 7:00 AM',
+  'Turn on Wi-Fi from Settings',
+  'Open Settings and check battery level',
+  "Open Calendar and check today's events",
+  'Open Chrome and search for the weather today',
+  'Go to the Home screen and open the Clock app',
+];
+
 
 /**
  * Renders an action result. The raw "UPDATED SCREEN ELEMENTS" dump is huge and
@@ -112,9 +129,30 @@ function StepResult({ result, failed }: { result: string; failed?: boolean }) {
   const splitAt = result.search(/(UPDATED SCREEN ELEMENTS|VISIBLE UI ELEMENTS|CURRENT APP:)/);
   const summary = (splitAt > 0 ? result.slice(0, splitAt) : result).trim();
   const details = splitAt > 0 ? result.slice(splitAt).trim() : '';
+  // Failed steps get a plain-language translation; the raw text stays behind the toggle.
+  const explanation = failed ? explainError(result) : null;
 
   return (
     <Box sx={{ mt: 0.5 }}>
+      {explanation && (
+        <Box
+          sx={{
+            mb: 0.5,
+            px: 1,
+            py: 0.75,
+            borderRadius: 1.5,
+            bgcolor: (t) => alpha(t.palette.error.main, 0.06),
+            border: (t) => `1px solid ${alpha(t.palette.error.main, 0.22)}`,
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 800, color: 'error.main', display: 'block' }}>
+            {explanation.title}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+            {explanation.cause} {explanation.suggestion}
+          </Typography>
+        </Box>
+      )}
       <Typography variant="caption" color={failed ? 'error' : 'text.secondary'} sx={{ display: 'block' }}>
         {summary || (failed ? 'Action failed' : 'Action completed')}
       </Typography>
@@ -161,6 +199,8 @@ export function AndroidAgentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
   const requestedTaskId = searchParams.get('taskId') ? Number(searchParams.get('taskId')) : undefined;
+  // A prompt handed over in the URL (e.g. from a run report's Re-run button).
+  const requestedPrompt = searchParams.get('prompt');
 
   const { data: devicesData } = useGetAndroidDevicesQuery(undefined, { pollingInterval: 5_000 });
   const { data: deviceTasksData, refetch: refetchSessions } = useGetAndroidTasksQuery(
@@ -260,6 +300,20 @@ export function AndroidAgentPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  /**
+   * Re-run handoff: a ?prompt= param prefills the input (never auto-runs) and
+   * is then removed from the URL so a refresh does not re-apply it.
+   */
+  useEffect(() => {
+    if (!requestedPrompt) return;
+    setPromptInput(requestedPrompt);
+    userOwnsChatRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.delete('prompt');
+    setSearchParams(next, { replace: true });
+    inputRef.current?.focus();
+  }, [requestedPrompt, searchParams, setSearchParams]);
 
   /** A different device means a different conversation — start it clean. */
   useEffect(() => {
@@ -1131,14 +1185,15 @@ export function AndroidAgentPage() {
                   and keep you updated step-by-step.
                 </Typography>
 
-                {/* Quick Action Suggestion Chips */}
-                <Stack direction="row" spacing={1} sx={{ mt: 3, flexWrap: 'wrap', justifyContent: 'center', gap: 1 }}>
-                  {[
-                    'Open Chrome and go to google.com',
-                    'Open YouTube and search for Lo-Fi Beats',
-                    'Open Settings and check Battery',
-                    'Open Clock and check alarms',
-                  ].map((preset) => (
+                {/* Quick Action Suggestion Chips — curated around actions the agent is good at */}
+                <Typography
+                  variant="overline"
+                  sx={{ display: 'block', mt: 3, fontWeight: 800, letterSpacing: 1, color: 'text.secondary' }}
+                >
+                  Try one of these
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', justifyContent: 'center', gap: 1, maxWidth: 620, mx: 'auto' }}>
+                  {CURATED_SUGGESTIONS.map((preset) => (
                     <Chip
                       key={preset}
                       label={preset}
@@ -1154,6 +1209,35 @@ export function AndroidAgentPage() {
                     />
                   ))}
                 </Stack>
+
+                {/* One-tap repeats of what already worked on this device */}
+                {sessions.some((session) => session.success && !session.is_running) && (
+                  <>
+                    <Typography
+                      variant="overline"
+                      sx={{ display: 'block', mt: 2.5, fontWeight: 800, letterSpacing: 1, color: 'text.secondary' }}
+                    >
+                      Run again
+                    </Typography>
+                    <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', justifyContent: 'center', gap: 1, maxWidth: 620, mx: 'auto' }}>
+                      {sessions
+                        .filter((session) => session.success && !session.is_running)
+                        .slice(0, 3)
+                        .map((session) => (
+                          <Chip
+                            key={session.id}
+                            icon={<HistoryIcon sx={{ fontSize: 14 }} />}
+                            label={session.prompt.length > 48 ? `${session.prompt.slice(0, 48)}…` : session.prompt}
+                            clickable={!isRunning && deviceReady}
+                            onClick={() => handleSendPrompt(session.prompt)}
+                            variant="outlined"
+                            color="success"
+                            sx={{ borderRadius: 2, fontWeight: 600, py: 2 }}
+                          />
+                        ))}
+                    </Stack>
+                  </>
+                )}
               </Box>
             ) : (
               messages.map((msg) => (
@@ -1376,7 +1460,74 @@ export function AndroidAgentPage() {
                                 {msg.status === 'running' ? 'WORKING' : msg.status === 'error' ? 'RESULT' : 'RESULT'}
                               </Typography>
                             </Stack>
+
+                            {/* Honesty check: flag sites the result claims but no step ever saw */}
+                            {msg.status === 'done' &&
+                              (() => {
+                                const verification = verifyResultClaims(msg.content, [
+                                  ...(msg.steps ?? []).map((step) => step.result),
+                                  ...(msg.steps ?? []).map((step) => step.thought),
+                                ]);
+                                if (verification.claimedCount === 0 || verification.verified) return null;
+                                return (
+                                  <Box
+                                    sx={{
+                                      mb: 1,
+                                      px: 1.25,
+                                      py: 0.75,
+                                      borderRadius: 1.5,
+                                      bgcolor: alpha(theme.palette.warning.main, 0.1),
+                                      border: `1px solid ${alpha(theme.palette.warning.main, 0.35)}`,
+                                    }}
+                                  >
+                                    <Typography variant="caption" sx={{ fontWeight: 800, color: 'warning.dark', display: 'block' }}>
+                                      Partially unverified result
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                      Not found in step evidence: {verification.unsupportedDomains.join(', ')}. The model may
+                                      be overstating what it actually did.
+                                    </Typography>
+                                  </Box>
+                                );
+                              })()}
+
                             <AgentMarkdown text={msg.content} />
+
+                            {/* Plain-language failure translation with a one-tap recovery */}
+                            {msg.status === 'error' &&
+                              (() => {
+                                const explanation = explainError(msg.content);
+                                if (!explanation) return null;
+                                return (
+                                  <Box
+                                    sx={{
+                                      mt: 1,
+                                      px: 1.25,
+                                      py: 0.75,
+                                      borderRadius: 1.5,
+                                      bgcolor: alpha(theme.palette.error.main, 0.05),
+                                      border: `1px solid ${alpha(theme.palette.error.main, 0.2)}`,
+                                    }}
+                                  >
+                                    <Typography variant="caption" sx={{ fontWeight: 800, color: 'error.main', display: 'block' }}>
+                                      {explanation.title}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                                      {explanation.cause} {explanation.suggestion}
+                                    </Typography>
+                                    {explanation.recoveryPrompt && (
+                                      <Chip
+                                        label={`Try: ${explanation.recoveryPrompt}`}
+                                        size="small"
+                                        color="warning"
+                                        onClick={() => handleSendPrompt(explanation.recoveryPrompt)}
+                                        disabled={isRunning || !deviceReady}
+                                        sx={{ mt: 0.75, fontWeight: 700, cursor: 'pointer' }}
+                                      />
+                                    )}
+                                  </Box>
+                                );
+                              })()}
                           </Box>
                         )}
                       </Paper>
