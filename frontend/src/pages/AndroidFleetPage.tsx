@@ -229,6 +229,15 @@ export default function AndroidFleetPage() {
 
   // ---- Derived -----------------------------------------------------------
   const onlineDevices = devices.filter((device) => device.status === 'ONLINE');
+
+  /** Running devices first, then idle online ones, then whatever is offline. */
+  const orderedDevices = useMemo(() => {
+    const rank = (device: AndroidDevice) => {
+      if (runtime[device.id]?.isRunning) return 0;
+      return device.status === 'ONLINE' ? 1 : 2;
+    };
+    return [...devices].sort((a, b) => rank(a) - rank(b) || a.device_name.localeCompare(b.device_name));
+  }, [devices, runtime]);
   const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
 
   const tasksByDevice = useMemo(() => {
@@ -513,7 +522,7 @@ export default function AndroidFleetPage() {
             gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)', xl: 'repeat(4, 1fr)' },
           }}
         >
-          {devices.map((device) => {
+          {orderedDevices.map((device) => {
             const state = runtime[device.id] ?? emptyRuntime;
             const isOnline = device.status === 'ONLINE';
             const isSelected = selectedIds.includes(device.id);
@@ -540,7 +549,7 @@ export default function AndroidFleetPage() {
                       {device.device_name}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" noWrap>
-                      {device.device_model || device.device_id}
+                      {device.device_model || 'Android'} · {device.device_id.slice(-8)}
                     </Typography>
                   </Box>
                   <Tooltip title={controlDeviceId === device.id ? 'Stop manual control' : 'Take manual control'}>
