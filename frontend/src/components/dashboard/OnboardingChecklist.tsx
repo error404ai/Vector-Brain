@@ -1,7 +1,6 @@
 import type { AiConfig } from '@/RTKService/aiConfigService/aiConfigService';
 import type { AndroidAgentTask, AndroidDevice } from '@/RTKService/androidService/androidService';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { alpha, Box, Button, LinearProgress, Paper, Stack, Typography, useTheme } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +11,8 @@ interface OnboardingChecklistProps {
   tasks: AndroidAgentTask[];
   /** Hide while the underlying queries are still loading to avoid a flash. */
   loading?: boolean;
+  /** Setup-mode presentation: welcome heading, centered, roomier. */
+  hero?: boolean;
 }
 
 interface ChecklistStep {
@@ -26,7 +27,7 @@ interface ChecklistStep {
  * New-user setup journey derived from live data — no stored "dismissed" flag
  * needed because the card disappears on its own once every step is real.
  */
-export default function OnboardingChecklist({ devices, aiConfigs, tasks, loading }: OnboardingChecklistProps) {
+export default function OnboardingChecklist({ devices, aiConfigs, tasks, loading, hero }: OnboardingChecklistProps) {
   const theme = useTheme();
   const navigate = useNavigate();
 
@@ -84,42 +85,85 @@ export default function OnboardingChecklist({ devices, aiConfigs, tasks, loading
   return (
     <Paper
       sx={{
-        p: { xs: 2, md: 2.5 },
+        p: { xs: 2, md: hero ? 3.5 : 2.5 },
         borderRadius: 3,
         borderLeft: `4px solid ${theme.palette.primary.main}`,
         background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.07)} 0%, transparent 70%)`,
       }}
     >
-      <Stack spacing={1.75}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <RocketLaunchIcon color="primary" fontSize="small" />
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, flexGrow: 1 }}>
-            Getting started
-          </Typography>
-          <Typography variant="caption" sx={{ fontWeight: 800, color: 'primary.main' }}>
-            {doneCount} / {steps.length}
-          </Typography>
-        </Stack>
+      <Stack spacing={hero ? 2.5 : 1.75}>
+        {hero ? (
+          <Box sx={{ textAlign: 'center' }}>
+            <RocketLaunchIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+            <Typography variant="h5" sx={{ fontWeight: 900 }}>
+              Welcome to Vector Brain
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Five quick steps and your phone starts working for you.
+            </Typography>
+          </Box>
+        ) : (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <RocketLaunchIcon color="primary" fontSize="small" />
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, flexGrow: 1 }}>
+              Getting started
+            </Typography>
+            <Typography variant="caption" sx={{ fontWeight: 800, color: 'primary.main' }}>
+              {doneCount} / {steps.length}
+            </Typography>
+          </Stack>
+        )}
 
-        <LinearProgress
-          variant="determinate"
-          value={(doneCount / steps.length) * 100}
-          sx={{ height: 6, borderRadius: 3 }}
-        />
+        <Box>
+          {hero && (
+            <Typography variant="caption" sx={{ fontWeight: 800, color: 'primary.main', display: 'block', mb: 0.5 }}>
+              {doneCount} of {steps.length} complete
+            </Typography>
+          )}
+          <LinearProgress
+            variant="determinate"
+            value={(doneCount / steps.length) * 100}
+            sx={{ height: 6, borderRadius: 3 }}
+          />
+        </Box>
 
-        <Stack spacing={1}>
-          {steps.map((step) => (
+        <Stack spacing={hero ? 1.5 : 1}>
+          {steps.map((step, index) => (
             <Stack
               key={step.label}
               direction="row"
               alignItems="center"
               spacing={1.25}
-              sx={{ opacity: step.done ? 0.65 : 1 }}
+              sx={{
+                opacity: step.done ? 0.6 : 1,
+                ...(hero && {
+                  p: 1.25,
+                  borderRadius: 2,
+                  border: '1px solid',
+                  borderColor: step.done ? 'transparent' : alpha(theme.palette.primary.main, 0.15),
+                  bgcolor: step.done ? 'transparent' : alpha(theme.palette.background.paper, 0.7),
+                }),
+              }}
             >
               {step.done ? (
-                <CheckCircleIcon color="success" sx={{ fontSize: 20 }} />
+                <CheckCircleIcon color="success" sx={{ fontSize: 22 }} />
               ) : (
-                <RadioButtonUncheckedIcon sx={{ fontSize: 20, color: 'text.disabled' }} />
+                <Box
+                  sx={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    display: 'grid',
+                    placeItems: 'center',
+                    bgcolor: alpha(theme.palette.primary.main, 0.12),
+                    color: 'primary.main',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    flexShrink: 0,
+                  }}
+                >
+                  {index + 1}
+                </Box>
               )}
               <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography
@@ -137,7 +181,7 @@ export default function OnboardingChecklist({ devices, aiConfigs, tasks, loading
               {!step.done && (
                 <Button
                   size="small"
-                  variant="outlined"
+                  variant={hero && steps.findIndex((item) => !item.done) === index ? 'contained' : 'outlined'}
                   onClick={() => navigate(step.actionPath)}
                   sx={{ borderRadius: 2, fontWeight: 700, flexShrink: 0 }}
                 >
