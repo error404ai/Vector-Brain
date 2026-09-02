@@ -1,13 +1,18 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
+  useGetAndroidTasksQuery,
+  useLazyGetActiveAndroidTaskQuery,
+  useLazyGetAndroidTaskLogsQuery,
   useRunAndroidTaskMutation,
+  type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
+import HistoryIcon from '@mui/icons-material/History';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
@@ -25,6 +30,8 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  ListItemText,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -87,6 +94,60 @@ const CHARS_PER_TOKEN = 4;
 const BASE_PROMPT_CHARS = 4000;
 
 
+/**
+ * Renders an action result. The raw "UPDATED SCREEN ELEMENTS" dump is huge and
+ * only useful for debugging, so only the human-readable first line is shown and
+ * the rest is hidden behind a toggle.
+ */
+function StepResult({ result, failed }: { result: string; failed?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const splitAt = result.search(/(UPDATED SCREEN ELEMENTS|VISIBLE UI ELEMENTS|CURRENT APP:)/);
+  const summary = (splitAt > 0 ? result.slice(0, splitAt) : result).trim();
+  const details = splitAt > 0 ? result.slice(splitAt).trim() : '';
+
+  return (
+    <Box sx={{ mt: 0.5 }}>
+      <Typography variant="caption" color={failed ? 'error' : 'text.secondary'} sx={{ display: 'block' }}>
+        {summary || (failed ? 'Action failed' : 'Action completed')}
+      </Typography>
+
+      {details && (
+        <>
+          <Button
+            size="small"
+            onClick={() => setExpanded((prev) => !prev)}
+            sx={{ mt: 0.25, px: 0.5, minWidth: 0, fontSize: 10, textTransform: 'none' }}
+          >
+            {expanded ? 'Hide screen details' : `Screen details (${Math.round(details.length / 100) / 10}k chars)`}
+          </Button>
+          {expanded && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                display: 'block',
+                mt: 0.5,
+                p: 1,
+                borderRadius: 1,
+                bgcolor: 'action.hover',
+                fontFamily: 'monospace',
+                fontSize: 10,
+                maxHeight: 220,
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {details}
+            </Typography>
+          )}
+        </>
+      )}
+    </Box>
+  );
+}
+
 export function AndroidAgentPage() {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -114,14 +175,27 @@ export function AndroidAgentPage() {
 
   const [runTask, { isLoading: isStartingTask }] = useRunAndroidTaskMutation();
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
+  const [fetchTaskLogs] = useLazyGetAndroidTaskLogsQuery();
+  const [fetchActiveTask] = useLazyGetActiveAndroidTaskQuery();
+
+  // History menu
+  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Live copy of the selected device id so the WebSocket handler (registered once)
+  // can ignore events belonging to other devices.
+  const selectedDeviceIdRef = useRef<number | undefined>(undefined);
+  const selectedDeviceHardwareIdRef = useRef<string | undefined>(undefined);
+  const restoredForDeviceRef = useRef<number | undefined>(undefined);
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
   const selectedDevice = devices.find((device) => device.id === effectiveSelectedDeviceId);
+  selectedDeviceIdRef.current = effectiveSelectedDeviceId;
+  selectedDeviceHardwareIdRef.current = selectedDevice?.device_id;
   const isDeviceOnline = selectedDevice?.status === 'ONLINE';
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
@@ -150,6 +224,19 @@ export function AndroidAgentPage() {
       try {
         const msg = JSON.parse(event.data);
 
+        // With several devices running at once, only render events for the
+        // device this page is currently showing.
+        const eventDeviceId = msg.payload?.deviceId;
+        const currentDeviceId = selectedDeviceIdRef.current;
+        if (
+          msg.event !== 'device:screen_capture' &&
+          typeof eventDeviceId === 'number' &&
+          typeof currentDeviceId === 'number' &&
+          eventDeviceId !== currentDeviceId
+        ) {
+          return;
+        }
+
         if (msg.event === 'task:started') {
           setIsRunning(true);
           setActiveTaskId(msg.payload.taskId);
@@ -157,8 +244,11 @@ export function AndroidAgentPage() {
             setLatestScreenshot(msg.payload.screenshot);
           }
         } else if (msg.event === 'device:screen_capture') {
+          // This event carries the hardware device id, so match it separately.
+          const hardwareId = msg.payload?.deviceId;
+          const belongsToSelected = !hardwareId || hardwareId === selectedDeviceHardwareIdRef.current;
           const capture = msg.payload?.result?.screenCapture?.base64Data;
-          if (capture) setLatestScreenshot(capture);
+          if (capture && belongsToSelected) setLatestScreenshot(capture);
         } else if (msg.event === 'task:step') {
           const step = msg.payload;
 
@@ -844,11 +934,7 @@ export function AndroidAgentPage() {
                                   💭 {step.thought}
                                 </Typography>
 
-                                {step.result && (
-                                  <Typography variant="caption" color={step.status === 'FAILED' ? 'error' : 'text.secondary'} sx={{ display: 'block', mt: 0.5 }}>
-                                    Result: {step.result}
-                                  </Typography>
-                                )}
+                                {step.result && <StepResult result={step.result} failed={step.status === 'FAILED'} />}
                               </Paper>
                             ))}
                           </Stack>
