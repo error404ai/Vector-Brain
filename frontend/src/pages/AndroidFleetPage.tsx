@@ -1,15 +1,20 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
+  useGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
+  type AndroidAgentTask,
   type AndroidDevice,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import HistoryIcon from '@mui/icons-material/History';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ReplayIcon from '@mui/icons-material/Replay';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
@@ -21,9 +26,13 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogContent,
+  DialogTitle,
   Divider,
   IconButton,
   LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -43,15 +52,45 @@ interface DeviceRuntime {
   stepIndex: number;
   lastThought?: string;
   lastAction?: string;
-  lastStatus?: 'EXECUTING' | 'SUCCESS' | 'FAILED';
   finishedAt?: number;
   finishedOk?: boolean;
   finishedMessage?: string;
+  startError?: string;
 }
 
 type RuntimeMap = Record<number, DeviceRuntime>;
 
+interface DispatchResult {
+  prompt: string;
+  startedIds: number[];
+  failedIds: number[];
+}
+
 const emptyRuntime: DeviceRuntime = { isRunning: false, stepIndex: 0 };
+
+const STEP_BUDGETS = [
+  { value: 20, label: 'Quick · 20 steps' },
+  { value: 40, label: 'Standard · 40 steps' },
+  { value: 50, label: 'Deep · 50 steps' },
+];
+
+function timeAgo(iso?: string): string {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diff)) return '';
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** Pull a readable reason out of an RTK Query error. */
+function errorMessage(error: unknown): string {
+  const data = (error as { data?: { message?: string } })?.data;
+  return data?.message || 'Could not start the task';
+}
 
 export default function AndroidFleetPage() {
   const navigate = useNavigate();
@@ -59,26 +98,32 @@ export default function AndroidFleetPage() {
   const { data: devicesData, isLoading, refetch } = useGetAndroidDevicesQuery(undefined, {
     pollingInterval: 20_000,
   });
+  const { data: tasksData } = useGetAndroidTasksQuery({ limit: 100 }, { pollingInterval: 20_000 });
   const { data: aiConfigsData } = useGetAiConfigsQuery();
+
   const [runTask] = useRunAndroidTaskMutation();
   const [cancelTask] = useCancelAndroidTaskMutation();
 
   const devices = useMemo<AndroidDevice[]>(() => devicesData?.data ?? [], [devicesData]);
+  const tasks = useMemo<AndroidAgentTask[]>(() => tasksData?.data ?? [], [tasksData]);
   const activeAiConfig = aiConfigsData?.data?.find((config) => config.is_active);
 
   const [runtime, setRuntime] = useState<RuntimeMap>({});
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [prompt, setPrompt] = useState('');
+  const [maxSteps, setMaxSteps] = useState(40);
   const [isDispatching, setIsDispatching] = useState(false);
+  const [lastDispatch, setLastDispatch] = useState<DispatchResult | null>(null);
+
+  // Per-device inline prompt inputs
+  const [cardPrompts, setCardPrompts] = useState<Record<number, string>>({});
+  const [historyDeviceId, setHistoryDeviceId] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
   const patchRuntime = (deviceId: number | undefined, patch: Partial<DeviceRuntime>) => {
     if (deviceId === undefined || deviceId === null) return;
-    setRuntime((prev) => ({
-      ...prev,
-      [deviceId]: { ...(prev[deviceId] ?? emptyRuntime), ...patch },
-    }));
+    setRuntime((prev) => ({ ...prev, [deviceId]: { ...(prev[deviceId] ?? emptyRuntime), ...patch } }));
   };
 
   // ---- Live stream -------------------------------------------------------
@@ -90,17 +135,13 @@ export default function AndroidFleetPage() {
       try {
         const msg = JSON.parse(event.data);
         const payload = msg.payload || {};
-        const deviceId: number | undefined =
-          typeof payload.deviceId === 'number' ? payload.deviceId : undefined;
+        const deviceId: number | undefined = typeof payload.deviceId === 'number' ? payload.deviceId : undefined;
 
         switch (msg.event) {
           case 'device:screen_capture': {
             const capture = payload?.result?.screenCapture?.base64Data;
-            // This event carries the hardware device id, so match it back to a row.
             const hardwareId = payload?.deviceId;
-            const match = devices.find(
-              (device) => device.device_id === hardwareId || device.id === hardwareId,
-            );
+            const match = devices.find((device) => device.device_id === hardwareId || device.id === hardwareId);
             if (capture && match) patchRuntime(match.id, { screenshot: capture });
             break;
           }
@@ -112,6 +153,7 @@ export default function AndroidFleetPage() {
               stepIndex: 0,
               finishedAt: undefined,
               finishedMessage: undefined,
+              startError: undefined,
             });
             break;
           case 'task:step':
@@ -120,11 +162,7 @@ export default function AndroidFleetPage() {
               stepIndex: payload.stepIndex ?? 0,
               lastThought: payload.thought,
               lastAction: payload.action?.type,
-              lastStatus: 'EXECUTING',
             });
-            break;
-          case 'task:step_result':
-            patchRuntime(deviceId, { lastStatus: payload.status });
             break;
           case 'task:completed':
             patchRuntime(deviceId, {
@@ -169,8 +207,9 @@ export default function AndroidFleetPage() {
         return;
       }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(
+        `${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`,
+      );
       wsRef.current = ws;
       ws.onmessage = handleMessage;
       ws.onclose = scheduleReconnect;
@@ -184,11 +223,21 @@ export default function AndroidFleetPage() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-    // devices is needed so screen_capture can be matched to a row
   }, [devices]);
 
-  // ---- Selection ---------------------------------------------------------
+  // ---- Derived -----------------------------------------------------------
   const onlineDevices = devices.filter((device) => device.status === 'ONLINE');
+  const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
+
+  const tasksByDevice = useMemo(() => {
+    const map: Record<number, AndroidAgentTask[]> = {};
+    for (const task of tasks) {
+      if (typeof task.device_id !== 'number') continue;
+      if (!map[task.device_id]) map[task.device_id] = [];
+      map[task.device_id].push(task);
+    }
+    return map;
+  }, [tasks]);
 
   const toggleDevice = (id: number) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -200,34 +249,81 @@ export default function AndroidFleetPage() {
   };
 
   // ---- Dispatch ----------------------------------------------------------
-  const handleRunOnSelected = async () => {
-    const text = prompt.trim();
-    if (!text) {
-      toast.error('Enter a task first');
-      return;
-    }
-    if (selectedIds.length === 0) {
-      toast.error('Select at least one device');
-      return;
-    }
+  const ensureReady = (): boolean => {
     if (!activeAiConfig) {
       toast.error('Configure an AI provider in Settings first');
       navigate('/settings');
-      return;
+      return false;
     }
+    return true;
+  };
 
+  /** Starts the same prompt on a set of devices and records what failed. */
+  const dispatchTo = async (deviceIds: number[], text: string) => {
     setIsDispatching(true);
-    const results = await Promise.allSettled(
-      selectedIds.map((deviceId) => runTask({ device_id: deviceId, prompt: text }).unwrap()),
+    const outcomes = await Promise.allSettled(
+      deviceIds.map((deviceId) => runTask({ device_id: deviceId, prompt: text, max_steps: maxSteps }).unwrap()),
     );
     setIsDispatching(false);
 
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.length - ok;
+    const startedIds: number[] = [];
+    const failedIds: number[] = [];
 
-    if (ok > 0) toast.success(`Task started on ${ok} device${ok > 1 ? 's' : ''}`);
-    if (failed > 0) toast.error(`${failed} device${failed > 1 ? 's' : ''} could not start`);
-    if (ok > 0) setPrompt('');
+    outcomes.forEach((outcome, index) => {
+      const deviceId = deviceIds[index];
+      if (outcome.status === 'fulfilled') {
+        startedIds.push(deviceId);
+        patchRuntime(deviceId, { startError: undefined });
+      } else {
+        failedIds.push(deviceId);
+        patchRuntime(deviceId, { startError: errorMessage(outcome.reason), isRunning: false });
+      }
+    });
+
+    setLastDispatch({ prompt: text, startedIds, failedIds });
+    // Keep only the failed ones selected so a retry hits exactly those.
+    setSelectedIds(failedIds);
+
+    if (startedIds.length) toast.success(`Started on ${startedIds.length} device${startedIds.length > 1 ? 's' : ''}`);
+    if (failedIds.length) toast.error(`${failedIds.length} device${failedIds.length > 1 ? 's' : ''} could not start`);
+  };
+
+  const handleRunOnSelected = async () => {
+    const text = prompt.trim();
+    if (!text) return toast.error('Enter a task first');
+    if (selectedIds.length === 0) return toast.error('Select at least one device');
+    if (!ensureReady()) return;
+    await dispatchTo(selectedIds, text);
+  };
+
+  const handleRetryFailed = async () => {
+    if (!lastDispatch?.failedIds.length) return;
+    if (!ensureReady()) return;
+    await dispatchTo(lastDispatch.failedIds, lastDispatch.prompt);
+  };
+
+  const handleDismissDispatch = () => {
+    setLastDispatch(null);
+    setSelectedIds([]);
+    setPrompt('');
+  };
+
+  /** Runs a device-specific prompt typed directly on its card. */
+  const handleRunOnCard = async (deviceId: number) => {
+    const text = (cardPrompts[deviceId] ?? '').trim();
+    if (!text) return;
+    if (!ensureReady()) return;
+
+    try {
+      await runTask({ device_id: deviceId, prompt: text, max_steps: maxSteps }).unwrap();
+      patchRuntime(deviceId, { startError: undefined });
+      setCardPrompts((prev) => ({ ...prev, [deviceId]: '' }));
+      toast.success('Task started');
+    } catch (error) {
+      const message = errorMessage(error);
+      patchRuntime(deviceId, { startError: message });
+      toast.error(message);
+    }
   };
 
   const handleStopDevice = async (deviceId: number) => {
@@ -242,16 +338,16 @@ export default function AndroidFleetPage() {
   };
 
   const handleStopAll = async () => {
-    const runningTaskIds = (Object.values(runtime) as DeviceRuntime[])
+    const ids = (Object.values(runtime) as DeviceRuntime[])
       .filter((state) => state.isRunning && typeof state.taskId === 'number')
       .map((state) => state.taskId as number);
-
-    if (runningTaskIds.length === 0) return;
-    await Promise.allSettled(runningTaskIds.map((taskId) => cancelTask(taskId).unwrap()));
+    if (ids.length === 0) return;
+    await Promise.allSettled(ids.map((taskId) => cancelTask(taskId).unwrap()));
     toast.success('Stop requested on all running devices');
   };
 
-  const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
+  const historyDevice = devices.find((device) => device.id === historyDeviceId);
+  const historyTasks = historyDeviceId !== null ? tasksByDevice[historyDeviceId] ?? [] : [];
 
   // ---- Render ------------------------------------------------------------
   return (
@@ -263,9 +359,7 @@ export default function AndroidFleetPage() {
           Device Fleet
         </Typography>
         <Chip size="small" label={`${onlineDevices.length} online`} color="success" variant="outlined" />
-        {runningCount > 0 && (
-          <Chip size="small" label={`${runningCount} running`} color="warning" variant="outlined" />
-        )}
+        {runningCount > 0 && <Chip size="small" label={`${runningCount} running`} color="warning" variant="outlined" />}
         <Box sx={{ flexGrow: 1 }} />
         {runningCount > 0 && (
           <Button size="small" color="error" variant="outlined" startIcon={<StopCircleIcon />} onClick={handleStopAll}>
@@ -308,16 +402,69 @@ export default function AndroidFleetPage() {
               }
             }}
           />
+          <TextField
+            select
+            size="small"
+            label="Steps"
+            value={maxSteps}
+            onChange={(event) => setMaxSteps(Number(event.target.value))}
+            sx={{ minWidth: 180 }}
+          >
+            {STEP_BUDGETS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </TextField>
           <Button
             variant="contained"
             startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
             disabled={isDispatching || selectedIds.length === 0 || !prompt.trim()}
             onClick={handleRunOnSelected}
-            sx={{ whiteSpace: 'nowrap', minWidth: 190 }}
+            sx={{ whiteSpace: 'nowrap', minWidth: 170 }}
           >
             Run on {selectedIds.length || 0}
           </Button>
         </Stack>
+
+        {/* Dispatch result strip */}
+        {lastDispatch && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            flexWrap="wrap"
+            gap={1}
+            sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}
+          >
+            {lastDispatch.startedIds.length > 0 && (
+              <Chip
+                size="small"
+                icon={<CheckCircleIcon />}
+                color="success"
+                variant="outlined"
+                label={`${lastDispatch.startedIds.length} started`}
+              />
+            )}
+            {lastDispatch.failedIds.length > 0 && (
+              <Chip
+                size="small"
+                icon={<ErrorOutlineIcon />}
+                color="error"
+                variant="outlined"
+                label={`${lastDispatch.failedIds.length} failed`}
+              />
+            )}
+            <Box sx={{ flexGrow: 1 }} />
+            {lastDispatch.failedIds.length > 0 && (
+              <Button size="small" startIcon={<ReplayIcon />} onClick={handleRetryFailed} disabled={isDispatching}>
+                Retry failed
+              </Button>
+            )}
+            <Button size="small" color="inherit" onClick={handleDismissDispatch}>
+              Dismiss
+            </Button>
+          </Stack>
+        )}
       </Paper>
 
       {/* Grid */}
@@ -337,18 +484,14 @@ export default function AndroidFleetPage() {
           sx={{
             display: 'grid',
             gap: 2,
-            gridTemplateColumns: {
-              xs: '1fr',
-              sm: 'repeat(2, 1fr)',
-              lg: 'repeat(3, 1fr)',
-              xl: 'repeat(4, 1fr)',
-            },
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)', xl: 'repeat(4, 1fr)' },
           }}
         >
           {devices.map((device) => {
             const state = runtime[device.id] ?? emptyRuntime;
             const isOnline = device.status === 'ONLINE';
             const isSelected = selectedIds.includes(device.id);
+            const historyCount = (tasksByDevice[device.id] ?? []).length;
 
             return (
               <Card
@@ -356,20 +499,16 @@ export default function AndroidFleetPage() {
                 variant="outlined"
                 sx={{
                   borderRadius: 2,
-                  borderColor: isSelected ? 'primary.main' : undefined,
-                  borderWidth: isSelected ? 2 : 1,
+                  borderWidth: isSelected || state.startError ? 2 : 1,
+                  borderColor: state.startError ? 'error.main' : isSelected ? 'primary.main' : undefined,
                   opacity: isOnline ? 1 : 0.65,
-                  transition: 'border-color .15s ease',
+                  display: 'flex',
+                  flexDirection: 'column',
                 }}
               >
-                {/* Card header */}
+                {/* Header */}
                 <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
-                  <Checkbox
-                    size="small"
-                    checked={isSelected}
-                    disabled={!isOnline}
-                    onChange={() => toggleDevice(device.id)}
-                  />
+                  <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
                   <Box sx={{ minWidth: 0, flexGrow: 1 }}>
                     <Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>
                       {device.device_name}
@@ -378,6 +517,13 @@ export default function AndroidFleetPage() {
                       {device.device_model || device.device_id}
                     </Typography>
                   </Box>
+                  <Tooltip title={`Task history (${historyCount})`}>
+                    <span>
+                      <IconButton size="small" disabled={historyCount === 0} onClick={() => setHistoryDeviceId(device.id)}>
+                        <HistoryIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Chip
                     size="small"
                     label={isOnline ? 'ONLINE' : 'OFFLINE'}
@@ -420,9 +566,16 @@ export default function AndroidFleetPage() {
 
                 <Divider />
 
-                {/* Status footer */}
-                <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
-                  {state.isRunning ? (
+                {/* Status */}
+                <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
+                  {state.startError ? (
+                    <Stack direction="row" alignItems="flex-start" gap={0.75}>
+                      <ErrorOutlineIcon fontSize="small" color="error" />
+                      <Typography variant="caption" color="error">
+                        {state.startError}
+                      </Typography>
+                    </Stack>
+                  ) : state.isRunning ? (
                     <Stack gap={0.5}>
                       <Stack direction="row" alignItems="center" gap={0.75}>
                         <Chip
@@ -446,12 +599,7 @@ export default function AndroidFleetPage() {
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                        }}
+                        sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
                         {state.lastThought || state.prompt || 'Working…'}
                       </Typography>
@@ -473,11 +621,96 @@ export default function AndroidFleetPage() {
                     </Typography>
                   )}
                 </CardContent>
+
+                {/* Inline per-device prompt */}
+                <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    placeholder="Task for this device…"
+                    disabled={!isOnline || state.isRunning}
+                    value={cardPrompts[device.id] ?? ''}
+                    onChange={(event) => setCardPrompts((prev) => ({ ...prev, [device.id]: event.target.value }))}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        handleRunOnCard(device.id);
+                      }
+                    }}
+                    sx={{ '& .MuiInputBase-input': { fontSize: 13 } }}
+                  />
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    disabled={!isOnline || state.isRunning || !(cardPrompts[device.id] ?? '').trim()}
+                    onClick={() => handleRunOnCard(device.id)}
+                  >
+                    <SendIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
               </Card>
             );
           })}
         </Box>
       )}
+
+      {/* Per-device history */}
+      <Dialog open={historyDeviceId !== null} onClose={() => setHistoryDeviceId(null)} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ pr: 6 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+            {historyDevice?.device_name ?? 'Device'} — task history
+          </Typography>
+          <IconButton
+            size="small"
+            onClick={() => setHistoryDeviceId(null)}
+            sx={{ position: 'absolute', right: 12, top: 12 }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {historyTasks.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+              No tasks recorded for this device yet.
+            </Typography>
+          ) : (
+            <Stack divider={<Divider flexItem />}>
+              {historyTasks.map((task) => (
+                <Stack
+                  key={task.id}
+                  direction="row"
+                  alignItems="center"
+                  gap={1.25}
+                  sx={{ py: 1.25, cursor: 'pointer' }}
+                  onClick={() => {
+                    setHistoryDeviceId(null);
+                    navigate(`/android-agent?deviceId=${task.device_id}`);
+                  }}
+                >
+                  {task.is_running ? (
+                    <CircularProgress size={16} />
+                  ) : task.success ? (
+                    <CheckCircleIcon fontSize="small" color="success" />
+                  ) : (
+                    <ErrorOutlineIcon fontSize="small" color="error" />
+                  )}
+                  <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                    <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
+                      {task.prompt}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" noWrap>
+                      {task.total_steps} steps · {task.model || 'unknown model'}
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                    {timeAgo(task.created_at)}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 }
