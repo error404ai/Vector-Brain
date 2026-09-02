@@ -56,6 +56,12 @@ export interface ListAndroidTasksParams {
   limit?: number;
 }
 
+export interface PromptClarification {
+  needsClarification: boolean;
+  question?: string;
+  options?: string[];
+}
+
 export interface RequestPairingPayload {
   device_name: string;
   device_model?: string;
@@ -150,6 +156,14 @@ const androidApi = baseApi.injectEndpoints({
       providesTags: ['AGENT_TASKS' as any],
     }),
 
+    clarifyPrompt: builder.mutation<{ message: string; data: PromptClarification }, { prompt: string }>({
+      query: (body) => ({
+        url: '/prompts/clarify',
+        method: 'POST',
+        body,
+      }),
+    }),
+
     getActiveAndroidTask: builder.query<{ message: string; data: AndroidAgentTask | null }, number | void>({
       query: (deviceId) => ({
         url: deviceId !== undefined ? `/android/agent/active?deviceId=${deviceId}` : '/android/agent/active',
@@ -172,6 +186,7 @@ export const {
   useLazyGetAndroidTasksQuery,
   useGetActiveAndroidTaskQuery,
   useLazyGetActiveAndroidTaskQuery,
+  useClarifyPromptMutation,
 } = androidApi;
 
 export default androidApi;
