@@ -157,10 +157,6 @@ export function AndroidAgentPage() {
   const { data: aiConfigsData } = useGetAiConfigsQuery();
   const aiConfigs = useMemo(() => aiConfigsData?.data ?? [], [aiConfigsData?.data]);
   const activeAiConfig = useMemo(() => aiConfigs.find((c) => c.is_active), [aiConfigs]);
-  const runningConfig = useMemo(
-    () => (selectedConfigId ? aiConfigs.find((c) => c.id === selectedConfigId) ?? activeAiConfig : activeAiConfig),
-    [aiConfigs, selectedConfigId, activeAiConfig],
-  );
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
@@ -170,6 +166,12 @@ export function AndroidAgentPage() {
   // Run configuration: 0 = use the account's active provider
   const [selectedConfigId, setSelectedConfigId] = useState(0);
   const [maxSteps, setMaxSteps] = useState(40);
+
+  // The provider this run will actually use: the explicit pick, else the active one.
+  const runningConfig = useMemo(
+    () => (selectedConfigId ? aiConfigs.find((c) => c.id === selectedConfigId) ?? activeAiConfig : activeAiConfig),
+    [aiConfigs, selectedConfigId, activeAiConfig],
+  );
 
   // Live token / cost estimation for the current session
   const [tokenStats, setTokenStats] = useState({ promptTokens: 0, completionTokens: 0 });
