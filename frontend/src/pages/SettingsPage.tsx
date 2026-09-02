@@ -9,6 +9,7 @@ import { useGetSettingsQuery, useUpdateSettingMutation } from '@/RTKService/sett
 import { AiConfigModal } from '@/components/ai-config/AiConfigModal';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
 import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
+import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import PageHeader from '@/components/ui/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -157,7 +158,8 @@ export default function SettingsPage() {
   }, [aiConfigs]);
 
   const activeConfig = aiConfigs.find((config) => config.is_active);
-  const otherConfigs = aiConfigs.filter((config) => !config.is_active);
+  // Recommended models first, free models second — cheap to try — then the rest.
+  const otherConfigs = sortModelsForDisplay(aiConfigs.filter((config) => !config.is_active));
 
   const getProviderColor = (provider: string) => {
     switch (provider) {
@@ -280,6 +282,7 @@ export default function SettingsPage() {
                         const providerColor = getProviderColor(config.provider);
                         const isTestingThis = testingId === config.id && isTestingSaved;
                         const outcome = testResults[config.id];
+                        const meta = getModelMeta(config.model);
 
                         return (
                           <Card
@@ -333,6 +336,18 @@ export default function SettingsPage() {
                                             fontSize: '0.65rem',
                                           }}
                                         />
+                                      )}
+
+                                      {meta && (
+                                        <Tooltip title={meta.note}>
+                                          <Chip
+                                            label={meta.tag === 'recommended' ? 'RECOMMENDED' : 'CAUTION'}
+                                            size="small"
+                                            color={meta.tag === 'recommended' ? 'success' : 'warning'}
+                                            variant={meta.tag === 'recommended' ? 'filled' : 'outlined'}
+                                            sx={{ height: 20, fontSize: '0.6rem', fontWeight: 800 }}
+                                          />
+                                        </Tooltip>
                                       )}
 
                                       {config.label && config.label !== config.model && (
