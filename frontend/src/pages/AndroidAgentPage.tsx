@@ -1,6 +1,7 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
+  useGetAndroidTasksQuery,
   useLazyGetActiveAndroidTaskQuery,
   useLazyGetAndroidTaskLogsQuery,
   useLazyGetAndroidTasksQuery,
@@ -13,6 +14,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
+import HistoryIcon from '@mui/icons-material/History';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -151,11 +153,15 @@ function StepResult({ result, failed }: { result: string; failed?: boolean }) {
 export function AndroidAgentPage() {
   const theme = useTheme();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
   const requestedTaskId = searchParams.get('taskId') ? Number(searchParams.get('taskId')) : undefined;
 
   const { data: devicesData } = useGetAndroidDevicesQuery(undefined, { pollingInterval: 5_000 });
+  const { data: deviceTasksData, refetch: refetchSessions } = useGetAndroidTasksQuery(
+    { limit: 40 },
+    { pollingInterval: 30_000 },
+  );
   const devices = useMemo(() => devicesData?.data || [], [devicesData?.data]);
 
   const { data: aiConfigsData } = useGetAiConfigsQuery();
@@ -171,6 +177,7 @@ export function AndroidAgentPage() {
   const [selectedConfigId, setSelectedConfigId] = useState(0);
   const [maxSteps, setMaxSteps] = useState(40);
   const [manualControl, setManualControl] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(true);
 
   // The provider this run will actually use: the explicit pick, else the active one.
   const runningConfig = useMemo(
@@ -210,6 +217,18 @@ export function AndroidAgentPage() {
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
   const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
+
+  /** Past runs on the selected device, newest first. */
+  const sessions = useMemo(
+    () => (deviceTasksData?.data ?? []).filter((task) => task.device_id === effectiveSelectedDeviceId),
+    [deviceTasksData, effectiveSelectedDeviceId],
+  );
+
+  /** Loads a stored run into the transcript by pointing the restore effect at it. */
+  const openSession = (taskId: number) => {
+    if (!effectiveSelectedDeviceId) return;
+    setSearchParams({ deviceId: String(effectiveSelectedDeviceId), taskId: String(taskId) });
+  };
 
   // Derived live usage estimate
   const usageEstimate = useMemo(() => {
@@ -438,6 +457,7 @@ export function AndroidAgentPage() {
             return updated;
           });
         } else if (msg.event === 'task:completed') {
+          refetchSessions();
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
           }
@@ -778,15 +798,119 @@ export function AndroidAgentPage() {
         </CardContent>
       </Card>
 
-      {/* Main Split Layout: Left Phone Mockup, Right Conversational Feed */}
+      {/* Main layout: sessions rail · conversation · live device */}
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', lg: '380px 1fr' },
-          gap: 3,
+          gridTemplateColumns: {
+            xs: '1fr',
+            lg: sessionsOpen ? '260px 360px 1fr' : '56px 360px 1fr',
+          },
+          gap: 2.5,
           alignItems: 'flex-start',
+          transition: 'grid-template-columns .2s ease',
         }}
       >
+        {/* Sessions rail */}
+        <Card
+          sx={{
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            position: { lg: 'sticky' },
+            top: { lg: 20 },
+            display: { xs: 'none', lg: 'block' },
+            overflow: 'hidden',
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            sx={{ px: sessionsOpen ? 1.5 : 0.5, py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}
+          >
+            {sessionsOpen && (
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, flexGrow: 1 }}>
+                Sessions
+              </Typography>
+            )}
+            <Tooltip title={sessionsOpen ? 'Collapse' : 'Sessions'}>
+              <IconButton size="small" onClick={() => setSessionsOpen((prev) => !prev)} sx={{ mx: 'auto' }}>
+                <HistoryIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+
+          {sessionsOpen && (
+            <>
+              <Box sx={{ p: 1.25 }}>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  startIcon={<ClearAllIcon />}
+                  onClick={handleClearChat}
+                  sx={{ borderRadius: 2, fontWeight: 700 }}
+                >
+                  New session
+                </Button>
+              </Box>
+
+              <Box sx={{ maxHeight: 520, overflowY: 'auto', pb: 1 }}>
+                {sessions.length === 0 ? (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 2, py: 3 }}>
+                    No runs on this device yet.
+                  </Typography>
+                ) : (
+                  sessions.map((session) => {
+                    const isOpen = activeTaskId === session.id;
+                    return (
+                      <Box
+                        key={session.id}
+                        onClick={() => openSession(session.id)}
+                        sx={{
+                          px: 1.5,
+                          py: 1,
+                          cursor: 'pointer',
+                          borderLeft: '3px solid',
+                          borderColor: isOpen ? 'primary.main' : 'transparent',
+                          bgcolor: isOpen ? alpha(theme.palette.primary.main, 0.06) : 'transparent',
+                          '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.04) },
+                        }}
+                      >
+                        <Stack direction="row" alignItems="center" gap={0.75}>
+                          {session.is_running ? (
+                            <CircularProgress size={12} />
+                          ) : session.success ? (
+                            <CheckCircleIcon sx={{ fontSize: 14 }} color="success" />
+                          ) : (
+                            <StopCircleIcon sx={{ fontSize: 14 }} color="error" />
+                          )}
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              fontWeight: 600,
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            {session.prompt}
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" sx={{ pl: 2.6, fontSize: 10 }}>
+                          {session.total_steps} steps
+                        </Typography>
+                      </Box>
+                    );
+                  })
+                )}
+              </Box>
+            </>
+          )}
+        </Card>
+
         {/* Left Sticky Column: Live Phone Mockup */}
         <Box sx={{ position: { lg: 'sticky' }, top: { lg: 20 } }}>
           <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
