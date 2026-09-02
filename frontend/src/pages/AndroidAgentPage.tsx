@@ -19,7 +19,6 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
-import TouchAppIcon from '@mui/icons-material/TouchApp';
 import {
   Alert,
   alpha,
