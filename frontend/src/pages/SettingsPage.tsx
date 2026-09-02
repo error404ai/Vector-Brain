@@ -15,6 +15,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import SaveIcon from '@mui/icons-material/Save';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -42,6 +43,30 @@ import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
 
+/**
+ * The enhancer shapes every task, so its default has to keep prompts tight.
+ * Expanding a request into a multi-page research plan is what makes runs
+ * exhaust their step budget.
+ */
+const DEFAULT_ENHANCER_PROMPT = `Rewrite the user's request as a clear, concrete Android task.
+
+This agent drives a real phone through the accessibility service. It is good at
+actions (open, tap, type, navigate, scroll) and poor at extracting page content.
+
+Rules:
+- Keep the task as SHORT as possible. Never add verification, cross-checking or
+  multi-source steps that the user did not ask for.
+- If the user wants information, use ONE source, read what is directly visible,
+  and report it.
+- Never expand a request into a multi-page research task.
+- Preserve the user's intent and any names, URLs or numbers exactly.`;
+
+interface TestOutcome {
+  ok: boolean;
+  at: number;
+  detail: string;
+}
+
 export default function SettingsPage() {
   const theme = useTheme();
 
@@ -62,6 +87,8 @@ export default function SettingsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AiConfig | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
+  // Remembers the last connection test per provider for this visit.
+  const [testResults, setTestResults] = useState<Record<number, TestOutcome>>({});
 
   useEffect(() => {
     if (systemPromptSetting) {
@@ -103,9 +130,15 @@ export default function SettingsPage() {
     setTestingId(id);
     try {
       const res = await testSavedConfig(id).unwrap();
-      toast.success(`Connected (${res.data.latencyMs}ms): ${res.data.reply}`);
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: { ok: true, at: Date.now(), detail: `${res.data.latencyMs}ms` },
+      }));
+      toast.success(`Connected (${res.data.latencyMs}ms)`);
     } catch (err: any) {
-      toast.error(err?.data?.message || 'Connection test failed');
+      const detail = err?.data?.message || 'Connection test failed';
+      setTestResults((prev) => ({ ...prev, [id]: { ok: false, at: Date.now(), detail } }));
+      toast.error(detail);
     } finally {
       setTestingId(null);
     }
@@ -120,6 +153,13 @@ export default function SettingsPage() {
     setEditingConfig(config);
     setModalOpen(true);
   };
+
+  /** Models configured more than once — the free-text label hides these. */
+  const duplicateModels = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const config of aiConfigs) counts[config.model] = (counts[config.model] ?? 0) + 1;
+    return new Set(Object.keys(counts).filter((model) => counts[model] > 1));
+  }, [aiConfigs]);
 
   const getProviderColor = (provider: string) => {
     switch (provider) {
@@ -249,9 +289,30 @@ export default function SettingsPage() {
 
                             <Box>
                               <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                                <Typography variant="subtitle1" fontWeight={600}>
-                                  {config.label || `${config.provider.toUpperCase()} - ${config.model}`}
+                                <Typography variant="subtitle1" fontWeight={700}>
+                                  {config.model}
                                 </Typography>
+
+                                {config.label && config.label !== config.model && (
+                                  <Chip
+                                    label={config.label}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ height: 22, fontSize: '0.7rem', maxWidth: 200 }}
+                                  />
+                                )}
+
+                                {duplicateModels.has(config.model) && (
+                                  <Tooltip title="Another entry uses the same model">
+                                    <Chip
+                                      label="DUPLICATE"
+                                      size="small"
+                                      color="warning"
+                                      variant="outlined"
+                                      sx={{ height: 22, fontSize: '0.65rem', fontWeight: 700 }}
+                                    />
+                                  </Tooltip>
+                                )}
 
                                 {config.is_active && (
                                   <Chip
@@ -283,10 +344,27 @@ export default function SettingsPage() {
                                 />
                               </Stack>
 
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                Model: <strong>{config.model}</strong>
-                                {config.base_url && ` • Base URL: ${config.base_url}`}
-                              </Typography>
+                              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 0.5 }}>
+                                {config.base_url && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    {config.base_url}
+                                  </Typography>
+                                )}
+                                {testResults[config.id] ? (
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ fontWeight: 700, color: testResults[config.id].ok ? 'success.main' : 'error.main' }}
+                                  >
+                                    {testResults[config.id].ok
+                                      ? `Tested OK · ${testResults[config.id].detail}`
+                                      : `Test failed · ${testResults[config.id].detail}`}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="caption" color="text.disabled">
+                                    Not tested this session
+                                  </Typography>
+                                )}
+                              </Stack>
                             </Box>
                           </Stack>
 
@@ -366,7 +444,8 @@ export default function SettingsPage() {
               <Box component="form" onSubmit={handlePromptSubmit}>
                 <Stack spacing={2}>
                   <Alert severity="info" variant="outlined">
-                    This prompt instructs the active AI model on how to improve user task prompts before sending them to agents.
+                    This prompt shapes every task before it reaches an agent. Keeping it tight matters: instructions
+                    that expand a request into a multi-step research plan make runs exhaust their step budget.
                   </Alert>
                   <TextField
                     label="System Prompt for Prompt Enhancement"
@@ -377,11 +456,24 @@ export default function SettingsPage() {
                     minRows={6}
                     fullWidth
                   />
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="flex-end">
+                    {systemPrompt !== String(systemPromptSetting?.value ?? '') && (
+                      <Typography variant="caption" color="warning.main" sx={{ fontWeight: 700, mr: 'auto' }}>
+                        Unsaved changes
+                      </Typography>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      startIcon={<RestartAltIcon />}
+                      onClick={() => setSystemPrompt(DEFAULT_ENHANCER_PROMPT)}
+                    >
+                      Restore default
+                    </Button>
                     <Button type="submit" variant="contained" startIcon={<SaveIcon />} disabled={isUpdatingPrompt}>
                       Save System Prompt
                     </Button>
-                  </Box>
+                  </Stack>
                 </Stack>
               </Box>
             )}
