@@ -59,6 +59,61 @@ export class AiService {
     }
   }
 
+  /**
+   * Checks whether an Android task prompt is concrete enough to run. Vague prompts
+   * ("open 30 random websites") make the agent burn its whole step budget deciding
+   * what to do, so it is far cheaper to ask one question up front.
+   */
+  async clarifyAndroidPrompt(
+    prompt: string,
+    userId?: number,
+  ): Promise<{ needsClarification: boolean; question?: string; options?: string[] }> {
+    const chatModel = await this.getChatModel(userId);
+    if (!chatModel) return { needsClarification: false };
+
+    const systemPrompt = [
+      'You review short instructions that will be executed by an agent controlling a real Android phone.',
+      'Decide whether the instruction is concrete enough to execute without guessing.',
+      'It is concrete when the app, the target and the desired end state are clear.',
+      'It is vague when it leaves a choice open that changes what the agent does — an unspecified list,',
+      '"random"/"any"/"some" items, or a missing target.',
+      'Be conservative: most instructions are fine and should pass through untouched.',
+      'Reply with ONLY minified JSON, no prose and no code fences:',
+      '{"needsClarification":boolean,"question":string,"options":string[]}',
+      'question: one short question (max 15 words). options: 2-4 short pickable answers (max 5 words each).',
+      'When it is concrete, reply {"needsClarification":false}.',
+    ].join(' ');
+
+    try {
+      const response = await chatModel.invoke([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ]);
+
+      const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { needsClarification: false };
+
+      const parsed = JSON.parse(match[0]) as {
+        needsClarification?: boolean;
+        question?: string;
+        options?: string[];
+      };
+
+      if (!parsed.needsClarification || !parsed.question) return { needsClarification: false };
+
+      return {
+        needsClarification: true,
+        question: String(parsed.question).slice(0, 160),
+        options: Array.isArray(parsed.options) ? parsed.options.slice(0, 4).map((o) => String(o).slice(0, 60)) : [],
+      };
+    } catch (error) {
+      // Clarification is an optimisation; never block a run because it failed.
+      Logger.warn('Failed to clarify prompt with AI:', error);
+      return { needsClarification: false };
+    }
+  }
+
   async enhancePrompt(prompt: string, userId?: number): Promise<string> {
     const chatModel = await this.getChatModel(userId);
     if (!chatModel) {
@@ -76,4 +131,3 @@ export class AiService {
     return enhanced.trim();
   }
 }
-
