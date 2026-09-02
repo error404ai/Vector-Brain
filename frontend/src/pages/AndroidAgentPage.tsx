@@ -13,6 +13,7 @@ import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigServi
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AgentMarkdown from '@/components/android/AgentMarkdown';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 import HistoryIcon from '@mui/icons-material/History';
@@ -1247,7 +1248,21 @@ export function AndroidAgentPage() {
                                     : theme.palette.success.main;
 
                               return (
-                                <Box key={step.stepIndex} sx={{ display: 'flex', gap: 1.25, position: 'relative' }}>
+                                <Box
+                                  key={step.stepIndex}
+                                  sx={{
+                                    display: 'flex',
+                                    gap: 1.25,
+                                    position: 'relative',
+                                    ...(step.status === 'EXECUTING' && {
+                                      bgcolor: alpha(theme.palette.warning.main, 0.07),
+                                      borderRadius: 1.5,
+                                      mx: -1,
+                                      px: 1,
+                                      pt: 0.75,
+                                    }),
+                                  }}
+                                >
                                   {/* Timeline rail */}
                                   <Box
                                     sx={{
@@ -1267,6 +1282,13 @@ export function AndroidAgentPage() {
                                         bgcolor: dotColor,
                                         boxShadow: `0 0 0 3px ${alpha(dotColor, 0.18)}`,
                                         flexShrink: 0,
+                                        ...(step.status === 'EXECUTING' && {
+                                          animation: 'vbPulse 1.2s ease-in-out infinite',
+                                          '@keyframes vbPulse': {
+                                            '0%, 100%': { boxShadow: `0 0 0 3px ${alpha(dotColor, 0.18)}` },
+                                            '50%': { boxShadow: `0 0 0 7px ${alpha(dotColor, 0.05)}` },
+                                          },
+                                        }),
                                       }}
                                     />
                                     {!isLast && (
@@ -1321,10 +1343,42 @@ export function AndroidAgentPage() {
                           </Stack>
                         )}
 
-                        {/* Summary / Reply Text */}
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontWeight: 600 }}>
-                          {msg.content}
-                        </Typography>
+                        {/* Final answer — the part the user actually reads */}
+                        {msg.content && (
+                          <Box
+                            sx={{
+                              mt: msg.steps?.length ? 2 : 0,
+                              p: 1.75,
+                              borderRadius: 2,
+                              border: '1px solid',
+                              borderColor:
+                                msg.status === 'error'
+                                  ? alpha(theme.palette.error.main, 0.35)
+                                  : alpha(theme.palette.success.main, 0.3),
+                              bgcolor:
+                                msg.status === 'error'
+                                  ? alpha(theme.palette.error.main, 0.05)
+                                  : alpha(theme.palette.success.main, 0.05),
+                            }}
+                          >
+                            <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>
+                              {msg.status === 'running' ? (
+                                <CircularProgress size={13} />
+                              ) : msg.status === 'error' ? (
+                                <StopCircleIcon sx={{ fontSize: 15 }} color="error" />
+                              ) : (
+                                <CheckCircleIcon sx={{ fontSize: 15 }} color="success" />
+                              )}
+                              <Typography
+                                variant="caption"
+                                sx={{ fontWeight: 800, letterSpacing: 0.4, fontSize: 10.5, color: 'text.secondary' }}
+                              >
+                                {msg.status === 'running' ? 'WORKING' : msg.status === 'error' ? 'RESULT' : 'RESULT'}
+                              </Typography>
+                            </Stack>
+                            <AgentMarkdown text={msg.content} />
+                          </Box>
+                        )}
                       </Paper>
                     </Stack>
                   )}
