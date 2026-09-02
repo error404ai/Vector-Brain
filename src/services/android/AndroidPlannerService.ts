@@ -219,7 +219,7 @@ export class AndroidPlannerService {
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
   private activeTasks = new Map<
     number,
-    { cancelled: boolean; deviceId: string; eko?: Eko; ekoTaskId?: string }
+    { cancelled: boolean; deviceId: string; deviceDbId?: number; eko?: Eko; ekoTaskId?: string }
   >();
   private activeDeviceTasks = new Map<string, number>();
   private startingDevices = new Set<string>();
@@ -279,6 +279,7 @@ export class AndroidPlannerService {
         const existing = await this.agentTaskRepo.findOne({ where: { id: existingTaskId, user_id: userId } });
         if (existing) {
           agentTask = existing;
+          agentTask.device_id = device.id;
           agentTask.provider = aiConfig.provider;
           agentTask.model = aiConfig.model;
           agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
@@ -312,6 +313,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         } else {
           agentTask = this.agentTaskRepo.create({
             user_id: userId,
+            device_id: device.id,
             prompt,
             provider: aiConfig.provider,
             model: aiConfig.model,
@@ -325,6 +327,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       } else {
         agentTask = this.agentTaskRepo.create({
           user_id: userId,
+          device_id: device.id,
           prompt,
           provider: aiConfig.provider,
           model: aiConfig.model,
@@ -343,7 +346,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // Keep the device CPU/display active for the complete automation session,
     // including the time spent waiting for the model between device actions.
     this.gatewayService.setAutomationSession(device.device_id, true);
-    this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id });
+    this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id, deviceDbId: device.id });
     this.activeDeviceTasks.set(device.device_id, agentTask.id);
     this.startingDevices.delete(device.device_id);
     const startTime = Date.now();
@@ -412,9 +415,33 @@ Use the current visible Android screen and UI state as context. Continue from wh
     task.success = false;
     await this.agentTaskRepo.save(task);
 
-    this.gatewayService.broadcastToUser(userId, 'task:cancelled', { taskId });
+    this.gatewayService.broadcastToUser(userId, 'task:cancelled', {
+      taskId,
+      deviceId: active?.deviceDbId ?? task.device_id,
+    });
 
     return { message: 'Task cancellation requested' };
+  }
+
+  /**
+   * Task ids that are currently executing (used by the API to mark live sessions).
+   */
+  getActiveTaskIds(): number[] {
+    return Array.from(this.activeTasks.entries())
+      .filter(([, entry]) => !entry.cancelled)
+      .map(([taskId]) => taskId);
+  }
+
+  /**
+   * The task currently running on a specific device, or any running task when no
+   * device is given. Lets the UI re-attach to a live session after a reload.
+   */
+  getActiveTaskIdForDevice(deviceDbId?: number): number | undefined {
+    for (const [taskId, entry] of this.activeTasks.entries()) {
+      if (entry.cancelled) continue;
+      if (deviceDbId === undefined || entry.deviceDbId === deviceDbId) return taskId;
+    }
+    return undefined;
   }
 
   private buildEkoLlms(aiConfig: DecryptedAiConfig): LLMs {
@@ -624,6 +651,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
             this.gatewayService.broadcastToUser(userId, 'task:step', {
               taskId: agentTask.id,
+              deviceId: deviceDbId,
               stepIndex: stepCount,
               thought: currentThought || `Executing ${toolName}`,
               action: { type: toolName, ...toolParams },
@@ -654,6 +682,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
             this.gatewayService.broadcastToUser(userId, 'task:step_result', {
               taskId: agentTask.id,
+              deviceId: deviceDbId,
               stepIndex: stepCount,
               status: isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS,
               result: textContent,
@@ -726,6 +755,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       if (!wasCancelled) {
         this.gatewayService.broadcastToUser(userId, 'task:completed', {
           taskId: agentTask.id,
+          deviceId: deviceDbId,
           success: agentTask.success,
           message: agentTask.message,
           totalSteps: stepCount,
@@ -741,7 +771,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
         agentTask.total_steps = stepCount;
         agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
         await this.agentTaskRepo.save(agentTask);
-        this.gatewayService.broadcastToUser(userId, 'task:error', { taskId: agentTask.id, error: err.message });
+        this.gatewayService.broadcastToUser(userId, 'task:error', {
+          taskId: agentTask.id,
+          deviceId: deviceDbId,
+          error: err.message,
+        });
       }
     } finally {
       clearTimeout(taskTimeout);
