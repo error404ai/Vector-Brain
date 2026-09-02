@@ -1,18 +1,13 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
-  useGetAndroidTasksQuery,
-  useLazyGetActiveAndroidTaskQuery,
-  useLazyGetAndroidTaskLogsQuery,
   useRunAndroidTaskMutation,
-  type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
-import HistoryIcon from '@mui/icons-material/History';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
@@ -30,8 +25,6 @@ import {
   CardContent,
   Chip,
   CircularProgress,
-  ListItemText,
-  Menu,
   MenuItem,
   Paper,
   Select,
@@ -175,12 +168,6 @@ export function AndroidAgentPage() {
 
   const [runTask, { isLoading: isStartingTask }] = useRunAndroidTaskMutation();
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
-  const [fetchTaskLogs] = useLazyGetAndroidTaskLogsQuery();
-  const [fetchActiveTask] = useLazyGetActiveAndroidTaskQuery();
-
-  // History menu
-  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
-  const [isRestoring, setIsRestoring] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -189,7 +176,6 @@ export function AndroidAgentPage() {
   // can ignore events belonging to other devices.
   const selectedDeviceIdRef = useRef<number | undefined>(undefined);
   const selectedDeviceHardwareIdRef = useRef<string | undefined>(undefined);
-  const restoredForDeviceRef = useRef<number | undefined>(undefined);
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
