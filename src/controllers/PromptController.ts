@@ -23,5 +23,17 @@ export class PromptController {
       originalPrompt: request.prompt,
     };
   }
-}
 
+  /**
+   * Asks whether an Android task prompt needs one clarifying question before it runs.
+   */
+  @Post('/clarify')
+  @UseBefore(zodValidationMiddleware(EnhancePromptValidation))
+  async clarify(
+    @Body() request: z.infer<typeof EnhancePromptValidation>,
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    const result = await this.promptService.clarifyAndroidPrompt(request.prompt, user.userId);
+    return { message: 'Prompt reviewed', data: result };
+  }
+}
