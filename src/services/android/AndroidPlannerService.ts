@@ -17,8 +17,8 @@ import crypto from 'node:crypto';
 config.platform = 'linux';
 // Eko defaults to 500 ReAct iterations. Mobile automation must always have a
 // small outer safety ceiling; each task also enforces its requested maxSteps.
-config.maxReactNum = 50;
-config.compressThreshold = 20;
+config.maxReactNum = 250;
+config.compressThreshold = 30;
 config.compressTokensThreshold = 60000;
 
 const MAX_CONSECUTIVE_FAILURES = 6;
@@ -57,6 +57,9 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 - For Google searches specifically, plan a node like: "Use open_url to
   navigate directly to https://www.google.com/search?q=<url-encoded-query>"
   — this skips the address bar entirely and lands straight on results.
+- open_url reuses the current tab by default. When a task visits several sites
+  one after another, plan plain open_url nodes; only mention separate tabs if
+  the user explicitly asked for them.
 - Include: wait for results → identify correct result → tap it
 - Never combine "search and open result" into one node — split them
 
@@ -234,8 +237,21 @@ export class AndroidPlannerService {
    * Main autonomous reasoning loop for Android task execution powered by @eko-ai/eko.
    * Supports multi-turn conversational follow-ups by passing existingTaskId.
    */
-  async runTask(prompt: string, deviceId: number, userId: number, maxSteps = 40, existingTaskId?: number): Promise<ApiResponse> {
-    const aiConfig = await this.aiConfigService.resolveActiveConfig(userId);
+  async runTask(
+    prompt: string,
+    deviceId: number,
+    userId: number,
+    maxSteps = 40,
+    existingTaskId?: number,
+    aiConfigId?: number,
+  ): Promise<ApiResponse> {
+    // A task can pin a specific provider so different devices can run different
+    // models simultaneously; otherwise fall back to the user's active config.
+    const aiConfig = aiConfigId
+      ? (await this.aiConfigService.resolveConfigById(userId, aiConfigId)) ??
+        (await this.aiConfigService.resolveActiveConfig(userId))
+      : await this.aiConfigService.resolveActiveConfig(userId);
+
     if (!aiConfig) {
       throw new AppError(
         'No active AI configuration found. Please add and activate an AI provider (OpenAI, Gemini, DeepSeek, Groq, Anthropic, OpenRouter) in Settings.',
@@ -256,7 +272,7 @@ export class AndroidPlannerService {
     }
     this.startingDevices.add(device.device_id);
 
-    const boundedMaxSteps = Math.max(1, Math.min(maxSteps, 50));
+    const boundedMaxSteps = Math.max(1, Math.min(maxSteps, 200));
 
     // Wake the display before the first observation in case the device was idle.
     this.gatewayService.setAutomationSession(device.device_id, true);
@@ -703,6 +719,13 @@ Use the current visible Android screen and UI state as context. Continue from wh
       activeTaskEntry.ekoTaskId = ekoTaskId;
     }
 
+    // The companion app holds a screen wake-lock with a safety timeout. Re-send the
+    // session signal periodically so the device never locks mid-task while the
+    // agent is waiting on the model.
+    const keepAwakeTimer = setInterval(() => {
+      this.gatewayService.setAutomationSession(hardwareDeviceId, true);
+    }, 45_000);
+
     const maxTaskDurationMillis = Math.min(
       10 * 60_000,
       Math.max(2 * 60_000, maxSteps * 30_000),
@@ -778,6 +801,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         });
       }
     } finally {
+      clearInterval(keepAwakeTimer);
       clearTimeout(taskTimeout);
       try {
         ekoInstance.deleteTask(ekoTaskId);
