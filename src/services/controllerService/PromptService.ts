@@ -8,5 +8,8 @@ export class PromptService {
   async enhancePrompt(prompt: string, userId?: number): Promise<string> {
     return this.aiService.enhancePrompt(prompt, userId);
   }
-}
 
+  async clarifyAndroidPrompt(prompt: string, userId?: number) {
+    return this.aiService.clarifyAndroidPrompt(prompt, userId);
+  }
+}
