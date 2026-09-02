@@ -2,6 +2,7 @@ import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
   useGetAndroidTasksQuery,
+  useClarifyPromptMutation,
   useLazyGetActiveAndroidTaskQuery,
   useLazyGetAndroidTaskLogsQuery,
   useLazyGetAndroidTasksQuery,
@@ -178,6 +179,10 @@ export function AndroidAgentPage() {
   const [maxSteps, setMaxSteps] = useState(40);
   const [manualControl, setManualControl] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const [clarifyPrompt, { isLoading: isCheckingPrompt }] = useClarifyPromptMutation();
+  const [clarification, setClarification] = useState<{ prompt: string; question: string; options: string[] } | null>(
+    null,
+  );
 
   // The provider this run will actually use: the explicit pick, else the active one.
   const runningConfig = useMemo(
@@ -580,6 +585,25 @@ export function AndroidAgentPage() {
       toast.error('Selected device is not ready for automation');
       return;
     }
+
+    // A vague instruction makes the agent spend its whole step budget deciding what
+    // to do, so ask one question first. Skip when the user already answered one.
+    if (!textToSend) {
+      try {
+        const review = await clarifyPrompt({ prompt: text }).unwrap();
+        if (review?.data?.needsClarification && review.data.question) {
+          setClarification({
+            prompt: text,
+            question: review.data.question,
+            options: review.data.options ?? [],
+          });
+          return;
+        }
+      } catch {
+        // Clarification is optional — fall through and run the task as written.
+      }
+    }
+    setClarification(null);
 
     const userMsgId = `user-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now() + 1}`;
@@ -1161,7 +1185,9 @@ export function AndroidAgentPage() {
                         {/* Step Execution Timeline (BrowserWorker Style Action Cards) */}
                         {msg.steps && msg.steps.length > 0 && (
                           <Stack spacing={1.5} sx={{ my: 1.5 }}>
-                            {msg.steps.map((step, stepIdx) => {
+                            {msg.steps
+                              .filter((step) => step.action?.type !== 'task_snapshot')
+                              .map((step, stepIdx) => {
                               const isLast = stepIdx === (msg.steps?.length ?? 0) - 1;
                               const dotColor =
                                 step.status === 'FAILED'
@@ -1267,8 +1293,53 @@ export function AndroidAgentPage() {
               bgcolor: alpha(theme.palette.background.paper, 0.95),
             }}
           >
+            {/* One clarifying question before a vague task is dispatched */}
+            {clarification && (
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 1.5,
+                  mb: 1.5,
+                  borderRadius: 2,
+                  borderColor: 'warning.main',
+                  bgcolor: alpha(theme.palette.warning.main, 0.06),
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 700, mb: 1 }}>
+                  {clarification.question}
+                </Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  {clarification.options.map((option) => (
+                    <Chip
+                      key={option}
+                      label={option}
+                      size="small"
+                      color="warning"
+                      onClick={() => handleSendPrompt(`${clarification.prompt} — ${option}`)}
+                      sx={{ fontWeight: 700, cursor: 'pointer' }}
+                    />
+                  ))}
+                  <Chip
+                    label="Run as written"
+                    size="small"
+                    variant="outlined"
+                    onClick={() => handleSendPrompt(clarification.prompt)}
+                    sx={{ fontWeight: 700, cursor: 'pointer' }}
+                  />
+                  <Chip
+                    label="Cancel"
+                    size="small"
+                    variant="outlined"
+                    color="default"
+                    onClick={() => setClarification(null)}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                </Stack>
+              </Paper>
+            )}
+
             {/* Suggestion Chips when in-between actions */}
-            {!isRunning && messages.length > 0 && (
+            {!isRunning && !clarification && messages.length > 0 && (
               <Stack direction="row" spacing={1} sx={{ mb: 1.5, overflowX: 'auto', pb: 0.5 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center', mr: 0.5 }}>
                   Follow-up:
@@ -1335,7 +1406,7 @@ export function AndroidAgentPage() {
                 <Button
                   variant="contained"
                   onClick={() => handleSendPrompt()}
-                  disabled={!promptInput.trim() || isStartingTask || !deviceReady}
+                  disabled={!promptInput.trim() || isStartingTask || isCheckingPrompt || !deviceReady}
                   endIcon={isStartingTask ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
                   sx={{
                     borderRadius: 3,
