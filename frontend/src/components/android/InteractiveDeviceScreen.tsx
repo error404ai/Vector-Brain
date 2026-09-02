@@ -7,7 +7,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import SendIcon from '@mui/icons-material/Send';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import { Box, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 
 interface InteractiveDeviceScreenProps {
@@ -34,7 +34,7 @@ export default function InteractiveDeviceScreen({
   onScreenshot,
   controlEnabled,
   isAgentRunning,
-  refreshMs = 1500,
+  refreshMs = 700,
   compact,
 }: InteractiveDeviceScreenProps) {
   const [sendDirectAction] = useSendDirectActionMutation();
@@ -45,34 +45,35 @@ export default function InteractiveDeviceScreen({
   const pointerStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const busyRef = useRef(false);
 
+  // Parents often pass an inline callback. Keeping it in a ref stops the polling
+  // effect from tearing down and restarting on every render.
+  const onScreenshotRef = useRef(onScreenshot);
+  useEffect(() => {
+    onScreenshotRef.current = onScreenshot;
+  }, [onScreenshot]);
+
+  /** Pulls one frame. Skips if a previous pull is still in flight. */
+  const captureFrame = useCallback(async () => {
+    if (!deviceId || busyRef.current) return;
+    busyRef.current = true;
+    try {
+      const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
+      const base64 = res?.data?.screenCapture?.base64Data;
+      if (base64) onScreenshotRef.current?.(base64);
+    } catch {
+      // A dropped frame is not worth surfacing; the next tick retries.
+    } finally {
+      busyRef.current = false;
+    }
+  }, [deviceId, sendDirectAction]);
+
   // ---- Live frames -------------------------------------------------------
   useEffect(() => {
     if (!controlEnabled || !deviceId) return;
-
-    let cancelled = false;
-
-    const pull = async () => {
-      // Never queue frames on top of each other on a slow link.
-      if (busyRef.current) return;
-      busyRef.current = true;
-      try {
-        const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
-        const base64 = res?.data?.screenCapture?.base64Data;
-        if (base64 && !cancelled) onScreenshot?.(base64);
-      } catch {
-        // A dropped frame is not worth surfacing; the next tick retries.
-      } finally {
-        busyRef.current = false;
-      }
-    };
-
-    pull();
-    const timer = setInterval(pull, refreshMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [controlEnabled, deviceId, refreshMs, sendDirectAction, onScreenshot]);
+    captureFrame();
+    const timer = setInterval(captureFrame, refreshMs);
+    return () => clearInterval(timer);
+  }, [controlEnabled, deviceId, refreshMs, captureFrame]);
 
   // ---- Coordinate mapping ------------------------------------------------
   /**
@@ -82,7 +83,10 @@ export default function InteractiveDeviceScreen({
    */
   const toDeviceCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
     const img = imgRef.current;
-    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+    if (!img || !img.naturalWidth || !img.naturalHeight) {
+      toast.error('Screen not measured yet — wait for a frame and try again');
+      return null;
+    }
 
     const rect = img.getBoundingClientRect();
     const scale = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
@@ -91,9 +95,9 @@ export default function InteractiveDeviceScreen({
     const offsetX = (rect.width - drawnW) / 2;
     const offsetY = (rect.height - drawnH) / 2;
 
-    const localX = clientX - rect.left - offsetX;
-    const localY = clientY - rect.top - offsetY;
-    if (localX < 0 || localY < 0 || localX > drawnW || localY > drawnH) return null;
+    // Clamp instead of dropping: clicks on the letterbox edge should still land.
+    const localX = Math.min(Math.max(clientX - rect.left - offsetX, 0), drawnW);
+    const localY = Math.min(Math.max(clientY - rect.top - offsetY, 0), drawnH);
 
     return { x: Math.round(localX / scale), y: Math.round(localY / scale) };
   };
@@ -103,9 +107,16 @@ export default function InteractiveDeviceScreen({
     try {
       const res = await sendDirectAction({ device_id: deviceId, action }).unwrap();
       const base64 = res?.data?.screenCapture?.base64Data;
-      if (base64) onScreenshot?.(base64);
-    } catch {
-      toast.error(`${label} failed`);
+      if (base64) onScreenshotRef.current?.(base64);
+
+      // Most actions return no frame, so pull one right away rather than waiting
+      // for the next interval tick. The short delay lets the UI settle first.
+      window.setTimeout(() => {
+        void captureFrame();
+      }, 250);
+    } catch (error) {
+      const message = (error as { data?: { message?: string } })?.data?.message;
+      toast.error(message ? `${label}: ${message}` : `${label} failed`);
     }
   };
 
@@ -188,15 +199,14 @@ export default function InteractiveDeviceScreen({
         }}
       >
         {screenshot ? (
-          <Box
-            component="img"
+          <img
             ref={imgRef}
             src={`data:image/jpeg;base64,${screenshot}`}
             alt="Device screen"
             draggable={false}
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
-            sx={{
+            style={{
               width: '100%',
               height: '100%',
               objectFit: 'contain',
