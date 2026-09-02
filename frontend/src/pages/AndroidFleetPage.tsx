@@ -8,6 +8,7 @@ import {
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
+import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -18,6 +19,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
+import TouchAppIcon from '@mui/icons-material/TouchApp';
 import {
   Box,
   Button,
@@ -116,6 +118,8 @@ export default function AndroidFleetPage() {
   // Per-device inline prompt inputs
   const [cardPrompts, setCardPrompts] = useState<Record<number, string>>({});
   const [historyDeviceId, setHistoryDeviceId] = useState<number | null>(null);
+  // Only one device streams frames at a time so the fleet view stays light.
+  const [controlDeviceId, setControlDeviceId] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -539,6 +543,18 @@ export default function AndroidFleetPage() {
                       {device.device_model || device.device_id}
                     </Typography>
                   </Box>
+                  <Tooltip title={controlDeviceId === device.id ? 'Stop manual control' : 'Take manual control'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!isOnline}
+                        color={controlDeviceId === device.id ? 'primary' : 'default'}
+                        onClick={() => setControlDeviceId((prev) => (prev === device.id ? null : device.id))}
+                      >
+                        <TouchAppIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Tooltip title={`Task history (${historyCount})`}>
                     <span>
                       <IconButton size="small" disabled={historyCount === 0} onClick={() => setHistoryDeviceId(device.id)}>
@@ -558,32 +574,21 @@ export default function AndroidFleetPage() {
 
                 {/* Live screen */}
                 <Box
-                  onClick={() => navigate(`/android-agent?deviceId=${device.id}`)}
-                  sx={{
-                    m: 1,
-                    borderRadius: 1.5,
-                    overflow: 'hidden',
-                    bgcolor: 'grey.900',
-                    aspectRatio: '9 / 16',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                  }}
+                  sx={{ m: 1, cursor: controlDeviceId === device.id ? 'default' : 'pointer' }}
+                  onClick={
+                    controlDeviceId === device.id
+                      ? undefined
+                      : () => navigate(`/android-agent?deviceId=${device.id}`)
+                  }
                 >
-                  {state.screenshot ? (
-                    <Box
-                      component="img"
-                      src={`data:image/jpeg;base64,${state.screenshot}`}
-                      alt={device.device_name}
-                      sx={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                    />
-                  ) : (
-                    <Stack alignItems="center" gap={1} sx={{ color: 'grey.500' }}>
-                      <PhoneAndroidIcon />
-                      <Typography variant="caption">No frame yet</Typography>
-                    </Stack>
-                  )}
+                  <InteractiveDeviceScreen
+                    compact
+                    deviceId={device.id}
+                    screenshot={state.screenshot}
+                    onScreenshot={(base64) => patchRuntime(device.id, { screenshot: base64 })}
+                    controlEnabled={controlDeviceId === device.id}
+                    isAgentRunning={state.isRunning}
+                  />
                 </Box>
 
                 <Divider />
