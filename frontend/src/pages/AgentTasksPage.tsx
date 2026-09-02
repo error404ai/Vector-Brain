@@ -1,6 +1,7 @@
 import type { DataTableColumn } from '@/components/datatable';
 import { DataTable } from '@/components/datatable';
 import { useAgentTasksDataTable, type AgentTask, type CreateAgentTaskPayload } from '@/hooks/useAgentTasksDataTable';
+import { useGetAndroidDevicesQuery } from '@/RTKService/androidService/androidService';
 import PageHeader, { HeaderActions } from '@/components/ui/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -10,15 +11,52 @@ import { modals } from '@/components/mui/modals';
 import { notifications } from '@/components/mui/notifications';
 import { IconCheck, IconX } from '@/components/mui/icons';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { AgentTaskActions } from '@/components/agent-tasks/AgentTaskActions';
 import { AgentTaskDetailModal } from '@/components/agent-tasks/AgentTaskDetailModal';
 import { CreateAgentTaskModal } from '@/components/agent-tasks/CreateAgentTaskModal';
 
+/** Turns a duration in seconds into "1m 12s" style text. */
+function formatDuration(seconds?: number): string {
+  if (!seconds || seconds <= 0) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  const diffMins = Math.floor((Date.now() - date.getTime()) / 60_000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 24 * 60) return `${Math.floor(diffMins / 60)}h ago`;
+  return date.toLocaleDateString();
+}
+
+/**
+ * A task carries more nuance than a success boolean: a run that burned its whole
+ * step budget or produced no steps at all is not the same as a clean failure.
+ */
+function outcomeOf(task: AgentTask): { label: string; color: 'success' | 'error' | 'warning' | 'default' } {
+  if (task.success) return { label: 'Succeeded', color: 'success' };
+  const message = (task.message || '').toLowerCase();
+  if (message.includes('cancelled')) return { label: 'Cancelled', color: 'default' };
+  if (message.includes('step limit') || message.includes('-step limit')) return { label: 'Step limit', color: 'warning' };
+  if (task.total_steps === 0) return { label: 'Never started', color: 'error' };
+  return { label: 'Failed', color: 'error' };
+}
+
 export default function AgentTasks() {
   // Get agent tasks data and handlers from custom hook
   const { data: agentTasks, pagination, isLoading, isCreating, isDeleting, page, limit, search, setPage, setLimit, setSearch, handleSortChange, handleCreateAgentTask, handleDeleteAgentTask } = useAgentTasksDataTable();
+
+  const { data: devicesData } = useGetAndroidDevicesQuery();
+  const deviceNames = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const device of devicesData?.data ?? []) map[device.id] = device.device_name;
+    return map;
+  }, [devicesData]);
 
   // Row selection state
   const [selectedTasks, setSelectedTasks] = useState<AgentTask[]>([]);
@@ -102,68 +140,58 @@ export default function AgentTasks() {
       ),
     },
     {
-      accessor: 'steps',
-      title: 'Steps',
+      accessor: 'device_id',
+      title: 'Device',
       sortable: false,
       render: (task) => (
-        <Typography variant="body2" color={task.steps ? 'text.primary' : 'text.secondary'}>
-          {task.steps ? `${task.steps.substring(0, 50)}...` : 'No steps'}
+        <Typography variant="body2" color={task.device_id ? 'text.primary' : 'text.secondary'} noWrap>
+          {task.device_id ? deviceNames[task.device_id] ?? `Device ${task.device_id}` : '—'}
         </Typography>
       ),
     },
     {
-      accessor: 'logs',
-      title: 'Logs',
-      sortable: false,
-      render: (task) => (
-        <Typography variant="body2" color={task.logs ? 'text.primary' : 'text.secondary'}>
-          {task.logs ? `${task.logs.substring(0, 50)}...` : 'No logs'}
-        </Typography>
-      ),
-    },
-    {
-      accessor: 'provider',
-      title: 'Provider',
+      accessor: 'success',
+      title: 'Outcome',
       sortable: true,
-      render: (task) => (
-        <Typography variant="body2" color={task.provider ? 'text.primary' : 'text.secondary'}>
-          {task.provider || 'N/A'}
-        </Typography>
-      ),
+      render: (task) => {
+        const outcome = outcomeOf(task);
+        return <Chip label={outcome.label} size="small" color={outcome.color} variant="outlined" sx={{ fontWeight: 700 }} />;
+      },
+    },
+    {
+      accessor: 'total_steps',
+      title: 'Steps',
+      sortable: true,
+      width: 90,
+      render: (task) => <Typography variant="body2">{task.total_steps}</Typography>,
+    },
+    {
+      accessor: 'total_duration_seconds',
+      title: 'Duration',
+      sortable: true,
+      width: 110,
+      render: (task) => <Typography variant="body2">{formatDuration(task.total_duration_seconds)}</Typography>,
     },
     {
       accessor: 'model',
       title: 'Model',
       sortable: true,
       render: (task) => (
-        <Typography variant="body2" color={task.model ? 'text.primary' : 'text.secondary'}>
+        <Typography variant="body2" color={task.model ? 'text.primary' : 'text.secondary'} noWrap>
           {task.model || 'N/A'}
         </Typography>
       ),
     },
     {
-      accessor: 'success',
-      title: 'Success',
-      sortable: true,
-      render: (task) => <Chip label={task.success ? 'Yes' : 'No'} size="small" color={task.success ? 'success' : 'error'} variant="outlined" />,
-    },
-    {
-      accessor: 'total_steps',
-      title: 'Total Steps',
-      sortable: true,
-      render: (task) => <Typography variant="body2">{task.total_steps}</Typography>,
-    },
-    {
-      accessor: 'total_duration_seconds',
-      title: 'Duration (s)',
-      sortable: true,
-      render: (task) => <Typography variant="body2">{task.total_duration_seconds.toFixed(2)}</Typography>,
-    },
-    {
       accessor: 'created_at',
-      title: 'Created',
+      title: 'Started',
       sortable: true,
-      render: (task) => <Typography variant="body2">{new Date(task.created_at).toLocaleDateString()}</Typography>,
+      width: 130,
+      render: (task) => (
+        <Typography variant="body2" title={new Date(task.created_at).toLocaleString()}>
+          {formatWhen(task.created_at)}
+        </Typography>
+      ),
     },
     {
       accessor: 'actions',
