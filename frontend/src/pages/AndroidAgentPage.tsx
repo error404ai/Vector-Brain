@@ -3,6 +3,7 @@ import {
   useGetAndroidDevicesQuery,
   useLazyGetActiveAndroidTaskQuery,
   useLazyGetAndroidTaskLogsQuery,
+  useLazyGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
   type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
@@ -188,6 +189,7 @@ export function AndroidAgentPage() {
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
   const [fetchTaskLogs] = useLazyGetAndroidTaskLogsQuery();
   const [fetchActiveTask] = useLazyGetActiveAndroidTaskQuery();
+  const [fetchDeviceTasks] = useLazyGetAndroidTasksQuery();
   const [isRestoring, setIsRestoring] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -229,7 +231,6 @@ export function AndroidAgentPage() {
 
     const key = `${effectiveSelectedDeviceId}:${requestedTaskId ?? 'active'}`;
     if (restoredKeyRef.current === key) return;
-    restoredKeyRef.current = key;
 
     let cancelled = false;
 
@@ -271,10 +272,15 @@ export function AndroidAgentPage() {
       try {
         let taskId = requestedTaskId;
 
-        // No explicit task: re-attach to whatever is still running on this device.
+        // No explicit task: re-attach to whatever is still running on this
+        // device, and otherwise fall back to its most recent conversation.
         if (!taskId) {
           const active = await fetchActiveTask(effectiveSelectedDeviceId).unwrap();
           taskId = active?.data?.id;
+        }
+        if (!taskId) {
+          const recent = await fetchDeviceTasks({ deviceId: effectiveSelectedDeviceId, limit: 1 }).unwrap();
+          taskId = recent?.data?.[0]?.id;
         }
         if (!taskId || cancelled) return;
 
@@ -298,10 +304,12 @@ export function AndroidAgentPage() {
         );
         setActiveTaskId(taskId);
         setIsRunning(running);
+        restoredKeyRef.current = key;
       } catch {
         // A missing or unreadable task simply leaves the chat empty.
       } finally {
-        if (!cancelled) setIsRestoring(false);
+        // Always clear the flag: leaving it set pins the header on "Loading".
+        setIsRestoring(false);
       }
     };
 
@@ -309,7 +317,7 @@ export function AndroidAgentPage() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveSelectedDeviceId, requestedTaskId, fetchActiveTask, fetchTaskLogs]);
+  }, [effectiveSelectedDeviceId, requestedTaskId, fetchActiveTask, fetchTaskLogs, fetchDeviceTasks]);
 
   // Connect to Vector-Brain WebSocket for live reactive streaming
   useEffect(() => {
@@ -891,7 +899,7 @@ export function AndroidAgentPage() {
                 </Typography>
               </Stack>
               <Typography variant="caption" color="text.secondary">
-                {isRestoring
+                {isRestoring && messages.length === 0
                   ? 'Loading conversation…'
                   : messages.length
                     ? `${messages.length} conversation turns`
