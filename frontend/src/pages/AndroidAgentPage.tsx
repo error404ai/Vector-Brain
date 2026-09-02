@@ -12,7 +12,9 @@ import {
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
+import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
+import SearchIcon from '@mui/icons-material/Search';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
@@ -40,6 +42,7 @@ import {
   CircularProgress,
   Dialog,
   IconButton,
+  InputAdornment,
   MenuItem,
   Paper,
   Select,
@@ -279,6 +282,19 @@ export function AndroidAgentPage() {
     [deviceTasksData, effectiveSelectedDeviceId],
   );
 
+  // Sessions rail search + outcome filter (client-side; the rail already holds the data).
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [sessionOutcome, setSessionOutcome] = useState<'all' | 'ok' | 'fail'>('all');
+  const filteredSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLowerCase();
+    return sessions.filter((session) => {
+      if (query && !session.prompt.toLowerCase().includes(query)) return false;
+      if (sessionOutcome === 'ok') return session.success && !session.is_running;
+      if (sessionOutcome === 'fail') return !session.success && !session.is_running;
+      return true;
+    });
+  }, [sessions, sessionQuery, sessionOutcome]);
+
   /** Loads a stored run into the transcript by pointing the restore effect at it. */
   const openSession = (taskId: number) => {
     if (!effectiveSelectedDeviceId) return;
@@ -330,6 +346,18 @@ export function AndroidAgentPage() {
     userOwnsChatRef.current = false;
     restoredKeyRef.current = '';
   }, [effectiveSelectedDeviceId]);
+
+  /**
+   * Pin the auto-picked device. Without this the fallback re-evaluates on every
+   * status refresh: the moment the current phone drops offline the page
+   * silently jumps to another device and auto-restores THAT device's last
+   * session — which looks like an old chat opening on its own.
+   */
+  useEffect(() => {
+    if (selectedDeviceId === undefined && effectiveSelectedDeviceId !== undefined) {
+      setSelectedDeviceId(effectiveSelectedDeviceId);
+    }
+  }, [selectedDeviceId, effectiveSelectedDeviceId]);
 
   /** Rebuilds the chat from a stored task so history and reloads keep context. */
   useEffect(() => {
@@ -810,7 +838,12 @@ export function AndroidAgentPage() {
               <Select
                 size="small"
                 value={effectiveSelectedDeviceId || ''}
-                onChange={(e) => setSelectedDeviceId(Number(e.target.value))}
+                onChange={(e) => {
+                  const nextId = Number(e.target.value);
+                  setSelectedDeviceId(nextId);
+                  // Keep the URL truthful so reloads and shares land on the same device.
+                  setSearchParams({ deviceId: String(nextId) }, { replace: true });
+                }}
                 displayEmpty
                 disabled={isRunning}
                 sx={{ minWidth: 200, fontWeight: 700, borderRadius: 2 }}
@@ -859,11 +892,23 @@ export function AndroidAgentPage() {
                   <MenuItem value={0} sx={{ fontSize: 13 }}>
                     Active — {activeAiConfig?.model ?? 'none'}
                   </MenuItem>
-                  {aiConfigs.map((config) => (
-                    <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13 }}>
-                      {config.model}
-                    </MenuItem>
-                  ))}
+                  {sortModelsForDisplay(aiConfigs).map((config) => {
+                    const meta = getModelMeta(config.model);
+                    return (
+                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13, gap: 0.75 }}>
+                        {config.model}
+                        {meta && (
+                          <Chip
+                            label={meta.tag === 'recommended' ? 'REC' : '!'}
+                            size="small"
+                            color={meta.tag === 'recommended' ? 'success' : 'warning'}
+                            title={meta.note}
+                            sx={{ height: 16, fontSize: 9, fontWeight: 800 }}
+                          />
+                        )}
+                      </MenuItem>
+                    );
+                  })}
                 </Select>
               )}
 
@@ -974,15 +1019,53 @@ export function AndroidAgentPage() {
                 >
                   New session
                 </Button>
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="Search sessions…"
+                  value={sessionQuery}
+                  onChange={(e) => setSessionQuery(e.target.value)}
+                  sx={{ mt: 1, '& .MuiInputBase-root': { borderRadius: 2, fontSize: 13 } }}
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon sx={{ fontSize: 16 }} />
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
+                />
+
+                <Stack direction="row" spacing={0.5} sx={{ mt: 1 }}>
+                  {(
+                    [
+                      { key: 'all', label: 'All' },
+                      { key: 'ok', label: '✓ Done' },
+                      { key: 'fail', label: '✗ Failed' },
+                    ] as const
+                  ).map((option) => (
+                    <Chip
+                      key={option.key}
+                      label={option.label}
+                      size="small"
+                      color={sessionOutcome === option.key ? 'primary' : 'default'}
+                      variant={sessionOutcome === option.key ? 'filled' : 'outlined'}
+                      onClick={() => setSessionOutcome(option.key)}
+                      sx={{ height: 22, fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}
+                    />
+                  ))}
+                </Stack>
               </Box>
 
               <Box sx={{ maxHeight: 520, overflowY: 'auto', pb: 1 }}>
-                {sessions.length === 0 ? (
+                {filteredSessions.length === 0 ? (
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 2, py: 3 }}>
-                    No runs on this device yet.
+                    {sessions.length === 0 ? 'No runs on this device yet.' : 'No sessions match the filter.'}
                   </Typography>
                 ) : (
-                  sessions.map((session) => {
+                  filteredSessions.map((session) => {
                     const isOpen = viewingTaskId === session.id;
                     return (
                       <Box
