@@ -1,4 +1,5 @@
 import type { AiConfig } from '@/RTKService/aiConfigService/aiConfigService';
+import { getModelMeta } from '@/utils/modelMeta';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -57,6 +58,7 @@ export default function ActiveProviderHero({
 }: ActiveProviderHeroProps) {
   const theme = useTheme();
   const free = isFreeModel(config.model);
+  const meta = getModelMeta(config.model);
 
   let statusBg = alpha(theme.palette.warning.main, 0.1);
   let statusColor = theme.palette.warning.dark;
@@ -169,6 +171,17 @@ export default function ActiveProviderHero({
                   fontSize: '0.7rem',
                 }}
               />
+            )}
+            {meta && (
+              <Tooltip title={meta.note}>
+                <Chip
+                  label={meta.tag === 'recommended' ? 'RECOMMENDED' : 'CAUTION'}
+                  size="small"
+                  color={meta.tag === 'recommended' ? 'success' : 'warning'}
+                  variant={meta.tag === 'recommended' ? 'filled' : 'outlined'}
+                  sx={{ height: 22, fontSize: '0.65rem', fontWeight: 800 }}
+                />
+              </Tooltip>
             )}
             <Chip
               icon={config.config_type === 'vision' ? <VisibilityIcon fontSize="inherit" /> : <SmartToyIcon fontSize="inherit" />}
