@@ -1,7 +1,10 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
+  useLazyGetActiveAndroidTaskQuery,
+  useLazyGetAndroidTaskLogsQuery,
   useRunAndroidTaskMutation,
+  type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
@@ -146,18 +149,27 @@ export function AndroidAgentPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialDeviceId = searchParams.get('deviceId') ? Number(searchParams.get('deviceId')) : undefined;
+  const requestedTaskId = searchParams.get('taskId') ? Number(searchParams.get('taskId')) : undefined;
 
   const { data: devicesData } = useGetAndroidDevicesQuery(undefined, { pollingInterval: 5_000 });
   const devices = useMemo(() => devicesData?.data || [], [devicesData?.data]);
 
   const { data: aiConfigsData } = useGetAiConfigsQuery();
-  const activeAiConfig = useMemo(() => aiConfigsData?.data?.find((c) => c.is_active), [aiConfigsData?.data]);
+  const aiConfigs = useMemo(() => aiConfigsData?.data ?? [], [aiConfigsData?.data]);
+  const activeAiConfig = useMemo(() => aiConfigs.find((c) => c.is_active), [aiConfigs]);
+  const runningConfig = useMemo(
+    () => (selectedConfigId ? aiConfigs.find((c) => c.id === selectedConfigId) ?? activeAiConfig : activeAiConfig),
+    [aiConfigs, selectedConfigId, activeAiConfig],
+  );
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
+  // Run configuration: 0 = use the account's active provider
+  const [selectedConfigId, setSelectedConfigId] = useState(0);
+  const [maxSteps, setMaxSteps] = useState(40);
 
   // Live token / cost estimation for the current session
   const [tokenStats, setTokenStats] = useState({ promptTokens: 0, completionTokens: 0 });
@@ -168,6 +180,9 @@ export function AndroidAgentPage() {
 
   const [runTask, { isLoading: isStartingTask }] = useRunAndroidTaskMutation();
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
+  const [fetchTaskLogs] = useLazyGetAndroidTaskLogsQuery();
+  const [fetchActiveTask] = useLazyGetActiveAndroidTaskQuery();
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -176,6 +191,7 @@ export function AndroidAgentPage() {
   // can ignore events belonging to other devices.
   const selectedDeviceIdRef = useRef<number | undefined>(undefined);
   const selectedDeviceHardwareIdRef = useRef<string | undefined>(undefined);
+  const restoredKeyRef = useRef<string>('');
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
@@ -190,16 +206,104 @@ export function AndroidAgentPage() {
   // Derived live usage estimate
   const usageEstimate = useMemo(() => {
     const totalTokens = tokenStats.promptTokens + tokenStats.completionTokens;
-    const price = priceFor(activeAiConfig?.model);
+    const price = priceFor(runningConfig?.model);
     const cost =
       (tokenStats.promptTokens / 1_000_000) * price.in + (tokenStats.completionTokens / 1_000_000) * price.out;
     return { totalTokens, cost };
-  }, [tokenStats, activeAiConfig?.model]);
+  }, [tokenStats, runningConfig?.model]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  /** Rebuilds the chat from a stored task so history and reloads keep context. */
+  useEffect(() => {
+    if (!effectiveSelectedDeviceId) return;
+
+    const key = `${effectiveSelectedDeviceId}:${requestedTaskId ?? 'active'}`;
+    if (restoredKeyRef.current === key) return;
+    restoredKeyRef.current = key;
+
+    let cancelled = false;
+
+    const buildMessages = (
+      taskId: number,
+      prompt: string,
+      summary: string,
+      createdAt: string,
+      running: boolean,
+      success: boolean,
+      logs: AndroidTaskLog[],
+    ): ChatMessage[] => {
+      const startedAt = new Date(createdAt).getTime() || Date.now();
+      const steps: StepUpdate[] = logs.map((log) => ({
+        stepIndex: log.step_index,
+        thought: log.thought_reasoning || `Executing ${log.action_type}`,
+        action: { type: log.action_type, ...(log.action_payload || {}) },
+        status: log.status === 'SUCCESS' ? 'SUCCESS' : log.status === 'FAILED' ? 'FAILED' : 'EXECUTING',
+        result: log.result_message,
+        durationMs: log.duration_ms,
+      }));
+
+      return [
+        { id: `restored-user-${taskId}`, role: 'user', content: prompt, timestamp: startedAt },
+        {
+          id: `restored-assistant-${taskId}`,
+          role: 'assistant',
+          content: summary,
+          timestamp: startedAt + 1,
+          steps,
+          status: running ? 'running' : success ? 'done' : 'error',
+          taskId,
+        },
+      ];
+    };
+
+    const restore = async () => {
+      setIsRestoring(true);
+      try {
+        let taskId = requestedTaskId;
+
+        // No explicit task: re-attach to whatever is still running on this device.
+        if (!taskId) {
+          const active = await fetchActiveTask(effectiveSelectedDeviceId).unwrap();
+          taskId = active?.data?.id;
+        }
+        if (!taskId || cancelled) return;
+
+        const response = await fetchTaskLogs(taskId).unwrap();
+        if (cancelled) return;
+
+        const task = response.task;
+        const logs = response.data ?? [];
+        const running = Boolean(task?.is_running);
+
+        setMessages(
+          buildMessages(
+            taskId,
+            task?.prompt ?? 'Restored task',
+            task?.message ?? '',
+            task?.created_at ?? new Date().toISOString(),
+            running,
+            Boolean(task?.success),
+            logs,
+          ),
+        );
+        setActiveTaskId(taskId);
+        setIsRunning(running);
+      } catch {
+        // A missing or unreadable task simply leaves the chat empty.
+      } finally {
+        if (!cancelled) setIsRestoring(false);
+      }
+    };
+
+    restore();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSelectedDeviceId, requestedTaskId, fetchActiveTask, fetchTaskLogs]);
 
   // Connect to Vector-Brain WebSocket for live reactive streaming
   useEffect(() => {
@@ -471,6 +575,8 @@ export function AndroidAgentPage() {
         device_id: effectiveSelectedDeviceId,
         prompt: text,
         task_id: activeTaskId || undefined,
+        max_steps: maxSteps,
+        ai_config_id: selectedConfigId || undefined,
       }).unwrap();
 
       setActiveTaskId(res.data.taskId);
@@ -586,17 +692,37 @@ export function AndroidAgentPage() {
 
             {/* Active Model Indicator & Actions */}
             <Stack direction="row" spacing={1} alignItems="center" sx={{ width: { xs: '100%', sm: 'auto' } }}>
-              {activeAiConfig && (
-                <Chip
-                  icon={<PsychologyIcon fontSize="small" />}
-                  label={`${activeAiConfig.provider.toUpperCase()} : ${activeAiConfig.model}`}
+              {aiConfigs.length > 0 && (
+                <Select
                   size="small"
-                  color="primary"
-                  variant="outlined"
-                  onClick={() => navigate('/settings')}
-                  sx={{ fontWeight: 700, cursor: 'pointer', height: 28 }}
-                />
+                  value={selectedConfigId}
+                  onChange={(e) => setSelectedConfigId(Number(e.target.value))}
+                  disabled={isRunning}
+                  startAdornment={<PsychologyIcon fontSize="small" sx={{ mr: 0.75, color: 'primary.main' }} />}
+                  sx={{ minWidth: 220, height: 34, fontWeight: 700, borderRadius: 2, fontSize: 13 }}
+                >
+                  <MenuItem value={0} sx={{ fontSize: 13 }}>
+                    Active — {activeAiConfig?.model ?? 'none'}
+                  </MenuItem>
+                  {aiConfigs.map((config) => (
+                    <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13 }}>
+                      {config.model}
+                    </MenuItem>
+                  ))}
+                </Select>
               )}
+
+              <TextField
+                size="small"
+                type="number"
+                label="Steps"
+                value={maxSteps}
+                disabled={isRunning}
+                onChange={(e) => setMaxSteps(Number(e.target.value))}
+                onBlur={() => setMaxSteps((prev) => Math.min(200, Math.max(1, prev || 40)))}
+                inputProps={{ min: 1, max: 200 }}
+                sx={{ width: 96, '& .MuiInputBase-root': { height: 34 } }}
+              />
 
               {usageEstimate.totalTokens > 0 && (
                 <Chip
@@ -742,7 +868,11 @@ export function AndroidAgentPage() {
                 </Typography>
               </Stack>
               <Typography variant="caption" color="text.secondary">
-                {messages.length ? `${messages.length} conversation turns` : 'Ready to start'}
+                {isRestoring
+                  ? 'Loading conversation…'
+                  : messages.length
+                    ? `${messages.length} conversation turns`
+                    : 'Ready to start'}
               </Typography>
             </Stack>
           </Box>
