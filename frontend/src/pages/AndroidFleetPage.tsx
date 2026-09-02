@@ -32,7 +32,7 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { useNavigate } from 'react-router';
+import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
 interface DeviceRuntime {
