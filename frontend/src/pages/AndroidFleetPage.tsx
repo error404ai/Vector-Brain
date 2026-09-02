@@ -20,6 +20,7 @@ import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import {
   Box,
   Button,
@@ -120,6 +121,7 @@ export default function AndroidFleetPage() {
   const [historyDeviceId, setHistoryDeviceId] = useState<number | null>(null);
   // Only one device streams frames at a time so the fleet view stays light.
   const [controlDeviceId, setControlDeviceId] = useState<number | null>(null);
+  const [expandedDeviceId, setExpandedDeviceId] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -552,6 +554,13 @@ export default function AndroidFleetPage() {
                       {device.device_model || 'Android'} · {device.device_id.slice(-8)}
                     </Typography>
                   </Box>
+                  <Tooltip title="Enlarge screen">
+                    <span>
+                      <IconButton size="small" disabled={!isOnline} onClick={() => setExpandedDeviceId(device.id)}>
+                        <OpenInFullIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Tooltip title={controlDeviceId === device.id ? 'Stop manual control' : 'Take manual control'}>
                     <span>
                       <IconButton
@@ -714,6 +723,74 @@ export default function AndroidFleetPage() {
           })}
         </Box>
       )}
+
+      {/* Enlarged device view */}
+      <Dialog
+        open={expandedDeviceId !== null}
+        onClose={() => setExpandedDeviceId(null)}
+        maxWidth={false}
+        slotProps={{
+          paper: {
+            sx: {
+              height: '92vh',
+              width: 480,
+              maxWidth: '96vw',
+              borderRadius: 3,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          },
+        }}
+      >
+        {(() => {
+          const device = devices.find((item) => item.id === expandedDeviceId);
+          if (!device) return null;
+          const state = runtime[device.id] ?? emptyRuntime;
+          const controlling = controlDeviceId === device.id;
+
+          return (
+            <>
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={1}
+                sx={{ px: 2, py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}
+              >
+                <PhoneAndroidIcon fontSize="small" color="primary" />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, flexGrow: 1 }} noWrap>
+                  {device.device_name}
+                </Typography>
+                <Tooltip title={controlling ? 'Stop manual control' : 'Take manual control'}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      color={controlling ? 'primary' : 'default'}
+                      onClick={() => setControlDeviceId((prev) => (prev === device.id ? null : device.id))}
+                    >
+                      <TouchAppIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <IconButton size="small" onClick={() => setExpandedDeviceId(null)}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+
+              <Box sx={{ flexGrow: 1, minHeight: 0, p: 1.5, display: 'flex', bgcolor: 'grey.900' }}>
+                <InteractiveDeviceScreen
+                  fill
+                  deviceId={device.id}
+                  screenshot={state.screenshot}
+                  onScreenshot={(base64) => patchRuntime(device.id, { screenshot: base64 })}
+                  controlEnabled={controlling}
+                  isAgentRunning={state.isRunning}
+                />
+              </Box>
+            </>
+          );
+        })()}
+      </Dialog>
 
       {/* Per-device history */}
       <Dialog open={historyDeviceId !== null} onClose={() => setHistoryDeviceId(null)} fullWidth maxWidth="sm">
