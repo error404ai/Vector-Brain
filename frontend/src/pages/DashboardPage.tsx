@@ -5,6 +5,7 @@ import {
   type AndroidDevice,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
+import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
 import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -162,6 +163,14 @@ export default function Dashboard() {
       />
 
       <Stack spacing={3}>
+        {/* New-user setup journey — hides itself once every step is complete */}
+        <OnboardingChecklist
+          devices={devices}
+          aiConfigs={aiConfigsResponse?.data ?? []}
+          tasks={tasks}
+          loading={isLoading}
+        />
+
         {/* Setup warnings */}
         {!activeAiConfig && (
           <Alert
