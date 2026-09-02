@@ -242,13 +242,16 @@ export default function AndroidFleetPage() {
   };
 
   const handleStopAll = async () => {
-    const running = Object.entries(runtime).filter(([, value]) => value.isRunning && value.taskId);
-    if (running.length === 0) return;
-    await Promise.allSettled(running.map(([, value]) => cancelTask(value.taskId as number).unwrap()));
+    const runningTaskIds = (Object.values(runtime) as DeviceRuntime[])
+      .filter((state) => state.isRunning && typeof state.taskId === 'number')
+      .map((state) => state.taskId as number);
+
+    if (runningTaskIds.length === 0) return;
+    await Promise.allSettled(runningTaskIds.map((taskId) => cancelTask(taskId).unwrap()));
     toast.success('Stop requested on all running devices');
   };
 
-  const runningCount = Object.values(runtime).filter((value) => value.isRunning).length;
+  const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
 
   // ---- Render ------------------------------------------------------------
   return (
