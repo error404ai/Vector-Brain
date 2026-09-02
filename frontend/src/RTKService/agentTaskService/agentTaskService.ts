@@ -3,6 +3,7 @@ import { baseApi, TAGS } from '../baseApi';
 export interface AgentTask {
   id: number;
   user_id: number;
+  device_id?: number | null;
   prompt: string;
   logs: string | null;
   steps: string | null;
