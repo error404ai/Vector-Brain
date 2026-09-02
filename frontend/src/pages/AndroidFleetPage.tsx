@@ -68,12 +68,6 @@ interface DispatchResult {
 
 const emptyRuntime: DeviceRuntime = { isRunning: false, stepIndex: 0 };
 
-const STEP_BUDGETS = [
-  { value: 20, label: 'Quick · 20 steps' },
-  { value: 40, label: 'Standard · 40 steps' },
-  { value: 50, label: 'Deep · 50 steps' },
-];
-
 function timeAgo(iso?: string): string {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
@@ -106,12 +100,16 @@ export default function AndroidFleetPage() {
 
   const devices = useMemo<AndroidDevice[]>(() => devicesData?.data ?? [], [devicesData]);
   const tasks = useMemo<AndroidAgentTask[]>(() => tasksData?.data ?? [], [tasksData]);
-  const activeAiConfig = aiConfigsData?.data?.find((config) => config.is_active);
+  const aiConfigs = useMemo(() => aiConfigsData?.data ?? [], [aiConfigsData]);
+  const activeAiConfig = aiConfigs.find((config) => config.is_active);
 
   const [runtime, setRuntime] = useState<RuntimeMap>({});
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
+  // 0 = use the account's active provider
+  const [broadcastConfigId, setBroadcastConfigId] = useState(0);
+  const [deviceConfigIds, setDeviceConfigIds] = useState<Record<number, number>>({});
   const [isDispatching, setIsDispatching] = useState(false);
   const [lastDispatch, setLastDispatch] = useState<DispatchResult | null>(null);
 
@@ -262,7 +260,14 @@ export default function AndroidFleetPage() {
   const dispatchTo = async (deviceIds: number[], text: string) => {
     setIsDispatching(true);
     const outcomes = await Promise.allSettled(
-      deviceIds.map((deviceId) => runTask({ device_id: deviceId, prompt: text, max_steps: maxSteps }).unwrap()),
+      deviceIds.map((deviceId) =>
+        runTask({
+          device_id: deviceId,
+          prompt: text,
+          max_steps: maxSteps,
+          ai_config_id: deviceConfigIds[deviceId] || broadcastConfigId || undefined,
+        }).unwrap(),
+      ),
     );
     setIsDispatching(false);
 
@@ -315,7 +320,12 @@ export default function AndroidFleetPage() {
     if (!ensureReady()) return;
 
     try {
-      await runTask({ device_id: deviceId, prompt: text, max_steps: maxSteps }).unwrap();
+      await runTask({
+        device_id: deviceId,
+        prompt: text,
+        max_steps: maxSteps,
+        ai_config_id: deviceConfigIds[deviceId] || broadcastConfigId || undefined,
+      }).unwrap();
       patchRuntime(deviceId, { startError: undefined });
       setCardPrompts((prev) => ({ ...prev, [deviceId]: '' }));
       toast.success('Task started');
@@ -405,17 +415,29 @@ export default function AndroidFleetPage() {
           <TextField
             select
             size="small"
-            label="Steps"
-            value={maxSteps}
-            onChange={(event) => setMaxSteps(Number(event.target.value))}
-            sx={{ minWidth: 180 }}
+            label="Model"
+            value={broadcastConfigId}
+            onChange={(event) => setBroadcastConfigId(Number(event.target.value))}
+            sx={{ minWidth: 200 }}
           >
-            {STEP_BUDGETS.map((option) => (
-              <MenuItem key={option.value} value={option.value}>
-                {option.label}
+            <MenuItem value={0}>Active — {activeAiConfig?.model ?? 'none'}</MenuItem>
+            {aiConfigs.map((config) => (
+              <MenuItem key={config.id} value={config.id}>
+                {config.model}
               </MenuItem>
             ))}
           </TextField>
+          <TextField
+            size="small"
+            type="number"
+            label="Steps"
+            value={maxSteps}
+            onChange={(event) => setMaxSteps(Number(event.target.value))}
+            onBlur={() => setMaxSteps((prev) => Math.min(200, Math.max(1, prev || 40)))}
+            inputProps={{ min: 1, max: 200 }}
+            helperText="1–200"
+            sx={{ width: 120 }}
+          />
           <Button
             variant="contained"
             startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
@@ -622,6 +644,31 @@ export default function AndroidFleetPage() {
                   )}
                 </CardContent>
 
+                {/* Per-device model override */}
+                <Box sx={{ px: 1, pb: 0.75 }}>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    label="Model"
+                    disabled={state.isRunning}
+                    value={deviceConfigIds[device.id] ?? 0}
+                    onChange={(event) =>
+                      setDeviceConfigIds((prev) => ({ ...prev, [device.id]: Number(event.target.value) }))
+                    }
+                    sx={{ '& .MuiInputBase-input': { fontSize: 12 } }}
+                  >
+                    <MenuItem value={0} sx={{ fontSize: 12 }}>
+                      Use fleet default
+                    </MenuItem>
+                    {aiConfigs.map((config) => (
+                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 12 }}>
+                        {config.model}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Box>
+
                 {/* Inline per-device prompt */}
                 <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
                   <TextField
@@ -684,7 +731,7 @@ export default function AndroidFleetPage() {
                   sx={{ py: 1.25, cursor: 'pointer' }}
                   onClick={() => {
                     setHistoryDeviceId(null);
-                    navigate(`/android-agent?deviceId=${task.device_id}`);
+                    navigate(`/android-agent?deviceId=${task.device_id}&taskId=${task.id}`);
                   }}
                 >
                   {task.is_running ? (
