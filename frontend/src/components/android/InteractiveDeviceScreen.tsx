@@ -23,6 +23,11 @@ interface InteractiveDeviceScreenProps {
   refreshMs?: number;
   /** Compact variant hides the on-screen keyboard row (used on fleet cards). */
   compact?: boolean;
+  /**
+   * Stretch to the parent's height instead of imposing a 9:16 box. Used when the
+   * screen sits inside a phone mockup that already defines the shape.
+   */
+  fill?: boolean;
 }
 
 /** A tap is anything shorter than this many pixels of movement. */
@@ -36,6 +41,7 @@ export default function InteractiveDeviceScreen({
   isAgentRunning,
   refreshMs = 700,
   compact,
+  fill,
 }: InteractiveDeviceScreenProps) {
   const [sendDirectAction] = useSendDirectActionMutation();
   const [typeText, setTypeText] = useState('');
@@ -165,7 +171,7 @@ export default function InteractiveDeviceScreen({
   const interactive = controlEnabled && Boolean(deviceId);
 
   return (
-    <Stack gap={1}>
+    <Stack gap={1} sx={fill ? { height: '100%', width: '100%' } : undefined}>
       {/* Warning while the agent is also driving this device */}
       {interactive && isAgentRunning && (
         <Typography
@@ -188,8 +194,8 @@ export default function InteractiveDeviceScreen({
         sx={{
           borderRadius: 2,
           overflow: 'hidden',
-          bgcolor: 'grey.900',
-          aspectRatio: '9 / 16',
+          bgcolor: fill ? 'transparent' : 'grey.900',
+          ...(fill ? { flexGrow: 1, minHeight: 0 } : { aspectRatio: '9 / 16' }),
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
