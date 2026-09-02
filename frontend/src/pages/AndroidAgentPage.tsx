@@ -16,6 +16,8 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 import HistoryIcon from '@mui/icons-material/History';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import CloseIcon from '@mui/icons-material/Close';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -33,6 +35,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
   IconButton,
   MenuItem,
   Paper,
@@ -178,6 +181,7 @@ export function AndroidAgentPage() {
   const [selectedConfigId, setSelectedConfigId] = useState(0);
   const [maxSteps, setMaxSteps] = useState(40);
   const [manualControl, setManualControl] = useState(false);
+  const [screenExpanded, setScreenExpanded] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
   const [clarifyPrompt, { isLoading: isCheckingPrompt }] = useClarifyPromptMutation();
   const [clarification, setClarification] = useState<{ prompt: string; question: string; options: string[] } | null>(
@@ -962,6 +966,13 @@ export function AndroidAgentPage() {
                   />
                 )}
                 <Box sx={{ flexGrow: 1 }} />
+                <Tooltip title="Enlarge screen">
+                  <span>
+                    <IconButton size="small" disabled={!isDeviceOnline} onClick={() => setScreenExpanded(true)}>
+                      <OpenInFullIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <Tooltip title={manualControl ? 'Stop manual control' : 'Take manual control'}>
                   <span>
                     <IconButton
@@ -1424,6 +1435,64 @@ export function AndroidAgentPage() {
           </Box>
         </Card>
       </Box>
+
+      {/* Enlarged device view — same controls, more room to work */}
+      <Dialog
+        open={screenExpanded}
+        onClose={() => setScreenExpanded(false)}
+        maxWidth={false}
+        slotProps={{
+          paper: {
+            sx: {
+              height: '92vh',
+              width: 480,
+              maxWidth: '96vw',
+              borderRadius: 3,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          },
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={1}
+          sx={{ px: 2, py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}
+        >
+          <PhoneAndroidIcon fontSize="small" color="primary" />
+          <Typography variant="subtitle2" sx={{ fontWeight: 800, flexGrow: 1 }} noWrap>
+            {selectedDevice?.device_name ?? 'Device'}
+          </Typography>
+          <Tooltip title={manualControl ? 'Stop manual control' : 'Take manual control'}>
+            <span>
+              <IconButton
+                size="small"
+                color={manualControl ? 'primary' : 'default'}
+                disabled={!isDeviceOnline}
+                onClick={() => setManualControl((prev) => !prev)}
+              >
+                <TouchAppIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <IconButton size="small" onClick={() => setScreenExpanded(false)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Stack>
+
+        <Box sx={{ flexGrow: 1, minHeight: 0, p: 1.5, display: 'flex', bgcolor: 'grey.900' }}>
+          <InteractiveDeviceScreen
+            fill
+            deviceId={effectiveSelectedDeviceId}
+            screenshot={latestScreenshot}
+            onScreenshot={setLatestScreenshot}
+            controlEnabled={manualControl}
+            isAgentRunning={isRunning}
+          />
+        </Box>
+      </Dialog>
     </Box>
   );
 }
