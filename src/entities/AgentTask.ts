@@ -9,6 +9,9 @@ export class AgentTask {
   @Column({ type: 'int' })
   user_id: number;
 
+  @Column({ type: 'int', nullable: true })
+  device_id: number;
+
   @Column({ type: 'text' })
   prompt: string;
 
