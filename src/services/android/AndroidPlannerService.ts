@@ -38,11 +38,38 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 
 ## CRITICAL PLANNING RULES:
 
+### Plan size must match the request
+- Count the concrete actions the user actually asked for. A request like
+  "open X and do Y" is TWO actions and deserves a two or three node plan.
+- Do NOT add nodes the user never asked for: sign-in handling, cookie banners,
+  permission dialogs, or extra verification passes. Handle those only if they
+  actually appear on screen.
+- Long plans are for genuinely long tasks (research, many sites, many items).
+
+### Search by URL, never by typing into a search box
+The device has NO way to press Enter or the keyboard's search key. Typing a
+query into a search box therefore leaves it unsubmitted, and the agent wastes
+many steps hunting for a submit button. ALWAYS navigate straight to the site's
+search results URL with open_url instead:
+- YouTube: \`https://www.youtube.com/results?search_query=<url-encoded-query>\`
+  (this opens the YouTube app itself, already on the results screen)
+- Google: \`https://www.google.com/search?q=<url-encoded-query>\`
+- Google Maps: \`https://www.google.com/maps/search/<url-encoded-query>\`
+- Amazon: \`https://www.amazon.in/s?k=<url-encoded-query>\`
+Only fall back to tapping a search box when the app has no URL entry point at
+all. Never plan a node that says "press Enter" or "tap the search button".
+
+### Picking from a list of results
+- Tap the FIRST plausible match. Do not scroll looking for a better one, and do
+  not judge results by length, view count or format unless the user asked.
+- At most two scrolls if nothing usable is visible.
+
 ### For ALL tasks:
 - Always start with launching the correct app or URL
-- Always include wait steps after page loads (e.g. "Wait 2-3 seconds for page to load")
-- Always include handling popups, cookie banners, or permission dialogs
-- Always end with a verification or summary step
+- Include a wait node only where something genuinely loads
+- Do not pre-plan popup, cookie or permission handling — the agent deals with
+  those if and when they actually show up
+- End with a verification step only for tasks where the result is not obvious
 
 ### For RESEARCH tasks (research, find info, look up, check reviews):
 - NEVER plan just 1-2 nodes — research needs 10-15 nodes minimum
@@ -54,14 +81,11 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
 - ALWAYS prefer open_url over manually tapping the address bar. Chrome may
   resume on a previously opened page, and its address bar is not always a
   reliable, easy-to-find tap target in the UI tree in that state.
-- For Google searches specifically, plan a node like: "Use open_url to
-  navigate directly to https://www.google.com/search?q=<url-encoded-query>"
-  — this skips the address bar entirely and lands straight on results.
 - open_url reuses the current tab by default. When a task visits several sites
   one after another, plan plain open_url nodes; only mention separate tabs if
   the user explicitly asked for them.
-- Include: wait for results → identify correct result → tap it
-- Never combine "search and open result" into one node — split them
+- Plan: open the search results URL → wait for results → tap the first
+  plausible result
 
 ### For multi-item lists (search results, article listings):
 - When identifying "top N" items from a scrollable list, note down each
