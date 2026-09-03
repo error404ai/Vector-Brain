@@ -7,7 +7,6 @@ import {
   useLazyGetAndroidTaskLogsQuery,
   useLazyGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
-  useSendDirectActionMutation,
   type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
@@ -244,7 +243,6 @@ export function AndroidAgentPage() {
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
-  const [sendDirectAction] = useSendDirectActionMutation();
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -347,38 +345,6 @@ export function AndroidAgentPage() {
       (tokenStats.promptTokens / 1_000_000) * price.in + (tokenStats.completionTokens / 1_000_000) * price.out;
     return { totalTokens, cost };
   }, [tokenStats, runningConfig?.model]);
-
-  /**
-   * One frame on arrival.
-   *
-   * Frames otherwise only arrive when the agent acts, so a freshly loaded page
-   * showed an empty phone until something happened. Asking once on mount fills
-   * it in immediately.
-   *
-   * Continuous polling was tried here and removed: it shares the device socket
-   * with the agent, which slowed runs down and let stale frames land after
-   * fresh ones. Live updates come from the agent's own steps.
-   */
-  useEffect(() => {
-    const deviceId = effectiveSelectedDeviceId;
-    if (!deviceId || !deviceReady) return;
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
-        const frame = res?.data?.screenCapture?.base64Data;
-        if (frame && !cancelled) setLatestScreenshot(frame);
-      } catch {
-        // A missing first frame is not worth interrupting the user over.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [effectiveSelectedDeviceId, deviceReady, sendDirectAction]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {

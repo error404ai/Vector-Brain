@@ -601,16 +601,6 @@ Use the current visible Android screen and UI state as context. Continue from wh
     };
 
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
-      // Frames go out the moment they arrive. Waiting for the whole step to
-      // finish meant the dashboard could sit up to twenty seconds behind the
-      // phone, since a step settles and observes before it reports.
-      onFrame: (frame) => {
-        lastScreenshot = frame;
-        this.gatewayService.broadcastToUser(userId, 'device:screen_capture', {
-          deviceId: hardwareDeviceId,
-          result: { screenCapture: { base64Data: frame } },
-        });
-      },
       onStepExecuted: (info) => {
         if (info.screenshotBase64) {
           lastScreenshot = info.screenshotBase64;

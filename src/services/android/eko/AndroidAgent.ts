@@ -20,15 +20,6 @@ export interface AndroidAgentCallbacks {
     uiTree?: string;
   }) => void;
 
-  /**
-   * Fired the moment any fresh screen frame arrives, before the step finishes.
-   *
-   * A step can spend several seconds settling and observing after the phone has
-   * already changed, which made the dashboard look many seconds behind. This
-   * carries no extra device work — it just forwards a frame that was fetched
-   * anyway, as soon as it exists.
-   */
-  onFrame?: (screenshotBase64: string) => void;
 }
 
 export class AndroidAgent extends Agent {
@@ -81,10 +72,7 @@ export class AndroidAgent extends Agent {
           const pkg = this.detectPackageName(tree?.root, tree?.packageName || 'unknown');
           this.lastUiTree = formatted;
           this.lastForegroundApp = pkg;
-          if (res.screenCapture?.base64Data) {
-            this.lastScreenshotBase64 = res.screenCapture.base64Data;
-            this.callbacks?.onFrame?.(res.screenCapture.base64Data);
-          }
+          this.lastScreenshotBase64 = res.screenCapture?.base64Data || this.lastScreenshotBase64;
 
           this.callbacks?.onStepExecuted?.({
             toolName: 'read_ui_tree',
@@ -157,7 +145,6 @@ export class AndroidAgent extends Agent {
 
           const base64 = res.screenCapture.base64Data;
           this.lastScreenshotBase64 = base64;
-          this.callbacks?.onFrame?.(base64);
           this.screenshotsUsed += 1;
 
           this.callbacks?.onStepExecuted?.({
@@ -532,8 +519,6 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
       if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
         this.lastScreenshotBase64 = observation.screenCapture.base64Data;
-        // Push it out now rather than waiting for the step to finish assembling.
-        this.callbacks?.onFrame?.(observation.screenCapture.base64Data);
       }
       if (observation.status === 'SUCCESS' && observation.uiTree) {
         this.lastUiTree = this.formatUiTree(observation.uiTree.root);
