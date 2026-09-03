@@ -75,6 +75,12 @@ That is the whole plan.
 - An ad playing over the target content still means the content opened
   correctly — do not restart the task because of one.
 
+### When a page looks empty
+Web pages often expose almost nothing to the accessibility tree, so a loaded
+page can look blank in the element list. Waiting again will not change that.
+After one wait, take a screenshot and read the screen from the image instead
+of waiting a third time or scrolling at random.
+
 ### Picking from a list of results
 - Tap the FIRST plausible match. Do not scroll looking for a better one, and do
   not judge results by length, view count or format unless the user asked.
@@ -97,9 +103,9 @@ That is the whole plan.
 - ALWAYS prefer open_url over manually tapping the address bar. Chrome may
   resume on a previously opened page, and its address bar is not always a
   reliable, easy-to-find tap target in the UI tree in that state.
-- open_url reuses the current tab by default. When a task visits several sites
-  one after another, plan plain open_url nodes; only mention separate tabs if
-  the user explicitly asked for them.
+- open_url cannot control tabs — the companion app does not support tab reuse
+  yet, so each call may open a new one. Plan plain open_url nodes and never
+  promise the user that pages stayed in a single tab.
 - Plan: open the search results URL → wait for results → tap the first
   plausible result
 
@@ -668,7 +674,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
             }
           } else if (message.type === 'tool_use') {
             if (runStepCount >= maxSteps) {
-              const reason = `Task stopped after reaching the ${maxSteps}-step limit.`;
+              const reason =
+                `Task stopped after reaching the ${maxSteps}-step limit. ` +
+                `The task was still in progress — raise the Steps value in the header (up to 500) and run it again, ` +
+                `or use Continue task below to carry on from the current screen.`;
               stopForSafety(reason);
               throw new Error(reason);
             }
