@@ -19,6 +19,7 @@ const VIEWER_TTL_MS = 45_000;
 
 interface StreamState {
   deviceId: string;
+  deviceDbId: number;
   userId: number;
   timer: ReturnType<typeof setTimeout>;
   lastSeenAt: number;
@@ -61,6 +62,7 @@ export class LiveScreenService {
 
     const state: StreamState = {
       deviceId: device.device_id,
+      deviceDbId: device.id,
       userId,
       timer: setTimeout(() => undefined, 0),
       lastSeenAt: Date.now(),
@@ -108,6 +110,15 @@ export class LiveScreenService {
     }
 
     if (state.busy) {
+      this.scheduleNext(key);
+      return;
+    }
+
+    // A running task drives the same device socket. Competing with it slows the
+    // agent down and lets an older frame land after a newer one, so stand aside
+    // and let the agent's own frames come through.
+    const device = await this.deviceRepo.findOne({ where: { id: state.deviceDbId } });
+    if (!device || device.status !== AndroidDeviceStatus.ONLINE) {
       this.scheduleNext(key);
       return;
     }

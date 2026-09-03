@@ -353,11 +353,15 @@ export function AndroidAgentPage() {
   }, [tokenStats, runningConfig?.model]);
 
   /**
-   * Live screen.
+   * Live screen while the device is idle.
    *
    * Frames otherwise only arrive when the agent acts, so a freshly loaded page
-   * shows an empty phone until something happens. Ask for one frame straight
-   * away, then keep a server-side stream alive while this tab is visible.
+   * shows an empty phone. This asks for one frame immediately, then keeps a
+   * server-side stream alive.
+   *
+   * The stream deliberately stops while a task runs: both it and the agent send
+   * capture requests down the same device socket, and competing for it made the
+   * agent slower and let stale frames land after fresh ones.
    */
   useEffect(() => {
     const deviceId = effectiveSelectedDeviceId;
@@ -375,9 +379,15 @@ export function AndroidAgentPage() {
       }
     };
 
+    if (isRunning) {
+      // The agent is driving; let it own the socket and push its own frames.
+      void unwatchDevice(deviceId).unwrap().catch(() => undefined);
+      return;
+    }
+
     const keepAlive = () => {
       if (document.visibilityState !== 'visible') return;
-      void watchDevice({ id: deviceId, interval_ms: 500 }).unwrap().catch(() => undefined);
+      void watchDevice({ id: deviceId, interval_ms: 700 }).unwrap().catch(() => undefined);
     };
 
     void pullOneFrame();
@@ -391,7 +401,7 @@ export function AndroidAgentPage() {
       document.removeEventListener('visibilitychange', keepAlive);
       void unwatchDevice(deviceId).unwrap().catch(() => undefined);
     };
-  }, [effectiveSelectedDeviceId, deviceReady, sendDirectAction, watchDevice, unwatchDevice]);
+  }, [effectiveSelectedDeviceId, deviceReady, isRunning, sendDirectAction, watchDevice, unwatchDevice]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
