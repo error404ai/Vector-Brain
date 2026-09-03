@@ -10,6 +10,9 @@ import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../Androi
  */
 const MIN_INFORMATIVE_ROWS = 8;
 
+/** Pause between foreground checks after launching an app or URL. */
+const LAUNCH_SETTLE_MS = 900;
+
 export interface AndroidAgentCallbacks {
   onStepExecuted?: (info: {
     toolName: string;
@@ -290,7 +293,8 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'open_app',
-        description: 'Launch an Android application by its package name.',
+        description:
+          'Launch an Android application by its package name. The result confirms whether the app actually reached the foreground, so trust what it says instead of re-checking by tapping icons.',
         parameters: {
           type: 'object',
           properties: {
@@ -477,13 +481,30 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
     const res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
-    const summary =
+    let summary =
       res.status === 'SUCCESS'
         ? res.summary
         : res.status === 'FAILURE'
         ? `${res.code}: ${res.message}`
         : 'Action cancelled';
     const isError = res.status !== 'SUCCESS';
+
+    // A launch only reports that the intent was dispatched, not that the app is
+    // on screen. Observing immediately catches the old screen, so the model is
+    // told "opened" while still looking at the launcher and wastes several
+    // steps hunting for the icon. Give the app time to come to the front and
+    // report what actually happened.
+    if (!isError && (action.type === 'OpenApp' || action.type === 'OpenUrl')) {
+      const wanted = action.type === 'OpenApp' ? String(action.packageName || '') : '';
+      const settled = await this.waitForForeground(wanted);
+      if (wanted) {
+        summary = settled
+          ? `${summary} (now in the foreground)`
+          : `Launch was dispatched for ${wanted}, but it is not in the foreground yet` +
+            `${this.lastForegroundApp ? ` — the current app is ${this.lastForegroundApp}` : ''}.` +
+            ' Wait a moment and read the screen again before trying another approach.';
+      }
+    }
 
     // Track consecutive failures
     if (isError) {
@@ -548,6 +569,42 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       content: [textPart],
       isError,
     };
+  }
+
+  /**
+   * Poll the screen until a freshly launched app reaches the foreground.
+   *
+   * `wantedPackage` empty means "just let the screen settle" (used for URL
+   * loads, where the browser is already in front). Returns true when the app
+   * was confirmed on screen.
+   */
+  private async waitForForeground(wantedPackage: string): Promise<boolean> {
+    const attempts = wantedPackage ? 4 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, LAUNCH_SETTLE_MS));
+      try {
+        const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, {
+          type: 'ObserveScreen',
+        });
+        if (observation.status !== 'SUCCESS') continue;
+        if (observation.screenCapture?.base64Data) {
+          this.lastScreenshotBase64 = observation.screenCapture.base64Data;
+        }
+        if (observation.uiTree) {
+          this.lastUiTree = this.formatUiTree(observation.uiTree.root);
+          this.lastForegroundApp = this.detectPackageName(
+            observation.uiTree.root,
+            observation.uiTree.packageName || 'unknown',
+          );
+        }
+        if (!wantedPackage) return true;
+        if (this.lastForegroundApp && wantedPackage.startsWith(this.lastForegroundApp)) return true;
+        if (this.lastForegroundApp && this.lastForegroundApp.startsWith(wantedPackage)) return true;
+      } catch {
+        // Best-effort: keep polling until the attempts run out.
+      }
+    }
+    return false;
   }
 
   private detectPackageName(root?: UiNodeSnapshot, defaultPkg = 'unknown'): string {
