@@ -25,6 +25,10 @@ export class AndroidAgent extends Agent {
   private consecutiveFailures = 0;
   private lastFailedAction = '';
 
+  /** Vision spend cap: images cost roughly 1k tokens each, so cap them per run. */
+  private screenshotsUsed = 0;
+  private readonly screenshotBudget = 3;
+
   constructor(
     private gatewayService: AndroidGatewayService,
     private hardwareDeviceId: string,
@@ -64,25 +68,40 @@ export class AndroidAgent extends Agent {
 
           const textContent = {
             type: 'text' as const,
-            text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (use center coordinates to tap):\n${formatted}`,
+            text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is the x,y to pass to tap_coordinate):\n${formatted}`,
           };
-          const content: ToolResult['content'] = this.lastScreenshotBase64
-            ? [textContent, { type: 'image', data: this.lastScreenshotBase64, mimeType: 'image/jpeg' }]
-            : [textContent];
+          // No image here on purpose. The tree already carries every element and
+          // its tap coordinates, and attaching the last frame on every call sent
+          // a ~1k-token image per step — often a stale one, which misleads the
+          // model. Vision is now opt-in through capture_screen.
           return {
-            content,
+            content: [textContent],
           };
         },
       },
       {
         name: 'capture_screen',
-        description: 'Capture the live screen frame image of the mobile device as visual context.',
+        description:
+          'EXPENSIVE — sends a real image to the model and costs far more than read_ui_tree. Only use when the UI tree cannot describe what you need (photos, video thumbnails, maps, games, charts). For buttons, text, fields and menus always use read_ui_tree instead. Limited to a few uses per task.',
         parameters: {
           type: 'object',
           properties: {},
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
+          // Weak models ask for screenshots compulsively; cap the spend instead
+          // of refusing outright so the run keeps moving.
+          if (this.screenshotsUsed >= this.screenshotBudget) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Screenshot budget for this task is used up (${this.screenshotBudget}). Use read_ui_tree instead — it lists every visible element with its tap coordinates.`,
+                },
+              ],
+            };
+          }
+
           const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'CaptureScreen' });
           if (res.status !== 'SUCCESS' || !res.screenCapture?.base64Data) {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Screen capture failed';
@@ -91,6 +110,7 @@ export class AndroidAgent extends Agent {
 
           const base64 = res.screenCapture.base64Data;
           this.lastScreenshotBase64 = base64;
+          this.screenshotsUsed += 1;
 
           this.callbacks?.onStepExecuted?.({
             toolName: 'capture_screen',
@@ -524,57 +544,51 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     return detected;
   }
 
+  /**
+   * Compact, table-shaped view of the screen.
+   *
+   * Container nodes with no text, no description and no interactivity are
+   * dropped entirely (their children are still walked) — they used to be
+   * emitted as bare "view" rows and made up most of the payload. One row per
+   * useful element keeps a busy screen near 1k characters instead of ~3k.
+   */
   private formatUiTree(node?: UiNodeSnapshot): string {
     if (!node) return 'No visible UI elements found.';
-    const lines: string[] = [];
+    const rows: string[] = [];
     let index = 0;
 
     const traverse = (current: UiNodeSnapshot) => {
-      const hasText = current.text && current.text.trim().length > 0;
-      const hasDesc = current.contentDescription && current.contentDescription.trim().length > 0;
+      const text = current.text?.trim() || '';
+      const desc = current.contentDescription?.trim() || '';
       const isInteractive = current.clickable || current.editable;
-      const hasChildren = (current.children?.length || 0) > 0;
+      const informative = text.length > 0 || desc.length > 0 || isInteractive;
 
-      // Skip useless container nodes
-      if (!hasText && !hasDesc && !isInteractive && !hasChildren) {
-        if (current.children) {
-          for (const child of current.children) traverse(child);
-        }
-        return;
-      }
+      if (informative && rows.length < 80) {
+        // Simplify class name
+        let type = (current.className || 'View').split('.').pop() || 'View';
+        if (type === 'TextView') type = 'text';
+        else if (type === 'Button') type = 'btn';
+        else if (type === 'EditText') type = 'input';
+        else if (type === 'ImageView') type = 'img';
+        else if (type === 'ImageButton') type = 'imgbtn';
+        else if (type.includes('Layout') || type.includes('View')) type = 'view';
+        else type = type.toLowerCase();
 
-      // Calculate center coordinates
-      let centerStr = '';
-      if (current.bounds) {
+        let label = text || desc;
+        if (label.length > 60) label = `${label.substring(0, 60)}...`;
+
+        // Single-character flags: t=tappable, e=editable, d=disabled
+        let flags = '';
+        if (current.clickable) flags += 't';
+        if (current.editable) flags += 'e';
+        if (!current.enabled) flags += 'd';
+
         const centerX = Math.round((current.bounds.left + current.bounds.right) / 2);
         const centerY = Math.round((current.bounds.top + current.bounds.bottom) / 2);
-        centerStr = ` center:(${centerX},${centerY})`;
+
+        rows.push(`${index}|${type}|${label}|${flags}|${centerX},${centerY}`);
+        index++;
       }
-
-      // Simplify class name
-      let type = (current.className || 'View').split('.').pop() || 'View';
-      if (type === 'TextView') type = 'text';
-      else if (type === 'Button') type = 'btn';
-      else if (type === 'EditText') type = 'input';
-      else if (type === 'ImageView') type = 'img';
-      else if (type === 'ImageButton') type = 'imgbtn';
-      else if (type.includes('Layout') || type.includes('View')) type = 'view';
-      else type = type.toLowerCase();
-
-      // Build display text
-      let displayText = current.text?.trim() || current.contentDescription?.trim() || '';
-      if (displayText.length > 60) displayText = displayText.substring(0, 60) + '...';
-
-      // Build action tags
-      const tags: string[] = [];
-      if (current.clickable) tags.push('tap');
-      if (current.editable) tags.push('edit');
-
-      const label = displayText ? ` "${displayText}"` : '';
-      const tagStr = tags.length > 0 ? ` [${tags.join(',')}]` : '';
-
-      lines.push(`[${index}] ${type}${label}${tagStr}${centerStr}`);
-      index++;
 
       if (current.children) {
         for (const child of current.children) traverse(child);
@@ -582,6 +596,8 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     };
 
     traverse(node);
-    return lines.slice(0, 80).join('\n');
+
+    if (rows.length === 0) return 'No visible UI elements found.';
+    return ['idx|type|label|flags|tap_at', ...rows].join('\n');
   }
 }
