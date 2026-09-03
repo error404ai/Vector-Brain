@@ -2,8 +2,8 @@ import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
 import { AutomationAction } from '@/services/android/AndroidProtocol';
-import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation } from '@/validations/AndroidDeviceValidation';
-import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, UseBefore } from 'routing-controllers';
+import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation } from '@/validations/AndroidDeviceValidation';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -44,6 +44,21 @@ export class AndroidDeviceController {
   @Get('/')
   async listDevices(@CurrentUser({ required: true }) user: { userId: number }) {
     return this.deviceService.listUserDevices(user.userId);
+  }
+
+  /**
+   * Rename a device. Two identical handsets are otherwise impossible to tell
+   * apart in the device picker.
+   */
+  @Authorized()
+  @Patch('/:id')
+  @UseBefore(zodValidationMiddleware(UpdateDeviceValidation))
+  async renameDevice(
+    @Param('id') id: number,
+    @Body() request: z.infer<typeof UpdateDeviceValidation>,
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.deviceService.renameDevice(id, user.userId, String(request.device_name));
   }
 
   /**
