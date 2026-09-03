@@ -5,6 +5,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { alpha, Box, Chip, Divider, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography, useTheme } from '@mui/material';
@@ -36,6 +37,7 @@ const mainItems: NavItem[] = [
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },
   { label: 'BrowserWorker Errors', icon: <BugReportIcon />, href: '/browserworker-errors', roles: ['admin'], badge: 'Admin', color: '#dc2626' },
   { label: 'My Rules', icon: <ManageAccountsIcon />, href: '/my-rules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#059669' },
+  { label: 'Schedules', icon: <ScheduleIcon />, href: '/schedules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#ea580c' },
 ];
 
 const systemItems: NavItem[] = [{ label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' }];
