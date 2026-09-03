@@ -8,8 +8,6 @@ import {
   useLazyGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
   useSendDirectActionMutation,
-  useUnwatchDeviceMutation,
-  useWatchDeviceMutation,
   type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
@@ -247,8 +245,6 @@ export function AndroidAgentPage() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
   const [sendDirectAction] = useSendDirectActionMutation();
-  const [watchDevice] = useWatchDeviceMutation();
-  const [unwatchDevice] = useUnwatchDeviceMutation();
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -353,15 +349,15 @@ export function AndroidAgentPage() {
   }, [tokenStats, runningConfig?.model]);
 
   /**
-   * Live screen while the device is idle.
+   * One frame on arrival.
    *
    * Frames otherwise only arrive when the agent acts, so a freshly loaded page
-   * shows an empty phone. This asks for one frame immediately, then keeps a
-   * server-side stream alive.
+   * showed an empty phone until something happened. Asking once on mount fills
+   * it in immediately.
    *
-   * The stream deliberately stops while a task runs: both it and the agent send
-   * capture requests down the same device socket, and competing for it made the
-   * agent slower and let stale frames land after fresh ones.
+   * Continuous polling was tried here and removed: it shares the device socket
+   * with the agent, which slowed runs down and let stale frames land after
+   * fresh ones. Live updates come from the agent's own steps.
    */
   useEffect(() => {
     const deviceId = effectiveSelectedDeviceId;
@@ -369,7 +365,7 @@ export function AndroidAgentPage() {
 
     let cancelled = false;
 
-    const pullOneFrame = async () => {
+    void (async () => {
       try {
         const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
         const frame = res?.data?.screenCapture?.base64Data;
@@ -377,31 +373,12 @@ export function AndroidAgentPage() {
       } catch {
         // A missing first frame is not worth interrupting the user over.
       }
-    };
-
-    if (isRunning) {
-      // The agent is driving; let it own the socket and push its own frames.
-      void unwatchDevice(deviceId).unwrap().catch(() => undefined);
-      return;
-    }
-
-    const keepAlive = () => {
-      if (document.visibilityState !== 'visible') return;
-      void watchDevice({ id: deviceId, interval_ms: 700 }).unwrap().catch(() => undefined);
-    };
-
-    void pullOneFrame();
-    keepAlive();
-    const timer = setInterval(keepAlive, 20_000);
-    document.addEventListener('visibilitychange', keepAlive);
+    })();
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', keepAlive);
-      void unwatchDevice(deviceId).unwrap().catch(() => undefined);
     };
-  }, [effectiveSelectedDeviceId, deviceReady, isRunning, sendDirectAction, watchDevice, unwatchDevice]);
+  }, [effectiveSelectedDeviceId, deviceReady, sendDirectAction]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
