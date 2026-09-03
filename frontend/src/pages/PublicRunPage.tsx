@@ -3,6 +3,7 @@ import { useGetPublicRunQuery } from '@/RTKService/runShareService/runShareServi
 import AgentMarkdown from '@/components/android/AgentMarkdown';
 import CheckIcon from '@mui/icons-material/Check';
 import PauseIcon from '@mui/icons-material/Pause';
+import MovieIcon from '@mui/icons-material/Movie';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { alpha, Box, Button, CircularProgress, LinearProgress, Stack, Typography } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -315,6 +316,28 @@ export default function PublicRunPage() {
                   {index + 1}/{frames.length}
                 </Typography>
               </Stack>
+
+              {/* Rendered on the server the first time someone asks for it. */}
+              <Button
+                fullWidth
+                size="small"
+                component="a"
+                href={`/media/runs/${token}.mp4`}
+                target="_blank"
+                rel="noreferrer"
+                startIcon={<MovieIcon />}
+                sx={{
+                  mt: 1,
+                  width: PHONE_W,
+                  borderRadius: 2,
+                  fontWeight: 700,
+                  color: alpha('#fff', 0.75),
+                  border: `1px solid ${alpha('#fff', 0.15)}`,
+                  '&:hover': { bgcolor: alpha('#fff', 0.08) },
+                }}
+              >
+                Watch as video
+              </Button>
             </Box>
 
             {/* Step rail — subtitles running beside the phone */}

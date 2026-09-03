@@ -23,6 +23,11 @@ FROM node:24-alpine AS production
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# ffmpeg renders shared runs into an MP4, and the DejaVu font is what its
+# drawtext filter uses for the social preview card. Both are system packages,
+# so the pnpm lockfile stays untouched.
+RUN apk add --no-cache ffmpeg ttf-dejavu
+
 WORKDIR /app
 
 ENV NODE_ENV=production

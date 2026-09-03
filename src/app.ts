@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import 'reflect-metadata';
@@ -32,6 +33,7 @@ import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { PublicRunController, RunShareController } from './controllers/RunShareController';
+import { RunMediaService } from './services/android/RunMediaService';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { SettingController } from './controllers/SettingController';
 import { UserController } from './controllers/UserController';
@@ -100,6 +102,84 @@ useExpressServer(app, {
 
 app.use(express.static(join(__dirname, '..', 'public')));
 
+/**
+ * Rendered media for shared runs.
+ *
+ * These sit outside the API prefix and outside routing-controllers because they
+ * stream binary files, and because link crawlers fetch them directly.
+ */
+app.get('/media/runs/:token.jpg', async (req, res) => {
+  try {
+    const path = await Container.get(RunMediaService).getPreviewPath(String(req.params.token));
+    if (!path) return res.status(404).end();
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(path);
+  } catch {
+    return res.status(500).end();
+  }
+});
+
+app.get('/media/runs/:token.mp4', async (req, res) => {
+  try {
+    const path = await Container.get(RunMediaService).getVideoPath(String(req.params.token));
+    if (!path) return res.status(404).end();
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(path);
+  } catch {
+    return res.status(500).end();
+  }
+});
+
+/**
+ * Shared-run page with server-rendered link previews.
+ *
+ * WhatsApp, Twitter and friends never run the app's JavaScript, so the meta
+ * tags have to be in the HTML that comes back from the server. The React app
+ * still boots afterwards and takes over as usual.
+ */
+app.get('/r/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token);
+    const meta = await Container.get(RunMediaService).getMeta(token);
+    if (!meta) return next();
+
+    const indexPath = join(__dirname, '..', 'public', 'index.html');
+    const html = await readFile(indexPath, 'utf8');
+
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const title = `"${meta.prompt}" — done by an AI on a real phone`;
+    const description = `An AI agent completed this in ${meta.steps} steps on a real Android device. Watch the replay.`;
+    const image = `${origin}/media/runs/${token}.jpg`;
+    const video = `${origin}/media/runs/${token}.mp4`;
+
+    const tags = [
+      `<title>${escapeHtml(title)}</title>`,
+      `<meta name="description" content="${escapeHtml(description)}" />`,
+      `<meta property="og:type" content="video.other" />`,
+      `<meta property="og:title" content="${escapeHtml(title)}" />`,
+      `<meta property="og:description" content="${escapeHtml(description)}" />`,
+      `<meta property="og:image" content="${image}" />`,
+      `<meta property="og:image:width" content="1200" />`,
+      `<meta property="og:image:height" content="630" />`,
+      `<meta property="og:url" content="${origin}/r/${token}" />`,
+      `<meta property="og:video" content="${video}" />`,
+      `<meta property="og:video:type" content="video/mp4" />`,
+      `<meta name="twitter:card" content="summary_large_image" />`,
+      `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
+      `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
+      `<meta name="twitter:image" content="${image}" />`,
+    ].join('\n    ');
+
+    // Replace the build's own <title> so crawlers do not see two.
+    const injected = html.replace(/<title>.*?<\/title>/i, '').replace('</head>', `    ${tags}\n  </head>`);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(injected);
+  } catch {
+    return next();
+  }
+});
+
 app.get('*', (req, res, next) => {
   if (res.headersSent) {
     return next();
@@ -109,6 +189,15 @@ app.get('*', (req, res, next) => {
   }
   res.sendFile(join(__dirname, '..', 'public', 'index.html'));
 });
+
+/** Minimal escaping for values placed inside meta tag attributes. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 const server = http.createServer(app);
 
