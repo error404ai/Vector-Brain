@@ -1,11 +1,13 @@
 import {
   useGetAndroidDevicesQuery,
+  useRenameDeviceMutation,
   useRequestPairingCodeMutation,
   useSendDirectActionMutation,
   useUnpairDeviceMutation,
 } from '@/RTKService/androidService/androidService';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import QrCodeIcon from '@mui/icons-material/QrCode';
@@ -46,6 +48,9 @@ export function AndroidDevicesPage() {
 
   const [requestPairing, { isLoading: isPairingLoading }] = useRequestPairingCodeMutation();
   const [unpairDevice] = useUnpairDeviceMutation();
+  const [renameDevice, { isLoading: isRenaming }] = useRenameDeviceMutation();
+  // Which device the rename dialog is editing, plus the in-progress name.
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
   const [sendDirectAction, { isLoading: isActionLoading }] = useSendDirectActionMutation();
 
   const [pairingModalOpen, setPairingModalOpen] = useState(false);
@@ -75,6 +80,19 @@ export function AndroidDevicesPage() {
       } catch (err: any) {
         toast.error(err?.data?.message || 'Failed to unpair');
       }
+    }
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renaming) return;
+    const name = renaming.name.trim();
+    if (!name) return;
+    try {
+      await renameDevice({ id: renaming.id, device_name: name }).unwrap();
+      toast.success('Device renamed');
+      setRenaming(null);
+    } catch (err: any) {
+      toast.error(err?.data?.message || 'Failed to rename device');
     }
   };
 
@@ -270,6 +288,16 @@ export function AndroidDevicesPage() {
                       </span>
                     </Tooltip>
 
+                    <Tooltip title="Rename Device">
+                      <IconButton
+                        size="small"
+                        onClick={() => setRenaming({ id: device.id, name: device.device_name })}
+                        sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}
+                      >
+                        <EditOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+
                     <Tooltip title="Unpair Device">
                       <IconButton
                         size="small"
@@ -376,6 +404,36 @@ export function AndroidDevicesPage() {
           <Button onClick={() => setActionModalOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleExecuteDirectAction} disabled={isActionLoading} startIcon={<SendIcon />}>
             Execute
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Rename device */}
+      <Dialog open={Boolean(renaming)} onClose={() => setRenaming(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Rename device</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            label="Device name"
+            value={renaming?.name ?? ''}
+            onChange={(e) => setRenaming((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameSubmit();
+            }}
+            helperText="Helps when two identical phones are paired."
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenaming(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleRenameSubmit}
+            disabled={isRenaming || !renaming?.name.trim()}
+          >
+            Save
           </Button>
         </DialogActions>
       </Dialog>
