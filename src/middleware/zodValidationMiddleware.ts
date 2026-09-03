@@ -27,11 +27,29 @@ export const zodValidationMiddleware = (schema: ZodSchema<any>) => {
 export function validationError(error: ZodError, schema?: ZodSchema<any>) {
   return {
     status: false,
-    message: 'Oops! It looks like some information is missing or incorrect. Please check your input and try again.',
+    // Name the field that actually failed. The old generic sentence left users
+    // guessing which input a 400 was complaining about.
+    message: describeIssues(error),
     errors: error.errors,
     supported_parameters: schema ? getSupportedParameters(schema) : null,
     data: null,
   };
+}
+
+/** Turn zod issues into one readable sentence, e.g. "max_steps: ... exceed 200". */
+function describeIssues(error: ZodError): string {
+  const parts = (error.errors || [])
+    .slice(0, 3)
+    .map((issue) => {
+      const field = Array.isArray(issue.path) ? issue.path.join('.') : '';
+      return field ? `${field}: ${issue.message}` : issue.message;
+    })
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return 'Oops! It looks like some information is missing or incorrect. Please check your input and try again.';
+  }
+  return parts.join(' · ');
 }
 
 function getSupportedParameters(schema: ZodSchema<any>) {
