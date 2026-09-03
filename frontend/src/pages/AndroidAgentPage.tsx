@@ -244,7 +244,6 @@ export function AndroidAgentPage() {
   // activeTaskId is cleared the moment a run ends, but sharing happens after
   // that, so the finished run is remembered separately.
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
-  const [finishedWasRecorded, setFinishedWasRecorded] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
   const [sendDirectAction] = useSendDirectActionMutation();
@@ -308,6 +307,13 @@ export function AndroidAgentPage() {
   const isDeviceOnline = selectedDevice?.status === 'ONLINE';
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
+  /**
+   * The run the Share button acts on: the one that just finished, or the one
+   * restored from the sessions list. Only gating on the live event meant a run
+   * opened from history had no way to be shared at all.
+   */
+  const shareableTaskId = finishedTaskId ?? requestedTaskId ?? null;
+
   const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
 
   /** Past runs on the selected device, newest first. */
@@ -661,7 +667,6 @@ export function AndroidAgentPage() {
         } else if (msg.event === 'task:completed') {
           refetchSessions();
           setFinishedTaskId(msg.payload.taskId ?? activeTaskId);
-          setFinishedWasRecorded(recordRun);
           setShareUrl(null);
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
@@ -1769,10 +1774,9 @@ export function AndroidAgentPage() {
 
                             {/* Sharing belongs right here — the moment a run ends
                                 is when someone wants to show it to somebody. */}
-                            {msg.status === 'done' && finishedTaskId && (
+                            {msg.status === 'done' && shareableTaskId && (
                               <Box sx={{ mt: 1.5 }}>
-                                {finishedWasRecorded ? (
-                                  shareUrl ? (
+                                {shareUrl ? (
                                     <Stack
                                       direction="row"
                                       alignItems="center"
@@ -1817,11 +1821,19 @@ export function AndroidAgentPage() {
                                       disabled={isSharingRun}
                                       onClick={async () => {
                                         try {
-                                          const res = await shareRun({ id: finishedTaskId }).unwrap();
+                                          const res = await shareRun({ id: shareableTaskId }).unwrap();
                                           const url = `${window.location.origin}/r/${res.data.token}`;
                                           setShareUrl(url);
                                           await navigator.clipboard.writeText(url).catch(() => undefined);
-                                          toast.success(`Link copied · ${res.data.frames} screens`);
+                                          if (res.data.frames === 0) {
+                                            // Without recording there is nothing to replay, so say so
+                                            // rather than handing over an empty page.
+                                            toast('Link created, but no screens were captured — turn on Record and run it again for a replay.', {
+                                              icon: '⚠️',
+                                            });
+                                          } else {
+                                            toast.success(`Link copied · ${res.data.frames} screens`);
+                                          }
                                         } catch (err: any) {
                                           toast.error(err?.data?.message || 'Failed to create share link');
                                         }
@@ -1835,11 +1847,6 @@ export function AndroidAgentPage() {
                                     >
                                       Share this run
                                     </Button>
-                                  )
-                                ) : (
-                                  <Typography variant="caption" color="text.secondary">
-                                    Turn on <b>Record</b> before running to capture the screens and share a replay.
-                                  </Typography>
                                 )}
                               </Box>
                             )}
