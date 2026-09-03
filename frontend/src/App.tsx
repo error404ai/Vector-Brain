@@ -9,6 +9,7 @@ import useAuthRedirect from './hooks/useAuthRedirect';
 import AgentTasksPage from './pages/AgentTasksPage';
 import AiRulesPage from './pages/AiRulesPage';
 import AndroidAgentPage from './pages/AndroidAgentPage';
+import PublicRunPage from './pages/PublicRunPage';
 import SchedulesPage from './pages/SchedulesPage';
 import AndroidDevicesPage from './pages/AndroidDevicesPage';
 import AndroidFleetPage from './pages/AndroidFleetPage';
@@ -75,6 +76,7 @@ const router = createBrowserRouter([
   {
     Component: RootShell,
     children: [
+      { path: '/r/:token', Component: PublicRunPage },
       {
         Component: GuestShell,
         children: [

@@ -1,11 +1,18 @@
 import type { AgentTask } from '@/RTKService/agentTaskService/agentTaskService';
 import type { AndroidTaskLog } from '@/RTKService/androidService/androidService';
 import { useGetAndroidTaskLogsQuery } from '@/RTKService/androidService/androidService';
+import {
+  useGetShareStatusQuery,
+  useShareRunMutation,
+  useUnshareRunMutation,
+} from '@/RTKService/runShareService/runShareService';
 import { explainError } from '@/utils/errorExplain';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
 import ReplayIcon from '@mui/icons-material/Replay';
+import ShareIcon from '@mui/icons-material/Share';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import {
   alpha,
@@ -22,6 +29,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { useState } from 'react';
+import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
 interface AgentTaskDetailModalProps {
@@ -169,10 +177,38 @@ export function AgentTaskDetailModal({ task, opened, onClose }: AgentTaskDetailM
     skip: !opened || !task,
   });
 
+  const { data: shareData } = useGetShareStatusQuery(task?.id ?? 0, { skip: !opened || !task });
+  const [shareRun, { isLoading: isSharing }] = useShareRunMutation();
+  const [unshareRun] = useUnshareRunMutation();
+  const shareToken = shareData?.data?.token ?? null;
+  const shareUrl = shareToken ? `${window.location.origin}/r/${shareToken}` : null;
+
   if (!task) return null;
 
   const logs = logsData?.data ?? [];
   const failedSteps = logs.filter((log) => log.status === 'FAILED').length;
+
+  const handleShare = async () => {
+    if (!task) return;
+    try {
+      const res = await shareRun({ id: task.id }).unwrap();
+      const url = `${window.location.origin}/r/${res.data.token}`;
+      await navigator.clipboard.writeText(url).catch(() => undefined);
+      toast.success(`Public link copied · ${res.data.frames} screens`);
+    } catch (err: any) {
+      toast.error(err?.data?.message || 'Failed to create share link');
+    }
+  };
+
+  const handleUnshare = async () => {
+    if (!task) return;
+    try {
+      await unshareRun(task.id).unwrap();
+      toast.success('Share link revoked');
+    } catch (err: any) {
+      toast.error(err?.data?.message || 'Failed to revoke link');
+    }
+  };
 
   const handleRerun = () => {
     const params = new URLSearchParams();
@@ -201,6 +237,33 @@ export function AgentTaskDetailModal({ task, opened, onClose }: AgentTaskDetailM
           <Typography variant="subtitle1" sx={{ fontWeight: 800, flexGrow: 1, minWidth: 0 }} noWrap>
             Run report — Task #{task.id}
           </Typography>
+          {shareToken ? (
+            <Tooltip title="Stop sharing this run publicly">
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                startIcon={<LinkOffIcon />}
+                onClick={handleUnshare}
+                sx={{ borderRadius: 2, fontWeight: 700 }}
+              >
+                Unshare
+              </Button>
+            </Tooltip>
+          ) : (
+            <Tooltip title="Create a public link anyone can open">
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<ShareIcon />}
+                onClick={handleShare}
+                disabled={isSharing}
+                sx={{ borderRadius: 2, fontWeight: 700 }}
+              >
+                Share
+              </Button>
+            </Tooltip>
+          )}
           <Button size="small" variant="contained" startIcon={<ReplayIcon />} onClick={handleRerun} sx={{ borderRadius: 2, fontWeight: 700 }}>
             Re-run
           </Button>
@@ -243,6 +306,34 @@ export function AgentTaskDetailModal({ task, opened, onClose }: AgentTaskDetailM
             sx={{ height: 22, fontSize: '0.7rem' }}
           />
         </Stack>
+
+        {shareUrl && (
+          <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 1 }}>
+            <Typography variant="caption" sx={{ fontWeight: 800, color: 'success.dark' }}>
+              Public link
+            </Typography>
+            <Typography
+              component="a"
+              href={shareUrl}
+              target="_blank"
+              rel="noreferrer"
+              variant="caption"
+              sx={{ color: 'primary.main', wordBreak: 'break-all' }}
+            >
+              {shareUrl}
+            </Typography>
+            <Button
+              size="small"
+              onClick={() => {
+                void navigator.clipboard.writeText(shareUrl);
+                toast.success('Link copied');
+              }}
+              sx={{ minWidth: 0, fontWeight: 700 }}
+            >
+              Copy
+            </Button>
+          </Stack>
+        )}
       </Box>
 
       <DialogContent sx={{ p: 2.5 }}>

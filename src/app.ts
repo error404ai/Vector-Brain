@@ -31,6 +31,7 @@ import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorCo
 import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
+import { PublicRunController, RunShareController } from './controllers/RunShareController';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { SettingController } from './controllers/SettingController';
 import { UserController } from './controllers/UserController';
@@ -75,6 +76,8 @@ useExpressServer(app, {
     DashboardController,
     HealthController,
     PromptController,
+    PublicRunController,
+    RunShareController,
     ScheduledTaskController,
     SettingController,
     UserController,

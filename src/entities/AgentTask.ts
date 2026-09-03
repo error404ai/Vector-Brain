@@ -39,6 +39,13 @@ export class AgentTask {
   @Column({ type: 'float', default: 0 })
   total_duration_seconds: number;
 
+  /** Random token that makes this run readable without logging in; null = private. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  share_token: string | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  shared_at: Date | null;
+
   @Column({ type: 'text', nullable: true })
   urls_visited: string;
 

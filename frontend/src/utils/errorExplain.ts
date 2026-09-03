@@ -94,6 +94,14 @@ const RULES: ErrorRule[] = [
     },
   },
   {
+    patterns: ['step limit', 'step-limit'],
+    explanation: {
+      title: 'Ran out of steps',
+      cause: 'The task needed more moves than the step budget allowed.',
+      suggestion: 'Continue the task with a bigger budget, or raise the Steps number in the header before starting long tasks.',
+    },
+  },
+  {
     patterns: ['timeout', 'timed out'],
     explanation: {
       title: 'The phone took too long to respond',

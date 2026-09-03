@@ -336,7 +336,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'open_url',
         description:
-          'Open an HTTP or HTTPS web URL in the device browser. By default it replaces the current page in the SAME tab.',
+          'Open an HTTP or HTTPS web URL in the device browser. NOTE: the companion app cannot reuse the current tab yet, so each call may open a new browser tab. Never tell the user that pages were opened in the same tab. Some domains (youtube.com, maps.google.com) are captured by their own app instead of the browser — if that happens, use global_action BACK to return to the browser.',
         parameters: {
           type: 'object',
           properties: {
@@ -344,7 +344,7 @@ export class AndroidAgent extends Agent {
             newTab: {
               type: 'boolean',
               description:
-                'Leave this out to reuse the current tab (default). Set true ONLY when the user explicitly wants the pages side by side in separate tabs.',
+                'Reserved for a future companion-app update; tab reuse is not controllable today, so leave this out.',
             },
           },
           required: ['url'],

@@ -43,12 +43,13 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface ScheduleForm {
   id?: number;
-  device_id: number | '';
+  /** Kept as strings because that is what the Select controls hand back. */
+  device_id: string;
   prompt: string;
   run_at: string;
   days: number[];
   max_steps: number;
-  ai_config_id: number | '';
+  ai_config_id: string;
 }
 
 const EMPTY_FORM: ScheduleForm = {
@@ -103,19 +104,19 @@ export default function SchedulesPage() {
   const deviceName = (id: number) => devices.find((device) => device.id === id)?.device_name ?? `Device #${id}`;
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, device_id: devices[0]?.id ?? '' });
+    setForm({ ...EMPTY_FORM, device_id: devices[0] ? String(devices[0].id) : '' });
     setDialogOpen(true);
   };
 
   const openEdit = (schedule: ScheduledTask) => {
     setForm({
       id: schedule.id,
-      device_id: schedule.device_id,
+      device_id: String(schedule.device_id),
       prompt: schedule.prompt,
       run_at: schedule.run_at,
       days: parseDays(schedule.days_of_week),
       max_steps: schedule.max_steps,
-      ai_config_id: schedule.ai_config_id ?? '',
+      ai_config_id: schedule.ai_config_id === null ? '' : String(schedule.ai_config_id),
     });
     setDialogOpen(true);
   };
@@ -135,7 +136,7 @@ export default function SchedulesPage() {
       run_at: form.run_at,
       days_of_week: form.days,
       max_steps: form.max_steps,
-      ai_config_id: form.ai_config_id === '' ? null : Number(form.ai_config_id),
+      ai_config_id: form.ai_config_id ? Number(form.ai_config_id) : null,
       // The browser's zone is the one the user picked the time in.
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
     };
@@ -390,8 +391,8 @@ export default function SchedulesPage() {
               <Select
                 size="small"
                 fullWidth
-                value={form.device_id === '' ? '' : String(form.device_id)}
-                onChange={(e) => setForm((prev) => ({ ...prev, device_id: Number(e.target.value) }))}
+                value={form.device_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, device_id: e.target.value }))}
               >
                 {devices.map((device) => (
                   <MenuItem key={device.id} value={String(device.id)}>
@@ -408,12 +409,8 @@ export default function SchedulesPage() {
               <Select
                 size="small"
                 fullWidth
-                value={form.ai_config_id === '' ? '' : String(form.ai_config_id)}
-                onChange={(e) => {
-                  // The empty option means "use whatever provider is active".
-                  const raw = String(e.target.value);
-                  setForm((prev) => ({ ...prev, ai_config_id: raw === '' ? '' : Number(raw) }));
-                }}
+                value={form.ai_config_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, ai_config_id: e.target.value }))}
                 displayEmpty
               >
                 <MenuItem value="">Use the active provider</MenuItem>
