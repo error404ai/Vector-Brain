@@ -59,6 +59,22 @@ search results URL with open_url instead:
 Only fall back to tapping a search box when the app has no URL entry point at
 all. Never plan a node that says "press Enter" or "tap the search button".
 
+### "Open <app> and find/play/search <X>" is ONE node, not two
+The search results URL launches the app already on the results screen, so a
+node that opens the app first is pure waste. Make the FIRST node the open_url
+call itself — do not plan open_app, do not plan tapping a search icon, and do
+not plan tapping search suggestions. For example, "Open YouTube and play
+Lo-Fi Beats" plans as:
+  1. open_url https://www.youtube.com/results?search_query=Lo-Fi+Beats
+  2. Tap the first video in the results
+That is the whole plan.
+
+### Ads and interstitials
+- If a "Skip ad", "Skip", "Close" or "X" control is on screen, tap it
+  immediately. Do not wait repeatedly for an ad to finish on its own.
+- An ad playing over the target content still means the content opened
+  correctly — do not restart the task because of one.
+
 ### Picking from a list of results
 - Tap the FIRST plausible match. Do not scroll looking for a better one, and do
   not judge results by length, view count or format unless the user asked.
