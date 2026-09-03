@@ -106,6 +106,12 @@ const priceFor = (model?: string): { in: number; out: number } => {
 const CHARS_PER_TOKEN = 4;
 /** Rough cost of one phone screenshot once encoded for a vision model. */
 const IMAGE_TOKENS_ESTIMATE = 1000;
+
+/**
+ * Only short instructions get the pre-run clarification check — a detailed
+ * prompt rarely needs it and the check costs a model call plus a few seconds.
+ */
+const CLARIFY_WORD_LIMIT = 8;
 // Approximate size of the constant part of every request (system prompt + tool schemas).
 const BASE_PROMPT_CHARS = 4000;
 
@@ -712,24 +718,6 @@ export function AndroidAgentPage() {
       return;
     }
 
-    // A vague instruction makes the agent spend its whole step budget deciding what
-    // to do, so ask one question first. Skip when the user already answered one.
-    if (!textToSend) {
-      try {
-        const review = await clarifyPrompt({ prompt: text }).unwrap();
-        if (review?.data?.needsClarification && review.data.question) {
-          setClarification({
-            prompt: text,
-            question: review.data.question,
-            options: review.data.options ?? [],
-          });
-          return;
-        }
-      } catch {
-        // Clarification is optional — fall through and run the task as written.
-      }
-    }
-    setClarification(null);
     userOwnsChatRef.current = true;
 
     const userMsgId = `user-${Date.now()}`;
@@ -751,9 +739,38 @@ export function AndroidAgentPage() {
       status: 'running',
     };
 
+    // Echo the message before anything slow happens. The clarification check is
+    // a network round-trip, and running it first left the screen looking as if
+    // Send had not registered at all.
     setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
     setPromptInput('');
     setIsRunning(true);
+
+    // A vague instruction makes the agent spend its whole step budget deciding
+    // what to do, so ask one question first. Skipped when the user already
+    // answered a question, and for prompts that are already specific — the
+    // check costs a model call, so short instructions are the ones worth it.
+    const worthClarifying = text.split(/\s+/).length <= CLARIFY_WORD_LIMIT;
+    if (!textToSend && worthClarifying) {
+      try {
+        const review = await clarifyPrompt({ prompt: text }).unwrap();
+        if (review?.data?.needsClarification && review.data.question) {
+          // Roll the chat back and ask instead of running.
+          setMessages((prev) => prev.filter((m) => m.id !== userMsgId && m.id !== assistantMsgId));
+          setIsRunning(false);
+          setPromptInput(text);
+          setClarification({
+            prompt: text,
+            question: review.data.question,
+            options: review.data.options ?? [],
+          });
+          return;
+        }
+      } catch {
+        // Clarification is optional — fall through and run the task as written.
+      }
+    }
+    setClarification(null);
 
     try {
       const res = await runTask({
