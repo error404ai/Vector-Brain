@@ -222,7 +222,8 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'type_text',
-        description: 'Type text into a focused input field. Always tap the input field first before typing.',
+        description:
+          'Type text into a focused input field. Always tap the input field first. IMPORTANT: this only sets the text — it CANNOT submit the field, and there is no way to press Enter or the keyboard search key on this device. Adding "\\n" does nothing. To run a search, do not fight the search box: use open_url with the site\'s search results URL instead (e.g. https://www.youtube.com/results?search_query=... or https://www.google.com/search?q=...).',
         parameters: {
           type: 'object',
           properties: {
