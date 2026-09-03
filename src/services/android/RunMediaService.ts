@@ -127,8 +127,8 @@ export class RunMediaService {
    * on the right, so a pasted link reads as a demo rather than a bare URL.
    */
   private async renderPreview(workDir: string, frames: SharedRunFrame[], task: AgentTask): Promise<void> {
-    const first = frames[0];
-    const raw = first.image_base64.replace(/^data:image\/\w+;base64,/, '');
+    const chosen = pickPreviewFrame(frames);
+    const raw = chosen.image_base64.replace(/^data:image\/\w+;base64,/, '');
     const framePath = join(workDir, 'first.jpg');
     await writeFile(framePath, Buffer.from(raw, 'base64'));
 
@@ -162,6 +162,21 @@ export class RunMediaService {
       { timeout: 60_000, maxBuffer: 1024 * 1024 * 8 },
     );
   }
+}
+
+/**
+ * Pick the frame that best sells the run.
+ *
+ * The first frame is usually an empty app that has just launched, which says
+ * nothing. The end of the run is where the result is on screen — but agents
+ * often press HOME or BACK last, which lands on the launcher. So walk back from
+ * the end and take the last frame that was not a navigation key press.
+ */
+function pickPreviewFrame(frames: SharedRunFrame[]): SharedRunFrame {
+  for (let i = frames.length - 1; i >= 0; i--) {
+    if (frames[i].action_type !== 'global_action') return frames[i];
+  }
+  return frames[frames.length - 1];
 }
 
 /** Split a prompt into at most `maxLines` lines of roughly `width` characters. */
