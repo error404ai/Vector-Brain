@@ -1,4 +1,5 @@
 import { useGetPublicRunQuery } from '@/RTKService/runShareService/runShareService';
+import AgentMarkdown from '@/components/android/AgentMarkdown';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -25,6 +26,19 @@ function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return '—';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+/**
+ * Captions come from the agent's raw thought, which can run for a paragraph and
+ * sometimes contains planner chatter. A viewer only needs the gist, so keep the
+ * first sentence and cap the length.
+ */
+function shortCaption(caption: string | null): string {
+  if (!caption) return 'Working…';
+  const firstSentence = caption.split(/(?<=[.!?])\s/)[0] ?? caption;
+  const text = firstSentence.trim();
+  if (text.length <= 150) return text;
+  return `${text.slice(0, 150).trimEnd()}…`;
 }
 
 function imageSrc(base64: string): string {
@@ -180,8 +194,8 @@ export default function PublicRunPage() {
               <Typography variant="overline" sx={{ fontWeight: 800, letterSpacing: 1, color: 'text.secondary' }}>
                 Step {currentFrame.step_index}
               </Typography>
-              <Typography variant="body1" sx={{ mt: 0.5, lineHeight: 1.6, minHeight: 88 }}>
-                {currentFrame.caption || 'Working…'}
+              <Typography variant="body1" sx={{ mt: 0.5, lineHeight: 1.6, minHeight: 72 }}>
+                {shortCaption(currentFrame.caption)}
               </Typography>
 
               {run.summary && (
@@ -197,9 +211,7 @@ export default function PublicRunPage() {
                   <Typography variant="caption" sx={{ fontWeight: 800, color: 'success.dark', display: 'block', mb: 0.5 }}>
                     Result
                   </Typography>
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {run.summary}
-                  </Typography>
+                  <AgentMarkdown text={run.summary} />
                 </Box>
               )}
             </Box>

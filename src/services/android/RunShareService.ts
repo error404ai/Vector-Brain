@@ -11,6 +11,12 @@ import { Service } from 'typedi';
 /** Upper bound on frames kept per shared run, to keep rows small. */
 const MAX_FRAMES = 60;
 
+/**
+ * Tool calls that do not drive the phone. Their log rows carry a stale frame,
+ * so they are left out of the replay.
+ */
+const NON_DEVICE_ACTIONS = new Set(['variable_storage', 'task_snapshot', 'foreach_task', 'watch_triggered']);
+
 @Service()
 export class RunShareService {
   private taskRepo: Repository<AgentTask> = AppDataSource.getRepository(AgentTask);
@@ -45,10 +51,21 @@ export class RunShareService {
     const excluded = new Set(excludeSteps);
     const frames: SharedRunFrame[] = [];
 
+    let previousImage = '';
+
     for (const log of logs) {
       if (!log.screenshot_base64) continue;
       if (excluded.has(log.step_index)) continue;
       if (frames.length >= MAX_FRAMES) break;
+
+      // Steps that never touch the device (the agent framework's internal
+      // bookkeeping calls) carry whatever frame was last seen, which shows up
+      // in the replay as the screen jumping backwards. Skip them.
+      if (NON_DEVICE_ACTIONS.has(log.action_type)) continue;
+
+      // Two identical frames in a row add nothing to a replay.
+      if (log.screenshot_base64 === previousImage) continue;
+      previousImage = log.screenshot_base64;
 
       // Only the first line of the thought — the rest is planner chatter and can
       // repeat the whole screen dump.
