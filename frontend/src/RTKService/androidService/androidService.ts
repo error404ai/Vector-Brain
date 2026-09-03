@@ -100,6 +100,15 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    renameDevice: builder.mutation<{ message: string }, { id: number; device_name: string }>({
+      query: ({ id, device_name }) => ({
+        url: `/android/devices/${id}`,
+        method: 'PATCH',
+        body: { device_name },
+      }),
+      invalidatesTags: ['ANDROID_DEVICES' as any],
+    }),
+
     unpairDevice: builder.mutation<{ message: string }, number>({
       query: (id) => ({
         url: `/android/devices/${id}`,
@@ -176,6 +185,7 @@ const androidApi = baseApi.injectEndpoints({
 export const {
   useGetAndroidDevicesQuery,
   useRequestPairingCodeMutation,
+  useRenameDeviceMutation,
   useUnpairDeviceMutation,
   useSendDirectActionMutation,
   useRunAndroidTaskMutation,
