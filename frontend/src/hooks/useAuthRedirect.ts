@@ -8,12 +8,20 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 const publicRoutes = ['/login', '/signup', '/'];
 
+/**
+ * Routes that must render for everyone and never bounce anywhere: a shared run
+ * link has to open for a stranger with no session, and for a signed-in owner
+ * without being pushed to the dashboard.
+ */
+const openRoutePrefixes = ['/r/'];
+
 export default function useAuthRedirect(skip: boolean = false) {
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
   const authInitialized = useSelector((state: RootState) => state.auth.authInitialized);
-  const isPublicRoute = publicRoutes.includes(location.pathname);
+  const isOpenRoute = openRoutePrefixes.some((prefix) => location.pathname.startsWith(prefix));
+  const isPublicRoute = isOpenRoute || publicRoutes.includes(location.pathname);
 
   const hasToken = !!authManager.getAccessToken();
 
@@ -41,7 +49,7 @@ export default function useAuthRedirect(skip: boolean = false) {
       dispatch(setTokenExpired(false));
       navigate(path);
     };
-    if (skip) {
+    if (skip || isOpenRoute) {
       return;
     }
     if (!hasToken && isPublicRoute) {
@@ -61,7 +69,7 @@ export default function useAuthRedirect(skip: boolean = false) {
       performRedirect('/dashboard');
       return;
     }
-  }, [authInitialized, isPublicRoute, navigate, hasToken, dispatch, skip]);
+  }, [authInitialized, isPublicRoute, isOpenRoute, navigate, hasToken, dispatch, skip]);
 
   useEffect(
     () => () => {
