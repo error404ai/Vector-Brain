@@ -20,6 +20,8 @@ export const TAGS = {
   SETTING: 'Setting',
   AI_CONFIG: 'AiConfig',
   AI_CONFIGS: 'AiConfigs',
+  ANDROID_DEVICES: 'ANDROID_DEVICES',
+  SCHEDULES: 'SCHEDULES',
 } as const;
 
 
