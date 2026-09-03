@@ -70,8 +70,13 @@ function stepLabel(frame: SharedRunFrame): { verb: string; detail: string } {
     case 'tap_coordinate':
     case 'click_node':
       return { verb: 'Tapped', detail: 'the screen' };
-    case 'type_text':
-      return { verb: 'Typed', detail: payload.text ? `“${payload.text}”` : 'text' };
+    case 'type_text': {
+      // Typed text is deliberately not stored — it could be a password — so the
+      // placeholder must never be shown to a visitor as if it were the input.
+      const typed = typeof payload.text === 'string' ? payload.text : '';
+      const usable = typed && typed !== '[REDACTED]';
+      return { verb: 'Typed', detail: usable ? `“${typed}”` : 'into the field' };
+    }
     case 'swipe':
       return { verb: 'Scrolled', detail: String(payload.direction || '').toUpperCase() === 'UP' ? 'up' : 'down' };
     case 'wait':
