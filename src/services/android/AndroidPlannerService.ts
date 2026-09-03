@@ -562,7 +562,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
         if (info.uiTree) lastUiTree = info.uiTree;
         if (info.foregroundApp) lastForegroundApp = info.foregroundApp;
 
-        if (info.uiTree || info.screenshotBase64) {
+        // Waits deliberately skip re-observation, so they always report the
+        // previous screen. Counting them here killed legitimate runs that were
+        // simply waiting for a page to finish loading.
+        const isWaitStep = info.toolName === 'wait';
+
+        if (!isWaitStep && (info.uiTree || info.screenshotBase64)) {
           const observationFingerprint = this.fingerprintObservation(
             info.foregroundApp,
             info.uiTree,
