@@ -111,6 +111,22 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    /** Tell the server a browser is watching this device's screen. */
+    watchDevice: builder.mutation<{ message: string; data: { streaming: boolean } }, { id: number; interval_ms?: number }>({
+      query: ({ id, interval_ms }) => ({
+        url: `/android/devices/${id}/watch`,
+        method: 'POST',
+        body: { interval_ms },
+      }),
+    }),
+
+    unwatchDevice: builder.mutation<{ message: string }, number>({
+      query: (id) => ({
+        url: `/android/devices/${id}/unwatch`,
+        method: 'POST',
+      }),
+    }),
+
     unpairDevice: builder.mutation<{ message: string }, number>({
       query: (id) => ({
         url: `/android/devices/${id}`,
@@ -188,6 +204,8 @@ export const {
   useGetAndroidDevicesQuery,
   useRequestPairingCodeMutation,
   useRenameDeviceMutation,
+  useWatchDeviceMutation,
+  useUnwatchDeviceMutation,
   useUnpairDeviceMutation,
   useSendDirectActionMutation,
   useRunAndroidTaskMutation,

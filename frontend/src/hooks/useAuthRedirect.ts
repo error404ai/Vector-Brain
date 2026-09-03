@@ -26,8 +26,11 @@ export default function useAuthRedirect(skip: boolean = false) {
   const hasToken = !!authManager.getAccessToken();
 
   // Use getProfile to initialize auth if token exists but auth not initialized
+  // The access token lives in memory only, so after a reload there is none
+  // until a silent refresh runs. Firing this query anyway is what triggers that
+  // refresh; without it the app decided the user was logged out on every reload.
   const { isLoading: isProfileLoading } = useGetProfileQuery(undefined, {
-    skip: !hasToken || isPublicRoute,
+    skip: isPublicRoute,
   });
 
   const [isRedirecting, setIsRedirecting] = useState(false);
@@ -52,16 +55,20 @@ export default function useAuthRedirect(skip: boolean = false) {
     if (skip || isOpenRoute) {
       return;
     }
+
+    // Deciding before the silent refresh resolves is what bounced every reload
+    // to the dashboard: the page redirected to /login, the token then came
+    // back, and /login forwarded the now-authenticated user to /dashboard.
+    if (!authInitialized && !isPublicRoute) {
+      return;
+    }
+
     if (!hasToken && isPublicRoute) {
       return;
     }
 
     if (!hasToken && !isPublicRoute) {
       performRedirect('/login');
-      return;
-    }
-
-    if (!authInitialized) {
       return;
     }
 
@@ -83,7 +90,7 @@ export default function useAuthRedirect(skip: boolean = false) {
     []
   );
 
-  const loading = Boolean(hasToken && isProfileLoading);
+  const loading = Boolean(isProfileLoading || (!authInitialized && !isPublicRoute));
 
   const currentLoadingState = loading || isRedirecting;
 

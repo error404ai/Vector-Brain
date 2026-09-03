@@ -1,6 +1,7 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
+import { LiveScreenService } from '@/services/android/LiveScreenService';
 import { AutomationAction } from '@/services/android/AndroidProtocol';
 import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation } from '@/validations/AndroidDeviceValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
@@ -13,6 +14,7 @@ export class AndroidDeviceController {
   constructor(
     private deviceService: AndroidDeviceService,
     private gatewayService: AndroidGatewayService,
+    private liveScreenService: LiveScreenService,
   ) {}
 
   /**
@@ -59,6 +61,28 @@ export class AndroidDeviceController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     return this.deviceService.renameDevice(id, user.userId, String(request.device_name));
+  }
+
+  /**
+   * Keep the live screen flowing while the dashboard is watching.
+   *
+   * The dashboard calls this when the view opens and repeats it as a
+   * keep-alive; the stream stops on its own once the calls stop.
+   */
+  @Authorized()
+  @Post('/:id/watch')
+  async watchDevice(
+    @Param('id') id: number,
+    @Body() body: { interval_ms?: number },
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.liveScreenService.watch(id, user.userId, body?.interval_ms ? Number(body.interval_ms) : undefined);
+  }
+
+  @Authorized()
+  @Post('/:id/unwatch')
+  async unwatchDevice(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.liveScreenService.unwatch(id, user.userId);
   }
 
   /**

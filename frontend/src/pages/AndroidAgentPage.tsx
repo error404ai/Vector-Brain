@@ -7,6 +7,9 @@ import {
   useLazyGetAndroidTaskLogsQuery,
   useLazyGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
+  useSendDirectActionMutation,
+  useUnwatchDeviceMutation,
+  useWatchDeviceMutation,
   type AndroidTaskLog,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
@@ -244,6 +247,9 @@ export function AndroidAgentPage() {
   const [finishedWasRecorded, setFinishedWasRecorded] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
+  const [sendDirectAction] = useSendDirectActionMutation();
+  const [watchDevice] = useWatchDeviceMutation();
+  const [unwatchDevice] = useUnwatchDeviceMutation();
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -339,6 +345,47 @@ export function AndroidAgentPage() {
       (tokenStats.promptTokens / 1_000_000) * price.in + (tokenStats.completionTokens / 1_000_000) * price.out;
     return { totalTokens, cost };
   }, [tokenStats, runningConfig?.model]);
+
+  /**
+   * Live screen.
+   *
+   * Frames otherwise only arrive when the agent acts, so a freshly loaded page
+   * shows an empty phone until something happens. Ask for one frame straight
+   * away, then keep a server-side stream alive while this tab is visible.
+   */
+  useEffect(() => {
+    const deviceId = effectiveSelectedDeviceId;
+    if (!deviceId || !deviceReady) return;
+
+    let cancelled = false;
+
+    const pullOneFrame = async () => {
+      try {
+        const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
+        const frame = res?.data?.screenCapture?.base64Data;
+        if (frame && !cancelled) setLatestScreenshot(frame);
+      } catch {
+        // A missing first frame is not worth interrupting the user over.
+      }
+    };
+
+    const keepAlive = () => {
+      if (document.visibilityState !== 'visible') return;
+      void watchDevice({ id: deviceId, interval_ms: 500 }).unwrap().catch(() => undefined);
+    };
+
+    void pullOneFrame();
+    keepAlive();
+    const timer = setInterval(keepAlive, 20_000);
+    document.addEventListener('visibilitychange', keepAlive);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', keepAlive);
+      void unwatchDevice(deviceId).unwrap().catch(() => undefined);
+    };
+  }, [effectiveSelectedDeviceId, deviceReady, sendDirectAction, watchDevice, unwatchDevice]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
