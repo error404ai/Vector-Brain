@@ -9,6 +9,7 @@ import useAuthRedirect from './hooks/useAuthRedirect';
 import AgentTasksPage from './pages/AgentTasksPage';
 import AiRulesPage from './pages/AiRulesPage';
 import AndroidAgentPage from './pages/AndroidAgentPage';
+import SchedulesPage from './pages/SchedulesPage';
 import AndroidDevicesPage from './pages/AndroidDevicesPage';
 import AndroidFleetPage from './pages/AndroidFleetPage';
 import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
@@ -91,6 +92,7 @@ const router = createBrowserRouter([
           { path: '/android-fleet', Component: AndroidFleetPage },
           { path: '/agent-tasks', Component: AgentTasksPage },
           { path: '/my-rules', Component: MyRulesPage },
+          { path: '/schedules', Component: SchedulesPage },
           { path: '/settings', Component: SettingsPage },
           {
             path: '/users',
