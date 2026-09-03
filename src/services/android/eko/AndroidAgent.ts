@@ -4,6 +4,12 @@ import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 
+/**
+ * Below this many usable rows we assume the app is not exposing its content to
+ * the accessibility tree (web views, canvas UIs, games) and fall back to vision.
+ */
+const MIN_INFORMATIVE_ROWS = 8;
+
 export interface AndroidAgentCallbacks {
   onStepExecuted?: (info: {
     toolName: string;
@@ -28,6 +34,10 @@ export class AndroidAgent extends Agent {
   /** Vision spend cap: images cost roughly 1k tokens each, so cap them per run. */
   private screenshotsUsed = 0;
   private readonly screenshotBudget = 3;
+
+  /** Separate cap for automatic fallback vision on accessibility-blind screens. */
+  private autoVisionUsed = 0;
+  private readonly autoVisionBudget = 8;
 
   constructor(
     private gatewayService: AndroidGatewayService,
@@ -70,10 +80,28 @@ export class AndroidAgent extends Agent {
             type: 'text' as const,
             text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is the x,y to pass to tap_coordinate):\n${formatted}`,
           };
-          // No image here on purpose. The tree already carries every element and
-          // its tap coordinates, and attaching the last frame on every call sent
-          // a ~1k-token image per step — often a stale one, which misleads the
-          // model. Vision is now opt-in through capture_screen.
+
+          // Normally the tree describes everything and an image would just burn
+          // tokens. But web views and canvas-drawn apps expose almost nothing to
+          // accessibility — there the model is blind without a picture, so fall
+          // back to vision exactly in that case.
+          const rowCount = formatted.split('\n').length - 1;
+          const treeIsThin = rowCount < MIN_INFORMATIVE_ROWS;
+          const freshShot = res.screenCapture?.base64Data;
+
+          if (treeIsThin && freshShot && this.autoVisionUsed < this.autoVisionBudget) {
+            this.autoVisionUsed += 1;
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `${textContent.text}\n\nNOTE: this screen exposes very little to the accessibility tree (typical for web pages and games). A screenshot is attached — read the screen from the image and tap using coordinates.`,
+                },
+                { type: 'image', data: freshShot, mimeType: 'image/jpeg' },
+              ],
+            };
+          }
+
           return {
             content: [textContent],
           };
