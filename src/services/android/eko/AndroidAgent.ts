@@ -42,6 +42,12 @@ export class AndroidAgent extends Agent {
   private autoVisionUsed = 0;
   private readonly autoVisionBudget = 8;
 
+  /**
+   * Repeated waits mean the model cannot tell whether the screen changed —
+   * usually a web page whose content never reaches the accessibility tree.
+   */
+  private consecutiveWaits = 0;
+
   constructor(
     private gatewayService: AndroidGatewayService,
     private hardwareDeviceId: string,
@@ -251,14 +257,16 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'swipe',
-        description: 'Swipe/scroll the screen. Use UP to scroll down (reveal content below), DOWN to scroll up.',
+        description:
+          'Scroll the screen. Direction is the direction you want to MOVE THROUGH the content: DOWN reveals what is further down the page, UP goes back towards the top. Do not scroll more than twice in the same direction without something changing — if the item you want is not appearing, read the screen or try another route instead.',
         parameters: {
           type: 'object',
           properties: {
             direction: {
               type: 'string',
               enum: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
-              description: 'UP = scroll down to see more, DOWN = scroll up to go back',
+              description:
+                'DOWN = move further down the page (see content below), UP = move back up towards the top',
             },
             durationMillis: {
               type: 'number',
@@ -272,19 +280,27 @@ export class AndroidAgent extends Agent {
           // Block excessive scrolling
           const scrollKey = `scroll_${args.direction}`;
           const recentScrolls = this.actionHistory.filter(a => a === scrollKey).length;
-          if (recentScrolls >= 8) {
+          if (recentScrolls >= 4) {
             return {
-              content: [{ type: 'text', text: `Blocked: Scrolled ${recentScrolls} times in same direction. Stop scrolling and work with visible elements or try a different approach.` }],
+              content: [{ type: 'text', text: `Blocked: already scrolled ${recentScrolls} times in this direction without finding it. Stop scrolling — read the screen, work with the elements that are visible, or reach the target another way (for example open_url).` }],
               isError: true,
             };
           }
           this.actionHistory.push(scrollKey);
           if (this.actionHistory.length > 10) this.actionHistory.shift();
 
+          // The tool speaks in content terms ("show me what is below"), while
+          // the device expects the finger's direction — which is the opposite.
+          // Exposing the raw gesture was making the model scroll the wrong way
+          // and then bounce back and forth hunting for the item.
+          const requested = args.direction as 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+          const gesture =
+            requested === 'DOWN' ? 'UP' : requested === 'UP' ? 'DOWN' : requested === 'RIGHT' ? 'LEFT' : 'RIGHT';
+
           return this.runDeviceAction(
             {
               type: 'Swipe',
-              direction: args.direction as 'UP' | 'DOWN' | 'LEFT' | 'RIGHT',
+              direction: gesture,
               durationMillis: args.durationMillis ? Number(args.durationMillis) : 400,
             },
             'swipe',
@@ -522,7 +538,16 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
 
         // Automatically capture updated screen frame and UI tree after each interaction.
     // Skip for pure wait actions — the screen state is captured by the next real action.
-    const skipObservation = action.type === 'Wait';
+    if (action.type === 'Wait') {
+      this.consecutiveWaits += 1;
+    } else {
+      this.consecutiveWaits = 0;
+    }
+
+    // Waits normally skip observation to save a round-trip. But once the model
+    // waits twice in a row it has stopped being able to tell what is on screen,
+    // so refresh properly instead of handing back the same stale tree.
+    const skipObservation = action.type === 'Wait' && this.consecutiveWaits < 2;
     try {
       if (skipObservation) throw new Error('skip');
       const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
@@ -561,11 +586,34 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
         : `Action succeeded: ${summary}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`,
     };
 
-        // Screenshot is intentionally NOT attached to regular action results.
+    // Screenshot is intentionally NOT attached to regular action results.
     // The text UI tree already contains everything needed (elements + center
     // coordinates). Images on every step multiply tokens/latency/cost.
     // The model can call read_ui_tree or capture_screen whenever it
     // genuinely needs visual context.
+    //
+    // The exception is a second consecutive wait: at that point the model is
+    // waiting because the tree is not telling it whether the page loaded, and
+    // more waiting will not fix that. Show it the screen once.
+    if (
+      action.type === 'Wait' &&
+      this.consecutiveWaits >= 2 &&
+      this.lastScreenshotBase64 &&
+      this.autoVisionUsed < this.autoVisionBudget
+    ) {
+      this.autoVisionUsed += 1;
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${textPart.text}\n\nNOTE: you have waited twice in a row. A screenshot of the current screen is attached — read it directly instead of waiting again. If the content is already there, continue with the task.`,
+          },
+          { type: 'image', data: this.lastScreenshotBase64, mimeType: 'image/jpeg' },
+        ],
+        isError,
+      };
+    }
+
     return {
       content: [textPart],
       isError,
