@@ -146,7 +146,12 @@ app.get('/r/:token', async (req, res, next) => {
     const indexPath = join(__dirname, '..', 'public', 'index.html');
     const html = await readFile(indexPath, 'utf8');
 
-    const origin = `${req.protocol}://${req.get('host')}`;
+    // Behind Coolify's proxy the app is reached over plain http, so req.protocol
+    // reports http while the public URL is https. Scrapers compare og:url with
+    // the URL they fetched, so the forwarded scheme is the one to trust.
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const scheme = forwardedProto || req.protocol;
+    const origin = `${scheme}://${req.get('host')}`;
     const title = `"${meta.prompt}" — done by an AI on a real phone`;
     const description = `An AI agent completed this in ${meta.steps} steps on a real Android device. Watch the replay.`;
     const image = `${origin}/media/runs/${token}.jpg`;

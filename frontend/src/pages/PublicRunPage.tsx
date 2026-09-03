@@ -104,6 +104,7 @@ export default function PublicRunPage() {
 
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
+  const [showVideo, setShowVideo] = useState(false);
   const railRef = useRef<HTMLDivElement | null>(null);
 
   // Loop the replay so a visitor always lands on something moving.
@@ -322,14 +323,12 @@ export default function PublicRunPage() {
                 </Typography>
               </Stack>
 
-              {/* Rendered on the server the first time someone asks for it. */}
+              {/* The rendered MP4 carries the prompt and step captions burned in,
+                  so it still explains itself once someone forwards it. */}
               <Button
                 fullWidth
                 size="small"
-                component="a"
-                href={`/media/runs/${token}.mp4`}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => setShowVideo((prev) => !prev)}
                 startIcon={<MovieIcon />}
                 sx={{
                   mt: 1,
@@ -341,8 +340,32 @@ export default function PublicRunPage() {
                   '&:hover': { bgcolor: alpha('#fff', 0.08) },
                 }}
               >
-                Watch as video
+                {showVideo ? 'Hide video' : 'Watch as video'}
               </Button>
+
+              {showVideo && (
+                <Box sx={{ mt: 1.5, width: PHONE_W }}>
+                  <Box
+                    component="video"
+                    src={`/media/runs/${token}.mp4`}
+                    controls
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    sx={{ width: '100%', borderRadius: 2, display: 'block', bgcolor: '#000' }}
+                  />
+                  <Typography
+                    component="a"
+                    href={`/media/runs/${token}.mp4`}
+                    download
+                    variant="caption"
+                    sx={{ display: 'block', mt: 0.75, color: alpha('#fff', 0.6), textAlign: 'center' }}
+                  >
+                    Download MP4
+                  </Typography>
+                </Box>
+              )}
             </Box>
 
             {/* Step rail — subtitles running beside the phone */}

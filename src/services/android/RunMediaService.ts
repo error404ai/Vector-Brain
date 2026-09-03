@@ -104,21 +104,51 @@ export class RunMediaService {
     await this.writeFrames(workDir, frames);
     const outPath = join(CACHE_DIR, `${task.share_token}.mp4`);
 
-    // Even dimensions and yuv420p are what make the file play everywhere,
-    // including WhatsApp and older mobile players.
+    // A bare screen recording says nothing on its own. Burning the prompt along
+    // the top and the current step along the bottom makes the file a demo that
+    // still explains itself after it has been forwarded somewhere else.
+    const header = wrapText(task.prompt, 34, 2);
+    const headerFilters = header
+      .map(
+        (line, i) =>
+          `drawtext=fontfile=${FONT}:text='${escapeDrawText(line)}':fontcolor=white:fontsize=26:x=(w-tw)/2:y=${34 + i * 34}`,
+      )
+      .join(',');
+
+    const captionFilters = frames
+      .map((frame, i) => {
+        const from = (i * SECONDS_PER_FRAME).toFixed(2);
+        const to = ((i + 1) * SECONDS_PER_FRAME).toFixed(2);
+        const text = escapeDrawText(shortStepLabel(frame));
+        return `drawtext=fontfile=${FONT}:text='${text}':fontcolor=white:fontsize=30:x=(w-tw)/2:y=h-64:enable='between(t,${from},${to})'`;
+      })
+      .join(',');
+
+    const filter = [
+      'scale=540:-2',
+      'pad=640:ih+220:50:150:color=0x0b1020',
+      `drawtext=fontfile=${FONT}:text='VECTOR BRAIN':fontcolor=0xa78bfa:fontsize=22:x=(w-tw)/2:y=14`,
+      headerFilters,
+      captionFilters,
+      'format=yuv420p',
+      'fps=25',
+    ]
+      .filter(Boolean)
+      .join(',');
+
     await run(
       'ffmpeg',
       [
         '-y',
         '-framerate', String(1 / SECONDS_PER_FRAME),
         '-i', join(workDir, 'f%04d.jpg'),
-        '-vf', 'scale=540:-2,format=yuv420p,fps=25',
+        '-vf', filter,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-movflags', '+faststart',
         outPath,
       ],
-      { timeout: 120_000, maxBuffer: 1024 * 1024 * 8 },
+      { timeout: 180_000, maxBuffer: 1024 * 1024 * 8 },
     );
   }
 
@@ -133,34 +163,117 @@ export class RunMediaService {
     await writeFile(framePath, Buffer.from(raw, 'base64'));
 
     const outPath = join(CACHE_DIR, `${task.share_token}.jpg`);
-    const lines = wrapText(task.prompt, 26, 3);
+    const lines = wrapText(task.prompt, 22, 3);
 
-    const textFilters = lines
-      .map((line, i) => `drawtext=fontfile=${FONT}:text='${escapeDrawText(line)}':fontcolor=white:fontsize=46:x=520:y=${210 + i * 60}`)
+    const promptFilters = lines
+      .map(
+        (line, i) =>
+          `drawtext=fontfile=${FONT}:text='${escapeDrawText(line)}':fontcolor=white:fontsize=58:x=560:y=${188 + i * 70}`,
+      )
       .join(',');
 
-    const captionFilter = `drawtext=fontfile=${FONT}:text='${escapeDrawText('Done by an AI on a real Android phone')}':fontcolor=0xa78bfa:fontsize=28:x=520:y=${210 + lines.length * 60 + 24}`;
-    const brandFilter = `drawtext=fontfile=${FONT}:text='Vector Brain':fontcolor=0x8b5cf6:fontsize=30:x=520:y=120`;
+    const stats = `${task.total_steps} steps  ${Math.max(1, Math.round(task.total_duration_seconds))}s  fully automated`;
+    const statsY = 188 + lines.length * 70 + 26;
 
-    await run(
-      'ffmpeg',
-      [
-        '-y',
-        '-i', framePath,
-        '-vf',
-        [
-          'scale=-2:520',
-          'pad=1200:630:80:55:color=0x0b1020',
-          brandFilter,
-          textFilters,
-          captionFilter,
-        ].join(','),
-        '-frames:v', '1',
-        '-q:v', '3',
-        outPath,
-      ],
-      { timeout: 60_000, maxBuffer: 1024 * 1024 * 8 },
-    );
+    const overlays = [
+      // Brand strip
+      `drawtext=fontfile=${FONT}:text='VECTOR BRAIN':fontcolor=white:fontsize=30:x=560:y=110`,
+      promptFilters,
+      `drawtext=fontfile=${FONT}:text='${escapeDrawText(stats)}':fontcolor=0xf5d0fe:fontsize=30:x=560:y=${statsY}`,
+      // Pill that reads as a play button
+      `drawbox=x=560:y=${statsY + 62}:w=300:h=64:color=white@0.16:t=fill`,
+      `drawtext=fontfile=${FONT}:text='Watch the replay':fontcolor=white:fontsize=30:x=590:y=${statsY + 80}`,
+    ]
+      .filter(Boolean)
+      .join(',');
+
+    // A bright gradient reads far better in a feed than a flat dark card. The
+    // gradients source needs a recent ffmpeg, so fall back to a solid fill if
+    // this build does not have it.
+    const gradientArgs = (background: string[]) => [
+      '-y',
+      ...background,
+      '-i', framePath,
+      '-filter_complex',
+      `[1:v]scale=-2:520[phone];[0:v][phone]overlay=90:55[bg];[bg]${overlays}[out]`,
+      '-map', '[out]',
+      '-frames:v', '1',
+      '-q:v', '3',
+      outPath,
+    ];
+
+    try {
+      await run(
+        'ffmpeg',
+        gradientArgs([
+          '-f', 'lavfi',
+          '-i', 'gradients=s=1200x630:c0=0x7c3aed:c1=0xdb2777:x0=0:y0=0:x1=1200:y1=630:duration=1',
+        ]),
+        { timeout: 60_000, maxBuffer: 1024 * 1024 * 8 },
+      );
+    } catch {
+      await run('ffmpeg', gradientArgs(['-f', 'lavfi', '-i', 'color=c=0x7c3aed:s=1200x630']), {
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024 * 8,
+      });
+    }
+  }
+
+}
+
+/**
+ * One short line describing a step, matching what the web replay shows.
+ * The agent's own thought is too long and too internal for a video caption.
+ */
+function shortStepLabel(frame: SharedRunFrame): string {
+  const payload = (frame.action_payload ?? {}) as Record<string, any>;
+
+  switch (frame.action_type) {
+    case 'open_app':
+      return `Opened ${prettyPackage(payload.packageName)}`;
+    case 'open_url':
+      return `Opened ${prettyUrl(payload.url)}`;
+    case 'tap_coordinate':
+    case 'click_node':
+      return 'Tapped the screen';
+    case 'type_text': {
+      const typed = typeof payload.text === 'string' ? payload.text : '';
+      return typed && typed !== '[REDACTED]' ? `Typed "${typed}"` : 'Typed into the field';
+    }
+    case 'swipe':
+      return String(payload.direction || '').toUpperCase() === 'UP' ? 'Scrolled up' : 'Scrolled down';
+    case 'wait':
+      return payload.durationMillis ? `Waited ${Math.round(Number(payload.durationMillis) / 1000)}s` : 'Waited';
+    case 'global_action':
+      return `Pressed ${String(payload.action || 'back').toLowerCase()}`;
+    case 'capture_screen':
+      return 'Looked at the screen';
+    default:
+      return 'Working';
+  }
+}
+
+function prettyPackage(pkg?: string): string {
+  if (!pkg) return 'an app';
+  const known: Record<string, string> = {
+    'com.android.chrome': 'Chrome',
+    'com.google.android.youtube': 'YouTube',
+    'com.android.settings': 'Settings',
+    'com.google.android.apps.maps': 'Maps',
+    'com.whatsapp': 'WhatsApp',
+    'com.google.android.deskclock': 'Clock',
+  };
+  if (known[pkg]) return known[pkg];
+  const last = pkg.split('.').pop() ?? pkg;
+  return last.charAt(0).toUpperCase() + last.slice(1);
+}
+
+function prettyUrl(url?: string): string {
+  if (!url) return 'a page';
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url.slice(0, 40);
   }
 }
 
