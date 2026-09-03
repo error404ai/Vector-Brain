@@ -15,6 +15,8 @@ import { explainError } from '@/utils/errorExplain';
 import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
 import SearchIcon from '@mui/icons-material/Search';
+import StarIcon from '@mui/icons-material/Star';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
@@ -904,16 +906,16 @@ export function AndroidAgentPage() {
                   {sortModelsForDisplay(aiConfigs).map((config) => {
                     const meta = getModelMeta(config.model);
                     return (
-                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13, gap: 0.75 }}>
+                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13, gap: 0.5 }}>
                         {config.model}
                         {meta && (
-                          <Chip
-                            label={meta.tag === 'recommended' ? 'REC' : '!'}
-                            size="small"
-                            color={meta.tag === 'recommended' ? 'success' : 'warning'}
-                            title={meta.note}
-                            sx={{ height: 16, fontSize: 9, fontWeight: 800 }}
-                          />
+                          <Tooltip title={meta.note}>
+                            {meta.tag === 'recommended' ? (
+                              <StarIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                            ) : (
+                              <WarningAmberIcon sx={{ fontSize: 14, color: 'warning.main' }} />
+                            )}
+                          </Tooltip>
                         )}
                       </MenuItem>
                     );
