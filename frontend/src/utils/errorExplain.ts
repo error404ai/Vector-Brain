@@ -38,6 +38,16 @@ const RULES: ErrorRule[] = [
     },
   },
   {
+    patterns: ['accessibility is not ready', 'accessibility not ready'],
+    explanation: {
+      title: 'The phone is not responding to the agent',
+      cause:
+        'This almost always means the screen went off, or Android stopped the accessibility service in the background.',
+      suggestion:
+        'Wake the phone, keep the screen on, and check Settings → Accessibility → Vector Brain is still enabled. Charging with "stay awake" on avoids it entirely.',
+    },
+  },
+  {
     patterns: ['accessibility_disabled'],
     explanation: {
       title: 'Accessibility service is turned off',

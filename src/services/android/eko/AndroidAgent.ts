@@ -11,7 +11,25 @@ import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../Androi
 const MIN_INFORMATIVE_ROWS = 8;
 
 /** Pause between foreground checks after launching an app or URL. */
-const LAUNCH_SETTLE_MS = 900;
+const LAUNCH_SETTLE_MS = 700;
+
+/**
+ * Budget for reading the screen.
+ *
+ * An observation that has not answered in this long means the phone is asleep
+ * or its accessibility service has stopped responding; waiting the full action
+ * timeout on top of every step is what made runs crawl.
+ */
+const OBSERVE_TIMEOUT_MS = 6000;
+
+/**
+ * Timeout for the quick checks that run after a launch.
+ *
+ * These must stay far below the normal action timeout: they are optional polish,
+ * and a sluggish phone would otherwise turn a single open_app into a minute of
+ * waiting while each check sat on the default 15 second budget.
+ */
+const SETTLE_TIMEOUT_MS = 2500;
 
 export interface AndroidAgentCallbacks {
   onStepExecuted?: (info: {
@@ -73,7 +91,11 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
-          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+          const res = await this.gatewayService.executeAction(
+            this.hardwareDeviceId,
+            { type: 'ObserveScreen' },
+            OBSERVE_TIMEOUT_MS,
+          );
           if (res.status !== 'SUCCESS') {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Inspection cancelled';
             return { content: [{ type: 'text', text: `Failed to read UI tree: ${errorMsg}` }], isError: true };
@@ -152,7 +174,11 @@ export class AndroidAgent extends Agent {
             };
           }
 
-          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'CaptureScreen' });
+          const res = await this.gatewayService.executeAction(
+            this.hardwareDeviceId,
+            { type: 'CaptureScreen' },
+            OBSERVE_TIMEOUT_MS,
+          );
           if (res.status !== 'SUCCESS' || !res.screenCapture?.base64Data) {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Screen capture failed';
             return { content: [{ type: 'text', text: `Failed to capture screen: ${errorMsg}` }], isError: true };
@@ -564,7 +590,11 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     const skipObservation = action.type === 'Wait' && this.consecutiveWaits < 2;
     try {
       if (skipObservation) throw new Error('skip');
-      const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+      const observation = await this.gatewayService.executeAction(
+        this.hardwareDeviceId,
+        { type: 'ObserveScreen' },
+        OBSERVE_TIMEOUT_MS,
+      );
       if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
         this.lastScreenshotBase64 = observation.screenCapture.base64Data;
         // Push it out now rather than waiting for the step to finish assembling.
@@ -644,14 +674,20 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
    * was confirmed on screen.
    */
   private async waitForForeground(wantedPackage: string): Promise<boolean> {
-    const attempts = wantedPackage ? 4 : 1;
+    const attempts = wantedPackage ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, LAUNCH_SETTLE_MS));
       try {
-        const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, {
-          type: 'ObserveScreen',
-        });
-        if (observation.status !== 'SUCCESS') continue;
+        const observation = await this.gatewayService.executeAction(
+          this.hardwareDeviceId,
+          { type: 'ObserveScreen' },
+          SETTLE_TIMEOUT_MS,
+        );
+        // A check that does not come back means the phone is busy or asleep.
+        // Retrying only stacks more waiting onto an already slow step, so stop
+        // and let the normal flow report what it finds.
+        if (observation.status !== 'SUCCESS') return false;
+
         if (observation.screenCapture?.base64Data) {
           this.lastScreenshotBase64 = observation.screenCapture.base64Data;
           this.callbacks?.onFrame?.(observation.screenCapture.base64Data);
@@ -667,7 +703,8 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
         if (this.lastForegroundApp && wantedPackage.startsWith(this.lastForegroundApp)) return true;
         if (this.lastForegroundApp && this.lastForegroundApp.startsWith(wantedPackage)) return true;
       } catch {
-        // Best-effort: keep polling until the attempts run out.
+        // Same reasoning as above: give up rather than pay the timeout again.
+        return false;
       }
     }
     return false;
