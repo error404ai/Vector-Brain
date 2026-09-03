@@ -102,6 +102,8 @@ const priceFor = (model?: string): { in: number; out: number } => {
 
 // Rough char-per-token ratio used for the live estimate.
 const CHARS_PER_TOKEN = 4;
+/** Rough cost of one phone screenshot once encoded for a vision model. */
+const IMAGE_TOKENS_ESTIMATE = 1000;
 // Approximate size of the constant part of every request (system prompt + tool schemas).
 const BASE_PROMPT_CHARS = 4000;
 
@@ -498,9 +500,16 @@ export function AndroidAgentPage() {
           // Estimate tokens: every step re-sends the accumulated context to the model.
           const promptChars = BASE_PROMPT_CHARS + contextCharsRef.current;
           const thoughtLen = typeof step.thought === 'string' ? step.thought.length : 0;
-          contextCharsRef.current += thoughtLen;
+          const resultLen = typeof step.result === 'string' ? step.result.length : 0;
+          // Screen dumps come back inside each action result, so they grow the
+          // context just like thoughts do — leaving them out is what made the
+          // old estimate read far below the real usage.
+          contextCharsRef.current += thoughtLen + resultLen;
+          // Vision steps additionally carry an image; a phone screenshot lands
+          // around a thousand tokens once encoded.
+          const imageTokens = step.action?.type === 'capture_screen' ? IMAGE_TOKENS_ESTIMATE : 0;
           setTokenStats((prev) => ({
-            promptTokens: prev.promptTokens + Math.round(promptChars / CHARS_PER_TOKEN),
+            promptTokens: prev.promptTokens + Math.round(promptChars / CHARS_PER_TOKEN) + imageTokens,
             completionTokens: prev.completionTokens + Math.round(thoughtLen / CHARS_PER_TOKEN),
           }));
 
@@ -683,7 +692,7 @@ export function AndroidAgentPage() {
     };
   }, []);
 
-  const handleSendPrompt = async (textToSend?: string) => {
+  const handleSendPrompt = async (textToSend?: string, options?: { maxStepsOverride?: number }) => {
     const text = (textToSend ?? promptInput).trim();
     if (!text) return;
 
@@ -749,7 +758,7 @@ export function AndroidAgentPage() {
         device_id: effectiveSelectedDeviceId,
         prompt: text,
         task_id: activeTaskId || undefined,
-        max_steps: maxSteps,
+        max_steps: options?.maxStepsOverride ?? maxSteps,
         ai_config_id: selectedConfigId || undefined,
       }).unwrap();
 
@@ -1575,6 +1584,40 @@ export function AndroidAgentPage() {
                               })()}
 
                             <AgentMarkdown text={msg.content} />
+
+                            {/* One-click continue when the run only stopped because of the step budget */}
+                            {msg.status === 'error' &&
+                              /step[ -]limit/i.test(msg.content) &&
+                              (() => {
+                                const idx = messages.findIndex((m) => m.id === msg.id);
+                                let runPrompt: string | null = null;
+                                for (let i = idx - 1; i >= 0; i--) {
+                                  if (messages[i].role === 'user') {
+                                    runPrompt = messages[i].content;
+                                    break;
+                                  }
+                                }
+                                if (!runPrompt) return null;
+                                const bumpedSteps = Math.min(200, maxSteps + 20);
+                                const continuePrompt = runPrompt.startsWith('Continue the unfinished task')
+                                  ? runPrompt
+                                  : `Continue the unfinished task: "${runPrompt}". The phone screen is already where the last run left off — continue from there, do not start over.`;
+                                return (
+                                  <Button
+                                    size="small"
+                                    variant="contained"
+                                    color="warning"
+                                    disabled={isRunning || !deviceReady}
+                                    onClick={() => {
+                                      setMaxSteps(bumpedSteps);
+                                      handleSendPrompt(continuePrompt, { maxStepsOverride: bumpedSteps });
+                                    }}
+                                    sx={{ mt: 1, borderRadius: 2, fontWeight: 800 }}
+                                  >
+                                    Continue task (+20 steps)
+                                  </Button>
+                                );
+                              })()}
 
                             {/* Plain-language failure translation with a one-tap recovery */}
                             {msg.status === 'error' &&
