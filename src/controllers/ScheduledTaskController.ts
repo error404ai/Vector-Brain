@@ -23,7 +23,10 @@ export class ScheduledTaskController {
     @Body() request: z.infer<typeof CreateScheduledTaskValidation>,
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
-    return this.scheduledTaskService.createSchedule(user.userId, request);
+    // The backend compiles with `strict: false`, where zod infers every key as
+    // optional even when the schema requires it. Zod has already validated the
+    // body at this point, so the cast is safe and keeps the compiler happy.
+    return this.scheduledTaskService.createSchedule(user.userId, request as any);
   }
 
   @Authorized()
@@ -34,7 +37,7 @@ export class ScheduledTaskController {
     @Body() request: z.infer<typeof UpdateScheduledTaskValidation>,
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
-    return this.scheduledTaskService.updateSchedule(id, user.userId, request);
+    return this.scheduledTaskService.updateSchedule(id, user.userId, request as any);
   }
 
   @Authorized()
