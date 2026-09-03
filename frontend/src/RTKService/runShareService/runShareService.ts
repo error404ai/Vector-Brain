@@ -3,6 +3,10 @@ import { baseApi } from '../baseApi';
 export interface SharedRunFrame {
   step_index: number;
   caption: string | null;
+  /** Tool that produced this frame, e.g. tap_coordinate. */
+  action_type: string | null;
+  /** Sanitised action detail: tap coordinates, typed text, swipe direction. */
+  action_payload: Record<string, unknown> | null;
   image_base64: string;
 }
 

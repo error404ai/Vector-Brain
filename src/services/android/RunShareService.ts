@@ -17,6 +17,29 @@ const MAX_FRAMES = 60;
  */
 const NON_DEVICE_ACTIONS = new Set(['variable_storage', 'task_snapshot', 'foreach_task', 'watch_triggered']);
 
+/**
+ * Keep only what the public replay needs from an action: where a tap landed,
+ * which direction a swipe went, what was typed. Anything else in the payload
+ * stays private.
+ */
+function sanitizeActionPayload(actionType: string | null, payload: any): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const safe: Record<string, unknown> = {};
+
+  if (typeof payload.x === 'number' && typeof payload.y === 'number') {
+    safe.x = payload.x;
+    safe.y = payload.y;
+  }
+  if (typeof payload.direction === 'string') safe.direction = payload.direction;
+  if (typeof payload.text === 'string') safe.text = payload.text.slice(0, 80);
+  if (typeof payload.url === 'string') safe.url = payload.url.slice(0, 120);
+  if (typeof payload.packageName === 'string') safe.packageName = payload.packageName;
+  if (typeof payload.durationMillis === 'number') safe.durationMillis = payload.durationMillis;
+  if (typeof payload.action === 'string' && actionType === 'global_action') safe.action = payload.action;
+
+  return Object.keys(safe).length > 0 ? safe : null;
+}
+
 @Service()
 export class RunShareService {
   private taskRepo: Repository<AgentTask> = AppDataSource.getRepository(AgentTask);
@@ -76,6 +99,8 @@ export class RunShareService {
           agent_task_id: task.id,
           step_index: log.step_index,
           caption,
+          action_type: log.action_type ?? null,
+          action_payload: sanitizeActionPayload(log.action_type, log.action_payload),
           image_base64: log.screenshot_base64,
         }),
       );
@@ -141,6 +166,8 @@ export class RunShareService {
         frames: frames.map((frame) => ({
           step_index: frame.step_index,
           caption: frame.caption,
+          action_type: frame.action_type,
+          action_payload: frame.action_payload,
           image_base64: frame.image_base64,
         })),
       },
