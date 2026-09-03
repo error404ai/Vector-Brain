@@ -12,7 +12,7 @@ export const CreateScheduledTaskValidation = z.object({
   run_at: timeOfDay,
   days_of_week: daysOfWeek.optional(),
   timezone: z.string().max(64).optional(),
-  max_steps: z.number().int().min(1).max(200).optional(),
+  max_steps: z.number().int().min(1).max(500).optional(),
   ai_config_id: z.number().int().nullable().optional(),
   enabled: z.boolean().optional(),
 });
@@ -23,7 +23,7 @@ export const UpdateScheduledTaskValidation = z.object({
   run_at: timeOfDay.optional(),
   days_of_week: daysOfWeek.optional(),
   timezone: z.string().max(64).optional(),
-  max_steps: z.number().int().min(1).max(200).optional(),
+  max_steps: z.number().int().min(1).max(500).optional(),
   ai_config_id: z.number().int().nullable().optional(),
   enabled: z.boolean().optional(),
 });
