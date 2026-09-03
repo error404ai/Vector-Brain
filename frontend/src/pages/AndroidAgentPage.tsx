@@ -112,6 +112,10 @@ const IMAGE_TOKENS_ESTIMATE = 1000;
  * prompt rarely needs it and the check costs a model call plus a few seconds.
  */
 const CLARIFY_WORD_LIMIT = 8;
+
+/** Step budget bounds, kept in step with the backend validation. */
+const DEFAULT_STEPS = 50;
+const MAX_ALLOWED_STEPS = 500;
 // Approximate size of the constant part of every request (system prompt + tool schemas).
 const BASE_PROMPT_CHARS = 4000;
 
@@ -233,7 +237,7 @@ export function AndroidAgentPage() {
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
   const [selectedConfigId, setSelectedConfigId] = useState(0);
-  const [maxSteps, setMaxSteps] = useState(40);
+  const [maxSteps, setMaxSteps] = useState(DEFAULT_STEPS);
   const [manualControl, setManualControl] = useState(false);
   const [screenExpanded, setScreenExpanded] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
@@ -947,8 +951,8 @@ export function AndroidAgentPage() {
                 value={maxSteps}
                 disabled={isRunning}
                 onChange={(e) => setMaxSteps(Number(e.target.value))}
-                onBlur={() => setMaxSteps((prev) => Math.min(200, Math.max(1, prev || 40)))}
-                inputProps={{ min: 1, max: 200 }}
+                onBlur={() => setMaxSteps((prev) => Math.min(MAX_ALLOWED_STEPS, Math.max(1, prev || DEFAULT_STEPS)))}
+                inputProps={{ min: 1, max: MAX_ALLOWED_STEPS }}
                 sx={{ width: 96, '& .MuiInputBase-root': { height: 34 } }}
               />
 
@@ -1617,7 +1621,7 @@ export function AndroidAgentPage() {
                                   }
                                 }
                                 if (!runPrompt) return null;
-                                const bumpedSteps = Math.min(200, maxSteps + 20);
+                                const bumpedSteps = Math.min(MAX_ALLOWED_STEPS, maxSteps + 20);
                                 const continuePrompt = runPrompt.startsWith('Continue the unfinished task')
                                   ? runPrompt
                                   : `Continue the unfinished task: "${runPrompt}". The phone screen is already where the last run left off — continue from there, do not start over.`;
