@@ -390,11 +390,11 @@ export default function SchedulesPage() {
               <Select
                 size="small"
                 fullWidth
-                value={form.device_id}
+                value={form.device_id === '' ? '' : String(form.device_id)}
                 onChange={(e) => setForm((prev) => ({ ...prev, device_id: Number(e.target.value) }))}
               >
                 {devices.map((device) => (
-                  <MenuItem key={device.id} value={device.id}>
+                  <MenuItem key={device.id} value={String(device.id)}>
                     {device.device_name}
                   </MenuItem>
                 ))}
@@ -408,15 +408,17 @@ export default function SchedulesPage() {
               <Select
                 size="small"
                 fullWidth
-                value={form.ai_config_id}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, ai_config_id: e.target.value === '' ? '' : Number(e.target.value) }))
-                }
+                value={form.ai_config_id === '' ? '' : String(form.ai_config_id)}
+                onChange={(e) => {
+                  // The empty option means "use whatever provider is active".
+                  const raw = String(e.target.value);
+                  setForm((prev) => ({ ...prev, ai_config_id: raw === '' ? '' : Number(raw) }));
+                }}
                 displayEmpty
               >
                 <MenuItem value="">Use the active provider</MenuItem>
                 {aiConfigs.map((config) => (
-                  <MenuItem key={config.id} value={config.id}>
+                  <MenuItem key={config.id} value={String(config.id)}>
                     {config.model}
                   </MenuItem>
                 ))}
