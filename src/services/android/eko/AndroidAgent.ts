@@ -10,27 +10,6 @@ import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../Androi
  */
 const MIN_INFORMATIVE_ROWS = 8;
 
-/** Pause between foreground checks after launching an app or URL. */
-const LAUNCH_SETTLE_MS = 700;
-
-/**
- * Budget for reading the screen.
- *
- * An observation that has not answered in this long means the phone is asleep
- * or its accessibility service has stopped responding; waiting the full action
- * timeout on top of every step is what made runs crawl.
- */
-const OBSERVE_TIMEOUT_MS = 6000;
-
-/**
- * Timeout for the quick checks that run after a launch.
- *
- * These must stay far below the normal action timeout: they are optional polish,
- * and a sluggish phone would otherwise turn a single open_app into a minute of
- * waiting while each check sat on the default 15 second budget.
- */
-const SETTLE_TIMEOUT_MS = 2500;
-
 export interface AndroidAgentCallbacks {
   onStepExecuted?: (info: {
     toolName: string;
@@ -91,11 +70,7 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
-          const res = await this.gatewayService.executeAction(
-            this.hardwareDeviceId,
-            { type: 'ObserveScreen' },
-            OBSERVE_TIMEOUT_MS,
-          );
+          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
           if (res.status !== 'SUCCESS') {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Inspection cancelled';
             return { content: [{ type: 'text', text: `Failed to read UI tree: ${errorMsg}` }], isError: true };
@@ -174,11 +149,7 @@ export class AndroidAgent extends Agent {
             };
           }
 
-          const res = await this.gatewayService.executeAction(
-            this.hardwareDeviceId,
-            { type: 'CaptureScreen' },
-            OBSERVE_TIMEOUT_MS,
-          );
+          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'CaptureScreen' });
           if (res.status !== 'SUCCESS' || !res.screenCapture?.base64Data) {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Screen capture failed';
             return { content: [{ type: 'text', text: `Failed to capture screen: ${errorMsg}` }], isError: true };
@@ -351,7 +322,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'open_app',
         description:
-          'Launch an Android application by its package name. The result confirms whether the app actually reached the foreground, so trust what it says instead of re-checking by tapping icons. Do NOT use this when the goal is to search inside the app — open_url with the app\'s search results URL (e.g. https://www.youtube.com/results?search_query=...) launches the app straight onto the results screen and saves several steps.',
+          'Launch an Android application by its package name. Give the app a moment to appear before deciding it did not open; do not hunt for its icon on the home screen. Do NOT use this when the goal is to search inside the app — open_url with the app\'s search results URL (e.g. https://www.youtube.com/results?search_query=...) launches the app straight onto the results screen and saves several steps.',
         parameters: {
           type: 'object',
           properties: {
@@ -538,7 +509,7 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
     const res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
-    let summary =
+    const summary =
       res.status === 'SUCCESS'
         ? res.summary
         : res.status === 'FAILURE'
@@ -546,55 +517,19 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
         : 'Action cancelled';
     const isError = res.status !== 'SUCCESS';
 
-    // A launch only reports that the intent was dispatched, not that the app is
-    // on screen. Observing immediately catches the old screen, so the model is
-    // told "opened" while still looking at the launcher and wastes several
-    // steps hunting for the icon. Give the app time to come to the front and
-    // report what actually happened.
-    if (!isError && (action.type === 'OpenApp' || action.type === 'OpenUrl')) {
-      const wanted = action.type === 'OpenApp' ? String(action.packageName || '') : '';
-      const settled = await this.waitForForeground(wanted);
-      if (wanted) {
-        summary = settled
-          ? `${summary} (now in the foreground)`
-          : `Launch was dispatched for ${wanted}, but it is not in the foreground yet` +
-            `${this.lastForegroundApp ? ` — the current app is ${this.lastForegroundApp}` : ''}.` +
-            ' Wait a moment and read the screen again before trying another approach.';
-      }
-    }
-
-    // Track consecutive failures
-    if (isError) {
-      if (toolName === this.lastFailedAction) {
-        this.consecutiveFailures++;
-      } else {
-        this.consecutiveFailures = 1;
-        this.lastFailedAction = toolName;
-      }
-    } else {
-      this.consecutiveFailures = 0;
-      this.lastFailedAction = '';
-    }
-
-        // Automatically capture updated screen frame and UI tree after each interaction.
-    // Skip for pure wait actions — the screen state is captured by the next real action.
     if (action.type === 'Wait') {
       this.consecutiveWaits += 1;
     } else {
       this.consecutiveWaits = 0;
     }
 
-    // Waits normally skip observation to save a round-trip. But once the model
-    // waits twice in a row it has stopped being able to tell what is on screen,
-    // so refresh properly instead of handing back the same stale tree.
+    // Waits normally skip observation to save a round-trip. Once the model waits
+    // twice in a row it can no longer tell what is on screen, so refresh instead
+    // of handing back the same stale tree.
     const skipObservation = action.type === 'Wait' && this.consecutiveWaits < 2;
     try {
       if (skipObservation) throw new Error('skip');
-      const observation = await this.gatewayService.executeAction(
-        this.hardwareDeviceId,
-        { type: 'ObserveScreen' },
-        OBSERVE_TIMEOUT_MS,
-      );
+      const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
       if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
         this.lastScreenshotBase64 = observation.screenCapture.base64Data;
         // Push it out now rather than waiting for the step to finish assembling.
@@ -664,50 +599,6 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       content: [textPart],
       isError,
     };
-  }
-
-  /**
-   * Poll the screen until a freshly launched app reaches the foreground.
-   *
-   * `wantedPackage` empty means "just let the screen settle" (used for URL
-   * loads, where the browser is already in front). Returns true when the app
-   * was confirmed on screen.
-   */
-  private async waitForForeground(wantedPackage: string): Promise<boolean> {
-    const attempts = wantedPackage ? 3 : 1;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, LAUNCH_SETTLE_MS));
-      try {
-        const observation = await this.gatewayService.executeAction(
-          this.hardwareDeviceId,
-          { type: 'ObserveScreen' },
-          SETTLE_TIMEOUT_MS,
-        );
-        // A check that does not come back means the phone is busy or asleep.
-        // Retrying only stacks more waiting onto an already slow step, so stop
-        // and let the normal flow report what it finds.
-        if (observation.status !== 'SUCCESS') return false;
-
-        if (observation.screenCapture?.base64Data) {
-          this.lastScreenshotBase64 = observation.screenCapture.base64Data;
-          this.callbacks?.onFrame?.(observation.screenCapture.base64Data);
-        }
-        if (observation.uiTree) {
-          this.lastUiTree = this.formatUiTree(observation.uiTree.root);
-          this.lastForegroundApp = this.detectPackageName(
-            observation.uiTree.root,
-            observation.uiTree.packageName || 'unknown',
-          );
-        }
-        if (!wantedPackage) return true;
-        if (this.lastForegroundApp && wantedPackage.startsWith(this.lastForegroundApp)) return true;
-        if (this.lastForegroundApp && this.lastForegroundApp.startsWith(wantedPackage)) return true;
-      } catch {
-        // Same reasoning as above: give up rather than pay the timeout again.
-        return false;
-      }
-    }
-    return false;
   }
 
   private detectPackageName(root?: UiNodeSnapshot, defaultPkg = 'unknown'): string {
