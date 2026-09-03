@@ -173,6 +173,21 @@ export class AndroidDeviceService {
   /**
    * Unpair and delete a device.
    */
+  async renameDevice(id: number, userId: number, deviceName: string): Promise<ApiResponse> {
+    const device = await this.deviceRepo.findOne({
+      where: { id, user_id: userId },
+    });
+
+    if (!device) {
+      throw new AppError('Device not found', 404);
+    }
+
+    device.device_name = deviceName;
+    await this.deviceRepo.save(device);
+
+    return { message: 'Device renamed successfully', data: { id: device.id, device_name: device.device_name } };
+  }
+
   async unpairDevice(id: number, userId: number): Promise<ApiResponse> {
     const device = await this.deviceRepo.findOne({
       where: { id, user_id: userId },
