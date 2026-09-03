@@ -290,6 +290,8 @@ export class AndroidPlannerService {
     maxSteps = 40,
     existingTaskId?: number,
     aiConfigId?: number,
+    /** Keep every screen frame so the run can be shared or replayed later. */
+    record = false,
   ): Promise<ApiResponse> {
     // A task can pin a specific provider so different devices can run different
     // models simultaneously; otherwise fall back to the user's active config.
@@ -433,6 +435,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       startTime,
       aiConfig,
       initialScreenshot,
+      record,
     ).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
       this.gatewayService.setAutomationSession(device.device_id, false);
@@ -554,6 +557,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     startTime: number,
     aiConfig: DecryptedAiConfig,
     initialScreenshot?: string,
+    record = false,
   ) {
     const lastLog = await this.taskLogRepo.findOne({
       where: { agent_task_id: agentTask.id },
@@ -747,6 +751,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
               currentTaskLog.result_message = textContent;
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
+              // Frames already arrive with every observation for the live view;
+              // recording simply keeps them so the run can be replayed or
+              // shared. Off by default because they are large.
+              if (record && lastScreenshot) {
+                currentTaskLog.screenshot_base64 = lastScreenshot;
+              }
               await this.taskLogRepo.save(currentTaskLog);
             }
 

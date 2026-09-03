@@ -74,6 +74,8 @@ export interface DispatchAndroidPromptPayload {
   max_steps?: number;
   /** Run with a specific AI provider instead of the active one. */
   ai_config_id?: number;
+  /** Keep every screen frame so the run can be replayed and shared. */
+  record?: boolean;
 }
 
 export interface DirectActionPayload {

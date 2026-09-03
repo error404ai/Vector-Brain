@@ -14,6 +14,7 @@ import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
 import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
+import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
 import StarIcon from '@mui/icons-material/Star';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -43,12 +44,14 @@ import {
   Chip,
   CircularProgress,
   Dialog,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   MenuItem,
   Paper,
   Select,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -238,6 +241,9 @@ export function AndroidAgentPage() {
   // Run configuration: 0 = use the account's active provider
   const [selectedConfigId, setSelectedConfigId] = useState(0);
   const [maxSteps, setMaxSteps] = useState(DEFAULT_STEPS);
+  // Keeping every frame makes a run shareable, but the images add up, so it is
+  // opt-in per run rather than always on.
+  const [recordRun, setRecordRun] = useState(false);
   const [manualControl, setManualControl] = useState(false);
   const [screenExpanded, setScreenExpanded] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
@@ -782,6 +788,7 @@ export function AndroidAgentPage() {
         prompt: text,
         task_id: activeTaskId || undefined,
         max_steps: options?.maxStepsOverride ?? maxSteps,
+        record: recordRun,
         ai_config_id: selectedConfigId || undefined,
       }).unwrap();
 
@@ -955,6 +962,28 @@ export function AndroidAgentPage() {
                 inputProps={{ min: 1, max: MAX_ALLOWED_STEPS }}
                 sx={{ width: 96, '& .MuiInputBase-root': { height: 34 } }}
               />
+
+              <Tooltip title="Save every screen so this run can be replayed and shared. Uses more storage.">
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={recordRun}
+                      disabled={isRunning}
+                      onChange={(e) => setRecordRun(e.target.checked)}
+                    />
+                  }
+                  label={
+                    <Stack direction="row" spacing={0.5} alignItems="center">
+                      <FiberManualRecordIcon sx={{ fontSize: 12, color: recordRun ? 'error.main' : 'text.disabled' }} />
+                      <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                        Record
+                      </Typography>
+                    </Stack>
+                  }
+                  sx={{ ml: 0, mr: 0 }}
+                />
+              </Tooltip>
 
               {usageEstimate.totalTokens > 0 && (
                 <Chip
