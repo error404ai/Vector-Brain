@@ -14,8 +14,10 @@ import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
 import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
+import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
+import ShareIcon from '@mui/icons-material/Share';
 import StarIcon from '@mui/icons-material/Star';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -236,6 +238,12 @@ export function AndroidAgentPage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+  // activeTaskId is cleared the moment a run ends, but sharing happens after
+  // that, so the finished run is remembered separately.
+  const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
+  const [finishedWasRecorded, setFinishedWasRecorded] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -605,6 +613,9 @@ export function AndroidAgentPage() {
           });
         } else if (msg.event === 'task:completed') {
           refetchSessions();
+          setFinishedTaskId(msg.payload.taskId ?? activeTaskId);
+          setFinishedWasRecorded(recordRun);
+          setShareUrl(null);
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
           }
@@ -755,6 +766,8 @@ export function AndroidAgentPage() {
     setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
     setPromptInput('');
     setIsRunning(true);
+    setFinishedTaskId(null);
+    setShareUrl(null);
 
     // A vague instruction makes the agent spend its whole step budget deciding
     // what to do, so ask one question first. Skipped when the user already
@@ -1706,6 +1719,83 @@ export function AndroidAgentPage() {
                                   </Box>
                                 );
                               })()}
+
+                            {/* Sharing belongs right here — the moment a run ends
+                                is when someone wants to show it to somebody. */}
+                            {msg.status === 'done' && finishedTaskId && (
+                              <Box sx={{ mt: 1.5 }}>
+                                {finishedWasRecorded ? (
+                                  shareUrl ? (
+                                    <Stack
+                                      direction="row"
+                                      alignItems="center"
+                                      gap={1}
+                                      sx={{
+                                        px: 1.5,
+                                        py: 1,
+                                        borderRadius: 2,
+                                        bgcolor: alpha(theme.palette.success.main, 0.08),
+                                        border: `1px solid ${alpha(theme.palette.success.main, 0.3)}`,
+                                        flexWrap: 'wrap',
+                                      }}
+                                    >
+                                      <Typography variant="caption" sx={{ fontWeight: 800, color: 'success.dark' }}>
+                                        Public link ready
+                                      </Typography>
+                                      <Typography
+                                        component="a"
+                                        href={shareUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        variant="caption"
+                                        sx={{ color: 'primary.main', wordBreak: 'break-all', flexGrow: 1 }}
+                                      >
+                                        {shareUrl}
+                                      </Typography>
+                                      <Button
+                                        size="small"
+                                        onClick={() => {
+                                          void navigator.clipboard.writeText(shareUrl);
+                                          toast.success('Link copied');
+                                        }}
+                                        sx={{ fontWeight: 700 }}
+                                      >
+                                        Copy
+                                      </Button>
+                                    </Stack>
+                                  ) : (
+                                    <Button
+                                      variant="contained"
+                                      startIcon={<ShareIcon />}
+                                      disabled={isSharingRun}
+                                      onClick={async () => {
+                                        try {
+                                          const res = await shareRun({ id: finishedTaskId }).unwrap();
+                                          const url = `${window.location.origin}/r/${res.data.token}`;
+                                          setShareUrl(url);
+                                          await navigator.clipboard.writeText(url).catch(() => undefined);
+                                          toast.success(`Link copied · ${res.data.frames} screens`);
+                                        } catch (err: any) {
+                                          toast.error(err?.data?.message || 'Failed to create share link');
+                                        }
+                                      }}
+                                      sx={{
+                                        borderRadius: 2,
+                                        fontWeight: 800,
+                                        background: `linear-gradient(135deg, ${theme.palette.primary.main}, #a78bfa)`,
+                                        boxShadow: `0 6px 18px ${alpha(theme.palette.primary.main, 0.35)}`,
+                                      }}
+                                    >
+                                      Share this run
+                                    </Button>
+                                  )
+                                ) : (
+                                  <Typography variant="caption" color="text.secondary">
+                                    Turn on <b>Record</b> before running to capture the screens and share a replay.
+                                  </Typography>
+                                )}
+                              </Box>
+                            )}
                           </Box>
                         )}
                       </Paper>
