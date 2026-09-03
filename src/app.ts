@@ -31,11 +31,13 @@ import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorCo
 import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
+import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { SettingController } from './controllers/SettingController';
 import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 import { AiEmbeddingService } from './services/AiEmbeddingService';
+import { ScheduledTaskService } from './services/android/ScheduledTaskService';
 import { initializeWebSocketServer } from './loaders/websocket';
 
 dotenv.config();
@@ -73,6 +75,7 @@ useExpressServer(app, {
     DashboardController,
     HealthController,
     PromptController,
+    ScheduledTaskController,
     SettingController,
     UserController,
   ],
@@ -121,6 +124,14 @@ AppDataSource.initialize()
     } catch (error) {
       Logger.warn('AI Embedding Service initialization failed (vector operations may be unavailable):', error);
       // Don't fail app startup if embedding service fails
+    }
+
+    // Recurring user schedules. Started after the database is up because the
+    // runner queries on every tick.
+    try {
+      Container.get(ScheduledTaskService).start();
+    } catch (error) {
+      Logger.warn('Scheduled task runner failed to start:', error);
     }
 
     const PORT = process.env.PORT || 3000;
