@@ -8,10 +8,16 @@ import { Repository } from 'typeorm';
 import { Service } from 'typedi';
 import { AndroidPlannerService } from './AndroidPlannerService';
 
+/**
+ * Shape accepted from the API layer. Every field is optional here because the
+ * backend compiles with `strict: false`, and zod's inferred types mark all keys
+ * optional in that mode. Zod still enforces the real requirements at runtime,
+ * and createSchedule re-checks the two fields it cannot default.
+ */
 export interface ScheduledTaskInput {
-  device_id: number;
-  prompt: string;
-  run_at: string;
+  device_id?: number;
+  prompt?: string;
+  run_at?: string;
   days_of_week?: number[];
   timezone?: string;
   max_steps?: number;
@@ -26,7 +32,7 @@ const TICK_MS = 60_000;
 export class ScheduledTaskService {
   private scheduleRepo: Repository<ScheduledTask>;
   private deviceRepo: Repository<AndroidDevice>;
-  private timer: NodeJS.Timeout | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
   /** Guards against a slow tick overlapping the next one. */
   private ticking = false;
 
@@ -44,12 +50,16 @@ export class ScheduledTaskService {
   }
 
   async createSchedule(userId: number, input: ScheduledTaskInput): Promise<ApiResponse> {
+    if (!input.device_id) throw new AppError('Target device is required', 400);
+    if (!input.prompt || !input.prompt.trim()) throw new AppError('Prompt cannot be empty', 400);
+    if (!input.run_at) throw new AppError('Time is required', 400);
+
     await this.assertDeviceBelongsToUser(input.device_id, userId);
 
     const schedule = this.scheduleRepo.create({
       user_id: userId,
       device_id: input.device_id,
-      prompt: input.prompt,
+      prompt: input.prompt.trim(),
       run_at: input.run_at,
       days_of_week: (input.days_of_week ?? []).join(','),
       timezone: input.timezone || 'Asia/Kolkata',
