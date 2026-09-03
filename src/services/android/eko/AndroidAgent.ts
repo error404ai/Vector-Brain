@@ -295,7 +295,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'open_app',
         description:
-          'Launch an Android application by its package name. The result confirms whether the app actually reached the foreground, so trust what it says instead of re-checking by tapping icons.',
+          'Launch an Android application by its package name. The result confirms whether the app actually reached the foreground, so trust what it says instead of re-checking by tapping icons. Do NOT use this when the goal is to search inside the app — open_url with the app\'s search results URL (e.g. https://www.youtube.com/results?search_query=...) launches the app straight onto the results screen and saves several steps.',
         parameters: {
           type: 'object',
           properties: {
