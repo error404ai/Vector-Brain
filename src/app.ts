@@ -119,17 +119,6 @@ app.get('/media/runs/:token.jpg', async (req, res) => {
   }
 });
 
-app.get('/media/runs/:token.mp4', async (req, res) => {
-  try {
-    const path = await Container.get(RunMediaService).getVideoPath(String(req.params.token));
-    if (!path) return res.status(404).end();
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    return res.sendFile(path);
-  } catch {
-    return res.status(500).end();
-  }
-});
-
 /**
  * Shared-run page with server-rendered link previews.
  *
@@ -155,20 +144,17 @@ app.get('/r/:token', async (req, res, next) => {
     const title = `"${meta.prompt}" — done by an AI on a real phone`;
     const description = `An AI agent completed this in ${meta.steps} steps on a real Android device. Watch the replay.`;
     const image = `${origin}/media/runs/${token}.jpg`;
-    const video = `${origin}/media/runs/${token}.mp4`;
 
     const tags = [
       `<title>${escapeHtml(title)}</title>`,
       `<meta name="description" content="${escapeHtml(description)}" />`,
-      `<meta property="og:type" content="video.other" />`,
+      `<meta property="og:type" content="website" />`,
       `<meta property="og:title" content="${escapeHtml(title)}" />`,
       `<meta property="og:description" content="${escapeHtml(description)}" />`,
       `<meta property="og:image" content="${image}" />`,
       `<meta property="og:image:width" content="1200" />`,
       `<meta property="og:image:height" content="630" />`,
       `<meta property="og:url" content="${origin}/r/${token}" />`,
-      `<meta property="og:video" content="${video}" />`,
-      `<meta property="og:video:type" content="video/mp4" />`,
       `<meta name="twitter:card" content="summary_large_image" />`,
       `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
       `<meta name="twitter:description" content="${escapeHtml(description)}" />`,

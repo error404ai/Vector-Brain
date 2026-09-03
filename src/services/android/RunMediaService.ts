@@ -16,11 +16,12 @@ const run = promisify(execFile);
  * Rendered media lives in the container's temp space, not a mounted volume: the
  * frames themselves are in the database, so anything here can be rebuilt after a
  * redeploy. First request pays the render cost, later ones are served from disk.
+ *
+ * Only the social preview image is produced here. Rendering runs to MP4 was
+ * tried and removed: H.264 encoding pushed this VPS close to its memory ceiling,
+ * and the replay on the page covers the same ground for free.
  */
 const CACHE_DIR = '/tmp/vector-brain-media';
-
-/** Seconds each frame is held in the rendered video. */
-const SECONDS_PER_FRAME = 1.1;
 
 const FONT = '/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf';
 
@@ -30,11 +31,6 @@ export class RunMediaService {
   private frameRepo: Repository<SharedRunFrame> = AppDataSource.getRepository(SharedRunFrame);
   /** Renders in flight, so ten simultaneous viewers cause one ffmpeg run. */
   private pending = new Map<string, Promise<string | null>>();
-
-  /** Absolute-path MP4 for a shared run, rendering it if needed. */
-  async getVideoPath(token: string): Promise<string | null> {
-    return this.withCache(`${token}.mp4`, (dir, frames, task) => this.renderVideo(dir, frames, task));
-  }
 
   /** Absolute-path 1200x630 JPEG used as the link preview image. */
   async getPreviewPath(token: string): Promise<string | null> {
@@ -88,68 +84,6 @@ export class RunMediaService {
 
     this.pending.set(fileName, job);
     return job;
-  }
-
-  /** Write every frame to disk as jpg so ffmpeg can read them as a sequence. */
-  private async writeFrames(workDir: string, frames: SharedRunFrame[]): Promise<void> {
-    let position = 0;
-    for (const frame of frames) {
-      const raw = frame.image_base64.replace(/^data:image\/\w+;base64,/, '');
-      await writeFile(join(workDir, `f${String(position).padStart(4, '0')}.jpg`), Buffer.from(raw, 'base64'));
-      position += 1;
-    }
-  }
-
-  private async renderVideo(workDir: string, frames: SharedRunFrame[], task: AgentTask): Promise<void> {
-    await this.writeFrames(workDir, frames);
-    const outPath = join(CACHE_DIR, `${task.share_token}.mp4`);
-
-    // A bare screen recording says nothing on its own. Burning the prompt along
-    // the top and the current step along the bottom makes the file a demo that
-    // still explains itself after it has been forwarded somewhere else.
-    const header = wrapText(task.prompt, 34, 2);
-    const headerFilters = header
-      .map(
-        (line, i) =>
-          `drawtext=fontfile=${FONT}:text='${escapeDrawText(line)}':fontcolor=white:fontsize=26:x=(w-tw)/2:y=${34 + i * 34}`,
-      )
-      .join(',');
-
-    const captionFilters = frames
-      .map((frame, i) => {
-        const from = (i * SECONDS_PER_FRAME).toFixed(2);
-        const to = ((i + 1) * SECONDS_PER_FRAME).toFixed(2);
-        const text = escapeDrawText(shortStepLabel(frame));
-        return `drawtext=fontfile=${FONT}:text='${text}':fontcolor=white:fontsize=30:x=(w-tw)/2:y=h-64:enable='between(t,${from},${to})'`;
-      })
-      .join(',');
-
-    const filter = [
-      'scale=540:-2',
-      'pad=640:ih+220:50:150:color=0x0b1020',
-      `drawtext=fontfile=${FONT}:text='VECTOR BRAIN':fontcolor=0xa78bfa:fontsize=22:x=(w-tw)/2:y=14`,
-      headerFilters,
-      captionFilters,
-      'format=yuv420p',
-      'fps=25',
-    ]
-      .filter(Boolean)
-      .join(',');
-
-    await run(
-      'ffmpeg',
-      [
-        '-y',
-        '-framerate', String(1 / SECONDS_PER_FRAME),
-        '-i', join(workDir, 'f%04d.jpg'),
-        '-vf', filter,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-movflags', '+faststart',
-        outPath,
-      ],
-      { timeout: 180_000, maxBuffer: 1024 * 1024 * 8 },
-    );
   }
 
   /**
@@ -219,62 +153,6 @@ export class RunMediaService {
     }
   }
 
-}
-
-/**
- * One short line describing a step, matching what the web replay shows.
- * The agent's own thought is too long and too internal for a video caption.
- */
-function shortStepLabel(frame: SharedRunFrame): string {
-  const payload = (frame.action_payload ?? {}) as Record<string, any>;
-
-  switch (frame.action_type) {
-    case 'open_app':
-      return `Opened ${prettyPackage(payload.packageName)}`;
-    case 'open_url':
-      return `Opened ${prettyUrl(payload.url)}`;
-    case 'tap_coordinate':
-    case 'click_node':
-      return 'Tapped the screen';
-    case 'type_text': {
-      const typed = typeof payload.text === 'string' ? payload.text : '';
-      return typed && typed !== '[REDACTED]' ? `Typed "${typed}"` : 'Typed into the field';
-    }
-    case 'swipe':
-      return String(payload.direction || '').toUpperCase() === 'UP' ? 'Scrolled up' : 'Scrolled down';
-    case 'wait':
-      return payload.durationMillis ? `Waited ${Math.round(Number(payload.durationMillis) / 1000)}s` : 'Waited';
-    case 'global_action':
-      return `Pressed ${String(payload.action || 'back').toLowerCase()}`;
-    case 'capture_screen':
-      return 'Looked at the screen';
-    default:
-      return 'Working';
-  }
-}
-
-function prettyPackage(pkg?: string): string {
-  if (!pkg) return 'an app';
-  const known: Record<string, string> = {
-    'com.android.chrome': 'Chrome',
-    'com.google.android.youtube': 'YouTube',
-    'com.android.settings': 'Settings',
-    'com.google.android.apps.maps': 'Maps',
-    'com.whatsapp': 'WhatsApp',
-    'com.google.android.deskclock': 'Clock',
-  };
-  if (known[pkg]) return known[pkg];
-  const last = pkg.split('.').pop() ?? pkg;
-  return last.charAt(0).toUpperCase() + last.slice(1);
-}
-
-function prettyUrl(url?: string): string {
-  if (!url) return 'a page';
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url.slice(0, 40);
-  }
 }
 
 /**

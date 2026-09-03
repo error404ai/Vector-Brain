@@ -3,7 +3,6 @@ import { useGetPublicRunQuery } from '@/RTKService/runShareService/runShareServi
 import AgentMarkdown from '@/components/android/AgentMarkdown';
 import CheckIcon from '@mui/icons-material/Check';
 import PauseIcon from '@mui/icons-material/Pause';
-import MovieIcon from '@mui/icons-material/Movie';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { alpha, Box, Button, CircularProgress, LinearProgress, Stack, Typography } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -104,7 +103,6 @@ export default function PublicRunPage() {
 
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [showVideo, setShowVideo] = useState(false);
   const railRef = useRef<HTMLDivElement | null>(null);
 
   // Loop the replay so a visitor always lands on something moving.
@@ -323,49 +321,6 @@ export default function PublicRunPage() {
                 </Typography>
               </Stack>
 
-              {/* The rendered MP4 carries the prompt and step captions burned in,
-                  so it still explains itself once someone forwards it. */}
-              <Button
-                fullWidth
-                size="small"
-                onClick={() => setShowVideo((prev) => !prev)}
-                startIcon={<MovieIcon />}
-                sx={{
-                  mt: 1,
-                  width: PHONE_W,
-                  borderRadius: 2,
-                  fontWeight: 700,
-                  color: alpha('#fff', 0.75),
-                  border: `1px solid ${alpha('#fff', 0.15)}`,
-                  '&:hover': { bgcolor: alpha('#fff', 0.08) },
-                }}
-              >
-                {showVideo ? 'Hide video' : 'Watch as video'}
-              </Button>
-
-              {showVideo && (
-                <Box sx={{ mt: 1.5, width: PHONE_W }}>
-                  <Box
-                    component="video"
-                    src={`/media/runs/${token}.mp4`}
-                    controls
-                    autoPlay
-                    muted
-                    loop
-                    playsInline
-                    sx={{ width: '100%', borderRadius: 2, display: 'block', bgcolor: '#000' }}
-                  />
-                  <Typography
-                    component="a"
-                    href={`/media/runs/${token}.mp4`}
-                    download
-                    variant="caption"
-                    sx={{ display: 'block', mt: 0.75, color: alpha('#fff', 0.6), textAlign: 'center' }}
-                  >
-                    Download MP4
-                  </Typography>
-                </Box>
-              )}
             </Box>
 
             {/* Step rail — subtitles running beside the phone */}
