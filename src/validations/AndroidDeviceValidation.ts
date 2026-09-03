@@ -34,7 +34,9 @@ export const DispatchAndroidPromptValidation = z.object({
   device_id: z.number({ required_error: 'Target device ID is required' }),
   prompt: z.string().min(1, 'Prompt cannot be empty'),
   task_id: z.number().optional(),
-  max_steps: z.number().min(1).max(50).default(15),
+  // Matches the 1-500 range the dashboard offers. The old cap of 50 silently
+  // rejected any longer run with a generic validation error.
+  max_steps: z.number().min(1, 'At least 1 step is required').max(500, 'Step limit cannot exceed 500').default(50),
 });
 
 const nodeSelectorShape = {
