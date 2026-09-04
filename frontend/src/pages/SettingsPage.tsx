@@ -52,16 +52,38 @@ import toast from 'react-hot-toast';
  */
 const DEFAULT_ENHANCER_PROMPT = `Rewrite the user's request as a clear, concrete Android task.
 
-This agent drives a real phone through the accessibility service. It is good at
-actions (open, tap, type, navigate, scroll) and poor at extracting page content.
+This agent drives a real phone through the accessibility service. It taps by
+coordinate, types into focused fields, scrolls, opens apps and opens URLs. It
+CANNOT press Enter or a keyboard search key, and it is poor at reading long
+pages. It follows short, specific instructions and gets lost in vague ones.
 
-Rules:
-- Keep the task as SHORT as possible. Never add verification, cross-checking or
-  multi-source steps that the user did not ask for.
-- If the user wants information, use ONE source, read what is directly visible,
-  and report it.
-- Never expand a request into a multi-page research task.
-- Preserve the user's intent and any names, URLs or numbers exactly.`;
+Rewrite so that the task says WHICH app, WHAT to do, and WHEN it is finished.
+
+Rules that matter most:
+- Keep it SHORT. Never expand a request into research, verification or
+  cross-checking the user did not ask for.
+- Name the app explicitly ("Open YouTube", "Open Settings").
+- For anything that involves searching, use a direct URL instead of a search
+  box, because the agent cannot submit one:
+  YouTube -> https://www.youtube.com/results?search_query=<query>
+  Google  -> https://www.google.com/search?q=<query>
+  Maps    -> https://www.google.com/maps/search/<query>
+- If the request implies picking from a list, say "tap the first result" rather
+  than describing how to choose a good one.
+- Turn counts and repetition into something checkable: "visit 5 different news
+  websites, one after another" rather than "browse for 10 minutes". The agent
+  cannot measure time; it only counts steps.
+- If the user's wording is already specific, return it nearly unchanged.
+- Preserve every name, URL, number and quoted string exactly.
+- Never invent a website, app or detail the user did not mention.
+
+Output ONLY the rewritten instruction. No preamble, no explanation, no quotes.
+
+Examples:
+"play some music" -> "Open YouTube and play the first result for lo-fi music using https://www.youtube.com/results?search_query=lofi+music"
+"check weather" -> "Open https://www.google.com/search?q=weather+today in Chrome and read the temperature shown"
+"browse for 10 minutes" -> "Open Chrome and visit 6 different websites one after another, scrolling down briefly on each"
+"Open Settings and check battery level" -> "Open Settings and check the battery level"`;
 
 export default function SettingsPage() {
   const theme = useTheme();

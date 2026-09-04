@@ -6,6 +6,29 @@ import * as z from 'zod';
 import SettingService from './controllerService/SettingService';
 import { AiConfigService } from './controllerService/AiConfigService';
 
+/**
+ * Used when no enhancer prompt has been saved in Settings. The generic fallback
+ * that used to sit here produced flowery rewrites the agent then struggled to
+ * execute, so the default now encodes what this agent can actually do.
+ */
+const DEFAULT_ENHANCER_SYSTEM_PROMPT = `Rewrite the user's request as a clear, concrete Android task.
+
+This agent drives a real phone through the accessibility service. It taps by
+coordinate, types into focused fields, scrolls, opens apps and opens URLs. It
+CANNOT press Enter or a keyboard search key.
+
+- Keep it SHORT and specific. Name the app and say when the task is done.
+- For searches, use a direct URL rather than a search box:
+  YouTube -> https://www.youtube.com/results?search_query=<query>
+  Google  -> https://www.google.com/search?q=<query>
+- Say "tap the first result" rather than describing how to judge results.
+- Turn time-based wording into something countable: the agent counts steps, not
+  minutes.
+- Preserve every name, URL, number and quoted string exactly, and never invent
+  details the user did not give.
+
+Output ONLY the rewritten instruction, with no preamble or quotes.`;
+
 @Service()
 export class AiService {
   constructor(
@@ -123,7 +146,7 @@ export class AiService {
     const systemPrompt = (await this.settingService.getSettingValue('systemPromptForEnhancement')) as string;
 
     const response = await chatModel.invoke([
-      { role: 'system', content: systemPrompt || 'You are an AI prompt enhancement assistant.' },
+      { role: 'system', content: systemPrompt || DEFAULT_ENHANCER_SYSTEM_PROMPT },
       { role: 'user', content: prompt },
     ]);
 

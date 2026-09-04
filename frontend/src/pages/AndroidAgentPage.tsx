@@ -15,6 +15,8 @@ import { explainError } from '@/utils/errorExplain';
 import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
 import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
+import { useEnhancePromptMutation } from '@/RTKService/promptService/promptService';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
 import ShareIcon from '@mui/icons-material/Share';
@@ -249,6 +251,9 @@ export function AndroidAgentPage() {
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
+  const [enhancePrompt, { isLoading: isEnhancing }] = useEnhancePromptMutation();
+  // Kept so the user can undo a rewrite they did not like.
+  const [promptBeforeEnhance, setPromptBeforeEnhance] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -744,6 +749,31 @@ export function AndroidAgentPage() {
       wsRef.current = null;
     };
   }, []);
+
+  /**
+   * Rewrites what the user typed into something the agent follows reliably.
+   *
+   * Task quality depends heavily on how the instruction is phrased, and that is
+   * not something a user should have to learn. The rewrite is shown in the input
+   * so it can be read, edited or undone before anything runs.
+   */
+  const handleImprovePrompt = async () => {
+    const original = promptInput.trim();
+    if (!original) return;
+    try {
+      const res = await enhancePrompt({ prompt: original }).unwrap();
+      const improved = (res?.enhancedPrompt || '').trim();
+      if (!improved || improved === original) {
+        toast('That instruction is already clear enough.', { icon: '👍' });
+        return;
+      }
+      setPromptBeforeEnhance(original);
+      setPromptInput(improved);
+      inputRef.current?.focus();
+    } catch (err: any) {
+      toast.error(err?.data?.message || 'Could not improve the prompt');
+    }
+  };
 
   const handleSendPrompt = async (textToSend?: string, options?: { maxStepsOverride?: number }) => {
     const text = (textToSend ?? promptInput).trim();
@@ -1908,6 +1938,25 @@ export function AndroidAgentPage() {
               </Stack>
             )}
 
+            {promptBeforeEnhance && (
+              <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
+                <AutoFixHighIcon sx={{ fontSize: 14, color: 'primary.main' }} />
+                <Typography variant="caption" color="text.secondary">
+                  Rewritten for the agent.
+                </Typography>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setPromptInput(promptBeforeEnhance);
+                    setPromptBeforeEnhance(null);
+                  }}
+                  sx={{ fontWeight: 700, minWidth: 0 }}
+                >
+                  Undo
+                </Button>
+              </Stack>
+            )}
+
             <Stack direction="row" spacing={1.5} alignItems="center">
               <TextField
                 inputRef={inputRef}
@@ -1921,7 +1970,10 @@ export function AndroidAgentPage() {
                       : 'Type a follow-up instruction (e.g. Now tap the second video)...'
                 }
                 value={promptInput}
-                onChange={(e) => setPromptInput(e.target.value)}
+                onChange={(e) => {
+                  setPromptInput(e.target.value);
+                  setPromptBeforeEnhance(null);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey && !isRunning && deviceReady) {
                     e.preventDefault();
@@ -1936,6 +1988,26 @@ export function AndroidAgentPage() {
                   },
                 }}
               />
+
+              {!isRunning && (
+                <Tooltip title="Rewrite this into a clearer instruction for the agent">
+                  <span>
+                    <IconButton
+                      onClick={handleImprovePrompt}
+                      disabled={!promptInput.trim() || isEnhancing || !deviceReady}
+                      sx={{
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 2.5,
+                        height: 40,
+                        width: 40,
+                      }}
+                    >
+                      {isEnhancing ? <CircularProgress size={16} /> : <AutoFixHighIcon fontSize="small" />}
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
 
               {isRunning ? (
                 <Button
