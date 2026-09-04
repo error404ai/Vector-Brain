@@ -14,8 +14,6 @@ import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
 import { verifyResultClaims } from '@/utils/verifyResult';
 import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
-import { useEnhancePromptMutation } from '@/RTKService/promptService/promptService';
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
 import ShareIcon from '@mui/icons-material/Share';
@@ -220,55 +218,6 @@ const StepResult = memo(function StepResult({ result, failed }: { result: string
   );
 });
 
-/**
- * Pulls the rewritten instruction out of whatever the model replied with.
- *
- * Models wrap the answer in a preamble ("Here's the rewritten instruction:"),
- * quote it, or — on weaker models — start performing the task instead. This
- * digs out the usable line and returns an empty string when there is not one,
- * so a bad reply never lands in the user's input box.
- */
-function cleanEnhancedPrompt(raw: string | undefined): string {
-  let text = (raw ?? '').trim();
-  if (!text) return '';
-
-  // Drop a leaked tool call or XML-ish block and anything after it.
-  text = text.replace(/<[^>]+>[\s\S]*$/, '').trim();
-  if (!text) return '';
-
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  // A line that only introduces the answer is not the answer.
-  const isPreamble = (line: string) =>
-    /^(here'?s|sure|okay|certainly|rewritten|improved|output|instruction|result)\b/i.test(line) ||
-    line.endsWith(':');
-
-  const candidates = lines.filter((line) => !isPreamble(line));
-  // Prefer the longest real line; models sometimes add a trailing note.
-  let best = candidates.sort((a, b) => b.length - a.length)[0] ?? '';
-
-  // "Here's the instruction: Open Chrome and ..." — keep what follows the colon.
-  if (!best && lines.length > 0) {
-    const withColon = lines.find((line) => line.includes(':') && line.split(':').slice(1).join(':').trim().length > 10);
-    best = withColon ? withColon.split(':').slice(1).join(':').trim() : '';
-  }
-
-  best = best
-    .replace(/^[-*\d.\s]+/, '')
-    .replace(/^["'“‘]|["'”’]$/g, '')
-    .trim();
-
-  if (!best || best.length < 8 || best.length > 600) return '';
-  if (/\btool_call\b|\bfunction_call\b|^\s*[{[]/i.test(best)) return '';
-  // First person means it started doing the task rather than rewriting it.
-  if (/^(i'?ll|i'?m|i am going to|let me)\b/i.test(best)) return '';
-
-  return best;
-}
-
 export function AndroidAgentPage() {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -297,9 +246,6 @@ export function AndroidAgentPage() {
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
-  const [enhancePrompt, { isLoading: isEnhancing }] = useEnhancePromptMutation();
-  // Kept so the user can undo a rewrite they did not like.
-  const [promptBeforeEnhance, setPromptBeforeEnhance] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -795,41 +741,6 @@ export function AndroidAgentPage() {
       wsRef.current = null;
     };
   }, []);
-
-  /**
-   * Rewrites what the user typed into something the agent follows reliably.
-   *
-   * Task quality depends heavily on how the instruction is phrased, and that is
-   * not something a user should have to learn. The rewrite is shown in the input
-   * so it can be read, edited or undone before anything runs.
-   */
-  const handleImprovePrompt = async () => {
-    const original = promptInput.trim();
-    if (!original) return;
-    try {
-      const res = await enhancePrompt({ prompt: original }).unwrap();
-      const improved = cleanEnhancedPrompt(res?.enhancedPrompt);
-
-      // Weaker models sometimes start doing the task instead of rewriting it,
-      // and answer with a tool call or a paragraph of narration. Putting that in
-      // the box would be worse than leaving the original alone.
-      if (improved === original) {
-        toast('That instruction is already clear enough.', { icon: '👍' });
-        return;
-      }
-      if (!improved) {
-        // Weaker models answer with narration or a tool call instead of a
-        // rewrite. Say so, rather than implying the prompt was already fine.
-        toast('The model did not return a usable rewrite — try a stronger model in Settings.', { icon: '⚠️' });
-        return;
-      }
-      setPromptBeforeEnhance(original);
-      setPromptInput(improved);
-      inputRef.current?.focus();
-    } catch (err: any) {
-      toast.error(err?.data?.message || 'Could not improve the prompt');
-    }
-  };
 
   const handleSendPrompt = async (textToSend?: string, options?: { maxStepsOverride?: number }) => {
     const text = (textToSend ?? promptInput).trim();
@@ -1962,25 +1873,6 @@ export function AndroidAgentPage() {
               </Stack>
             )}
 
-            {promptBeforeEnhance && (
-              <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
-                <AutoFixHighIcon sx={{ fontSize: 14, color: 'primary.main' }} />
-                <Typography variant="caption" color="text.secondary">
-                  Rewritten for the agent.
-                </Typography>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setPromptInput(promptBeforeEnhance);
-                    setPromptBeforeEnhance(null);
-                  }}
-                  sx={{ fontWeight: 700, minWidth: 0 }}
-                >
-                  Undo
-                </Button>
-              </Stack>
-            )}
-
             <Stack direction="row" spacing={1.5} alignItems="center">
               <TextField
                 inputRef={inputRef}
@@ -1994,10 +1886,7 @@ export function AndroidAgentPage() {
                       : 'Type a follow-up instruction (e.g. Now tap the second video)...'
                 }
                 value={promptInput}
-                onChange={(e) => {
-                  setPromptInput(e.target.value);
-                  setPromptBeforeEnhance(null);
-                }}
+                onChange={(e) => setPromptInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey && !isRunning && deviceReady) {
                     e.preventDefault();
@@ -2012,26 +1901,6 @@ export function AndroidAgentPage() {
                   },
                 }}
               />
-
-              {!isRunning && (
-                <Tooltip title="Rewrite this into a clearer instruction for the agent">
-                  <span>
-                    <IconButton
-                      onClick={handleImprovePrompt}
-                      disabled={!promptInput.trim() || isEnhancing || !deviceReady}
-                      sx={{
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 2.5,
-                        height: 40,
-                        width: 40,
-                      }}
-                    >
-                      {isEnhancing ? <CircularProgress size={16} /> : <AutoFixHighIcon fontSize="small" />}
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              )}
 
               {isRunning ? (
                 <Button
