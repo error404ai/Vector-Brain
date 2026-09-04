@@ -59,7 +59,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -84,6 +84,12 @@ export interface ChatMessage {
   status?: 'running' | 'done' | 'error' | 'cancelled';
   screenshot?: string;
   taskId?: number;
+  /**
+   * Computed once when the run finishes. Doing this inside render meant it ran
+   * again for every incoming screen frame, which made the live view stutter on
+   * long transcripts.
+   */
+  verification?: { verified: boolean; unsupportedDomains: string[]; claimedCount: number };
 }
 
 interface ApiMutationError {
@@ -145,7 +151,7 @@ const CURATED_SUGGESTIONS = [
  * only useful for debugging, so only the human-readable first line is shown and
  * the rest is hidden behind a toggle.
  */
-function StepResult({ result, failed }: { result: string; failed?: boolean }) {
+const StepResult = memo(function StepResult({ result, failed }: { result: string; failed?: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
   const splitAt = result.search(/(UPDATED SCREEN ELEMENTS|VISIBLE UI ELEMENTS|CURRENT APP:)/);
@@ -213,7 +219,7 @@ function StepResult({ result, failed }: { result: string; failed?: boolean }) {
       )}
     </Box>
   );
-}
+});
 
 export function AndroidAgentPage() {
   const theme = useTheme();
@@ -434,6 +440,12 @@ export function AndroidAgentPage() {
           timestamp: startedAt + 1,
           steps,
           status: running ? 'running' : success ? 'done' : 'error',
+          verification: running
+            ? undefined
+            : verifyResultClaims(summary, [
+                ...steps.map((step) => step.result),
+                ...steps.map((step) => step.thought),
+              ]),
           taskId,
         },
       ];
@@ -634,11 +646,18 @@ export function AndroidAgentPage() {
             const lastMsg = updated[lastIdx];
 
             if (lastMsg.role === 'assistant') {
+              const finalContent =
+                msg.payload.message || (msg.payload.success ? 'Task completed successfully.' : 'Task ended.');
               updated[lastIdx] = {
                 ...lastMsg,
-                content: msg.payload.message || (msg.payload.success ? 'Task completed successfully.' : 'Task ended.'),
+                content: finalContent,
                 status: msg.payload.success ? 'done' : 'error',
                 screenshot: msg.payload.screenshot || lastMsg.screenshot,
+                // Computed once, here, rather than on every render.
+                verification: verifyResultClaims(finalContent, [
+                  ...(lastMsg.steps ?? []).map((step) => step.result),
+                  ...(lastMsg.steps ?? []).map((step) => step.thought),
+                ]),
               };
             }
             return updated;
@@ -1626,11 +1645,8 @@ export function AndroidAgentPage() {
                             {/* Honesty check: flag sites the result claims but no step ever saw */}
                             {msg.status === 'done' &&
                               (() => {
-                                const verification = verifyResultClaims(msg.content, [
-                                  ...(msg.steps ?? []).map((step) => step.result),
-                                  ...(msg.steps ?? []).map((step) => step.thought),
-                                ]);
-                                if (verification.claimedCount === 0 || verification.verified) return null;
+                                const verification = msg.verification;
+                                if (!verification || verification.claimedCount === 0 || verification.verified) return null;
                                 return (
                                   <Box
                                     sx={{

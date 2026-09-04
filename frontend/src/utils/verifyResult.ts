@@ -51,16 +51,24 @@ export function verifyResultClaims(finalMessage: string | null | undefined, evid
     return { verified: true, unsupportedDomains: [], claimedCount: 0 };
   }
 
-  const evidence = evidenceParts
-    .filter((part): part is string => typeof part === 'string' && part.length > 0)
-    .join('\n')
-    .toLowerCase();
+  // Only the domains matter, and step results carry whole screen dumps, so the
+  // evidence is reduced to its domains rather than lower-casing tens of
+  // kilobytes of text. This runs on every render of a finished run, and the
+  // naive version was heavy enough to make the live screen stutter.
+  const evidence = new Set<string>();
+  for (const part of evidenceParts) {
+    if (typeof part !== 'string' || part.length === 0) continue;
+    for (const domain of extractDomains(part)) evidence.add(domain);
+  }
 
   const unsupported = claimed.filter((domain) => {
-    if (evidence.includes(domain)) return false;
+    if (evidence.has(domain)) return false;
     // A claim like "youtube.com" is also supported by evidence that only
     // mentions a subdomain such as "m.youtube.com".
-    return !evidence.includes(`.${domain}`);
+    for (const seen of evidence) {
+      if (seen.endsWith(`.${domain}`)) return false;
+    }
+    return true;
   });
 
   return {

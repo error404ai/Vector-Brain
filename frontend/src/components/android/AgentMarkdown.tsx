@@ -1,4 +1,5 @@
 import { Box, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
+import { memo } from 'react';
 import type { ReactNode } from 'react';
 
 /**
@@ -63,7 +64,12 @@ const splitRow = (line: string): string[] =>
 
 const isSeparatorRow = (line: string): boolean => /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes('-');
 
-export default function AgentMarkdown({ text }: { text: string }) {
+/**
+ * Memoised because the transcript re-renders on every incoming screen frame,
+ * and re-parsing every finished result each time was enough to make the live
+ * view stutter on long runs.
+ */
+export default memo(function AgentMarkdown({ text }: { text: string }) {
   if (!text?.trim()) return null;
 
   // Models often emit a whole table on one line; put each row back on its own.
@@ -176,4 +182,4 @@ export default function AgentMarkdown({ text }: { text: string }) {
 
   flushList();
   return <Box>{blocks}</Box>;
-}
+});
