@@ -223,6 +223,30 @@ const StepResult = memo(function StepResult({ result, failed }: { result: string
   );
 });
 
+/**
+ * Keeps only a usable rewrite. Returns an empty string when the model answered
+ * with something other than a plain instruction.
+ */
+function cleanEnhancedPrompt(raw: string | undefined): string {
+  let text = (raw ?? '').trim();
+  if (!text) return '';
+
+  // Strip a tool call or any XML-ish block the model leaked.
+  text = text.replace(/<[^>]+>[\s\S]*$/, '').trim();
+  // Strip surrounding quotes or a "Rewritten:" style prefix.
+  text = text.replace(/^["'“‘]|["'”’]$/g, '').trim();
+  text = text.replace(/^(rewritten|improved|output|instruction)\s*[:\-]\s*/i, '').trim();
+
+  if (!text) return '';
+  // A rewrite is one instruction, not a monologue.
+  if (text.length > 400) return '';
+  if (/\btool_call\b|\bfunction_call\b|^\s*[{[]/i.test(text)) return '';
+  // First person means it started doing the task rather than rewriting it.
+  if (/^(i'?ll|i am going to|let me|sure|okay|here'?s)\b/i.test(text)) return '';
+
+  return text;
+}
+
 export function AndroidAgentPage() {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -762,7 +786,11 @@ export function AndroidAgentPage() {
     if (!original) return;
     try {
       const res = await enhancePrompt({ prompt: original }).unwrap();
-      const improved = (res?.enhancedPrompt || '').trim();
+      const improved = cleanEnhancedPrompt(res?.enhancedPrompt);
+
+      // Weaker models sometimes start doing the task instead of rewriting it,
+      // and answer with a tool call or a paragraph of narration. Putting that in
+      // the box would be worse than leaving the original alone.
       if (!improved || improved === original) {
         toast('That instruction is already clear enough.', { icon: '👍' });
         return;
