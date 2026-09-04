@@ -12,7 +12,6 @@ import {
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
-import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import { verifyResultClaims } from '@/utils/verifyResult';
 import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
 import { useEnhancePromptMutation } from '@/RTKService/promptService/promptService';
@@ -20,11 +19,10 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
 import ShareIcon from '@mui/icons-material/Share';
-import StarIcon from '@mui/icons-material/Star';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
+import ModelPicker from '@/components/android/ModelPicker';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 import HistoryIcon from '@mui/icons-material/History';
@@ -33,7 +31,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import PersonIcon from '@mui/icons-material/Person';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
-import PsychologyIcon from '@mui/icons-material/Psychology';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
@@ -1045,38 +1042,6 @@ export function AndroidAgentPage() {
 
             {/* Active Model Indicator & Actions */}
             <Stack direction="row" spacing={1} alignItems="center" sx={{ width: { xs: '100%', sm: 'auto' } }}>
-              {aiConfigs.length > 0 && (
-                <Select
-                  size="small"
-                  value={selectedConfigId}
-                  onChange={(e) => setSelectedConfigId(Number(e.target.value))}
-                  disabled={isRunning}
-                  startAdornment={<PsychologyIcon fontSize="small" sx={{ mr: 0.75, color: 'primary.main' }} />}
-                  sx={{ minWidth: 220, height: 34, fontWeight: 700, borderRadius: 2, fontSize: 13 }}
-                >
-                  <MenuItem value={0} sx={{ fontSize: 13 }}>
-                    Active — {activeAiConfig?.model ?? 'none'}
-                  </MenuItem>
-                  {sortModelsForDisplay(aiConfigs).map((config) => {
-                    const meta = getModelMeta(config.model);
-                    return (
-                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 13, gap: 0.5 }}>
-                        {config.model}
-                        {meta && (
-                          <Tooltip title={meta.note}>
-                            {meta.tag === 'recommended' ? (
-                              <StarIcon sx={{ fontSize: 14, color: 'success.main' }} />
-                            ) : (
-                              <WarningAmberIcon sx={{ fontSize: 14, color: 'warning.main' }} />
-                            )}
-                          </Tooltip>
-                        )}
-                      </MenuItem>
-                    );
-                  })}
-                </Select>
-              )}
-
               <TextField
                 size="small"
                 type="number"
@@ -2096,6 +2061,16 @@ export function AndroidAgentPage() {
                   Send
                 </Button>
               )}
+            </Stack>
+
+            {/* Model choice belongs next to the prompt, where the decision is made. */}
+            <Stack direction="row" alignItems="center" sx={{ mt: 1 }}>
+              <ModelPicker
+                configs={aiConfigs}
+                selectedId={selectedConfigId}
+                onSelect={setSelectedConfigId}
+                disabled={isRunning}
+              />
             </Stack>
           </Box>
         </Card>
