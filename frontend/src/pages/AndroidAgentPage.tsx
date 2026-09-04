@@ -224,27 +224,52 @@ const StepResult = memo(function StepResult({ result, failed }: { result: string
 });
 
 /**
- * Keeps only a usable rewrite. Returns an empty string when the model answered
- * with something other than a plain instruction.
+ * Pulls the rewritten instruction out of whatever the model replied with.
+ *
+ * Models wrap the answer in a preamble ("Here's the rewritten instruction:"),
+ * quote it, or — on weaker models — start performing the task instead. This
+ * digs out the usable line and returns an empty string when there is not one,
+ * so a bad reply never lands in the user's input box.
  */
 function cleanEnhancedPrompt(raw: string | undefined): string {
   let text = (raw ?? '').trim();
   if (!text) return '';
 
-  // Strip a tool call or any XML-ish block the model leaked.
+  // Drop a leaked tool call or XML-ish block and anything after it.
   text = text.replace(/<[^>]+>[\s\S]*$/, '').trim();
-  // Strip surrounding quotes or a "Rewritten:" style prefix.
-  text = text.replace(/^["'“‘]|["'”’]$/g, '').trim();
-  text = text.replace(/^(rewritten|improved|output|instruction)\s*[:\-]\s*/i, '').trim();
-
   if (!text) return '';
-  // A rewrite is one instruction, not a monologue.
-  if (text.length > 400) return '';
-  if (/\btool_call\b|\bfunction_call\b|^\s*[{[]/i.test(text)) return '';
-  // First person means it started doing the task rather than rewriting it.
-  if (/^(i'?ll|i am going to|let me|sure|okay|here'?s)\b/i.test(text)) return '';
 
-  return text;
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // A line that only introduces the answer is not the answer.
+  const isPreamble = (line: string) =>
+    /^(here'?s|sure|okay|certainly|rewritten|improved|output|instruction|result)\b/i.test(line) ||
+    line.endsWith(':');
+
+  const candidates = lines.filter((line) => !isPreamble(line));
+  // Prefer the longest real line; models sometimes add a trailing note.
+  let best = candidates.sort((a, b) => b.length - a.length)[0] ?? '';
+
+  // "Here's the instruction: Open Chrome and ..." — keep what follows the colon.
+  if (!best && lines.length > 0) {
+    const withColon = lines.find((line) => line.includes(':') && line.split(':').slice(1).join(':').trim().length > 10);
+    best = withColon ? withColon.split(':').slice(1).join(':').trim() : '';
+  }
+
+  best = best
+    .replace(/^[-*\d.\s]+/, '')
+    .replace(/^["'“‘]|["'”’]$/g, '')
+    .trim();
+
+  if (!best || best.length < 8 || best.length > 600) return '';
+  if (/\btool_call\b|\bfunction_call\b|^\s*[{[]/i.test(best)) return '';
+  // First person means it started doing the task rather than rewriting it.
+  if (/^(i'?ll|i'?m|i am going to|let me)\b/i.test(best)) return '';
+
+  return best;
 }
 
 export function AndroidAgentPage() {
@@ -791,8 +816,14 @@ export function AndroidAgentPage() {
       // Weaker models sometimes start doing the task instead of rewriting it,
       // and answer with a tool call or a paragraph of narration. Putting that in
       // the box would be worse than leaving the original alone.
-      if (!improved || improved === original) {
+      if (improved === original) {
         toast('That instruction is already clear enough.', { icon: '👍' });
+        return;
+      }
+      if (!improved) {
+        // Weaker models answer with narration or a tool call instead of a
+        // rewrite. Say so, rather than implying the prompt was already fine.
+        toast('The model did not return a usable rewrite — try a stronger model in Settings.', { icon: '⚠️' });
         return;
       }
       setPromptBeforeEnhance(original);
