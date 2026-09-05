@@ -14,8 +14,10 @@ import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
 import { verifyResultClaims } from '@/utils/verifyResult';
 import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
+import { useSaveFlowMutation } from '@/RTKService/flowService/flowService';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
+import BoltIcon from '@mui/icons-material/Bolt';
 import ShareIcon from '@mui/icons-material/Share';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -246,6 +248,8 @@ export function AndroidAgentPage() {
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
+  const [saveFlow, { isLoading: isSavingFlow }] = useSaveFlowMutation();
+  const [savedFlowId, setSavedFlowId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
@@ -789,6 +793,7 @@ export function AndroidAgentPage() {
     setIsRunning(true);
     setFinishedTaskId(null);
     setShareUrl(null);
+    setSavedFlowId(null);
 
     // A vague instruction makes the agent spend its whole step budget deciding
     // what to do, so ask one question first. Skipped when the user already
@@ -1710,6 +1715,51 @@ export function AndroidAgentPage() {
                                 is when someone wants to show it to somebody. */}
                             {msg.status === 'done' && shareableTaskId && (
                               <Box sx={{ mt: 1.5 }}>
+                                {/* A finished route can be replayed later without a model,
+                                    so offer to keep it right where it succeeded. */}
+                                <Box sx={{ mb: 1 }}>
+                                  {savedFlowId ? (
+                                    <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+                                      <BoltIcon sx={{ fontSize: 15, color: 'success.main' }} />
+                                      <Typography variant="caption" sx={{ fontWeight: 800, color: 'success.dark' }}>
+                                        Saved as a flow — replay it any time, free
+                                      </Typography>
+                                      <Button
+                                        size="small"
+                                        onClick={() => navigate('/flows')}
+                                        sx={{ fontWeight: 700, minWidth: 0 }}
+                                      >
+                                        Open Flows
+                                      </Button>
+                                    </Stack>
+                                  ) : (
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      startIcon={<BoltIcon />}
+                                      disabled={isSavingFlow}
+                                      onClick={async () => {
+                                        try {
+                                          const res = await saveFlow({ task_id: shareableTaskId }).unwrap();
+                                          setSavedFlowId(res.data.id);
+                                          if (res.data.coordinate_step_count > 0) {
+                                            toast('Saved — note it taps fixed screen positions, so replay can drift if the app changes.', {
+                                              icon: '⚠️',
+                                            });
+                                          } else {
+                                            toast.success(`Saved as a flow · ${res.data.step_count} steps`);
+                                          }
+                                        } catch (err: any) {
+                                          toast.error(err?.data?.message || 'Could not save this run as a flow');
+                                        }
+                                      }}
+                                      sx={{ borderRadius: 2, fontWeight: 700 }}
+                                    >
+                                      Save as flow
+                                    </Button>
+                                  )}
+                                </Box>
+
                                 {shareUrl ? (
                                     <Stack
                                       direction="row"

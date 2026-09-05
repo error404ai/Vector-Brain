@@ -32,6 +32,7 @@ import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorCo
 import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
+import { FlowController } from './controllers/FlowController';
 import { PublicRunController, RunShareController } from './controllers/RunShareController';
 import { RunMediaService } from './services/android/RunMediaService';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
@@ -77,6 +78,7 @@ useExpressServer(app, {
     BrowserWorkerErrorController,
     DashboardController,
     HealthController,
+    FlowController,
     PromptController,
     PublicRunController,
     RunShareController,

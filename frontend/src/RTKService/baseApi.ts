@@ -23,6 +23,7 @@ export const TAGS = {
   ANDROID_DEVICES: 'ANDROID_DEVICES',
   SCHEDULES: 'SCHEDULES',
   RUN_SHARE: 'RUN_SHARE',
+  FLOWS: 'FLOWS',
 } as const;
 
 
