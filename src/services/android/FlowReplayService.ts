@@ -213,8 +213,14 @@ export class FlowReplayService {
       } else {
         try {
           const res = await this.gatewayService.executeAction(device.device_id, action);
-          ok = res.status === 'SUCCESS';
-          resultText = ok ? res.summary || 'Done' : `${res.code}: ${res.message}`;
+          if (res.status === 'SUCCESS') {
+            ok = true;
+            resultText = res.summary || 'Done';
+          } else if (res.status === 'FAILURE') {
+            resultText = `${res.code}: ${res.message}`;
+          } else {
+            resultText = 'Action cancelled';
+          }
         } catch (error: any) {
           resultText = String(error?.message ?? 'Device did not respond');
         }
