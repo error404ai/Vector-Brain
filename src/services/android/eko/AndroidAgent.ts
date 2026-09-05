@@ -10,6 +10,77 @@ import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../Androi
  */
 const MIN_INFORMATIVE_ROWS = 8;
 
+/** Pause between foreground checks after launching an app or URL. */
+const LAUNCH_SETTLE_MS = 900;
+
+/**
+ * Package names for the same stock app differ across Android builds — the
+ * emulator ships Clock as com.google.android.deskclock, Samsung as
+ * com.sec.android.app.clockpackage, Xiaomi as com.android.deskclock. The model
+ * cannot list what is installed, so it guesses, and every wrong guess costs a
+ * step. Each family below is tried in order after an APP_NOT_FOUND, matched on
+ * a keyword in whatever package the model asked for.
+ */
+const PACKAGE_FAMILIES: { keywords: string[]; packages: string[] }[] = [
+  {
+    keywords: ['clock', 'alarm'],
+    packages: [
+      'com.google.android.deskclock',
+      'com.android.deskclock',
+      'com.sec.android.app.clockpackage',
+      'com.miui.clock',
+    ],
+  },
+  {
+    keywords: ['camera'],
+    packages: ['com.android.camera2', 'com.android.camera', 'com.sec.android.app.camera', 'com.oplus.camera'],
+  },
+  {
+    keywords: ['contact', 'people'],
+    packages: ['com.google.android.contacts', 'com.android.contacts', 'com.samsung.android.app.contacts'],
+  },
+  {
+    keywords: ['message', 'sms', 'mms'],
+    packages: ['com.google.android.apps.messaging', 'com.android.mms', 'com.samsung.android.messaging'],
+  },
+  {
+    keywords: ['photo', 'gallery'],
+    packages: [
+      'com.google.android.apps.photos',
+      'com.miui.gallery',
+      'com.sec.android.gallery3d',
+      'com.android.gallery3d',
+    ],
+  },
+  {
+    keywords: ['calculator'],
+    packages: ['com.google.android.calculator', 'com.android.calculator2', 'com.miui.calculator'],
+  },
+  {
+    keywords: ['calendar'],
+    packages: ['com.google.android.calendar', 'com.android.calendar', 'com.samsung.android.calendar'],
+  },
+  {
+    keywords: ['dialer', 'phone'],
+    packages: ['com.google.android.dialer', 'com.android.dialer', 'com.samsung.android.dialer'],
+  },
+  {
+    keywords: ['file', 'document'],
+    packages: ['com.google.android.documentsui', 'com.android.documentsui', 'com.mi.android.globalFileexplorer'],
+  },
+  { keywords: ['setting'], packages: ['com.android.settings'] },
+];
+
+/** How many alternates to try before handing the failure back to the model. */
+const MAX_PACKAGE_RETRIES = 4;
+
+function packageAlternatives(requested: string): string[] {
+  const wanted = requested.toLowerCase();
+  const family = PACKAGE_FAMILIES.find((entry) => entry.keywords.some((keyword) => wanted.includes(keyword)));
+  if (!family) return [];
+  return family.packages.filter((candidate) => candidate.toLowerCase() !== wanted).slice(0, MAX_PACKAGE_RETRIES);
+}
+
 export interface AndroidAgentCallbacks {
   onStepExecuted?: (info: {
     toolName: string;
@@ -19,7 +90,6 @@ export interface AndroidAgentCallbacks {
     foregroundApp?: string;
     uiTree?: string;
   }) => void;
-
 }
 
 export class AndroidAgent extends Agent {
@@ -309,7 +379,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'open_app',
         description:
-          'Launch an Android application by its package name. Give the app a moment to appear before deciding it did not open; do not hunt for its icon on the home screen. Do NOT use this when the goal is to search inside the app — open_url with the app\'s search results URL (e.g. https://www.youtube.com/results?search_query=...) launches the app straight onto the results screen and saves several steps.',
+          'Launch an Android application by its package name. The result confirms whether the app actually reached the foreground, so trust what it says instead of re-checking by tapping icons. Do NOT use this when the goal is to search inside the app — open_url with the app\'s search results URL (e.g. https://www.youtube.com/results?search_query=...) launches the app straight onto the results screen and saves several steps.',
         parameters: {
           type: 'object',
           properties: {
@@ -495,8 +565,29 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
-    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
-    const summary =
+    let res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+
+    // The model guessed a package name that does not exist on this build. Try
+    // the known equivalents before handing back a failure — three wasted steps
+    // guessing clock package names is what this avoids.
+    let launchedPackage = action.type === 'OpenApp' ? String(action.packageName || '') : '';
+    let triedAlternatives: string[] = [];
+    if (action.type === 'OpenApp' && res.status === 'FAILURE' && res.code === 'APP_NOT_FOUND') {
+      triedAlternatives = packageAlternatives(launchedPackage);
+      for (const candidate of triedAlternatives) {
+        const retry = await this.gatewayService.executeAction(this.hardwareDeviceId, {
+          type: 'OpenApp',
+          packageName: candidate,
+        });
+        if (retry.status === 'SUCCESS') {
+          res = retry;
+          launchedPackage = candidate;
+          break;
+        }
+      }
+    }
+
+    let summary =
       res.status === 'SUCCESS'
         ? res.summary
         : res.status === 'FAILURE'
@@ -504,15 +595,61 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
         : 'Action cancelled';
     const isError = res.status !== 'SUCCESS';
 
+    if (action.type === 'OpenApp' && !isError && launchedPackage !== String(action.packageName || '')) {
+      summary = `${summary} (resolved to ${launchedPackage} on this device)`;
+    }
+
+    // Guessing further package names never works — the model has no way to see
+    // what is installed. Point it at the one method that does.
+    if (action.type === 'OpenApp' && isError && res.status === 'FAILURE' && res.code === 'APP_NOT_FOUND') {
+      const alsoTried = triedAlternatives.length > 0 ? ` Also tried: ${triedAlternatives.join(', ')}.` : '';
+      summary =
+        `${summary}${alsoTried} Do NOT guess more package names — none of the usual ones exist here. ` +
+        'Use global_action HOME, then read_ui_tree to find the app by the name shown under its icon, ' +
+        'and open it with click_node instead.';
+    }
+
+    // A launch only reports that the intent was dispatched, not that the app is
+    // on screen. Observing immediately catches the old screen, so the model is
+    // told "opened" while still looking at the launcher and wastes several
+    // steps hunting for the icon. Give the app time to come to the front and
+    // report what actually happened.
+    if (!isError && (action.type === 'OpenApp' || action.type === 'OpenUrl')) {
+      const wanted = action.type === 'OpenApp' ? launchedPackage : '';
+      const settled = await this.waitForForeground(wanted);
+      if (wanted) {
+        summary = settled
+          ? `${summary} (now in the foreground)`
+          : `Launch was dispatched for ${wanted}, but it is not in the foreground yet` +
+            `${this.lastForegroundApp ? ` — the current app is ${this.lastForegroundApp}` : ''}.` +
+            ' Wait a moment and read the screen again before trying another approach.';
+      }
+    }
+
+    // Track consecutive failures
+    if (isError) {
+      if (toolName === this.lastFailedAction) {
+        this.consecutiveFailures++;
+      } else {
+        this.consecutiveFailures = 1;
+        this.lastFailedAction = toolName;
+      }
+    } else {
+      this.consecutiveFailures = 0;
+      this.lastFailedAction = '';
+    }
+
+        // Automatically capture updated screen frame and UI tree after each interaction.
+    // Skip for pure wait actions — the screen state is captured by the next real action.
     if (action.type === 'Wait') {
       this.consecutiveWaits += 1;
     } else {
       this.consecutiveWaits = 0;
     }
 
-    // Waits normally skip observation to save a round-trip. Once the model waits
-    // twice in a row it can no longer tell what is on screen, so refresh instead
-    // of handing back the same stale tree.
+    // Waits normally skip observation to save a round-trip. But once the model
+    // waits twice in a row it has stopped being able to tell what is on screen,
+    // so refresh properly instead of handing back the same stale tree.
     const skipObservation = action.type === 'Wait' && this.consecutiveWaits < 2;
     try {
       if (skipObservation) throw new Error('skip');
@@ -584,6 +721,42 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       content: [textPart],
       isError,
     };
+  }
+
+  /**
+   * Poll the screen until a freshly launched app reaches the foreground.
+   *
+   * `wantedPackage` empty means "just let the screen settle" (used for URL
+   * loads, where the browser is already in front). Returns true when the app
+   * was confirmed on screen.
+   */
+  private async waitForForeground(wantedPackage: string): Promise<boolean> {
+    const attempts = wantedPackage ? 4 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, LAUNCH_SETTLE_MS));
+      try {
+        const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, {
+          type: 'ObserveScreen',
+        });
+        if (observation.status !== 'SUCCESS') continue;
+        if (observation.screenCapture?.base64Data) {
+          this.lastScreenshotBase64 = observation.screenCapture.base64Data;
+        }
+        if (observation.uiTree) {
+          this.lastUiTree = this.formatUiTree(observation.uiTree.root);
+          this.lastForegroundApp = this.detectPackageName(
+            observation.uiTree.root,
+            observation.uiTree.packageName || 'unknown',
+          );
+        }
+        if (!wantedPackage) return true;
+        if (this.lastForegroundApp && wantedPackage.startsWith(this.lastForegroundApp)) return true;
+        if (this.lastForegroundApp && this.lastForegroundApp.startsWith(wantedPackage)) return true;
+      } catch {
+        // Best-effort: keep polling until the attempts run out.
+      }
+    }
+    return false;
   }
 
   private detectPackageName(root?: UiNodeSnapshot, defaultPkg = 'unknown'): string {

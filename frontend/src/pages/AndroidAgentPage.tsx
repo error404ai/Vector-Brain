@@ -21,6 +21,7 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import ShareIcon from '@mui/icons-material/Share';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ReplayIcon from '@mui/icons-material/Replay';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
 import ModelPicker from '@/components/android/ModelPicker';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
@@ -1549,7 +1550,15 @@ export function AndroidAgentPage() {
                           const total = Math.max(planned, doneSteps);
                           if (msg.status !== 'running' && total === 0) return null;
 
-                          const pct = total > 0 ? Math.min(100, Math.round((doneSteps / total) * 100)) : 0;
+                          // The planner's node count is only a forecast, and the
+                          // agent routinely needs more or fewer tool calls than
+                          // it planned. Once the run is over the real count is
+                          // the honest number, so "Step 1 of 8" does not linger
+                          // on a task that finished in one step.
+                          const running = msg.status === 'running';
+                          const denominator = running ? total : doneSteps;
+                          const pct =
+                            denominator > 0 ? Math.min(100, Math.round((doneSteps / denominator) * 100)) : 0;
 
                           return (
                             <Box sx={{ mb: 1.5 }}>
@@ -1560,19 +1569,22 @@ export function AndroidAgentPage() {
                                 sx={{ mb: 0.5 }}
                               >
                                 <Typography variant="caption" color="text.secondary">
-                                  {total > 0
-                                    ? `Step ${Math.min(doneSteps + (msg.status === 'running' ? 1 : 0), total)} of ${total}`
-                                    : 'Writing the plan'}
+                                  {!running
+                                    ? `${doneSteps} ${doneSteps === 1 ? 'step' : 'steps'}`
+                                    : total > 0
+                                      ? `Step ${Math.min(doneSteps + 1, total)} of ${total}`
+                                      : 'Writing the plan'}
                                 </Typography>
-                                {msg.status === 'running' && (
+                                {running && (
                                   <Typography variant="caption" color="text.secondary">
                                     <RunTimer startedAt={msg.timestamp} />
                                   </Typography>
                                 )}
                               </Stack>
                               <LinearProgress
-                                variant={total > 0 ? 'determinate' : 'indeterminate'}
+                                variant={running && total === 0 ? 'indeterminate' : 'determinate'}
                                 value={pct}
+                                color={msg.status === 'error' ? 'error' : 'primary'}
                                 sx={{ height: 3, borderRadius: 2 }}
                               />
                             </Box>
@@ -1590,7 +1602,7 @@ export function AndroidAgentPage() {
                                 step.status === 'FAILED'
                                   ? theme.palette.error.main
                                   : step.status === 'EXECUTING'
-                                    ? theme.palette.warning.main
+                                    ? theme.palette.primary.main
                                     : theme.palette.success.main;
 
                               return (
@@ -1609,7 +1621,7 @@ export function AndroidAgentPage() {
                                       to: { opacity: 1, transform: 'translateX(0)' },
                                     },
                                     ...(step.status === 'EXECUTING' && {
-                                      bgcolor: alpha(theme.palette.warning.main, 0.07),
+                                      bgcolor: alpha(theme.palette.primary.main, 0.06),
                                       borderRadius: 1.5,
                                       mx: -1,
                                       px: 1,
@@ -1962,6 +1974,38 @@ export function AndroidAgentPage() {
 
                             {/* Sharing belongs right here — the moment a run ends
                                 is when someone wants to show it to somebody. */}
+                            {/* Re-running the same instruction is the most common
+                                next move after both a failure and a success, and
+                                retyping it was the only way to do it. */}
+                            {msg.status !== 'running' &&
+                              (() => {
+                                const idx = messages.findIndex((m) => m.id === msg.id);
+                                let originalPrompt: string | null = null;
+                                for (let i = idx - 1; i >= 0; i--) {
+                                  if (messages[i].role === 'user') {
+                                    originalPrompt = messages[i].content;
+                                    break;
+                                  }
+                                }
+                                if (!originalPrompt) return null;
+                                const promptToRun = originalPrompt;
+
+                                return (
+                                  <Box sx={{ mt: 1.5 }}>
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      startIcon={<ReplayIcon />}
+                                      disabled={isRunning || !deviceReady}
+                                      onClick={() => handleSendPrompt(promptToRun)}
+                                      sx={{ fontWeight: 700, borderRadius: 1.5, textTransform: 'none' }}
+                                    >
+                                      Run again
+                                    </Button>
+                                  </Box>
+                                );
+                              })()}
+
                             {msg.status === 'done' && shareableTaskId && (
                               <Box sx={{ mt: 1.5 }}>
                                 {/* A finished route can be replayed later without a model,
@@ -2158,7 +2202,7 @@ export function AndroidAgentPage() {
                   'Go to Home screen',
                   'Scroll down',
                   'Tap on the first search result',
-                  'Take a screenshot',
+                  'Show me the current screen',
                 ].map((followup) => (
                   <Chip
                     key={followup}
