@@ -126,6 +126,13 @@ const CLARIFY_WORD_LIMIT = 8;
 /** Step budget bounds, kept in step with the backend validation. */
 const DEFAULT_STEPS = 50;
 const MAX_ALLOWED_STEPS = 500;
+
+/**
+ * Vertical space taken by everything around the transcript: app bar, the device
+ * header, the panel's own header and the prompt box. Subtracting it keeps the
+ * whole screen inside the viewport.
+ */
+const CHAT_CHROME_PX = 400;
 // Approximate size of the constant part of every request (system prompt + tool schemas).
 const BASE_PROMPT_CHARS = 4000;
 
@@ -254,7 +261,15 @@ export function AndroidAgentPage() {
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   // Run configuration: 0 = use the account's active provider
   const [selectedConfigId, setSelectedConfigId] = useState(0);
-  const [maxSteps, setMaxSteps] = useState(DEFAULT_STEPS);
+  const [maxSteps, setMaxSteps] = useState(() => {
+    // Reverting to the default on every reload meant re-typing this for long runs.
+    const stored = Number(localStorage.getItem('vb.maxSteps'));
+    return Number.isFinite(stored) && stored >= 1 && stored <= MAX_ALLOWED_STEPS ? stored : DEFAULT_STEPS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('vb.maxSteps', String(maxSteps));
+  }, [maxSteps]);
   // Keeping every frame makes a run shareable, but the images add up, so it is
   // opt-in per run rather than always on.
   const [recordRun, setRecordRun] = useState(false);
@@ -288,6 +303,7 @@ export function AndroidAgentPage() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   // Live copy of the selected device id so the WebSocket handler (registered once)
   // can ignore events belonging to other devices.
@@ -353,9 +369,21 @@ export function AndroidAgentPage() {
     return { totalTokens, cost };
   }, [tokenStats, runningConfig?.model]);
 
-  // Auto-scroll chat to bottom
+  /**
+   * Follow the conversation, unless the user has scrolled up to read something.
+   * Yanking the view back to the bottom on every incoming step made older steps
+   * impossible to read while a task was running.
+   */
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesRef.current;
+    if (!container) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 120) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   /**
@@ -1127,7 +1155,7 @@ export function AndroidAgentPage() {
                 </Stack>
               </Box>
 
-              <Box sx={{ maxHeight: 520, overflowY: 'auto', pb: 1 }}>
+              <Box sx={{ maxHeight: `calc(100vh - ${CHAT_CHROME_PX}px)`, overflowY: 'auto', pb: 1 }}>
                 {filteredSessions.length === 0 ? (
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 2, py: 3 }}>
                     {sessions.length === 0 ? 'No runs on this device yet.' : 'No sessions match the filter.'}
@@ -1314,11 +1342,14 @@ export function AndroidAgentPage() {
 
           {/* Messages Scroll Area */}
           <Box
+            ref={messagesRef}
             sx={{
               p: 2.5,
               flexGrow: 1,
-              maxHeight: 'calc(100vh - 340px)',
-              minHeight: 450,
+              // Sized to the viewport so the transcript scrolls inside its own
+              // panel; the page behind it should never need scrolling.
+              height: `calc(100vh - ${CHAT_CHROME_PX}px)`,
+              minHeight: 260,
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
