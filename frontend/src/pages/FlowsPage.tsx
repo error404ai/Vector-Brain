@@ -184,7 +184,7 @@ export default function FlowsPage() {
                       </Box>
 
                       <Stack direction="row" spacing={1} alignItems="center" alignSelf={{ xs: 'flex-end', md: 'center' }}>
-                        {onlineDevices.length > 1 && (
+                        {onlineDevices.length > 0 && (
                           <Select
                             size="small"
                             value={String(chosenDevice(flow.id))}
