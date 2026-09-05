@@ -41,6 +41,7 @@ import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 import { AiEmbeddingService } from './services/AiEmbeddingService';
+import { HistoryCleanupService } from './services/android/HistoryCleanupService';
 import { ScheduledTaskService } from './services/android/ScheduledTaskService';
 import { initializeWebSocketServer } from './loaders/websocket';
 
@@ -215,6 +216,7 @@ AppDataSource.initialize()
     // runner queries on every tick.
     try {
       Container.get(ScheduledTaskService).start();
+      Container.get(HistoryCleanupService).start();
     } catch (error) {
       Logger.warn('Scheduled task runner failed to start:', error);
     }

@@ -1155,7 +1155,7 @@ export function AndroidAgentPage() {
                 </Stack>
               </Box>
 
-              <Box sx={{ maxHeight: `calc(100vh - ${CHAT_CHROME_PX}px)`, overflowY: 'auto', pb: 1 }}>
+              <Box sx={{ maxHeight: 520, overflowY: 'auto', pb: 1 }}>
                 {filteredSessions.length === 0 ? (
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 2, py: 3 }}>
                     {sessions.length === 0 ? 'No runs on this device yet.' : 'No sessions match the filter.'}
@@ -1520,6 +1520,14 @@ export function AndroidAgentPage() {
                                     display: 'flex',
                                     gap: 1.25,
                                     position: 'relative',
+                                    // Steps arrive one at a time while a task runs; easing
+                                    // them in makes the sequence readable instead of a
+                                    // list that suddenly grows.
+                                    animation: 'vbStepIn 260ms ease-out',
+                                    '@keyframes vbStepIn': {
+                                      from: { opacity: 0, transform: 'translateX(-6px)' },
+                                      to: { opacity: 1, transform: 'translateX(0)' },
+                                    },
                                     ...(step.status === 'EXECUTING' && {
                                       bgcolor: alpha(theme.palette.warning.main, 0.07),
                                       borderRadius: 1.5,
@@ -1625,6 +1633,15 @@ export function AndroidAgentPage() {
                                 msg.status === 'error'
                                   ? alpha(theme.palette.error.main, 0.05)
                                   : alpha(theme.palette.success.main, 0.05),
+                              // A finished run should feel like it landed, so the
+                              // result settles into place rather than blinking in.
+                              ...(msg.status !== 'running' && {
+                                animation: 'vbResultIn 340ms cubic-bezier(0.16, 1, 0.3, 1)',
+                                '@keyframes vbResultIn': {
+                                  from: { opacity: 0, transform: 'scale(0.96) translateY(6px)' },
+                                  to: { opacity: 1, transform: 'scale(1) translateY(0)' },
+                                },
+                              }),
                             }}
                           >
                             <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>
