@@ -5,7 +5,7 @@ import { AppDataSource } from '@/loaders/database';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
 import { DispatchAndroidPromptValidation } from '@/validations/AndroidDeviceValidation';
-import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -121,6 +121,28 @@ export class AndroidAgentController {
       message: 'Active task retrieved successfully',
       data: { ...task, is_running: true },
     };
+  }
+
+  /**
+   * Delete a finished run and everything stored under it.
+   *
+   * Shared frames are removed by the foreign key cascade, so a deleted run also
+   * stops resolving on its public share link. Saved flows keep their own copy of
+   * the steps, so a flow made from this run keeps working.
+   */
+  @Delete('/tasks/:taskId')
+  async deleteTask(@Param('taskId') taskId: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId } });
+    if (!task) throw new AppError('Task not found', 404);
+
+    if (this.plannerService.getActiveTaskIds().includes(task.id)) {
+      throw new AppError('This run is still in progress. Stop it before deleting.', 409);
+    }
+
+    await this.taskLogRepo.delete({ agent_task_id: task.id });
+    await this.agentTaskRepo.delete({ id: task.id });
+
+    return { message: 'Run deleted successfully', data: { id: task.id } };
   }
 
   /**

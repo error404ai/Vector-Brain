@@ -111,22 +111,6 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
-    /** Tell the server a browser is watching this device's screen. */
-    watchDevice: builder.mutation<{ message: string; data: { streaming: boolean } }, { id: number; interval_ms?: number }>({
-      query: ({ id, interval_ms }) => ({
-        url: `/android/devices/${id}/watch`,
-        method: 'POST',
-        body: { interval_ms },
-      }),
-    }),
-
-    unwatchDevice: builder.mutation<{ message: string }, number>({
-      query: (id) => ({
-        url: `/android/devices/${id}/unwatch`,
-        method: 'POST',
-      }),
-    }),
-
     unpairDevice: builder.mutation<{ message: string }, number>({
       query: (id) => ({
         url: `/android/devices/${id}`,
@@ -183,6 +167,14 @@ const androidApi = baseApi.injectEndpoints({
       providesTags: ['AGENT_TASKS' as any],
     }),
 
+    deleteAndroidTask: builder.mutation<{ message: string; data: { id: number } }, number>({
+      query: (taskId) => ({
+        url: `/android/agent/tasks/${taskId}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: ['AGENT_TASKS' as any],
+    }),
+
     clarifyPrompt: builder.mutation<{ message: string; data: PromptClarification }, { prompt: string }>({
       query: (body) => ({
         url: '/prompts/clarify',
@@ -204,8 +196,6 @@ export const {
   useGetAndroidDevicesQuery,
   useRequestPairingCodeMutation,
   useRenameDeviceMutation,
-  useWatchDeviceMutation,
-  useUnwatchDeviceMutation,
   useUnpairDeviceMutation,
   useSendDirectActionMutation,
   useRunAndroidTaskMutation,
@@ -216,6 +206,7 @@ export const {
   useLazyGetAndroidTasksQuery,
   useGetActiveAndroidTaskQuery,
   useLazyGetActiveAndroidTaskQuery,
+  useDeleteAndroidTaskMutation,
   useClarifyPromptMutation,
 } = androidApi;
 

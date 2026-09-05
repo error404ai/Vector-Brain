@@ -1,5 +1,6 @@
 import {
   useCancelAndroidTaskMutation,
+  useDeleteAndroidTaskMutation,
   useGetAndroidDevicesQuery,
   useGetAndroidTasksQuery,
   useClarifyPromptMutation,
@@ -22,6 +23,7 @@ import ShareIcon from '@mui/icons-material/Share';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ReplayIcon from '@mui/icons-material/Replay';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AgentMarkdown from '@/components/android/AgentMarkdown';
 import ModelPicker from '@/components/android/ModelPicker';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
@@ -324,6 +326,7 @@ export function AndroidAgentPage() {
 
   const [runTask, { isLoading: isStartingTask }] = useRunAndroidTaskMutation();
   const [cancelTask, { isLoading: isCancelling }] = useCancelAndroidTaskMutation();
+  const [deleteTask] = useDeleteAndroidTaskMutation();
   const [fetchTaskLogs] = useLazyGetAndroidTaskLogsQuery();
   const [fetchActiveTask] = useLazyGetActiveAndroidTaskQuery();
   const [fetchDeviceTasks] = useLazyGetAndroidTasksQuery();
@@ -343,6 +346,8 @@ export function AndroidAgentPage() {
   const previousDeviceRef = useRef<number | undefined>(undefined);
   // Task currently shown in the transcript, used to highlight the sessions rail.
   const [viewingTaskId, setViewingTaskId] = useState<number | null>(null);
+  // Which session row is mid-delete, so its spinner shows and repeat clicks are ignored.
+  const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
@@ -949,6 +954,34 @@ export function AndroidAgentPage() {
     toast.success('Conversation cleared');
   };
 
+  const handleDeleteSession = async (taskId: number) => {
+    if (deletingSessionId !== null) return;
+    if (!window.confirm('Delete this run? Its steps and any shared link will be removed.')) return;
+
+    setDeletingSessionId(taskId);
+    try {
+      await deleteTask(taskId).unwrap();
+      // Clearing the open run leaves the panel showing a session that no longer
+      // exists, so reset the view when the deleted one was on screen.
+      if (viewingTaskId === taskId) {
+        setMessages([]);
+        setActiveTaskId(null);
+        setViewingTaskId(null);
+        setClarification(null);
+        restoredKeyRef.current = '';
+        if (effectiveSelectedDeviceId) {
+          setSearchParams({ deviceId: String(effectiveSelectedDeviceId) });
+        }
+      }
+      refetchSessions();
+      toast.success('Run deleted');
+    } catch (err: unknown) {
+      toast.error((err as ApiMutationError)?.data?.message || 'Failed to delete this run');
+    } finally {
+      setDeletingSessionId(null);
+    }
+  };
+
   return (
     <Box sx={{ maxWidth: 1440, mx: 'auto', p: { xs: 1, sm: 2 } }}>
       <Helmet>
@@ -1216,6 +1249,7 @@ export function AndroidAgentPage() {
                           borderColor: isOpen ? 'primary.main' : 'transparent',
                           bgcolor: isOpen ? alpha(theme.palette.primary.main, 0.06) : 'transparent',
                           '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.04) },
+                          '&:hover .vb-session-delete': { opacity: 1 },
                         }}
                       >
                         <Stack direction="row" alignItems="center" gap={0.75}>
@@ -1230,6 +1264,8 @@ export function AndroidAgentPage() {
                             variant="caption"
                             sx={{
                               fontWeight: 600,
+                              flex: 1,
+                              minWidth: 0,
                               display: '-webkit-box',
                               WebkitLineClamp: 2,
                               WebkitBoxOrient: 'vertical',
@@ -1239,6 +1275,34 @@ export function AndroidAgentPage() {
                           >
                             {session.prompt}
                           </Typography>
+                          {!session.is_running && (
+                            <Tooltip title="Delete this run">
+                              <IconButton
+                                className="vb-session-delete"
+                                size="small"
+                                aria-label="Delete this run"
+                                disabled={deletingSessionId === session.id}
+                                onClick={(event) => {
+                                  // The row itself opens the session, so the
+                                  // delete click must not travel up to it.
+                                  event.stopPropagation();
+                                  void handleDeleteSession(session.id);
+                                }}
+                                sx={{
+                                  p: 0.25,
+                                  opacity: 0,
+                                  transition: 'opacity 120ms',
+                                  '&:focus-visible': { opacity: 1 },
+                                }}
+                              >
+                                {deletingSessionId === session.id ? (
+                                  <CircularProgress size={12} />
+                                ) : (
+                                  <DeleteOutlineIcon sx={{ fontSize: 15 }} />
+                                )}
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Stack>
                         <Typography variant="caption" color="text.secondary" sx={{ pl: 2.6, fontSize: 10 }}>
                           {session.total_steps} steps

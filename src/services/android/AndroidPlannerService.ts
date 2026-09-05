@@ -226,107 +226,105 @@ of waiting a third time or scrolling at random.
 {{examples}}`;
 
 const ANDROID_PLANNER_EXAMPLES = `
-## Example 1 (Simple Web Navigation)
+Every example below obeys the rules above. Copy their SIZE and METHOD, not just
+their shape: a one-action request gets a one-node plan, and searching is always
+done by opening a results URL — never by typing into a search box.
+
+## Example 1 (One action, one node)
 User: Open Chrome and go to google.com
 Output result:
 <root>
   <n>Open Google</n>
-  <thought>Simple navigation task. Open Chrome browser and navigate to google.com. Handle any popups.</thought>
+  <thought>This is a single navigation. open_url launches the browser and loads the page in one call, so a node to open Chrome first would be pure waste. The result is obvious on screen, so no verification node either.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Launch Chrome and navigate to google.com</task>
+      <task>Open google.com</task>
       <nodes>
-        <node>Open Chrome browser using open_app</node>
-        <node>Wait 2 seconds for Chrome to load</node>
-        <node>Tap the address bar at the top of Chrome</node>
-        <node>Type "google.com" in the address bar</node>
-        <node>Tap Go or press Enter to navigate</node>
-        <node>Wait 3 seconds for Google homepage to load</node>
-        <node>Handle any cookie popups or permission dialogs if they appear</node>
-        <node>Verify Google homepage is displayed and search box is visible</node>
+        <node>Open https://www.google.com with open_url</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 2 (Search and Open Result)
+## Example 2 (Open an app and search inside it)
+User: Open YouTube and play Lo-Fi Beats
+Output result:
+<root>
+  <n>Play Lo-Fi Beats on YouTube</n>
+  <thought>The results URL opens the YouTube app already on the results screen, so open_app and tapping the search icon are both unnecessary. Two nodes: land on results, tap the first video.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Play a Lo-Fi Beats video on YouTube</task>
+      <nodes>
+        <node>Open https://www.youtube.com/results?search_query=Lo-Fi+Beats with open_url</node>
+        <node>Tap the first video in the results</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+## Example 3 (Search the web and open a result)
 User: Search for Phonebox.co.uk on Google and open their website
 Output result:
 <root>
-  <n>Search and Open Phonebox</n>
-  <thought>Need to open Chrome, go to Google, search for Phonebox, then open the correct result. Each step is separate.</thought>
+  <n>Open the Phonebox website</n>
+  <thought>Go straight to the Google results URL rather than loading google.com and typing. Three nodes: results, tap the official link, wait for that site to load. No cookie or popup nodes — the agent handles those only if they actually appear.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Search Google for Phonebox.co.uk and open official website</task>
+      <task>Find and open the official Phonebox website</task>
       <nodes>
-        <node>Open Chrome browser</node>
-        <node>Wait 2 seconds for Chrome to load</node>
-        <node>Tap the address bar and type "google.com", press Enter</node>
-        <node>Wait 3 seconds for Google to load</node>
-        <node>Tap the Google search box</node>
-        <node>Type "Phonebox.co.uk" in the search box</node>
-        <node>Tap the Search button or press Enter</node>
-        <node>Wait 3 seconds for search results to load</node>
-        <node>Read the search results and identify the official Phonebox website link</node>
-        <node>Tap on the official Phonebox website result</node>
-        <node>Wait 4 seconds for the website to load</node>
-        <node>Handle any cookie consent or popup dialogs</node>
-        <node>Verify the Phonebox website is loaded correctly</node>
+        <node>Open https://www.google.com/search?q=Phonebox.co.uk with open_url</node>
+        <node>Tap the first result that links to phonebox.co.uk</node>
+        <node>Wait 3 seconds for the website to load</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 3 (Company Research)
+## Example 4 (Research — long because the task genuinely is)
 User: Research about Phonebox.co.uk company - find their services, reviews, and latest news
 Output result:
 <root>
   <n>Phonebox Company Research</n>
-  <thought>This is a research task requiring multiple sources. I must NOT complete after just one search. I need to: visit official website, read content, find reviews on Trustpilot, search for news, then summarize everything. Minimum 15 nodes needed.</thought>
+  <thought>Research needs several sources, so this plan is long by necessity — not because long plans are better. Each new search is its own open_url call, which is more reliable than pressing back and retyping. Ends with a summary node.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Research Phonebox.co.uk thoroughly from multiple sources and provide complete summary</task>
+      <task>Research Phonebox.co.uk from multiple sources and summarise the findings</task>
       <nodes>
-        <node>Open Chrome browser and navigate to google.com</node>
-        <node>Wait 3 seconds for Google to load</node>
-        <node>Search for "Phonebox.co.uk" in Google</node>
-        <node>Wait 3 seconds for search results to load</node>
-        <node>Identify and tap the official Phonebox website from results</node>
-        <node>Wait 4 seconds for website to load and handle any popups</node>
-        <node>Read the homepage - note company description, main services, and key offerings</node>
-        <node>Scroll down slowly to read more content about their services</node>
-        <node>Press back button to return to Google search results</node>
-        <node>Search for "Phonebox.co.uk reviews Trustpilot" on Google</node>
-        <node>Wait 3 seconds for results and tap the Trustpilot result</node>
-        <node>Wait 4 seconds for Trustpilot page to load</node>
-        <node>Read the overall rating and top customer reviews</node>
-        <node>Press back and search for "Phonebox.co.uk news 2025"</node>
-        <node>Wait 3 seconds and open the most recent news article</node>
-        <node>Read the news article content</node>
-        <node>Prepare and present complete summary: company overview, services, Trustpilot rating, customer feedback, recent news</node>
+        <node>Open https://www.google.com/search?q=Phonebox.co.uk with open_url</node>
+        <node>Tap the first result that links to phonebox.co.uk</node>
+        <node>Wait 3 seconds for the website to load</node>
+        <node>Read the homepage and note the company description and main services</node>
+        <node>Scroll down to read the rest of the services section</node>
+        <node>Open https://www.google.com/search?q=Phonebox.co.uk+reviews+Trustpilot with open_url</node>
+        <node>Tap the Trustpilot result</node>
+        <node>Wait 3 seconds for the Trustpilot page to load</node>
+        <node>Read the overall rating and the top customer reviews</node>
+        <node>Open https://www.google.com/search?q=Phonebox.co.uk+news with open_url</node>
+        <node>Tap the most recent news article</node>
+        <node>Read the article content</node>
+        <node>Prepare a complete summary of all collected information: company overview, services, Trustpilot rating, customer feedback and recent news</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 4 (Multi-step Form or Settings)
-User: Fill in information or adjust device/app options
+## Example 5 (Changing a device setting)
+User: Turn off battery saver
 Output result:
 <root>
-  <n>Configure Mobile Options</n>
-  <thought>Need to navigate to correct settings, find the specific option, and make the change carefully.</thought>
+  <n>Turn off battery saver</n>
+  <thought>Settings has no URL entry point, so open_app is correct here. Each node is one concrete action. A verification node earns its place because a toggle state is easy to get wrong.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Navigate to settings and make the requested configuration change</task>
+      <task>Turn off battery saver in Settings</task>
       <nodes>
-        <node>Open the required app or settings screen</node>
-        <node>Wait 2 seconds for app to load</node>
-        <node>Handle any permission requests or popups</node>
-        <node>Scroll to locate the relevant option or input field</node>
-        <node>Tap on the target field or option</node>
-        <node>Enter the required value or toggle the setting</node>
-        <node>Tap Save or Confirm button</node>
-        <node>Verify the change was applied successfully</node>
+        <node>Open com.android.settings with open_app</node>
+        <node>Read the screen to locate the Battery entry</node>
+        <node>Tap Battery</node>
+        <node>Tap Battery Saver</node>
+        <node>Turn the Battery Saver toggle off</node>
+        <node>Read the screen and confirm the toggle now reads Off</node>
       </nodes>
     </agent>
   </agents>
