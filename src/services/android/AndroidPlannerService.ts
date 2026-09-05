@@ -27,6 +27,80 @@ const MAX_UNCHANGED_OBSERVATIONS = 3;
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
 const MAX_HISTORY_THOUGHT_CHARS = 200; // cap per-step thought when building follow-up context
 
+/** Longest plan we will show; anything past this is noise for the user. */
+const MAX_PLAN_NODES = 40;
+/** Plan rows are one-liners in the UI, so keep them short. */
+const MAX_PLAN_NODE_CHARS = 120;
+
+/**
+ * Pulls human-readable step descriptions out of an Eko workflow stream message.
+ *
+ * The shape of that message is not part of Eko's public typings, and it has
+ * changed between versions, so this reads defensively: every access is guarded
+ * and any unrecognised shape simply yields an empty list. A missing plan
+ * degrades the UI to what it showed before — it never breaks the run.
+ */
+function extractPlanNodes(payload: unknown): string[] {
+  const nodes: string[] = [];
+
+  const pushText = (value: unknown): void => {
+    if (nodes.length >= MAX_PLAN_NODES) return;
+    let text: string | null = null;
+    if (typeof value === 'string') {
+      text = value;
+    } else if (value && typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      for (const key of ['text', 'name', 'description', 'title', 'content']) {
+        if (typeof obj[key] === 'string' && (obj[key] as string).trim()) {
+          text = obj[key] as string;
+          break;
+        }
+      }
+    }
+    if (!text) return;
+    const cleaned = text.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+    nodes.push(cleaned.length > MAX_PLAN_NODE_CHARS ? `${cleaned.slice(0, MAX_PLAN_NODE_CHARS - 1)}…` : cleaned);
+  };
+
+  const walk = (value: unknown, depth: number): void => {
+    if (!value || depth > 6 || nodes.length >= MAX_PLAN_NODES) return;
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry, depth + 1);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    const obj = value as Record<string, unknown>;
+    if (Array.isArray(obj.nodes)) {
+      for (const node of obj.nodes) pushText(node);
+      return;
+    }
+    for (const key of ['workflow', 'agents', 'steps', 'plan']) {
+      if (obj[key]) walk(obj[key], depth + 1);
+    }
+  };
+
+  walk(payload, 0);
+
+  // Older Eko builds stream the plan as XML text rather than a node array.
+  if (nodes.length === 0 && payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+    const xml = [obj.xml, obj.text, (obj.workflow as Record<string, unknown> | undefined)?.xml].find(
+      (candidate) => typeof candidate === 'string' && candidate.includes('<node'),
+    );
+    if (typeof xml === 'string') {
+      const pattern = /<node[^>]*>([\s\S]*?)<\/node>/g;
+      let match = pattern.exec(xml);
+      while (match !== null && nodes.length < MAX_PLAN_NODES) {
+        pushText(match[1].replace(/<[^>]*>/g, ' '));
+        match = pattern.exec(xml);
+      }
+    }
+  }
+
+  return nodes;
+}
+
 const ANDROID_PLANNER_SYSTEM = `You are an expert autonomous AI Planner for Android mobile devices.
 
 ## Your Role
@@ -570,6 +644,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let currentThought = '';
     let thinkingBuffer = '';
     let textBuffer = '';
+    // Eko re-streams the workflow as it grows, so only broadcast real changes.
+    let lastPlanSignature = '';
+    let loggedUnparsedPlan = false;
     let currentTaskLog: AndroidTaskLog | null = null;
     let lastScreenshot: string | undefined = initialScreenshot;
     let lastUiTree: string | undefined;
@@ -643,6 +720,34 @@ Use the current visible Android screen and UI state as context. Continue from wh
         onMessage: async (message: AgentStreamMessage) => {
           if (this.activeTasks.get(agentTask.id)?.cancelled) {
             wasCancelled = true;
+            return;
+          }
+
+          // The plan Eko builds before it touches the device is the most useful
+          // thing we can show during the otherwise blank planning wait. Read it
+          // through an untyped view: 'workflow' is not in Eko's exported union,
+          // so comparing the typed discriminant would not compile.
+          const rawMessage = message as unknown as { type?: string };
+          if (rawMessage.type === 'workflow') {
+            const planNodes = extractPlanNodes(message);
+            if (planNodes.length > 0) {
+              const signature = planNodes.join('\u0000');
+              if (signature !== lastPlanSignature) {
+                lastPlanSignature = signature;
+                this.gatewayService.broadcastToUser(userId, 'task:plan', {
+                  taskId: agentTask.id,
+                  nodes: planNodes,
+                });
+              }
+            } else if (!loggedUnparsedPlan) {
+              // One line per task, truncated — enough to fix the parser if a
+              // future Eko version changes the shape again.
+              loggedUnparsedPlan = true;
+              Logger.info(
+                `[AndroidPlanner] Task ${agentTask.id}: could not read plan from workflow message: ` +
+                  `${JSON.stringify(message).slice(0, 600)}`,
+              );
+            }
             return;
           }
 

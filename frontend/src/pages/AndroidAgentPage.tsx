@@ -48,6 +48,7 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
+  LinearProgress,
   MenuItem,
   Paper,
   Select,
@@ -89,6 +90,12 @@ export interface ChatMessage {
    * long transcripts.
    */
   verification?: { verified: boolean; unsupportedDomains: string[]; claimedCount: number };
+  /**
+   * The agent's plan, sent once the planner has written it and before any step
+   * touches the device. Rendered as upcoming rows so the wait shows what is
+   * about to happen instead of a bare spinner.
+   */
+  plan?: string[];
 }
 
 interface ApiMutationError {
@@ -151,6 +158,26 @@ const CURATED_SUGGESTIONS = [
   'Go to the Home screen and open the Clock app',
 ];
 
+
+/**
+ * Live elapsed time for a running task.
+ *
+ * This owns its own interval so the tick re-renders one <span> rather than the
+ * whole transcript — re-rendering the message list on a timer is what made the
+ * live screen stutter once before.
+ */
+const RunTimer = memo(function RunTimer({ startedAt }: { startedAt: number }) {
+  const [elapsed, setElapsed] = useState(() => Date.now() - startedAt);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  const seconds = Math.max(0, Math.floor(elapsed / 1000));
+  const label = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return <>{label}</>;
+});
 
 /**
  * Renders an action result. The raw "UPDATED SCREEN ELEMENTS" dump is huge and
@@ -560,6 +587,19 @@ export function AndroidAgentPage() {
           setActiveTaskId(msg.payload.taskId);
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
+          }
+        } else if (msg.event === 'task:plan') {
+          const nodes = msg.payload?.nodes;
+          if (Array.isArray(nodes) && nodes.length > 0) {
+            setMessages((prev) => {
+              if (prev.length === 0) return prev;
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              const lastMsg = updated[lastIdx];
+              if (lastMsg.role !== 'assistant') return prev;
+              updated[lastIdx] = { ...lastMsg, plan: nodes as string[] };
+              return updated;
+            });
           }
         } else if (msg.event === 'device:screen_capture') {
           // This event carries the hardware device id, so match it separately.
@@ -1499,6 +1539,46 @@ export function AndroidAgentPage() {
                           )}
                         </Stack>
 
+                        {/* Progress rail — turns the blank planning wait into
+                            something that shows how far along the run is. */}
+                        {(() => {
+                          const doneSteps = (msg.steps ?? []).filter(
+                            (step) => step.action?.type !== 'task_snapshot',
+                          ).length;
+                          const planned = msg.plan?.length ?? 0;
+                          const total = Math.max(planned, doneSteps);
+                          if (msg.status !== 'running' && total === 0) return null;
+
+                          const pct = total > 0 ? Math.min(100, Math.round((doneSteps / total) * 100)) : 0;
+
+                          return (
+                            <Box sx={{ mb: 1.5 }}>
+                              <Stack
+                                direction="row"
+                                justifyContent="space-between"
+                                alignItems="center"
+                                sx={{ mb: 0.5 }}
+                              >
+                                <Typography variant="caption" color="text.secondary">
+                                  {total > 0
+                                    ? `Step ${Math.min(doneSteps + (msg.status === 'running' ? 1 : 0), total)} of ${total}`
+                                    : 'Writing the plan'}
+                                </Typography>
+                                {msg.status === 'running' && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    <RunTimer startedAt={msg.timestamp} />
+                                  </Typography>
+                                )}
+                              </Stack>
+                              <LinearProgress
+                                variant={total > 0 ? 'determinate' : 'indeterminate'}
+                                value={pct}
+                                sx={{ height: 3, borderRadius: 2 }}
+                              />
+                            </Box>
+                          );
+                        })()}
+
                         {/* Step Execution Timeline (BrowserWorker Style Action Cards) */}
                         {msg.steps && msg.steps.length > 0 && (
                           <Stack spacing={1.5} sx={{ my: 1.5 }}>
@@ -1617,6 +1697,62 @@ export function AndroidAgentPage() {
                           </Stack>
                         )}
 
+                        {/* What the agent still intends to do. The planner's nodes
+                            do not map one-to-one onto tool calls, so this is
+                            labelled as intent rather than as exact next steps. */}
+                        {msg.status === 'running' &&
+                          (() => {
+                            const plan = msg.plan ?? [];
+                            if (plan.length === 0) return null;
+                            const doneSteps = (msg.steps ?? []).filter(
+                              (step) => step.action?.type !== 'task_snapshot',
+                            ).length;
+                            const remaining = plan.slice(doneSteps);
+                            if (remaining.length === 0) return null;
+                            const shown = remaining.slice(0, 6);
+                            const hidden = remaining.length - shown.length;
+
+                            return (
+                              <Box sx={{ my: 1.5 }}>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: 800,
+                                    letterSpacing: 0.4,
+                                    fontSize: 10.5,
+                                    color: 'text.secondary',
+                                  }}
+                                >
+                                  PLANNED
+                                </Typography>
+                                <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+                                  {shown.map((node, idx) => (
+                                    <Stack key={idx} direction="row" alignItems="flex-start" gap={1}>
+                                      <Box
+                                        sx={{
+                                          width: 7,
+                                          height: 7,
+                                          mt: 0.7,
+                                          flexShrink: 0,
+                                          borderRadius: '50%',
+                                          border: `1px solid ${alpha(theme.palette.text.disabled, 0.6)}`,
+                                        }}
+                                      />
+                                      <Typography variant="body2" color="text.disabled" sx={{ fontSize: 13 }}>
+                                        {node}
+                                      </Typography>
+                                    </Stack>
+                                  ))}
+                                  {hidden > 0 && (
+                                    <Typography variant="caption" color="text.disabled" sx={{ pl: 2 }}>
+                                      +{hidden} more
+                                    </Typography>
+                                  )}
+                                </Stack>
+                              </Box>
+                            );
+                          })()}
+
                         {/* Final answer — the part the user actually reads */}
                         {msg.content && (
                           <Box
@@ -1688,6 +1824,71 @@ export function AndroidAgentPage() {
                               })()}
 
                             <AgentMarkdown text={msg.content} />
+
+                            {/* Evidence: the actions that actually landed, so the
+                                claim above can be checked against what ran. */}
+                            {msg.status === 'done' &&
+                              (() => {
+                                const evidence = (msg.steps ?? []).filter(
+                                  (step) =>
+                                    step.status === 'SUCCESS' &&
+                                    step.action?.type !== 'task_snapshot' &&
+                                    Boolean(step.action?.type),
+                                );
+                                if (evidence.length === 0) return null;
+                                const shown = evidence.slice(-5);
+                                const hidden = evidence.length - shown.length;
+
+                                return (
+                                  <Box sx={{ mt: 1.5, pt: 1.25, borderTop: `1px solid ${theme.palette.divider}` }}>
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        fontWeight: 800,
+                                        letterSpacing: 0.4,
+                                        fontSize: 10.5,
+                                        color: 'text.secondary',
+                                      }}
+                                    >
+                                      WHAT BACKS THIS UP
+                                    </Typography>
+                                    <Stack spacing={0.5} sx={{ mt: 0.75 }}>
+                                      {hidden > 0 && (
+                                        <Typography variant="caption" color="text.disabled">
+                                          {hidden} earlier {hidden === 1 ? 'action' : 'actions'} not shown
+                                        </Typography>
+                                      )}
+                                      {shown.map((step) => (
+                                        <Stack key={step.stepIndex} direction="row" alignItems="center" gap={1}>
+                                          <Chip
+                                            label={`step ${step.stepIndex}`}
+                                            size="small"
+                                            sx={{
+                                              height: 18,
+                                              fontSize: 10,
+                                              fontWeight: 700,
+                                              bgcolor: alpha(theme.palette.success.main, 0.12),
+                                              color: 'success.dark',
+                                            }}
+                                          />
+                                          <Typography
+                                            variant="caption"
+                                            color="text.secondary"
+                                            sx={{
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            {step.action?.type}
+                                            {step.result ? ` · ${step.result.split('\n')[0].slice(0, 70)}` : ''}
+                                          </Typography>
+                                        </Stack>
+                                      ))}
+                                    </Stack>
+                                  </Box>
+                                );
+                              })()}
 
                             {/* One-click continue when the run only stopped because of the step budget */}
                             {msg.status === 'error' &&
