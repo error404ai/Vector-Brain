@@ -2,6 +2,21 @@ import type { AndroidDevice } from '@/RTKService/androidService/androidService';
 import { Box, Stack, Tooltip, Typography } from '@mui/material';
 import { useMemo } from 'react';
 
+/**
+ * Turns whatever the companion app reported into one short, groupable label.
+ *
+ * Devices send this field in several shapes — "13", "13.0", and (on this fleet)
+ * the already-prefixed "Android 17 (API 37)". Prefixing blindly produced
+ * "Android Android 17 (API 37)", so the version number is extracted instead of
+ * assumed.
+ */
+function versionLabel(raw?: string): string {
+  const value = (raw || '').trim();
+  if (!value) return 'Unknown';
+  const match = value.match(/(\d+)/);
+  return match ? `Android ${match[1]}` : value;
+}
+
 interface FleetCoverageStripProps {
   devices: AndroidDevice[];
 }
@@ -22,20 +37,15 @@ export default function FleetCoverageStrip({ devices }: FleetCoverageStripProps)
   const segments = useMemo(() => {
     const counts = new Map<string, number>();
     for (const device of devices) {
-      // Versions arrive as "13", "13.0" or occasionally a codename. The major
-      // number is the only part anyone groups by.
-      const raw = (device.android_version || '').trim();
-      const major = raw ? raw.split('.')[0] : '';
-      const key = major ? `Android ${major}` : 'Unknown';
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      counts.set(versionLabel(device.android_version), (counts.get(versionLabel(device.android_version)) ?? 0) + 1);
     }
 
     return [...counts.entries()]
       .sort((a, b) => {
         const na = Number(a[0].replace(/\D/g, ''));
         const nb = Number(b[0].replace(/\D/g, ''));
-        if (Number.isNaN(na)) return 1;
-        if (Number.isNaN(nb)) return -1;
+        if (!na) return 1;
+        if (!nb) return -1;
         return nb - na;
       })
       .map(([label, count]) => ({ label, count }));
@@ -48,7 +58,9 @@ export default function FleetCoverageStrip({ devices }: FleetCoverageStripProps)
   // Older versions sit further along the ramp, so the fleet reads left-to-right
   // from newest to oldest without needing a legend.
   const shade = (index: number) => {
-    const stops = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'];
+    // Adjacent shades of one hue are indistinguishable in a 10px bar, so the
+    // ramp steps through hue as well as lightness.
+    const stops = ['#1d4ed8', '#0891b2', '#7c3aed', '#0d9488', '#c2410c', '#64748b'];
     return stops[Math.min(index, stops.length - 1)];
   };
 

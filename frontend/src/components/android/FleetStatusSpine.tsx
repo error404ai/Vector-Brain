@@ -22,8 +22,8 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
   const base = {
     running: 'primary.main',
     failed: 'error.main',
-    idle: 'success.light',
-    offline: 'grey.300',
+    idle: 'success.main',
+    offline: 'grey.400',
   }[state];
 
   return (
@@ -34,7 +34,7 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
         left: 0,
         top: 0,
         bottom: 0,
-        width: 4,
+        width: 5,
         bgcolor: base,
         overflow: 'hidden',
 

@@ -561,7 +561,10 @@ export default function AndroidFleetPage() {
           sx={{
             display: 'grid',
             gap: 2,
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)', xl: 'repeat(4, 1fr)' },
+            // auto-fill rather than a fixed count: two devices on a wide screen
+            // stay card-sized instead of stretching into two huge panels.
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            alignItems: 'start',
           }}
         >
           {orderedDevices.map((device) => {
@@ -584,7 +587,7 @@ export default function AndroidFleetPage() {
                   // so the content stays readable.
                   display: 'flex',
                   flexDirection: 'column',
-                  pl: '4px',
+                  pl: '5px',
                   transition: 'border-color 180ms ease, box-shadow 180ms ease',
                   ...(state.isRunning && { boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.28)' }),
                 }}
@@ -648,8 +651,19 @@ export default function AndroidFleetPage() {
                 {state.isRunning && <LinearProgress sx={{ mt: 1 }} />}
 
                 {/* Live screen */}
+                {/* A 9:16 box inside a grid column becomes ~750px tall, which turned
+                    every card into a column of black. On a board the screen is a
+                    thumbnail, not the subject — the full view is behind Enlarge.
+                    Fixed height keeps the rows aligned across the whole grid. */}
                 <Box
-                  sx={{ m: 1, cursor: controlDeviceId === device.id ? 'default' : 'pointer' }}
+                  sx={{
+                    m: 1,
+                    height: 208,
+                    borderRadius: 1.5,
+                    overflow: 'hidden',
+                    bgcolor: 'grey.900',
+                    cursor: controlDeviceId === device.id ? 'default' : 'pointer',
+                  }}
                   onClick={
                     controlDeviceId === device.id
                       ? undefined
@@ -658,6 +672,7 @@ export default function AndroidFleetPage() {
                 >
                   <InteractiveDeviceScreen
                     compact
+                    fill
                     deviceId={device.id}
                     screenshot={state.screenshot}
                     onScreenshot={(base64) => patchRuntime(device.id, { screenshot: base64 })}
