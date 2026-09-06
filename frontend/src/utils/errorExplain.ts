@@ -104,11 +104,81 @@ const RULES: ErrorRule[] = [
     },
   },
   {
+    patterns: ['nothing happened for'],
+    explanation: {
+      title: 'The run went silent and was stopped',
+      cause:
+        'Neither the phone nor the AI provider sent anything for three minutes. Usually the companion app lost its connection, the phone went to sleep, or the provider request hung.',
+      suggestion:
+        'Check the phone is awake, online and showing the companion app as connected, then run it again. This is not a step or time limit, so raising Steps will not help.',
+      recoveryPrompt: 'Show me the current screen',
+    },
+  },
+  {
     patterns: ['step limit', 'step-limit'],
     explanation: {
       title: 'Ran out of steps',
       cause: 'The task needed more moves than the step budget allowed.',
-      suggestion: 'Continue the task with a bigger budget, or raise the Steps number in the header before starting long tasks.',
+      suggestion:
+        'Raise the Steps number in the header and run it again — there is no upper limit, so long tasks can be given thousands. As a rough guide a step takes about 11 seconds, so 500 steps is roughly an hour and a half.',
+    },
+  },
+  {
+    patterns: [
+      'context length',
+      'context_length_exceeded',
+      'maximum context',
+      'too many tokens',
+      'prompt is too long',
+      'reduce the length of the messages',
+    ],
+    explanation: {
+      title: 'The conversation grew too large for the model',
+      cause:
+        'Every step is added to the model\u2019s context. On a very long run that eventually exceeds what the model can hold.',
+      suggestion:
+        'Open Settings and lower "Compress threshold" so history is summarised sooner, or switch to a model with a larger context window. Splitting the task into a few shorter runs also avoids it entirely.',
+    },
+  },
+  {
+    patterns: ['rate limit', 'rate_limit', 'too many requests', '429'],
+    explanation: {
+      title: 'The AI provider is throttling the requests',
+      cause: 'Long runs make many calls in a row, and the provider capped how fast your key may send them.',
+      suggestion:
+        'Wait a few minutes and retry, or switch to another provider in the model dropdown. Upgrading the plan on your provider account raises the limit permanently.',
+    },
+  },
+  {
+    patterns: ['invalid api key', 'incorrect api key', 'unauthorized', 'authentication', '401'],
+    explanation: {
+      title: 'The AI provider rejected your key',
+      cause: 'The API key is wrong, expired, or has no credit left.',
+      suggestion: 'Open Settings → AI configuration and re-enter the key, then check the balance on your provider account.',
+    },
+  },
+  {
+    patterns: ['insufficient', 'quota', 'billing', 'credit balance'],
+    explanation: {
+      title: 'Your provider account is out of credit',
+      cause: 'The AI provider refused the request because the account has no remaining balance or quota.',
+      suggestion: 'Top up the account with your AI provider, then run the task again. Vector Brain itself does not charge for runs.',
+    },
+  },
+  {
+    patterns: ['already running another automation'],
+    explanation: {
+      title: 'That phone is busy',
+      cause: 'One device can only run a single automation at a time, and an earlier run has not finished yet.',
+      suggestion: 'Stop the running task from its session, or wait for it to finish, then start this one.',
+    },
+  },
+  {
+    patterns: ['is currently offline'],
+    explanation: {
+      title: 'The phone is not connected',
+      cause: 'The companion app is closed, the phone lost network, or Android killed the app in the background.',
+      suggestion: 'Open the Vector Brain companion app on the phone and wait for it to show as connected, then retry.',
     },
   },
   {

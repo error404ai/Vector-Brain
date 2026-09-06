@@ -36,7 +36,9 @@ export const DispatchAndroidPromptValidation = z.object({
   task_id: z.number().optional(),
   // Matches the 1-500 range the dashboard offers. The old cap of 50 silently
   // rejected any longer run with a generic validation error.
-  max_steps: z.number().min(1, 'At least 1 step is required').max(500, 'Step limit cannot exceed 500').default(50),
+  // No upper bound: steps are the run's only budget now that the wall-clock
+  // timeout is gone, and long tasks legitimately need thousands of them.
+  max_steps: z.number().int().min(1, 'At least 1 step is required').default(500),
   /** Pin a specific provider instead of the account's active one. */
   ai_config_id: z.number().optional(),
   /** Keep every screen frame so the run can be replayed or shared. */
