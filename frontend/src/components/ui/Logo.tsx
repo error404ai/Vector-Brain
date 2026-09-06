@@ -1,4 +1,4 @@
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import VectorMark from '@/components/brand/VectorMark';
 import { Box, Stack, Typography } from '@mui/material';
 
 interface LogoProps {
@@ -22,7 +22,7 @@ export function Logo({ size = 34, showText = true }: LogoProps) {
           boxShadow: '0 10px 22px rgba(37, 99, 235, 0.22)',
         }}
       >
-        <AutoAwesomeIcon sx={{ fontSize: Math.round(size * 0.58) }} />
+        <VectorMark size={Math.round(size * 0.66)} color="#ffffff" accent="#7dd3fc" />
       </Box>
       {showText ? (
         <Typography

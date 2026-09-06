@@ -1358,7 +1358,7 @@ export function AndroidAgentPage() {
                   </Box>
                 ) : (
                   <Stack spacing={1.5} alignItems="center" sx={{ p: 3, textAlign: 'center' }}>
-                    <PhoneAndroidIcon sx={{ fontSize: 48, color: 'text.disabled' }} />
+                    <VectorMark size={52} color="#64748b" accent="#38bdf8" animated={isDeviceOnline && hasScreenCapture} />
                     <Typography variant="caption" color="text.secondary">
                       {!isDeviceOnline
                         ? 'Device is offline'
@@ -1588,6 +1588,9 @@ export function AndroidAgentPage() {
 
                           return (
                             <Box sx={{ mb: 1.5 }}>
+                              {/* Before any step lands there is nothing to show
+                                  but an empty bar, so the mark carries the wait. */}
+                              {running && doneSteps === 0 && <PlanningIndicator />}
                               <Stack
                                 direction="row"
                                 justifyContent="space-between"
