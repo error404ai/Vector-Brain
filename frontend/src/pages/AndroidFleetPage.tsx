@@ -656,11 +656,17 @@ export default function AndroidFleetPage() {
                     every card into a column of black. On a board the screen is a
                     thumbnail, not the subject — the full view is behind Enlarge.
                     Fixed height keeps the rows aligned across the whole grid. */}
+                {/* A phone screen is portrait, so a full-width landscape box wasted
+                    most of its area on black bars and shrank the actual frame to a
+                    sliver. Constraining by height instead keeps the real 9:16 shape
+                    and gives every card the same row height. */}
                 <Box
                   sx={{
-                    m: 1,
-                    height: 208,
-                    borderRadius: 1.5,
+                    mx: 'auto',
+                    my: 1,
+                    height: 250,
+                    width: 141,
+                    borderRadius: 2,
                     overflow: 'hidden',
                     bgcolor: 'grey.900',
                     cursor: controlDeviceId === device.id ? 'default' : 'pointer',
