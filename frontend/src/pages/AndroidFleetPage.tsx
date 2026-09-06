@@ -9,6 +9,8 @@ import {
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
+import FleetCoverageStrip from '@/components/android/FleetCoverageStrip';
+import FleetStatusSpine from '@/components/android/FleetStatusSpine';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -378,13 +380,37 @@ export default function AndroidFleetPage() {
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       {/* Header */}
-      <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1.5} sx={{ mb: 2 }}>
-        <PhoneAndroidIcon color="primary" />
-        <Typography variant="h5" sx={{ fontWeight: 800 }}>
-          Device Fleet
-        </Typography>
-        <Chip size="small" label={`${onlineDevices.length} online`} color="success" variant="outlined" />
-        {runningCount > 0 && <Chip size="small" label={`${runningCount} running`} color="warning" variant="outlined" />}
+      <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 2.5 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h5" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
+            Device Fleet
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            Send one instruction to every phone at once
+          </Typography>
+        </Box>
+
+        {/* Counters read as a board, not as chips: the number carries the
+            weight and the word underneath explains it. */}
+        <Stack direction="row" spacing={3} sx={{ ml: { md: 2 } }}>
+          {[
+            { value: onlineDevices.length, label: 'online', tone: 'success.main' },
+            { value: runningCount, label: 'running', tone: runningCount > 0 ? 'primary.main' : 'text.disabled' },
+            { value: devices.length - onlineDevices.length, label: 'offline', tone: 'text.disabled' },
+          ].map((stat) => (
+            <Box key={stat.label}>
+              <Typography
+                sx={{ fontWeight: 800, fontSize: 26, lineHeight: 1, color: stat.tone, fontVariantNumeric: 'tabular-nums' }}
+              >
+                {stat.value}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {stat.label}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
+
         <Box sx={{ flexGrow: 1 }} />
         {runningCount > 0 && (
           <Button size="small" color="error" variant="outlined" startIcon={<StopCircleIcon />} onClick={handleStopAll}>
@@ -398,8 +424,22 @@ export default function AndroidFleetPage() {
         </Tooltip>
       </Stack>
 
-      {/* Broadcast bar */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }}>
+      <FleetCoverageStrip devices={devices} />
+
+      {/* Broadcast bar — the primary control on the page, so it is raised out of
+          the flat outlined-paper treatment the rest of the page uses. */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2.25,
+          mb: 3,
+          borderRadius: 2.5,
+          border: '1px solid',
+          borderColor: selectedIds.length > 0 ? 'primary.main' : 'divider',
+          bgcolor: selectedIds.length > 0 ? 'action.hover' : 'background.paper',
+          transition: 'border-color 200ms ease, background-color 200ms ease',
+        }}
+      >
         <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1.5 }}>
           <SmartToyIcon fontSize="small" color="primary" />
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -535,14 +575,31 @@ export default function AndroidFleetPage() {
                 key={device.id}
                 variant="outlined"
                 sx={{
+                  position: 'relative',
                   borderRadius: 2,
+                  overflow: 'hidden',
                   borderWidth: isSelected || state.startError ? 2 : 1,
                   borderColor: state.startError ? 'error.main' : isSelected ? 'primary.main' : undefined,
-                  opacity: isOnline ? 1 : 0.65,
+                  // Offline cards keep full contrast; the spine carries the state
+                  // so the content stays readable.
                   display: 'flex',
                   flexDirection: 'column',
+                  pl: '4px',
+                  transition: 'border-color 180ms ease, box-shadow 180ms ease',
+                  ...(state.isRunning && { boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.28)' }),
                 }}
               >
+                <FleetStatusSpine
+                  state={
+                    state.isRunning
+                      ? 'running'
+                      : state.startError
+                        ? 'failed'
+                        : isOnline
+                          ? 'idle'
+                          : 'offline'
+                  }
+                />
                 {/* Header */}
                 <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
                   <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
