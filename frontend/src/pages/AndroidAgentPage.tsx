@@ -60,6 +60,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
+import DownloadLogsButton from '@/components/android/DownloadLogsButton';
 import PlanningIndicator from '@/components/brand/PlanningIndicator';
 import VectorMark from '@/components/brand/VectorMark';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -2039,6 +2040,11 @@ export function AndroidAgentPage() {
 
                             {msg.status === 'done' && shareableTaskId && (
                               <Box sx={{ mt: 1.5 }}>
+                                {/* The panel only renders the last few actions, so a
+                                    long run is unreviewable without an export. */}
+                                <Box sx={{ mb: 1.5 }}>
+                                  <DownloadLogsButton taskId={shareableTaskId} />
+                                </Box>
                                 {/* A finished route can be replayed later without a model,
                                     so offer to keep it right where it succeeded. */}
                                 <Box sx={{ mb: 1 }}>
