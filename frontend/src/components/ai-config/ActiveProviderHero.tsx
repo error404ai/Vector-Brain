@@ -94,6 +94,28 @@ export default function ActiveProviderHero({
         )} 65%, transparent 100%)`,
         boxShadow: `0 8px 24px ${alpha(theme.palette.primary.main, 0.14)}`,
         p: { xs: 2, md: 2.5 },
+        overflow: 'hidden',
+
+        // One slow sweep across the panel. This is the only thing on the page
+        // that moves on its own, which is what makes it read as "this provider
+        // is the live one" rather than as decoration.
+        '@keyframes vbHeroSweep': {
+          '0%': { transform: 'translateX(-120%)' },
+          '100%': { transform: 'translateX(220%)' },
+        },
+        '&::after': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          width: '35%',
+          background: `linear-gradient(100deg, transparent, ${alpha(theme.palette.primary.main, 0.16)}, transparent)`,
+          animation: 'vbHeroSweep 5.5s ease-in-out infinite',
+          pointerEvents: 'none',
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          '&::after': { animation: 'none', opacity: 0 },
+        },
       }}
     >
       <Stack spacing={1.75}>
