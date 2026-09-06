@@ -378,7 +378,7 @@ export default function AndroidFleetPage() {
 
   // ---- Render ------------------------------------------------------------
   return (
-    <Box sx={{ p: { xs: 2, md: 3 } }}>
+    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1360, mx: 'auto' }}>
       {/* Header */}
       <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 2.5 }}>
         <Box sx={{ minWidth: 0 }}>
@@ -563,7 +563,7 @@ export default function AndroidFleetPage() {
             gap: 2,
             // auto-fill rather than a fixed count: two devices on a wide screen
             // stay card-sized instead of stretching into two huge panels.
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
             alignItems: 'start',
           }}
         >
@@ -606,14 +606,21 @@ export default function AndroidFleetPage() {
                 {/* Header */}
                 <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
                   <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
-                  <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-                    <Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>
-                      {device.device_name}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" noWrap>
-                      {device.device_model || 'Android'} · {device.device_id.slice(-8)}
-                    </Typography>
-                  </Box>
+                  <Typography variant="body2" noWrap sx={{ fontWeight: 700, flexGrow: 1, minWidth: 0 }}>
+                    {device.device_name}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={isOnline ? 'ONLINE' : 'OFFLINE'}
+                    color={isOnline ? 'success' : 'default'}
+                    sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
+                  />
+                </Stack>
+
+                <Stack direction="row" alignItems="center" gap={0.25} sx={{ px: 1, pb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ flexGrow: 1, minWidth: 0, pl: 0.5 }}>
+                    {device.device_model || 'Android'} · {device.device_id.slice(-8)}
+                  </Typography>
                   <Tooltip title="Enlarge screen">
                     <span>
                       <IconButton size="small" disabled={!isOnline} onClick={() => setExpandedDeviceId(device.id)}>
@@ -640,15 +647,9 @@ export default function AndroidFleetPage() {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Chip
-                    size="small"
-                    label={isOnline ? 'ONLINE' : 'OFFLINE'}
-                    color={isOnline ? 'success' : 'default'}
-                    sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
-                  />
                 </Stack>
 
-                {state.isRunning && <LinearProgress sx={{ mt: 1 }} />}
+                {state.isRunning && <LinearProgress />}
 
                 {/* Live screen */}
                 {/* A 9:16 box inside a grid column becomes ~750px tall, which turned
