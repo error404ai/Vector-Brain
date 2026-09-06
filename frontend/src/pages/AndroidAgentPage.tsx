@@ -60,6 +60,8 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
+import PlanningIndicator from '@/components/brand/PlanningIndicator';
+import VectorMark from '@/components/brand/VectorMark';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
