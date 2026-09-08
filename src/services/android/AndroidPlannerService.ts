@@ -247,113 +247,116 @@ of waiting a third time or scrolling at random.
 {{examples}}`;
 
 const ANDROID_PLANNER_EXAMPLES = `
-## Example 1 (Simple Web Navigation)
+## Example 1 (Open a website)
 User: Open Chrome and go to google.com
 Output result:
 <root>
   <n>Open Google</n>
-  <thought>Simple navigation task. Open Chrome browser and navigate to google.com. Handle any popups.</thought>
+  <thought>A URL is known, so this is a single open_url. No app launch, no address bar, no Enter.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Launch Chrome and navigate to google.com</task>
+      <task>Open google.com</task>
       <nodes>
-        <node>Open Chrome browser using open_app</node>
-        <node>Wait 2 seconds for Chrome to load</node>
-        <node>Tap the address bar at the top of Chrome</node>
-        <node>Type "google.com" in the address bar</node>
-        <node>Tap Go or press Enter to navigate</node>
-        <node>Wait 3 seconds for Google homepage to load</node>
-        <node>Handle any cookie popups or permission dialogs if they appear</node>
-        <node>Verify Google homepage is displayed and search box is visible</node>
+        <node>open_url https://www.google.com</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 2 (Search and Open Result)
+## Example 2 (Search the web and open a result)
 User: Search for Phonebox.co.uk on Google and open their website
 Output result:
 <root>
-  <n>Search and Open Phonebox</n>
-  <thought>Need to open Chrome, go to Google, search for Phonebox, then open the correct result. Each step is separate.</thought>
+  <n>Open Phonebox site</n>
+  <thought>The search results URL loads Google already on the results page, so the search itself is one node. &udm=14 strips the AI overview and ad blocks so the organic results sit at the top with no scrolling.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Search Google for Phonebox.co.uk and open official website</task>
+      <task>Search Google for Phonebox.co.uk and open the official site</task>
       <nodes>
-        <node>Open Chrome browser</node>
-        <node>Wait 2 seconds for Chrome to load</node>
-        <node>Tap the address bar and type "google.com", press Enter</node>
-        <node>Wait 3 seconds for Google to load</node>
-        <node>Tap the Google search box</node>
-        <node>Type "Phonebox.co.uk" in the search box</node>
-        <node>Tap the Search button or press Enter</node>
-        <node>Wait 3 seconds for search results to load</node>
-        <node>Read the search results and identify the official Phonebox website link</node>
-        <node>Tap on the official Phonebox website result</node>
-        <node>Wait 4 seconds for the website to load</node>
-        <node>Handle any cookie consent or popup dialogs</node>
-        <node>Verify the Phonebox website is loaded correctly</node>
+        <node>open_url https://www.google.com/search?q=Phonebox.co.uk&udm=14</node>
+        <node>Tap the first result that points at phonebox.co.uk</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 3 (Company Research)
-User: Research about Phonebox.co.uk company - find their services, reviews, and latest news
+## Example 3 (Search inside an app that has no URL)
+User: Open the Play Store and search for Duolingo
 Output result:
 <root>
-  <n>Phonebox Company Research</n>
-  <thought>This is a research task requiring multiple sources. I must NOT complete after just one search. I need to: visit official website, read content, find reviews on Trustpilot, search for news, then summarize everything. Minimum 15 nodes needed.</thought>
+  <n>Find Duolingo</n>
+  <thought>The Play Store has no usable search URL, so this is the fallback path: focus the search field, set the text, then press_key ENTER to submit. Only use this shape when no URL entry point exists.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Research Phonebox.co.uk thoroughly from multiple sources and provide complete summary</task>
+      <task>Search the Play Store for Duolingo</task>
       <nodes>
-        <node>Open Chrome browser and navigate to google.com</node>
-        <node>Wait 3 seconds for Google to load</node>
-        <node>Search for "Phonebox.co.uk" in Google</node>
-        <node>Wait 3 seconds for search results to load</node>
-        <node>Identify and tap the official Phonebox website from results</node>
-        <node>Wait 4 seconds for website to load and handle any popups</node>
-        <node>Read the homepage - note company description, main services, and key offerings</node>
-        <node>Scroll down slowly to read more content about their services</node>
-        <node>Press back button to return to Google search results</node>
-        <node>Search for "Phonebox.co.uk reviews Trustpilot" on Google</node>
-        <node>Wait 3 seconds for results and tap the Trustpilot result</node>
-        <node>Wait 4 seconds for Trustpilot page to load</node>
-        <node>Read the overall rating and top customer reviews</node>
-        <node>Press back and search for "Phonebox.co.uk news 2025"</node>
-        <node>Wait 3 seconds and open the most recent news article</node>
-        <node>Read the news article content</node>
-        <node>Prepare and present complete summary: company overview, services, Trustpilot rating, customer feedback, recent news</node>
+        <node>Open the Play Store with open_app</node>
+        <node>Tap the search field and set_text "Duolingo"</node>
+        <node>press_key ENTER to run the search</node>
+        <node>Tap the Duolingo result</node>
       </nodes>
     </agent>
   </agents>
 </root>
 
-## Example 4 (Multi-step Form or Settings)
-User: Fill in information or adjust device/app options
+## Example 4 (Open an app already on its results screen)
+User: Open YouTube and play Lo-Fi Beats
 Output result:
 <root>
-  <n>Configure Mobile Options</n>
-  <thought>Need to navigate to correct settings, find the specific option, and make the change carefully.</thought>
+  <n>Play Lo-Fi Beats</n>
+  <thought>YouTube's results URL opens the app itself on the results screen, so opening the app first would be wasted. Two nodes total.</thought>
   <agents>
     <agent name="AndroidAgent" id="0" dependsOn="">
-      <task>Navigate to settings and make the requested configuration change</task>
+      <task>Play a Lo-Fi Beats video on YouTube</task>
       <nodes>
-        <node>Open the required app or settings screen</node>
-        <node>Wait 2 seconds for app to load</node>
-        <node>Handle any permission requests or popups</node>
-        <node>Scroll to locate the relevant option or input field</node>
-        <node>Tap on the target field or option</node>
-        <node>Enter the required value or toggle the setting</node>
-        <node>Tap Save or Confirm button</node>
-        <node>Verify the change was applied successfully</node>
+        <node>open_url https://www.youtube.com/results?search_query=Lo-Fi+Beats</node>
+        <node>Tap the first video in the results</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+## Example 5 (Research across several sources)
+User: Research Phonebox.co.uk - services, reviews, and latest news
+Output result:
+<root>
+  <n>Phonebox research</n>
+  <thought>Research genuinely needs several sources, so the node count is high here for a real reason, not out of habit. Each source is still reached by URL rather than by typing into a search box.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Research Phonebox.co.uk from several sources and summarise</task>
+      <nodes>
+        <node>open_url https://www.phonebox.co.uk</node>
+        <node>Read the homepage - company description, main services, key offerings</node>
+        <node>Scroll down and read the rest of the services content</node>
+        <node>open_url https://uk.trustpilot.com/review/phonebox.co.uk</node>
+        <node>Read the overall rating and the top customer reviews</node>
+        <node>open_url https://www.google.com/search?q=Phonebox.co.uk+news&udm=14</node>
+        <node>Open the most recent news article and read it</node>
+        <node>Prepare the summary: overview, services, Trustpilot rating, customer feedback, recent news</node>
+      </nodes>
+    </agent>
+  </agents>
+</root>
+
+## Example 6 (Change a device setting)
+User: Open Settings and check the battery level
+Output result:
+<root>
+  <n>Check battery</n>
+  <thought>No URL exists for Settings, so open the app and navigate. No pre-planned popup handling and no fixed waits — the agent deals with whatever actually appears.</thought>
+  <agents>
+    <agent name="AndroidAgent" id="0" dependsOn="">
+      <task>Read the battery level from Settings</task>
+      <nodes>
+        <node>Open Settings with open_app</node>
+        <node>Find and tap Battery</node>
+        <node>Read the battery percentage from the screen</node>
       </nodes>
     </agent>
   </agents>
 </root>
 `;
-
 global.prompts.set(GlobalPromptKey.planner_system, ANDROID_PLANNER_SYSTEM);
 global.prompts.set(GlobalPromptKey.planner_example, ANDROID_PLANNER_EXAMPLES);
 
