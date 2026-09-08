@@ -72,11 +72,23 @@ const RULES: ErrorRule[] = [
     },
   },
   {
+    // Must sit above the generic action_rejected rule below, which is matched by
+    // substring in order. A scroll that hits the end of a list is the most
+    // common rejection by far, and calling it a security block was alarming and
+    // wrong.
+    patterns: ['already at the end', 'nothing moved'],
+    explanation: {
+      title: 'The page would not scroll further',
+      cause: 'That list or page is already at its end.',
+      suggestion: 'Nothing to fix — the agent reads what is on screen instead.',
+    },
+  },
+  {
     patterns: ['action_rejected'],
     explanation: {
-      title: 'Android blocked the action',
-      cause: 'Some screens (payments, permission dialogs, secure apps) do not allow automated input.',
-      suggestion: 'Complete that step manually on the phone, then ask the agent to continue.',
+      title: 'The app would not accept that action',
+      cause: 'The element refused the tap or edit. Payment screens, permission dialogs and secure apps also block automated input.',
+      suggestion: 'Usually the agent retries another way. If it keeps failing, do that step by hand on the phone and ask the agent to continue.',
     },
   },
   {

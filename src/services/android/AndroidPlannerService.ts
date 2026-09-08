@@ -203,6 +203,10 @@ of waiting a third time or scrolling at random.
   promise the user that pages stayed in a single tab.
 - Plan: open the search results URL → wait for results → tap the first
   plausible result
+- Always append &udm=14 to a Google search URL. It drops the AI overview, the
+  shopping row and the image block, so the organic results sit at the top and
+  no scrolling is needed to reach them. Without it a search often returns
+  stock-photo and image pages instead of the sites asked for.
 
 ### For multi-item lists (search results, article listings):
 - When identifying "top N" items from a scrollable list, note down each
@@ -213,9 +217,10 @@ of waiting a third time or scrolling at random.
   repeatedly to visually re-confirm it.
 
 ### For NAVIGATION tasks:
-- Include explicit wait times after each navigation
-- Include handling of any popups or overlays
-- Include scroll steps if content is below the fold
+- Add a wait node only where something genuinely loads, and never plan popup or
+  overlay handling in advance — the agent deals with those if they appear. (An
+  earlier version of this section asked for both, contradicting the rule above.)
+- Include a scroll node only when the content is known to sit below the fold
 
 ### STOPPING EARLY (important):
 - The nodes are a guide, NOT a checklist that must be exhausted. The moment
@@ -452,11 +457,17 @@ export class AndroidPlannerService {
           agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
           await this.agentTaskRepo.save(agentTask);
 
-          const recentLogs = await this.taskLogRepo.find({
-            where: { agent_task_id: existingTaskId },
-            order: { step_index: 'ASC' },
-            take: 20,
-          });
+          // DESC then reversed: take() applies after the sort, so ASC handed back
+          // the FIRST twenty steps of the run. On any task longer than twenty
+          // steps a follow-up therefore showed the agent only the beginning and
+          // none of the work it had just done.
+          const recentLogs = (
+            await this.taskLogRepo.find({
+              where: { agent_task_id: existingTaskId },
+              order: { step_index: 'DESC' },
+              take: 20,
+            })
+          ).reverse();
 
                     const historySnippet = recentLogs.length
             ? recentLogs

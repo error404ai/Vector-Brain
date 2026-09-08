@@ -495,7 +495,7 @@ export default function AndroidFleetPage() {
             onChange={(event) => setMaxSteps(Number(event.target.value))}
             onBlur={() => setMaxSteps((prev) => Math.min(200, Math.max(1, prev || 40)))}
             inputProps={{ min: 1, max: 200 }}
-            helperText="1–200"
+            helperText="1–20000"
             sx={{ width: 120 }}
           />
           <Button
