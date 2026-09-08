@@ -138,16 +138,17 @@ export class DeviceFileService {
   /**
    * The list the companion app polls.
    *
-   * Shape is dictated by the app, not by us: it expects success/data/files and
-   * reads id, name, size, sha256 and status off each entry, keeping only the
-   * PENDING ones.
+   * Shape is dictated by the app, not by us: `data` must be the array of files
+   * itself. Wrapping it in an object made the phone report
+   * "JsonObject is not a JsonArray". A duplicate `files` key rides along because
+   * it costs nothing and covers a build that reads the other spelling.
    */
-  async listPendingForDevice(deviceIdString: string): Promise<{ success: boolean; data: { files: any[] } }> {
+  async listPendingForDevice(deviceIdString: string): Promise<{ success: boolean; data: any[]; files: any[] }> {
     await this.sweepExpired();
 
     const device = await this.deviceRepo.findOne({ where: { device_id: deviceIdString } });
     if (!device) {
-      return { success: true, data: { files: [] } };
+      return { success: true, data: [], files: [] };
     }
 
     const files = await this.fileRepo.find({
@@ -156,19 +157,16 @@ export class DeviceFileService {
       take: 20,
     });
 
-    return {
-      success: true,
-      data: {
-        files: files.map((file) => ({
-          id: SERIALIZE_ID_AS_STRING ? String(file.id) : file.id,
-          name: file.file_name,
-          size: file.size_bytes,
-          sha256: file.sha256,
-          status: file.status,
-          mime_type: file.mime_type,
-        })),
-      },
-    };
+    const payload = files.map((file) => ({
+      id: SERIALIZE_ID_AS_STRING ? String(file.id) : file.id,
+      name: file.file_name,
+      size: file.size_bytes,
+      sha256: file.sha256,
+      status: file.status,
+      mime_type: file.mime_type,
+    }));
+
+    return { success: true, data: payload, files: payload };
   }
 
   /**
