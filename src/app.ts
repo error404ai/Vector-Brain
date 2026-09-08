@@ -26,7 +26,9 @@ import { AiConfigController } from './controllers/AiConfigController';
 import { AiRuleController } from './controllers/AiRuleController';
 import { AndroidAgentController } from './controllers/AndroidAgentController';
 
+import { AndroidCompanionController } from './controllers/AndroidCompanionController';
 import { AndroidDeviceController } from './controllers/AndroidDeviceController';
+import { AndroidFileController } from './controllers/AndroidFileController';
 import { AuthController } from './controllers/AuthController';
 import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorController';
 import { DashboardController } from './controllers/DashboardController';
@@ -74,7 +76,9 @@ useExpressServer(app, {
     AiConfigController,
     AiRuleController,
     AndroidAgentController,
+    AndroidCompanionController,
     AndroidDeviceController,
+    AndroidFileController,
     AuthController,
     BrowserWorkerErrorController,
     DashboardController,

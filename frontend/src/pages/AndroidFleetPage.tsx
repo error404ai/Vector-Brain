@@ -11,10 +11,12 @@ import authManager from '@/_helpers/authManager';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import FleetCoverageStrip from '@/components/android/FleetCoverageStrip';
 import FleetStatusSpine from '@/components/android/FleetStatusSpine';
+import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -124,6 +126,7 @@ export default function AndroidFleetPage() {
   // Only one device streams frames at a time so the fleet view stays light.
   const [controlDeviceId, setControlDeviceId] = useState<number | null>(null);
   const [expandedDeviceId, setExpandedDeviceId] = useState<number | null>(null);
+  const [fileDeviceId, setFileDeviceId] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -374,6 +377,7 @@ export default function AndroidFleetPage() {
   };
 
   const historyDevice = devices.find((device) => device.id === historyDeviceId);
+  const fileDevice = devices.find((device) => device.id === fileDeviceId);
   const historyTasks = historyDeviceId !== null ? tasksByDevice[historyDeviceId] ?? [] : [];
 
   // ---- Render ------------------------------------------------------------
@@ -647,6 +651,13 @@ export default function AndroidFleetPage() {
                       </IconButton>
                     </span>
                   </Tooltip>
+                  <Tooltip title="Send a file to this device">
+                    <span>
+                      <IconButton size="small" onClick={() => setFileDeviceId(device.id)}>
+                        <AttachFileIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 </Stack>
 
                 {state.isRunning && <LinearProgress />}
@@ -870,6 +881,15 @@ export default function AndroidFleetPage() {
           );
         })()}
       </Dialog>
+
+      {/* Send a file to one device */}
+      <SendFileDialog
+        open={fileDeviceId !== null}
+        deviceId={fileDeviceId}
+        deviceName={fileDevice?.device_name}
+        isOnline={fileDevice?.status === 'ONLINE'}
+        onClose={() => setFileDeviceId(null)}
+      />
 
       {/* Per-device history */}
       <Dialog open={historyDeviceId !== null} onClose={() => setHistoryDeviceId(null)} fullWidth maxWidth="sm">

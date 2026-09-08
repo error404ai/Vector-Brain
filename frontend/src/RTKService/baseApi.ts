@@ -24,6 +24,7 @@ export const TAGS = {
   SCHEDULES: 'SCHEDULES',
   RUN_SHARE: 'RUN_SHARE',
   FLOWS: 'FLOWS',
+  DEVICE_FILES: 'DEVICE_FILES',
 } as const;
 
 
