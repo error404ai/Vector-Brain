@@ -611,7 +611,7 @@ export default function AndroidFleetPage() {
             gap: 2,
             // auto-fill rather than a fixed count: two devices on a wide screen
             // stay card-sized instead of stretching into two huge panels.
-            gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(470px, 1fr))',
             alignItems: 'start',
           }}
         >
@@ -727,8 +727,17 @@ export default function AndroidFleetPage() {
                     sliver. Constraining by height instead keeps the real 9:16 shape
                     and gives every card the same row height. */}
                 <PhoneFrame3D
-                  width={215}
-                  height={382}
+                  width={248}
+                  // 9:19, matching the Android Agent page's mockup, so the two
+                  // views show a phone of the same shape.
+                  //
+                  // Taller while driving: turning control on makes
+                  // InteractiveDeviceScreen add a Back/Home/Recents row and a
+                  // 2px outline inside this same box, and at the fixed height
+                  // those squeezed the frame and spilled past its edges. The
+                  // extra room lets the row sit along the bottom of the glass,
+                  // where a real phone keeps its nav bar anyway.
+                  height={controlDeviceId === device.id ? 580 : 524}
                   tilt={controlDeviceId !== device.id}
                   active={state.isRunning}
                   onClick={
