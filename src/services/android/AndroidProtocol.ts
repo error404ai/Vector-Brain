@@ -12,6 +12,28 @@ export type DeviceKey = 'ENTER' | 'BACKSPACE' | 'CLEAR';
 
 export type ScrollDirection = 'FORWARD' | 'BACKWARD';
 
+/**
+ * Settings screens the companion can open by intent.
+ *
+ * Each maps to an Android constant, so it lands on the same page whatever skin
+ * the phone runs — which navigating the Settings app does not.
+ */
+export type SettingsScreen =
+  | 'DATE_TIME'
+  | 'LANGUAGE'
+  | 'WIFI'
+  | 'MOBILE_NETWORK'
+  | 'DISPLAY'
+  | 'SOUND'
+  | 'LOCATION'
+  | 'BATTERY'
+  | 'STORAGE'
+  | 'APPS'
+  | 'ACCESSIBILITY'
+  | 'DEVELOPER'
+  | 'ABOUT'
+  | 'ROOT';
+
 export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
 
 export type AutomationAction =
@@ -36,7 +58,8 @@ export type AutomationAction =
   | { type: 'LongPress'; nodePath?: string; viewId?: string; text?: string; x?: number; y?: number; durationMillis?: number }
   | { type: 'ListApps' }
   | { type: 'SetClipboard'; text: string }
-  | { type: 'Paste' };
+  | { type: 'Paste' }
+  | { type: 'OpenSettings'; screen: SettingsScreen };
 
 export interface NodeBounds {
   left: number;

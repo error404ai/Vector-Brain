@@ -591,6 +591,35 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'open_settings',
+        description:
+          'Open a Settings screen directly. Always prefer this over launching the Settings app and navigating: manufacturers nest and rename these pages differently, so navigating costs several steps and often fails, while this lands on the same screen on every phone.',
+        parameters: {
+          type: 'object',
+          properties: {
+            screen: {
+              type: 'string',
+              enum: [
+                'DATE_TIME', 'LANGUAGE', 'WIFI', 'MOBILE_NETWORK', 'DISPLAY', 'SOUND',
+                'LOCATION', 'BATTERY', 'STORAGE', 'APPS', 'ACCESSIBILITY', 'DEVELOPER',
+                'ABOUT', 'ROOT',
+              ],
+              description: 'DATE_TIME for time and timezone, LANGUAGE for language and region, ROOT for the Settings home page',
+            },
+          },
+          required: ['screen'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          this.actionHistory = [];
+          return this.runDeviceAction(
+            { type: 'OpenSettings', screen: args.screen as any },
+            'open_settings',
+            args,
+          );
+        },
+      },
+      {
         name: 'wait_for_element',
         description: 'Wait until a UI element appears instead of guessing a fixed loading delay.',
         parameters: {

@@ -71,6 +71,45 @@ export const AutomationActionValidation = z.discriminatedUnion('type', [
   z.object({ type: z.literal('Wait'), durationMillis: z.number().int().min(1).max(60_000) }),
   z.object({ type: z.literal('ReadUiTree') }),
   z.object({ type: z.literal('CaptureScreen') }),
+  // The union had fallen behind the protocol: WaitForNode and ObserveScreen
+  // shipped without being listed, so a direct action of either type was
+  // rejected here even though every device supports it.
+  z.object({
+    type: z.literal('WaitForNode'),
+    nodePath: z.string().min(1).optional(),
+    viewId: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    timeoutMillis: z.number().int().min(250).max(15_000).optional(),
+  }),
+  z.object({ type: z.literal('ObserveScreen') }),
+  z.object({ type: z.literal('PressKey'), key: z.enum(['ENTER', 'BACKSPACE', 'CLEAR']) }),
+  z.object({
+    type: z.literal('ScrollNode'),
+    nodePath: z.string().min(1).optional(),
+    viewId: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    direction: z.enum(['FORWARD', 'BACKWARD']).optional(),
+  }),
+  z.object({
+    type: z.literal('LongPress'),
+    nodePath: z.string().min(1).optional(),
+    viewId: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    x: z.number().nonnegative().optional(),
+    y: z.number().nonnegative().optional(),
+    durationMillis: z.number().int().min(400).max(3_000).optional(),
+  }),
+  z.object({ type: z.literal('ListApps') }),
+  z.object({ type: z.literal('SetClipboard'), text: z.string().max(10_000) }),
+  z.object({ type: z.literal('Paste') }),
+  z.object({
+    type: z.literal('OpenSettings'),
+    screen: z.enum([
+      'DATE_TIME', 'LANGUAGE', 'WIFI', 'MOBILE_NETWORK', 'DISPLAY', 'SOUND',
+      'LOCATION', 'BATTERY', 'STORAGE', 'APPS', 'ACCESSIBILITY', 'DEVELOPER',
+      'ABOUT', 'ROOT',
+    ]),
+  }),
 ]).superRefine((action, context) => {
   if (action.type === 'ClickNode' && !action.nodePath && !action.viewId && !action.text) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'ClickNode requires a nodePath, viewId, or text' });

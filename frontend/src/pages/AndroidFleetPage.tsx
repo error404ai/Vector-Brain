@@ -5,6 +5,7 @@ import {
   useRunAndroidTaskMutation,
   type AndroidAgentTask,
   type AndroidDevice,
+  useSendDirectActionMutation,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
@@ -18,6 +19,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -46,6 +48,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Menu,
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
@@ -94,6 +97,28 @@ function errorMessage(error: unknown): string {
   return data?.message || 'Could not start the task';
 }
 
+/**
+ * The screens worth one click.
+ *
+ * Ordered by how often a fleet needs them rather than alphabetically — time,
+ * language and network come first because those are what geo testing changes.
+ */
+const SETTINGS_SHORTCUTS: { screen: string; label: string }[] = [
+  { screen: 'DATE_TIME', label: 'Date & time' },
+  { screen: 'LANGUAGE', label: 'Language & region' },
+  { screen: 'WIFI', label: 'Wi-Fi' },
+  { screen: 'MOBILE_NETWORK', label: 'Network & internet' },
+  { screen: 'LOCATION', label: 'Location' },
+  { screen: 'BATTERY', label: 'Battery' },
+  { screen: 'DISPLAY', label: 'Display' },
+  { screen: 'SOUND', label: 'Sound' },
+  { screen: 'STORAGE', label: 'Storage' },
+  { screen: 'APPS', label: 'Apps' },
+  { screen: 'ACCESSIBILITY', label: 'Accessibility' },
+  { screen: 'ABOUT', label: 'About phone' },
+  { screen: 'ROOT', label: 'Settings home' },
+];
+
 export default function AndroidFleetPage() {
   const navigate = useNavigate();
 
@@ -128,6 +153,24 @@ export default function AndroidFleetPage() {
   const [controlDeviceId, setControlDeviceId] = useState<number | null>(null);
   const [expandedDeviceId, setExpandedDeviceId] = useState<number | null>(null);
   const [fileDeviceId, setFileDeviceId] = useState<number | null>(null);
+  const [settingsMenu, setSettingsMenu] = useState<{ anchor: HTMLElement; deviceId: number } | null>(null);
+  const [sendDirectAction] = useSendDirectActionMutation();
+
+  /**
+   * Opens one Settings screen on a phone in a single call.
+   *
+   * Goes through the direct-action endpoint rather than the agent: there is
+   * nothing to reason about, so paying for a planner round trip would be waste.
+   */
+  const openSettingsScreen = async (deviceId: number, screen: string, label: string) => {
+    setSettingsMenu(null);
+    try {
+      await sendDirectAction({ device_id: deviceId, action: { type: 'OpenSettings', screen } as any }).unwrap();
+      toast.success(`Opened ${label} on the phone`);
+    } catch (error: any) {
+      toast.error(error?.data?.message || `Could not open ${label}`);
+    }
+  };
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -659,6 +702,17 @@ export default function AndroidFleetPage() {
                       </IconButton>
                     </span>
                   </Tooltip>
+                  <Tooltip title="Open a settings screen on this phone">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={device.status !== 'ONLINE'}
+                        onClick={(event) => setSettingsMenu({ anchor: event.currentTarget, deviceId: device.id })}
+                      >
+                        <TuneIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 </Stack>
 
                 {state.isRunning && <LinearProgress />}
@@ -876,6 +930,23 @@ export default function AndroidFleetPage() {
           );
         })()}
       </Dialog>
+
+      {/* One-click settings screens. Direct intents, so they land on the same
+          page on Xiaomi, Realme and Pixel alike. */}
+      <Menu
+        anchorEl={settingsMenu?.anchor ?? null}
+        open={Boolean(settingsMenu)}
+        onClose={() => setSettingsMenu(null)}
+      >
+        {SETTINGS_SHORTCUTS.map((shortcut) => (
+          <MenuItem
+            key={shortcut.screen}
+            onClick={() => settingsMenu && openSettingsScreen(settingsMenu.deviceId, shortcut.screen, shortcut.label)}
+          >
+            {shortcut.label}
+          </MenuItem>
+        ))}
+      </Menu>
 
       {/* Send a file to one device */}
       <SendFileDialog
