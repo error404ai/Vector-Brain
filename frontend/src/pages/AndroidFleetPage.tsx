@@ -568,7 +568,7 @@ export default function AndroidFleetPage() {
             gap: 2,
             // auto-fill rather than a fixed count: two devices on a wide screen
             // stay card-sized instead of stretching into two huge panels.
-            gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
             alignItems: 'start',
           }}
         >
@@ -673,8 +673,8 @@ export default function AndroidFleetPage() {
                     sliver. Constraining by height instead keeps the real 9:16 shape
                     and gives every card the same row height. */}
                 <PhoneFrame3D
-                  width={175}
-                  height={311}
+                  width={215}
+                  height={382}
                   tilt={controlDeviceId !== device.id}
                   active={state.isRunning}
                   onClick={
