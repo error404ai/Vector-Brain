@@ -338,7 +338,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'swipe',
         description:
-          'LAST RESORT scrolling — try scroll_element first, which asks the list itself to scroll and always moves the right container. Use swipe only when scroll_element reports that nothing on screen is scrollable, or for a horizontal drag such as a carousel or an image gallery. Direction is the direction you want to MOVE THROUGH the content: DOWN reveals what is further down the page, UP goes back towards the top. Do not swipe more than twice in the same direction without something changing.',
+          'LAST RESORT scrolling — try scroll_element first, which asks the list itself to scroll and always moves the right container. Use swipe only when scroll_element reports that nothing on screen is scrollable, or for a horizontal drag such as a carousel or an image gallery. Direction is the direction your FINGER drags: UP reveals what is further down the page, DOWN goes back towards the top. (This wording used to be inverted, which sent the agent swinging up and down without getting anywhere.) Do not swipe more than twice in the same direction without something changing.',
         parameters: {
           type: 'object',
           properties: {
@@ -346,7 +346,7 @@ export class AndroidAgent extends Agent {
               type: 'string',
               enum: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
               description:
-                'DOWN = move further down the page (see content below), UP = move back up towards the top',
+                'UP = drag upward, which reveals content below. DOWN = drag downward, which goes back towards the top.',
             },
             durationMillis: {
               type: 'number',
@@ -615,6 +615,30 @@ export class AndroidAgent extends Agent {
           return this.runDeviceAction(
             { type: 'OpenSettings', screen: args.screen as any },
             'open_settings',
+            args,
+          );
+        },
+      },
+      {
+        name: 'read_notifications',
+        description:
+          'Read notifications the phone has received. Use this for one-time codes, delivery alerts, or to check whether a message arrived. Only notifications posted since the Vector app started are visible — it cannot read what was already in the shade.',
+        parameters: {
+          type: 'object',
+          properties: {
+            packageName: { type: 'string', description: 'Optional package to filter by, e.g. com.google.android.apps.messaging' },
+            limit: { type: 'number', description: 'How many to return, 1 to 50 (default 20)' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            {
+              type: 'ReadNotifications',
+              packageName: args.packageName as string | undefined,
+              limit: typeof args.limit === 'number' ? args.limit : undefined,
+            },
+            'read_notifications',
             args,
           );
         },

@@ -110,6 +110,11 @@ export const AutomationActionValidation = z.discriminatedUnion('type', [
       'ABOUT', 'ROOT',
     ]),
   }),
+  z.object({
+    type: z.literal('ReadNotifications'),
+    packageName: z.string().min(1).max(255).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
 ]).superRefine((action, context) => {
   if (action.type === 'ClickNode' && !action.nodePath && !action.viewId && !action.text) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'ClickNode requires a nodePath, viewId, or text' });

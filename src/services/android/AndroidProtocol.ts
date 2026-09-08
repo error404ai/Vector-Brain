@@ -59,7 +59,8 @@ export type AutomationAction =
   | { type: 'ListApps' }
   | { type: 'SetClipboard'; text: string }
   | { type: 'Paste' }
-  | { type: 'OpenSettings'; screen: SettingsScreen };
+  | { type: 'OpenSettings'; screen: SettingsScreen }
+  | { type: 'ReadNotifications'; packageName?: string; limit?: number };
 
 export interface NodeBounds {
   left: number;
