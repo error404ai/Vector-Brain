@@ -8,6 +8,7 @@ import {
   useLazyGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
   type AndroidTaskLog,
+  useDeleteAndroidTaskMutation,
 } from '@/RTKService/androidService/androidService';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import authManager from '@/_helpers/authManager';
@@ -35,6 +36,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import {
   Alert,
   alpha,
@@ -328,6 +330,8 @@ export function AndroidAgentPage() {
   const [manualControl, setManualControl] = useState(false);
   const [screenExpanded, setScreenExpanded] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const [deleteAndroidTask] = useDeleteAndroidTaskMutation();
+
   const [clarifyPrompt, { isLoading: isCheckingPrompt }] = useClarifyPromptMutation();
   const [clarification, setClarification] = useState<{ prompt: string; question: string; options: string[] } | null>(
     null,
@@ -367,6 +371,26 @@ export function AndroidAgentPage() {
   const previousDeviceRef = useRef<number | undefined>(undefined);
   // Task currently shown in the transcript, used to highlight the sessions rail.
   const [viewingTaskId, setViewingTaskId] = useState<number | null>(null);
+  /**
+   * Removes a session and its steps.
+   *
+   * Confirms first because this is not undoable, and clears the viewer when the
+   * open session is the one being deleted — otherwise the panel keeps showing a
+   * run that no longer exists.
+   */
+  const handleDeleteSession = async (taskId: number, prompt: string) => {
+    const label = prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt;
+    if (!window.confirm(`Delete "${label}"? This removes the session and all of its steps.`)) return;
+
+    try {
+      await deleteAndroidTask(taskId).unwrap();
+      if (viewingTaskId === taskId) setViewingTaskId(null);
+      refetchSessions();
+      toast.success('Session deleted');
+    } catch (error: any) {
+      toast.error(error?.data?.message || 'Could not delete the session');
+    }
+  };
 
   const effectiveSelectedDeviceId =
     selectedDeviceId ?? devices.find((device) => device.status === 'ONLINE')?.id ?? devices[0]?.id;
@@ -1244,7 +1268,10 @@ export function AndroidAgentPage() {
                           borderLeft: '3px solid',
                           borderColor: isOpen ? 'primary.main' : 'transparent',
                           bgcolor: isOpen ? alpha(theme.palette.primary.main, 0.06) : 'transparent',
-                          '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.04) },
+                          '&:hover': {
+                            bgcolor: alpha(theme.palette.primary.main, 0.04),
+                            '& .session-delete': { opacity: 1 },
+                          },
                         }}
                       >
                         <Stack direction="row" alignItems="center" gap={0.75}>
@@ -1269,9 +1296,27 @@ export function AndroidAgentPage() {
                             {session.prompt}
                           </Typography>
                         </Stack>
-                        <Typography variant="caption" color="text.secondary" sx={{ pl: 2.6, fontSize: 10 }}>
-                          {session.total_steps} steps
-                        </Typography>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between">
+                          <Typography variant="caption" color="text.secondary" sx={{ pl: 2.6, fontSize: 10 }}>
+                            {session.total_steps} steps
+                          </Typography>
+                          {/* Hidden until hover: a delete control on every row in a
+                              long list is noise, and one sitting under the cursor
+                              is easy to hit by accident. */}
+                          <Tooltip title="Delete this session">
+                            <IconButton
+                              size="small"
+                              className="session-delete"
+                              sx={{ opacity: 0, transition: 'opacity 0.15s', p: 0.25 }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteSession(session.id, session.prompt);
+                              }}
+                            >
+                              <DeleteOutlineIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Stack>
                       </Box>
                     );
                   })

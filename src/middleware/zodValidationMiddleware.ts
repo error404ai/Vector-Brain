@@ -4,14 +4,17 @@ import { ZodError, ZodSchema } from 'zod';
 export const zodValidationMiddleware = (schema: ZodSchema<any>) => {
   return async (req: Request, res: Response, next?: NextFunction) => {
     try {
-      let validateData: any = '';
-      if (req.params && Object.keys(req.params).length > 0) {
-        validateData = req.params;
-      } else if (req.method == 'GET') {
-        validateData = req.query;
-      } else {
-        validateData = req.body;
-      }
+      // Merge rather than pick one source. Preferring params meant any route
+      // carrying an :id — PUT /ai-config/update/:id, PATCH /android-device/:id
+      // and three others — validated the id and never looked at the body, so
+      // those bodies went through unchecked. Body wins on a name clash because
+      // that is where the payload lives; a schema that only wants the id still
+      // finds it, and zod objects ignore keys they were not asked about.
+      const params = req.params && Object.keys(req.params).length > 0 ? req.params : {};
+      const validateData: any =
+        req.method === 'GET'
+          ? { ...params, ...(req.query || {}) }
+          : { ...params, ...(req.body || {}) };
 
       await schema.parseAsync(validateData);
       if (typeof next === 'function') next();
