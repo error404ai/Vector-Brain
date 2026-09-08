@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { AiConfigType } from '@/entities/AiConfig';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import AppError from '@/helpers/AppError';
@@ -67,6 +68,65 @@ export class AndroidCompanionController {
         provider: config?.provider ?? '',
       },
     };
+  }
+
+  /**
+   * The AI providers on this account, so the phone can show and switch them.
+   *
+   * Keys never travel back — the service's safe view strips them — so this is
+   * only ever a list of which providers exist and which one is live.
+   */
+  @Get('/ai-configs')
+  async listAiConfigs(@Req() req: any) {
+    const result = await this.aiConfigService.list(req.deviceToken.userId);
+    return { success: true, data: (result as any)?.data ?? [] };
+  }
+
+  /**
+   * Adds a provider key from the phone.
+   *
+   * Typing an API key on a phone is unpleasant, so this exists mainly for the
+   * case where someone sets the fleet up entirely from a handset and has no
+   * dashboard open. The same service the dashboard uses does the work, which is
+   * what keeps the key encrypted at rest.
+   */
+  @Post('/ai-configs')
+  async createAiConfig(
+    @Body() body: { provider?: string; model?: string; api_key?: string; label?: string; base_url?: string },
+    @Req() req: any,
+  ) {
+    const provider = String(body?.provider || '').trim().toLowerCase();
+    const model = String(body?.model || '').trim();
+    const apiKey = String(body?.api_key || '').trim();
+
+    if (!provider) throw new AppError('Choose a provider', 400);
+    if (!model) throw new AppError('Enter a model name', 400);
+    if (!apiKey) throw new AppError('Enter an API key', 400);
+
+    const result = await this.aiConfigService.create(
+      {
+        provider: provider as any,
+        model,
+        api_key: apiKey,
+        base_url: body?.base_url || undefined,
+        // Added from the phone means the person wants to use it now.
+        is_active: true,
+        label: body?.label || null,
+        // Passed explicitly: the zod default only applies when the request goes
+        // through validation, and this calls the service directly.
+        config_type: AiConfigType.VISION,
+      } as any,
+      req.deviceToken.userId,
+    );
+
+    return { success: true, message: 'Provider added', data: (result as any)?.data ?? null };
+  }
+
+  /** Switches which provider the agent uses. */
+  @Post('/ai-configs/:id/activate')
+  async activateAiConfig(@Param('id') id: string, @Req() req: any) {
+    const result = await this.aiConfigService.setActive(Number(id), req.deviceToken.userId);
+    return { success: true, message: 'Provider switched', data: (result as any)?.data ?? null };
   }
 
   /** Recent tasks for this phone, newest first. */
