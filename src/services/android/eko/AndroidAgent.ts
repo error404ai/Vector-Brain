@@ -338,7 +338,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'swipe',
         description:
-          'Scroll the screen. Direction is the direction you want to MOVE THROUGH the content: DOWN reveals what is further down the page, UP goes back towards the top. Do not scroll more than twice in the same direction without something changing — if the item you want is not appearing, read the screen or try another route instead.',
+          'LAST RESORT scrolling — try scroll_element first, which asks the list itself to scroll and always moves the right container. Use swipe only when scroll_element reports that nothing on screen is scrollable, or for a horizontal drag such as a carousel or an image gallery. Direction is the direction you want to MOVE THROUGH the content: DOWN reveals what is further down the page, UP goes back towards the top. Do not swipe more than twice in the same direction without something changing.',
         parameters: {
           type: 'object',
           properties: {
@@ -665,14 +665,19 @@ WORKFLOW:
 2. Use tap_coordinate with the center X,Y coordinates shown in the UI tree to tap elements.
 3. For text input: first tap the input field using tap_coordinate, then use type_text.
 4. Use open_app to launch apps, open_url to open websites directly.
-5. Use swipe UP to scroll down and reveal more content.
+5. To scroll, use scroll_element with direction FORWARD to move down a list and
+   BACKWARD to move back up. It scrolls the actual list rather than dragging the
+   whole display, so it works on pages that hold a list inside them, and a refusal
+   tells you the list has reached its end. Fall back to swipe only when
+   scroll_element says nothing is scrollable, or for horizontal carousels.
 6. Use global_action BACK to go back to previous screen.
 7. Use wait_for_element or wait after actions that need loading time.
 
 CRITICAL RULES:
 - ALWAYS use tap_coordinate with center coordinates from read_ui_tree - this is the PRIMARY way to click.
 - NEVER repeat the same tap coordinate more than 2 times - try a different approach.
-- Avoid scrolling in the same direction more than 7 times in a row - if content
+- Avoid scrolling in the same direction more than 7 times in a row, counting
+  scroll_element and swipe together - if content
   still isn't found, try a different approach instead of scrolling further.
 - If tap_coordinate fails, try click_node with the element's visible text as fallback.
 - After typing text, always tap the search/submit button to execute.
