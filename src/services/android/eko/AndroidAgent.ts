@@ -494,6 +494,103 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'scroll_element',
+        description:
+          'Scroll a specific list or container. Prefer this over swipe whenever the screen has a list inside a page — swipe drags whatever sits under the middle of the display and often moves the wrong thing. With no selector it scrolls the innermost scrollable container on screen. A refusal means the list is already at that end.',
+        parameters: {
+          type: 'object',
+          properties: {
+            nodePath: { type: 'string', description: 'Optional node path of an element inside the list' },
+            viewId: { type: 'string', description: 'Optional stable resource ID' },
+            text: { type: 'string', description: 'Optional visible text of an element inside the list' },
+            direction: { type: 'string', enum: ['FORWARD', 'BACKWARD'], description: 'FORWARD = down or right, BACKWARD = up or left' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            {
+              type: 'ScrollNode',
+              nodePath: args.nodePath as string | undefined,
+              viewId: args.viewId as string | undefined,
+              text: args.text as string | undefined,
+              direction: (args.direction as 'FORWARD' | 'BACKWARD') || 'FORWARD',
+            },
+            'scroll_element',
+            args,
+          );
+        },
+      },
+      {
+        name: 'long_press',
+        description:
+          'Press and hold. Use for context menus, selecting text, app icon menus, and anything that a normal tap does not open. Give a selector, or x and y for a raw coordinate.',
+        parameters: {
+          type: 'object',
+          properties: {
+            nodePath: { type: 'string', description: 'Optional node path from the latest UI snapshot' },
+            viewId: { type: 'string', description: 'Optional stable resource ID' },
+            text: { type: 'string', description: 'Optional visible text or content description' },
+            x: { type: 'number', description: 'Optional screen x, used when no selector is given' },
+            y: { type: 'number', description: 'Optional screen y, used when no selector is given' },
+            durationMillis: { type: 'number', description: 'Hold time, 400 to 3000 ms (default 700)' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            {
+              type: 'LongPress',
+              nodePath: args.nodePath as string | undefined,
+              viewId: args.viewId as string | undefined,
+              text: args.text as string | undefined,
+              x: typeof args.x === 'number' ? args.x : undefined,
+              y: typeof args.y === 'number' ? args.y : undefined,
+              durationMillis: typeof args.durationMillis === 'number' ? args.durationMillis : undefined,
+            },
+            'long_press',
+            args,
+          );
+        },
+      },
+      {
+        name: 'list_apps',
+        description:
+          'List every launchable app on the device with its package name. Use this before open_app when unsure of the exact package, instead of going to the home screen and reading icon labels.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction({ type: 'ListApps' }, 'list_apps', args);
+        },
+      },
+      {
+        name: 'set_clipboard',
+        description:
+          'Put text on the device clipboard, then use paste to drop it into a focused field. Faster than set_text for long text, and it works in fields that refuse set_text.',
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'Text to copy' },
+          },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            { type: 'SetClipboard', text: String(args.text || '') },
+            'set_clipboard',
+            args,
+          );
+        },
+      },
+      {
+        name: 'paste',
+        description: 'Paste the clipboard into the field that currently has focus. Call set_clipboard first.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction({ type: 'Paste' }, 'paste', args);
+        },
+      },
+      {
         name: 'wait_for_element',
         description: 'Wait until a UI element appears instead of guessing a fixed loading delay.',
         parameters: {

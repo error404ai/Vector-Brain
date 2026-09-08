@@ -10,6 +10,8 @@ export type GlobalAction = 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS';
  */
 export type DeviceKey = 'ENTER' | 'BACKSPACE' | 'CLEAR';
 
+export type ScrollDirection = 'FORWARD' | 'BACKWARD';
+
 export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
 
 export type AutomationAction =
@@ -29,7 +31,12 @@ export type AutomationAction =
   | { type: 'ReadUiTree' }
   | { type: 'CaptureScreen' }
   | { type: 'ObserveScreen' }
-  | { type: 'PressKey'; key: DeviceKey };
+  | { type: 'PressKey'; key: DeviceKey }
+  | { type: 'ScrollNode'; nodePath?: string; viewId?: string; text?: string; direction?: ScrollDirection }
+  | { type: 'LongPress'; nodePath?: string; viewId?: string; text?: string; x?: number; y?: number; durationMillis?: number }
+  | { type: 'ListApps' }
+  | { type: 'SetClipboard'; text: string }
+  | { type: 'Paste' };
 
 export interface NodeBounds {
   left: number;
