@@ -14,7 +14,11 @@ export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
 
 export type AutomationAction =
   | { type: 'OpenApp'; packageName: string }
-  | { type: 'OpenUrl'; url: string; newTab?: boolean }
+  // sameTab, not newTab: the companion app reads sameTab, and because its JSON
+  // parser ignores unknown keys a newTab field was silently dropped, leaving
+  // sameTab on its default of true — which is why every page opened in the
+  // in-app browser instead of Chrome.
+  | { type: 'OpenUrl'; url: string; sameTab?: boolean }
   | { type: 'ClickNode'; nodePath?: string; viewId?: string; text?: string }
   | { type: 'Tap'; x: number; y: number }
   | { type: 'SetText'; nodePath?: string; viewId?: string; text: string }

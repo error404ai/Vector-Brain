@@ -5,6 +5,18 @@ import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 
 /**
+ * Which browser open_url uses.
+ *
+ * false sends sameTab:false, so Android resolves the URL normally and the
+ * user's real browser (Chrome) handles it, with their own cookies and logins.
+ * true routes every page through the companion app's built-in browser, which
+ * reuses one surface and reads more cleanly, but is not Chrome — and the agent
+ * kept telling users it was.
+ */
+const USE_IN_APP_BROWSER = false;
+
+
+/**
  * Below this many usable rows we assume the app is not exposing its content to
  * the accessibility tree (web views, canvas UIs, games) and fall back to vision.
  */
@@ -404,16 +416,11 @@ export class AndroidAgent extends Agent {
       {
         name: 'open_url',
         description:
-          'Open an HTTP or HTTPS web URL in the device browser. NOTE: the companion app cannot reuse the current tab yet, so each call may open a new browser tab. Never tell the user that pages were opened in the same tab. Some domains (youtube.com, maps.google.com) are captured by their own app instead of the browser — if that happens, use global_action BACK to return to the browser.',
+          'Open an HTTP or HTTPS web URL in the device browser. Each call may open a new tab, so never tell the user that pages stayed in one tab. Some domains (youtube.com, maps.google.com) are captured by their own app instead of the browser — if that happens, use global_action BACK to return to the browser.',
         parameters: {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'Full URL (e.g. "https://google.com")' },
-            newTab: {
-              type: 'boolean',
-              description:
-                'Reserved for a future companion-app update; tab reuse is not controllable today, so leave this out.',
-            },
           },
           required: ['url'],
           additionalProperties: false,
@@ -425,7 +432,7 @@ export class AndroidAgent extends Agent {
             {
               type: 'OpenUrl',
               url: String(args.url || ''),
-              newTab: args.newTab === true,
+              sameTab: USE_IN_APP_BROWSER,
             },
             'open_url',
             args,
