@@ -11,6 +11,7 @@ import authManager from '@/_helpers/authManager';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import FleetCoverageStrip from '@/components/android/FleetCoverageStrip';
 import FleetStatusSpine from '@/components/android/FleetStatusSpine';
+import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
@@ -671,17 +672,11 @@ export default function AndroidFleetPage() {
                     most of its area on black bars and shrank the actual frame to a
                     sliver. Constraining by height instead keeps the real 9:16 shape
                     and gives every card the same row height. */}
-                <Box
-                  sx={{
-                    mx: 'auto',
-                    my: 1,
-                    height: { xs: 260, md: 340 },
-                    width: { xs: 146, md: 191 },
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                    bgcolor: 'grey.900',
-                    cursor: controlDeviceId === device.id ? 'default' : 'pointer',
-                  }}
+                <PhoneFrame3D
+                  width={175}
+                  height={311}
+                  tilt={controlDeviceId !== device.id}
+                  active={state.isRunning}
                   onClick={
                     controlDeviceId === device.id
                       ? undefined
@@ -697,7 +692,7 @@ export default function AndroidFleetPage() {
                     controlEnabled={controlDeviceId === device.id}
                     isAgentRunning={state.isRunning}
                   />
-                </Box>
+                </PhoneFrame3D>
 
                 <Divider />
 
