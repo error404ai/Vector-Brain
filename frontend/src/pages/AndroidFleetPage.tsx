@@ -382,7 +382,7 @@ export default function AndroidFleetPage() {
 
   // ---- Render ------------------------------------------------------------
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1360, mx: 'auto' }}>
+    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1680, mx: 'auto' }}>
       {/* Header */}
       <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 2.5 }}>
         <Box sx={{ minWidth: 0 }}>
@@ -567,7 +567,7 @@ export default function AndroidFleetPage() {
             gap: 2,
             // auto-fill rather than a fixed count: two devices on a wide screen
             // stay card-sized instead of stretching into two huge panels.
-            gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
             alignItems: 'start',
           }}
         >
@@ -675,8 +675,8 @@ export default function AndroidFleetPage() {
                   sx={{
                     mx: 'auto',
                     my: 1,
-                    height: 250,
-                    width: 141,
+                    height: { xs: 260, md: 340 },
+                    width: { xs: 146, md: 191 },
                     borderRadius: 2,
                     overflow: 'hidden',
                     bgcolor: 'grey.900',
