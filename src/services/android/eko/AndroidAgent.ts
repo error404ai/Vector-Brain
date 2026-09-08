@@ -460,6 +460,33 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'press_key',
+        description:
+          'Press a key on the text field that currently has focus. Use ENTER to submit a search or form after set_text — it triggers the field\'s own Search/Go/Done action. BACKSPACE deletes one character, CLEAR empties the field. ENTER needs Android 11 or newer; if it is refused, tap the on-screen Search or Go button instead.',
+        parameters: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              enum: ['ENTER', 'BACKSPACE', 'CLEAR'],
+              description: 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field',
+            },
+          },
+          required: ['key'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            {
+              type: 'PressKey',
+              key: args.key as 'ENTER' | 'BACKSPACE' | 'CLEAR',
+            },
+            'press_key',
+            args,
+          );
+        },
+      },
+      {
         name: 'wait_for_element',
         description: 'Wait until a UI element appears instead of guessing a fixed loading delay.',
         parameters: {

@@ -2,6 +2,14 @@ export type SwipeDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
 export type GlobalAction = 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS';
 
+/**
+ * Keys the companion app can press on the focused text field.
+ *
+ * Kept to what the accessibility API can genuinely do — Android will not let a
+ * service inject arbitrary key events — so this is not the full keyboard.
+ */
+export type DeviceKey = 'ENTER' | 'BACKSPACE' | 'CLEAR';
+
 export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
 
 export type AutomationAction =
@@ -16,7 +24,8 @@ export type AutomationAction =
   | { type: 'WaitForNode'; nodePath?: string; viewId?: string; text?: string; timeoutMillis?: number }
   | { type: 'ReadUiTree' }
   | { type: 'CaptureScreen' }
-  | { type: 'ObserveScreen' };
+  | { type: 'ObserveScreen' }
+  | { type: 'PressKey'; key: DeviceKey };
 
 export interface NodeBounds {
   left: number;
