@@ -1,3 +1,4 @@
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 import { useLoginMutation } from '@/RTKService/authService/authService';
 import { useForm } from '@/components/mui/form';
 import { notifications } from '@/components/mui/notifications';
@@ -110,6 +111,8 @@ export default function LoginPage() {
             </Button>
           </Stack>
         </form>
+
+        <GoogleSignInButton text="signin_with" dividerLabel="or sign in with" />
 
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ fontSize: 14 }}>
           Do not have an account?{' '}

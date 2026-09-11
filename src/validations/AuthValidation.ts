@@ -34,3 +34,13 @@ export const SignupValidation = z
       path: ['email'],
     }
   );
+
+/**
+ * The credential Google Identity Services hands the browser.
+ *
+ * Length-bounded so an oversized body is rejected before any parsing work: a
+ * real Google ID token is well under 4 KB.
+ */
+export const GoogleAuthValidation = z.object({
+  credential: z.string({ required_error: 'Google credential is required' }).min(20).max(4096),
+});

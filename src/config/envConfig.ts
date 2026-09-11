@@ -66,6 +66,9 @@ const envConfig = {
   androidAgentApiKey: process.env.ANDROID_AGENT_API_KEY,
   androidAgentModel: process.env.ANDROID_AGENT_MODEL || 'gpt-4o-mini',
 
+  // Google sign-in (optional). Empty means the button stays hidden.
+  googleClientId: process.env.GOOGLE_CLIENT_ID,
+
   // Telegram bot (optional). With no token the bot stays off and the dashboard
   // shows it as not configured.
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,

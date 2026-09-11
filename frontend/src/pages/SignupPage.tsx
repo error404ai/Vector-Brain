@@ -1,3 +1,4 @@
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 import { useSignupMutation } from '@/RTKService/authService/authService';
 import { useForm } from '@/components/mui/form';
 import { notifications } from '@/components/mui/notifications';
@@ -141,6 +142,8 @@ export default function SignupPage() {
             </Button>
           </Stack>
         </form>
+
+        <GoogleSignInButton text="signup_with" dividerLabel="or sign up with" />
 
         <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ fontSize: 14 }}>
           Already have an account?{' '}

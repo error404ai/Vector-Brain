@@ -43,6 +43,19 @@ export interface SignupResponse {
   };
 }
 
+export interface GoogleAuthRequest {
+  /** The ID token Google Identity Services returns in its callback. */
+  credential: string;
+}
+
+export interface AuthConfigResponse {
+  message: string;
+  data: {
+    /** null when the server has no GOOGLE_CLIENT_ID, which hides the button. */
+    googleClientId: string | null;
+  };
+}
+
 export interface ProfileResponse {
   data: User;
 }
@@ -78,6 +91,24 @@ const authApi = baseApi.injectEndpoints({
       async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         await authManager.handleLoginOnQueryStarted(queryFulfilled, dispatch);
       },
+    }),
+
+    googleAuth: builder.mutation<LoginResponse, GoogleAuthRequest>({
+      query: (body) => ({
+        url: '/auth/google',
+        method: 'POST',
+        body,
+      }),
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        await authManager.handleLoginOnQueryStarted(queryFulfilled, dispatch);
+      },
+    }),
+
+    getAuthConfig: builder.query<AuthConfigResponse, void>({
+      query: () => ({
+        url: '/auth/config',
+        method: 'GET',
+      }),
     }),
 
     getProfile: builder.query<ProfileResponse, void>({
@@ -116,6 +147,15 @@ const authApi = baseApi.injectEndpoints({
   }),
 });
 
-export const { useLoginMutation, useSignupMutation, useGetProfileQuery, useLazyGetProfileQuery, useLogoutMutation, useRefreshTokenMutation } = authApi;
+export const {
+  useLoginMutation,
+  useSignupMutation,
+  useGoogleAuthMutation,
+  useGetAuthConfigQuery,
+  useGetProfileQuery,
+  useLazyGetProfileQuery,
+  useLogoutMutation,
+  useRefreshTokenMutation,
+} = authApi;
 
 export default authApi;

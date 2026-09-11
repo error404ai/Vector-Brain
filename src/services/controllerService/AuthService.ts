@@ -6,7 +6,8 @@ import { JwtHelper } from '@/helpers/JwtHelper';
 import { AppDataSource } from '@/loaders/database';
 import { CookieService } from '@/services/auth/CookieService';
 import { ApiResponse } from '@/types/ApiResponse';
-import { LoginValidation, RefreshTokenValidation, SignupValidation } from '@/validations/AuthValidation';
+import { GoogleAuthValidation, LoginValidation, RefreshTokenValidation, SignupValidation } from '@/validations/AuthValidation';
+import envConfig from '@/config/envConfig';
 import crypto from 'crypto';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -229,6 +230,155 @@ export class AuthService {
         refreshToken: refreshToken.token,
         expireAt: accessToken.expireAt,
       },
+    };
+  }
+
+  /**
+   * Public sign-in configuration for the browser.
+   *
+   * The client id is served at runtime rather than baked into the bundle: Vite
+   * inlines VITE_ variables at build time, so shipping it that way would mean a
+   * rebuild to change it. A Google client id is not a secret.
+   */
+  getPublicAuthConfig(): ApiResponse {
+    return {
+      message: 'Auth configuration',
+      data: { googleClientId: envConfig.googleClientId || null },
+    };
+  }
+
+  /**
+   * Sign in (or sign up) with a Google ID token from the browser.
+   *
+   * The token is verified by Google itself. Decoding it here without checking
+   * the signature would let anyone mint a token for any email address, so the
+   * response is only trusted after the audience, issuer and expiry all match.
+   */
+  async googleAuth(
+    request: z.infer<typeof GoogleAuthValidation>,
+    userAgent?: string,
+    ipAddress?: string,
+  ): Promise<ApiResponse> {
+    const clientId = envConfig.googleClientId;
+    if (!clientId) {
+      throw new AppError('Google sign-in is not configured on this server.', 400);
+    }
+
+    const profile = await this.verifyGoogleToken(request.credential, clientId);
+
+    // Match on the Google subject id first, then fall back to the email so an
+    // account created with a password can be signed into with the same address.
+    let user = await this.userRepository.findOne({ where: { google_id: profile.sub } });
+    if (!user) {
+      user = await this.userRepository.findOne({ where: { email: profile.email } });
+    }
+
+    if (user) {
+      if (!user.isActive) {
+        throw new UnauthorizedError('Your account has been deactivated');
+      }
+      let changed = false;
+      if (!user.google_id) {
+        user.google_id = profile.sub;
+        changed = true;
+      }
+      if (profile.picture && user.avatar_url !== profile.picture) {
+        user.avatar_url = profile.picture;
+        changed = true;
+      }
+      if (changed) await this.userRepository.save(user);
+    } else {
+      user = this.userRepository.create({
+        name: profile.name || profile.email.split('@')[0],
+        email: profile.email,
+        // The column is NOT NULL and this account never signs in with a
+        // password, so it gets an unguessable one that is never shown anywhere.
+        password: CryptoHelper.generateHash(crypto.randomBytes(32).toString('hex')),
+        google_id: profile.sub,
+        avatar_url: profile.picture || null,
+        role: Role.USER,
+        isActive: true,
+      });
+      await this.userRepository.save(user);
+    }
+
+    const accessToken = this.buildAccessTokenPayload(user);
+    const refreshToken = await this.createRefreshToken(user.id, userAgent, ipAddress);
+    await this.cookieService.setRefreshToken(refreshToken.token);
+
+    const { password: _password, ...userWithoutPassword } = user;
+
+    return {
+      message: 'Login successful',
+      data: {
+        user: userWithoutPassword,
+        token: accessToken.token,
+        refreshToken: refreshToken.token,
+        expireAt: accessToken.expireAt,
+      },
+    };
+  }
+
+  /**
+   * Ask Google to validate the ID token and return what it says about the user.
+   *
+   * Google's tokeninfo endpoint does the signature check, which avoids fetching
+   * and caching its rotating public keys here. It still has to be checked that
+   * the token was issued for THIS application and has not expired — Google will
+   * happily describe a valid token that belongs to somebody else's site.
+   */
+  private async verifyGoogleToken(
+    credential: string,
+    clientId: string,
+  ): Promise<{ sub: string; email: string; name?: string; picture?: string }> {
+    let payload: any;
+    try {
+      const response = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      if (!response.ok) {
+        throw new UnauthorizedError('Google rejected this sign-in. Please try again.');
+      }
+      payload = await response.json();
+    } catch (error) {
+      if (error instanceof UnauthorizedError) throw error;
+      throw new AppError('Could not reach Google to verify the sign-in. Please try again.', 502);
+    }
+
+    const audience = String(payload?.aud || '');
+    if (audience !== clientId) {
+      throw new UnauthorizedError('This sign-in was not issued for Vector Brain.');
+    }
+
+    const issuer = String(payload?.iss || '');
+    if (issuer !== 'accounts.google.com' && issuer !== 'https://accounts.google.com') {
+      throw new UnauthorizedError('Google rejected this sign-in. Please try again.');
+    }
+
+    const expiresAt = Number(payload?.exp || 0) * 1000;
+    if (!expiresAt || expiresAt < Date.now()) {
+      throw new UnauthorizedError('This sign-in expired. Please try again.');
+    }
+
+    const email = String(payload?.email || '').toLowerCase();
+    // An unverified address could belong to anyone, and accepting it would let
+    // a stranger take over a password account with the same email.
+    const emailVerified = payload?.email_verified === true || payload?.email_verified === 'true';
+    if (!email || !emailVerified) {
+      throw new UnauthorizedError('This Google account has no verified email address.');
+    }
+
+    const sub = String(payload?.sub || '');
+    if (!sub) {
+      throw new UnauthorizedError('Google rejected this sign-in. Please try again.');
+    }
+
+    return {
+      sub,
+      email,
+      name: payload?.name ? String(payload.name) : undefined,
+      picture: payload?.picture ? String(payload.picture) : undefined,
     };
   }
 }
