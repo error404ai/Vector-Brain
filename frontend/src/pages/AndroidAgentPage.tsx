@@ -550,6 +550,9 @@ export function AndroidAgentPage() {
             : verifyResultClaims(summary, [
                 ...steps.map((step) => step.result),
                 ...steps.map((step) => step.thought),
+                // Stored results no longer repeat the screen dump, so domains
+                // that were only visible on screen come from the snapshot.
+                ...logs.map((log) => (typeof log.ui_tree_snapshot === 'string' ? log.ui_tree_snapshot : undefined)),
               ]),
           taskId,
         },

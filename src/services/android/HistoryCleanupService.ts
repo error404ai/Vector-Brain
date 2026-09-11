@@ -3,7 +3,7 @@ import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import { SavedFlow } from '@/entities/SavedFlow';
 import Logger from '@/logger/index';
 import { AppDataSource } from '@/loaders/database';
-import { LessThan, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Service } from 'typedi';
 
 /** How long a finished run stays before it is cleared out. */
@@ -14,6 +14,12 @@ const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** Rows per pass, so a large backlog never locks the table for long. */
 const BATCH_SIZE = 200;
+
+/**
+ * Batches per sweep. A backlog used to drain at 200 runs per six hours; this
+ * lets one sweep clear up to 4,000 while still deleting in small bites.
+ */
+const MAX_BATCHES_PER_SWEEP = 20;
 
 /**
  * Clears out old run history.
@@ -37,39 +43,57 @@ export class HistoryCleanupService {
 
   async sweep(): Promise<{ tasksDeleted: number; logsDeleted: number }> {
     const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    let tasksDeleted = 0;
+    let logsDeleted = 0;
 
     try {
-      const stale = await this.taskRepo.find({
-        where: { created_at: LessThan(cutoff) },
-        order: { created_at: 'ASC' },
-        take: BATCH_SIZE,
-      });
+      for (let batch = 0; batch < MAX_BATCHES_PER_SWEEP; batch++) {
+        const ids = await this.findDeletableIds(cutoff);
+        if (ids.length === 0) break;
 
-      if (stale.length === 0) return { tasksDeleted: 0, logsDeleted: 0 };
+        const logResult = await this.logRepo
+          .createQueryBuilder()
+          .delete()
+          .where('agent_task_id IN (:...ids)', { ids })
+          .execute();
+        await this.taskRepo.delete(ids);
 
-      // Anything the user chose to keep is not history any more.
-      const savedFlows = await this.flowRepo.find({ select: { source_task_id: true } });
-      const keepTaskIds = new Set(savedFlows.map((flow) => flow.source_task_id).filter(Boolean) as number[]);
+        tasksDeleted += ids.length;
+        logsDeleted += logResult.affected ?? 0;
+        if (ids.length < BATCH_SIZE) break;
+      }
 
-      const deletable = stale.filter((task) => !task.share_token && !keepTaskIds.has(task.id));
-      if (deletable.length === 0) return { tasksDeleted: 0, logsDeleted: 0 };
-
-      const ids = deletable.map((task) => task.id);
-      const logResult = await this.logRepo
-        .createQueryBuilder()
-        .delete()
-        .where('agent_task_id IN (:...ids)', { ids })
-        .execute();
-
-      await this.taskRepo.delete(ids);
-
-      const logsDeleted = logResult.affected ?? 0;
-      Logger.info(`[Cleanup] Removed ${deletable.length} runs and ${logsDeleted} steps older than ${RETENTION_DAYS} days`);
-      return { tasksDeleted: deletable.length, logsDeleted };
+      if (tasksDeleted > 0) {
+        Logger.info(`[Cleanup] Removed ${tasksDeleted} runs and ${logsDeleted} steps older than ${RETENTION_DAYS} days`);
+      }
+      return { tasksDeleted, logsDeleted };
     } catch (error) {
       // Cleanup is housekeeping; a failure must never take the app down.
       Logger.warn('[Cleanup] Sweep failed', error);
-      return { tasksDeleted: 0, logsDeleted: 0 };
+      return { tasksDeleted, logsDeleted };
     }
+  }
+
+  /**
+   * The next batch of runs that are old AND not kept.
+   *
+   * The "kept" filter has to live in the query. It used to run in JS on the 200
+   * oldest rows, so once more than 200 old runs were shared or saved as flows,
+   * every batch came back fully filtered and cleanup stopped for good without
+   * logging anything.
+   */
+  private async findDeletableIds(cutoff: Date): Promise<number[]> {
+    const flowTable = this.flowRepo.metadata.tableName;
+    const rows = await this.taskRepo
+      .createQueryBuilder('task')
+      .select('task.id', 'id')
+      .where('task.created_at < :cutoff', { cutoff })
+      .andWhere('task.share_token IS NULL')
+      .andWhere(`NOT EXISTS (SELECT 1 FROM \`${flowTable}\` kept WHERE kept.source_task_id = task.id)`)
+      .orderBy('task.created_at', 'ASC')
+      .limit(BATCH_SIZE)
+      .getRawMany<{ id: number | string }>();
+
+    return rows.map((row) => Number(row.id)).filter((id) => Number.isFinite(id));
   }
 }

@@ -66,6 +66,12 @@ const envConfig = {
   androidAgentApiKey: process.env.ANDROID_AGENT_API_KEY,
   androidAgentModel: process.env.ANDROID_AGENT_MODEL || 'gpt-4o-mini',
 
+  // Telegram bot (optional). With no token the bot stays off and the dashboard
+  // shows it as not configured.
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+  /** Public https origin Telegram should call, e.g. https://app.vectoragent.in */
+  telegramWebhookBaseUrl: process.env.TELEGRAM_WEBHOOK_BASE_URL || process.env.APP_URL,
+
   // Qdrant Vector Database Configuration
   qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
   qdrantApiKey: process.env.QDRANT_API_KEY, // Optional, for production auth

@@ -6,6 +6,7 @@ import {
   useTestSavedAiConfigMutation,
 } from '@/RTKService/aiConfigService/aiConfigService';
 import { AiConfigModal } from '@/components/ai-config/AiConfigModal';
+import TelegramLinkCard from '@/components/telegram/TelegramLinkCard';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
 import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
 import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
@@ -456,6 +457,11 @@ export default function SettingsPage() {
             )}
           </Stack>
         </Paper>
+        </Reveal>
+
+        {/* Section 2: Telegram bot */}
+        <Reveal index={1}>
+          <TelegramLinkCard />
         </Reveal>
       </Stack>
 

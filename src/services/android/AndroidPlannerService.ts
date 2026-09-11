@@ -32,6 +32,27 @@ const MAX_UNCHANGED_OBSERVATIONS = 3;
 const DEFAULT_MAX_STEPS = 500;
 
 /**
+ * The screen dump inside a tool result, up to an optional trailing NOTE.
+ *
+ * Matches both shapes AndroidAgent produces: "UPDATED SCREEN ELEMENTS:" on
+ * action results and "VISIBLE UI ELEMENTS (...):" on read_ui_tree.
+ */
+const SCREEN_DUMP_PATTERN = /\n\n(?:UPDATED SCREEN ELEMENTS:|VISIBLE UI ELEMENTS \([^\n]*\):)\n[\s\S]*?(?=\n\nNOTE:|$)/;
+
+/**
+ * Drop the screen dump from a tool result before it is persisted.
+ *
+ * The model needs the dump in its context, but the same tree is already saved
+ * in ui_tree_snapshot, so storing it in result_message as well kept every step's
+ * screen twice — the main reason android_task_logs grew to hundreds of MB. The
+ * live broadcast still carries the full text; only the stored copy is trimmed.
+ */
+function stripScreenDump(text: string): string {
+  if (!text) return text;
+  return text.replace(SCREEN_DUMP_PATTERN, '\n\n(screen elements stored separately)');
+}
+
+/**
  * How long a run may produce no activity at all before it is considered dead.
  *
  * This deliberately replaced a wall-clock limit. The old code stopped every run
@@ -919,7 +940,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
             if (currentTaskLog) {
               currentTaskLog.status = isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS;
-              currentTaskLog.result_message = textContent;
+              currentTaskLog.result_message = stripScreenDump(textContent);
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
               // Frames already arrive with every observation for the live view;

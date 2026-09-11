@@ -29,7 +29,20 @@ export class AndroidGatewayService {
   // capabilities change) instead of writing the same row on every heartbeat.
   private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string }>();
 
+  /**
+   * Server-side subscribers to user events (task finished, new frame, ...).
+   * The Telegram bot uses this to report on runs it started, whether or not a
+   * browser tab is open.
+   */
+  private broadcastListeners = new Set<(userId: number, event: string, payload: any) => void>();
+
   constructor(private deviceService: AndroidDeviceService) {}
+
+  /** Subscribe to every user event. Returns an unsubscribe function. */
+  onBroadcast(listener: (userId: number, event: string, payload: any) => void): () => void {
+    this.broadcastListeners.add(listener);
+    return () => this.broadcastListeners.delete(listener);
+  }
 
   /**
    * Registers a newly authenticated Android device WebSocket connection.
@@ -255,6 +268,16 @@ export class AndroidGatewayService {
    * Broadcast an event to all connected browser Web UI tabs for a given user.
    */
   broadcastToUser(userId: number, event: string, payload: any) {
+    // Listeners run before the socket check: they must hear about events even
+    // when no dashboard tab is open.
+    for (const listener of this.broadcastListeners) {
+      try {
+        listener(userId, event, payload);
+      } catch (err) {
+        Logger.warn(`[AndroidGateway] Broadcast listener failed for ${event}:`, err);
+      }
+    }
+
     const sockets = this.userWebSockets.get(userId);
     if (!sockets || sockets.size === 0) return;
 

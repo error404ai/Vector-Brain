@@ -39,12 +39,14 @@ import { PublicRunController, RunShareController } from './controllers/RunShareC
 import { RunMediaService } from './services/android/RunMediaService';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { SettingController } from './controllers/SettingController';
+import { TelegramController } from './controllers/TelegramController';
 import { UserController } from './controllers/UserController';
 
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 import { AiEmbeddingService } from './services/AiEmbeddingService';
 import { HistoryCleanupService } from './services/android/HistoryCleanupService';
 import { ScheduledTaskService } from './services/android/ScheduledTaskService';
+import { TelegramService } from './services/telegram/TelegramService';
 import { initializeWebSocketServer } from './loaders/websocket';
 
 dotenv.config();
@@ -89,6 +91,7 @@ useExpressServer(app, {
     RunShareController,
     ScheduledTaskController,
     SettingController,
+    TelegramController,
     UserController,
   ],
 
@@ -224,6 +227,11 @@ AppDataSource.initialize()
     } catch (error) {
       Logger.warn('Scheduled task runner failed to start:', error);
     }
+
+    // Telegram bot: registers its webhook. Optional, and never blocks startup.
+    Container.get(TelegramService)
+      .start()
+      .catch((error) => Logger.warn('Telegram bot failed to start:', error));
 
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, () => {
