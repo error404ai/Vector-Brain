@@ -78,10 +78,13 @@ const router = createBrowserRouter([
     Component: RootShell,
     children: [
       { path: '/r/:token', Component: PublicRunPage },
+      // The landing page lays out its own full-width sections, so it must not
+      // sit inside GuestShell — that wraps its children in the narrow centred
+      // card the sign-in and sign-up forms are built around.
+      { path: '/', Component: HomePage },
       {
         Component: GuestShell,
         children: [
-          { path: '/', Component: HomePage },
           { path: '/login', Component: LoginPage },
           { path: '/signup', Component: SignupPage },
         ],
