@@ -55,6 +55,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
+import DeviceControls from '@/components/android/DeviceControls';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -688,6 +689,20 @@ export default function AndroidFleetPage() {
           </Button>
         </Stack>
 
+        {/* Same controls as each card, aimed at the selection. Setting up a
+            fleet means sending Home or Back to every phone far more often than
+            to any one of them. */}
+        <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+            Controls for {selectedIds.length || 0} selected
+          </Typography>
+          <DeviceControls
+            deviceIds={selectedIds}
+            variant="full"
+            onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
+          />
+        </Stack>
+
         {/* Dispatch result strip */}
         {lastDispatch && (
           <Stack
@@ -975,6 +990,15 @@ export default function AndroidFleetPage() {
                     ))}
                   </TextField>
                 </Box>
+
+                {/* One-tap controls for this phone alone. */}
+                <Stack direction="row" justifyContent="center" sx={{ px: 1, pb: 0.5 }}>
+                  <DeviceControls
+                    deviceIds={[device.id]}
+                    disabled={!isOnline}
+                    onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
+                  />
+                </Stack>
 
                 {/* Inline per-device prompt */}
                 <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
