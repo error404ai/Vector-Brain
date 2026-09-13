@@ -19,6 +19,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -141,6 +142,7 @@ export default function AndroidFleetPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [queueFile, { isLoading: isSendingFile }] = useQueueDeviceFileMutation();
+  const [isRefreshingFrames, setIsRefreshingFrames] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -358,6 +360,47 @@ export default function AndroidFleetPage() {
 
     if (startedIds.length) toast.success(`Started on ${startedIds.length} device${startedIds.length > 1 ? 's' : ''}`);
     if (failedIds.length) toast.error(`${failedIds.length} device${failedIds.length > 1 ? 's' : ''} could not start`);
+  };
+
+  /**
+   * Pulls one fresh frame from every online phone.
+   *
+   * Requests go out in small batches rather than all at once: each frame is a
+   * full screenshot travelling up from the handset, and twenty of those firing
+   * together saturates the uplink and times half of them out. A device that
+   * fails is skipped quietly — its card keeps whatever it had.
+   */
+  const handleRefreshAllFrames = async () => {
+    const targets = onlineDevices;
+    if (targets.length === 0) return toast.error('No devices are online');
+
+    setIsRefreshingFrames(true);
+    let captured = 0;
+
+    try {
+      const BATCH = 4;
+      for (let start = 0; start < targets.length; start += BATCH) {
+        const batch = targets.slice(start, start + BATCH);
+        const results = await Promise.allSettled(
+          batch.map(async (device) => {
+            const response = await sendDirectAction({
+              device_id: device.id,
+              action: { type: 'CaptureScreen' },
+            }).unwrap();
+            const base64 = response?.data?.screenCapture?.base64Data;
+            if (base64) patchRuntime(device.id, { screenshot: base64 });
+            return Boolean(base64);
+          }),
+        );
+        captured += results.filter((result) => result.status === 'fulfilled' && result.value).length;
+      }
+
+      if (captured === 0) toast.error('No phone returned a frame');
+      else if (captured < targets.length) toast.success(`Got ${captured} of ${targets.length} screens`);
+      else toast.success(`Refreshed ${captured} screens`);
+    } finally {
+      setIsRefreshingFrames(false);
+    }
   };
 
   /**
@@ -584,6 +627,16 @@ export default function AndroidFleetPage() {
             sx={{ whiteSpace: 'nowrap', minWidth: 170 }}
           >
             Run on {selectedIds.length || 0}
+          </Button>
+
+          <Button
+            variant="outlined"
+            startIcon={isRefreshingFrames ? <CircularProgress size={16} color="inherit" /> : <PhotoCameraIcon />}
+            disabled={isRefreshingFrames || onlineDevices.length === 0}
+            onClick={handleRefreshAllFrames}
+            sx={{ whiteSpace: 'nowrap' }}
+          >
+            Show all screens
           </Button>
 
           <Button
