@@ -13,7 +13,10 @@ export interface DeviceFile {
 }
 
 export interface QueueFilePayload {
-  device_id: number;
+  /** One device. Omit when sending device_ids. */
+  device_id?: number;
+  /** Several devices in a single upload — the bytes travel once. */
+  device_ids?: number[];
   file_name: string;
   mime_type: string;
   content_base64: string;
@@ -29,7 +32,10 @@ const deviceFileApi = baseApi.injectEndpoints({
       providesTags: ['DEVICE_FILES' as any],
     }),
 
-    queueDeviceFile: builder.mutation<{ message: string; data: { id: number; file_name: string } }, QueueFilePayload>({
+    queueDeviceFile: builder.mutation<
+      { message: string; data: { id: number; file_name: string; device_count?: number } },
+      QueueFilePayload
+    >({
       query: (body) => ({
         url: '/android/files',
         method: 'POST',

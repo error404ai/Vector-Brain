@@ -3,7 +3,10 @@ import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post
 import { Service } from 'typedi';
 
 interface QueueFileBody {
-  device_id: number;
+  /** One device. Kept so existing callers keep working. */
+  device_id?: number;
+  /** Several devices in one upload. Takes precedence when both are sent. */
+  device_ids?: number[];
   file_name: string;
   mime_type?: string;
   content_base64: string;
@@ -38,9 +41,13 @@ export class AndroidFileController {
   @Authorized()
   @Post('/')
   async queueFile(@Body() body: QueueFileBody, @CurrentUser({ required: true }) user: { userId: number }) {
+    const deviceIds = Array.isArray(body?.device_ids) && body.device_ids.length > 0
+      ? body.device_ids.map(Number)
+      : [Number(body?.device_id)];
+
     return this.fileService.queueFile(
       user.userId,
-      Number(body?.device_id),
+      deviceIds,
       String(body?.file_name || 'file'),
       String(body?.mime_type || 'application/octet-stream'),
       String(body?.content_base64 || ''),

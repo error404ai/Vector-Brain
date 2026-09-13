@@ -4,7 +4,7 @@ import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import crypto from 'crypto';
-import { LessThan } from 'typeorm';
+import { In, LessThan } from 'typeorm';
 import { Service } from 'typedi';
 
 /**
@@ -18,6 +18,20 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 /** How long a queued file stays available before it is swept. */
 const RETENTION_DAYS = 7;
+
+/** Devices one upload may be queued for at a time. */
+const MAX_DEVICES_PER_QUEUE = 100;
+
+/**
+ * Ceiling on the bytes a single upload may add to the table.
+ *
+ * Each device gets its own row holding its own copy, because a row drops its
+ * bytes the moment that phone confirms receipt — sharing one blob between rows
+ * would mean the first device to finish deletes the file out from under the
+ * rest. The copies are therefore temporary, but 10 MB across a hundred phones
+ * is still a gigabyte arriving at once, so the total is capped.
+ */
+const MAX_TOTAL_QUEUED_BYTES = 300 * 1024 * 1024;
 
 /**
  * The companion app reads the "id" field of each listed file and pastes it
@@ -42,14 +56,24 @@ export class DeviceFileService {
    */
   async queueFile(
     userId: number,
-    deviceId: number,
+    deviceIds: number[],
     fileName: string,
     mimeType: string,
     contentBase64: string,
   ): Promise<ApiResponse> {
-    const device = await this.deviceRepo.findOne({ where: { id: deviceId, user_id: userId } });
-    if (!device) {
-      throw new AppError('Device not found', 404);
+    const wantedIds = Array.from(new Set(deviceIds.filter((id) => Number.isFinite(id) && id > 0)));
+    if (wantedIds.length === 0) {
+      throw new AppError('Pick at least one device', 400);
+    }
+    if (wantedIds.length > MAX_DEVICES_PER_QUEUE) {
+      throw new AppError(`You can send a file to at most ${MAX_DEVICES_PER_QUEUE} devices at once.`, 400);
+    }
+
+    // Loaded in one query and checked against what was asked for, so a device
+    // belonging to somebody else is refused rather than quietly skipped.
+    const devices = await this.deviceRepo.find({ where: { id: In(wantedIds), user_id: userId } });
+    if (devices.length !== wantedIds.length) {
+      throw new AppError('One or more devices were not found', 404);
     }
 
     let content: Buffer;
@@ -67,31 +91,48 @@ export class DeviceFileService {
       throw new AppError(`File is too large. The limit is ${Math.floor(MAX_FILE_BYTES / (1024 * 1024))} MB.`, 400);
     }
 
+    if (content.length * devices.length > MAX_TOTAL_QUEUED_BYTES) {
+      const allowed = Math.max(1, Math.floor(MAX_TOTAL_QUEUED_BYTES / content.length));
+      throw new AppError(`That file is too large for ${devices.length} devices. Send it to at most ${allowed} at a time.`, 400);
+    }
+
     const safeName = this.sanitiseFileName(fileName);
     const sha256 = crypto.createHash('sha256').update(content).digest('hex');
+    const expiresAt = new Date(Date.now() + RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
-    const record = this.fileRepo.create({
-      user_id: userId,
-      device_id: device.id,
-      file_name: safeName,
-      mime_type: mimeType || 'application/octet-stream',
-      size_bytes: content.length,
-      sha256,
-      content,
-      status: DeviceFileStatus.PENDING,
-      expires_at: new Date(Date.now() + RETENTION_DAYS * 24 * 60 * 60 * 1000),
-    });
+    const records = devices.map((device) =>
+      this.fileRepo.create({
+        user_id: userId,
+        device_id: device.id,
+        file_name: safeName,
+        mime_type: mimeType || 'application/octet-stream',
+        size_bytes: content.length,
+        sha256,
+        content,
+        status: DeviceFileStatus.PENDING,
+        expires_at: expiresAt,
+      }),
+    );
 
-    await this.fileRepo.save(record);
+    // Chunked so a large fleet does not build one enormous INSERT: at 10 MB a
+    // copy, a single statement for a hundred rows would sail past max_allowed_packet.
+    for (let start = 0; start < records.length; start += 5) {
+      await this.fileRepo.save(records.slice(start, start + 5));
+    }
 
     return {
-      message: 'File queued for the device',
+      message:
+        devices.length === 1
+          ? 'File queued for the device'
+          : `File queued for ${devices.length} devices`,
       data: {
-        id: record.id,
-        file_name: record.file_name,
-        size_bytes: record.size_bytes,
-        status: record.status,
-        expires_at: record.expires_at.toISOString(),
+        id: records[0].id,
+        file_name: safeName,
+        size_bytes: content.length,
+        status: DeviceFileStatus.PENDING,
+        expires_at: expiresAt.toISOString(),
+        device_count: devices.length,
+        queued: records.map((record) => ({ id: record.id, device_id: record.device_id })),
       },
     };
   }

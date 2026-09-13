@@ -52,6 +52,7 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
+import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -138,6 +139,8 @@ export default function AndroidFleetPage() {
 
   const [runtime, setRuntime] = useState<RuntimeMap>({});
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [queueFile, { isLoading: isSendingFile }] = useQueueDeviceFileMutation();
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -357,6 +360,38 @@ export default function AndroidFleetPage() {
     if (failedIds.length) toast.error(`${failedIds.length} device${failedIds.length > 1 ? 's' : ''} could not start`);
   };
 
+  /**
+   * Sends one picked file to every selected device.
+   *
+   * The bytes are read once and posted once; the server makes a copy per device
+   * so each phone's transfer can succeed or fail on its own.
+   */
+  const handleSendFile = async (file: File) => {
+    if (selectedIds.length === 0) return toast.error('Select at least one device');
+
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        // readAsDataURL gives "data:<mime>;base64,<payload>" — only the payload
+        // goes to the server.
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+        reader.onerror = () => reject(new Error('Could not read the file'));
+        reader.readAsDataURL(file);
+      });
+
+      const response = await queueFile({
+        device_ids: selectedIds,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        content_base64: base64,
+      }).unwrap();
+
+      toast.success(response.message || `Sent ${file.name} to ${selectedIds.length} devices`);
+    } catch (err: any) {
+      toast.error(err?.data?.message || 'Could not send the file');
+    }
+  };
+
   const handleRunOnSelected = async () => {
     const text = prompt.trim();
     if (!text) return toast.error('Enter a task first');
@@ -550,6 +585,27 @@ export default function AndroidFleetPage() {
           >
             Run on {selectedIds.length || 0}
           </Button>
+
+          <Button
+            variant="outlined"
+            startIcon={isSendingFile ? <CircularProgress size={16} color="inherit" /> : <AttachFileIcon />}
+            disabled={isSendingFile || selectedIds.length === 0}
+            onClick={() => fileInputRef.current?.click()}
+            sx={{ whiteSpace: 'nowrap' }}
+          >
+            Send file
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Cleared straight away so picking the same file twice still fires.
+              event.target.value = '';
+              if (file) void handleSendFile(file);
+            }}
+          />
         </Stack>
 
         {/* Dispatch result strip */}
