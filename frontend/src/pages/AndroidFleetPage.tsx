@@ -30,6 +30,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import {
+  alpha,
   Box,
   Button,
   Card,
@@ -566,17 +567,64 @@ export default function AndroidFleetPage() {
           transition: 'border-color 200ms ease, background-color 200ms ease',
         }}
       >
-        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1.5 }}>
+        <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
           <SmartToyIcon fontSize="small" color="primary" />
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
             Run one task on many devices
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
+
+          {/* Fleet-wide utilities. They belong beside the selection control
+              rather than in the run form below: neither one uses the prompt,
+              the model or the step budget, and crowding them into that row
+              pushed the primary Run button off the edge. */}
+          <Tooltip title={onlineDevices.length ? `Pull a fresh frame from all ${onlineDevices.length} online phones` : 'No devices online'}>
+            <span>
+              <Button
+                size="small"
+                startIcon={isRefreshingFrames ? <CircularProgress size={14} color="inherit" /> : <PhotoCameraIcon fontSize="small" />}
+                disabled={isRefreshingFrames || onlineDevices.length === 0}
+                onClick={handleRefreshAllFrames}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                Show all screens
+              </Button>
+            </span>
+          </Tooltip>
+
+          <Tooltip title={selectedIds.length ? `Send one file to ${selectedIds.length} selected device${selectedIds.length === 1 ? '' : 's'}` : 'Select devices first'}>
+            <span>
+              <Button
+                size="small"
+                startIcon={isSendingFile ? <CircularProgress size={14} color="inherit" /> : <AttachFileIcon fontSize="small" />}
+                disabled={isSendingFile || selectedIds.length === 0}
+                onClick={() => fileInputRef.current?.click()}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                Send file
+              </Button>
+            </span>
+          </Tooltip>
+
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
+
           <Button size="small" onClick={selectAllOnline} disabled={onlineDevices.length === 0}>
             {selectedIds.length === onlineDevices.length && onlineDevices.length > 0
               ? 'Clear selection'
               : 'Select all online'}
           </Button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Cleared straight away so picking the same file twice still fires.
+              event.target.value = '';
+              if (file) void handleSendFile(file);
+            }}
+          />
         </Stack>
 
         <Stack direction={{ xs: 'column', md: 'row' }} gap={1.5}>
@@ -621,44 +669,23 @@ export default function AndroidFleetPage() {
           />
           <Button
             variant="contained"
+            disableElevation
             startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
             disabled={isDispatching || selectedIds.length === 0 || !prompt.trim()}
             onClick={handleRunOnSelected}
-            sx={{ whiteSpace: 'nowrap', minWidth: 170 }}
+            sx={{
+              whiteSpace: 'nowrap',
+              minWidth: 170,
+              fontWeight: 700,
+              // The one action on this card that starts work on every selected
+              // phone, so it is the only thing here that carries a shadow.
+              boxShadow: (theme) => `0 6px 18px ${alpha(theme.palette.primary.main, 0.32)}`,
+              '&:hover': { boxShadow: (theme) => `0 8px 22px ${alpha(theme.palette.primary.main, 0.42)}` },
+              '&.Mui-disabled': { boxShadow: 'none' },
+            }}
           >
             Run on {selectedIds.length || 0}
           </Button>
-
-          <Button
-            variant="outlined"
-            startIcon={isRefreshingFrames ? <CircularProgress size={16} color="inherit" /> : <PhotoCameraIcon />}
-            disabled={isRefreshingFrames || onlineDevices.length === 0}
-            onClick={handleRefreshAllFrames}
-            sx={{ whiteSpace: 'nowrap' }}
-          >
-            Show all screens
-          </Button>
-
-          <Button
-            variant="outlined"
-            startIcon={isSendingFile ? <CircularProgress size={16} color="inherit" /> : <AttachFileIcon />}
-            disabled={isSendingFile || selectedIds.length === 0}
-            onClick={() => fileInputRef.current?.click()}
-            sx={{ whiteSpace: 'nowrap' }}
-          >
-            Send file
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              // Cleared straight away so picking the same file twice still fires.
-              event.target.value = '';
-              if (file) void handleSendFile(file);
-            }}
-          />
         </Stack>
 
         {/* Dispatch result strip */}
