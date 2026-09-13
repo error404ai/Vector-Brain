@@ -56,6 +56,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
 import DeviceControls from '@/components/android/DeviceControls';
+import PasteToDevices from '@/components/android/PasteToDevices';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -701,6 +702,7 @@ export default function AndroidFleetPage() {
             variant="full"
             onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
           />
+          <PasteToDevices deviceIds={selectedIds} />
         </Stack>
 
         {/* Dispatch result strip */}

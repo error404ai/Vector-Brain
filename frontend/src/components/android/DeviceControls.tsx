@@ -1,6 +1,5 @@
 import { useSendDirectActionMutation } from '@/RTKService/androidService/androidService';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import ContentPasteIcon from '@mui/icons-material/ContentPaste';
 import HomeIcon from '@mui/icons-material/Home';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -38,7 +37,6 @@ const CONTROLS: Control[] = [
   { key: 'down', label: 'Scroll down', icon: <KeyboardArrowDownIcon fontSize="inherit" />, action: { type: 'Swipe', direction: 'UP' } },
   { key: 'up', label: 'Scroll up', icon: <KeyboardArrowUpIcon fontSize="inherit" />, action: { type: 'Swipe', direction: 'DOWN' } },
   { key: 'enter', label: 'Press Enter', icon: <KeyboardReturnIcon fontSize="inherit" />, action: { type: 'PressKey', key: 'ENTER' } },
-  { key: 'paste', label: 'Paste clipboard', icon: <ContentPasteIcon fontSize="inherit" />, action: { type: 'Paste' } },
   { key: 'refresh', label: 'Refresh screen', icon: <RefreshIcon fontSize="inherit" />, action: { type: 'CaptureScreen' }, primary: true, returnsFrame: true },
 ];
 
