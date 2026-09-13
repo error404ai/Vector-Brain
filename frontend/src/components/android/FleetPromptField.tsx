@@ -1,0 +1,110 @@
+import { useGetAndroidTasksQuery } from '@/RTKService/androidService/androidService';
+import HistoryIcon from '@mui/icons-material/History';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import { Autocomplete, Box, TextField, Typography } from '@mui/material';
+import { useMemo } from 'react';
+
+/** Starting points for someone who has not run anything yet. */
+const SUGGESTIONS = [
+  'Open YouTube and play lofi study music',
+  'Open Chrome and search for the weather today',
+  'Open the Play Store and check for app updates',
+  'Open date and time settings',
+  'Open bbc.com and tell me the top 3 headlines',
+  'Take me to the home screen and open the app drawer',
+];
+
+/** Past prompts pulled per open. Enough to be useful, not enough to scroll forever. */
+const HISTORY_LIMIT = 50;
+const HISTORY_SHOWN = 8;
+
+interface PromptOption {
+  value: string;
+  kind: 'history' | 'suggestion';
+}
+
+interface FleetPromptFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  placeholder?: string;
+}
+
+/**
+ * The fleet's task box, with what has been run before behind it.
+ *
+ * Typing the same instruction again is the most common thing anyone does here,
+ * so previous prompts come first and the canned examples sit underneath as a
+ * fallback for an empty account. Free text is still the point — the list only
+ * saves typing, it never restricts what can be sent.
+ */
+export default function FleetPromptField({ value, onChange, onSubmit, placeholder }: FleetPromptFieldProps) {
+  // Already cached by RTK for the tasks page, so this rarely costs a request.
+  const { data } = useGetAndroidTasksQuery({ limit: HISTORY_LIMIT });
+
+  const options = useMemo<PromptOption[]>(() => {
+    const seen = new Set<string>();
+    const history: PromptOption[] = [];
+
+    for (const task of data?.data ?? []) {
+      const prompt = (task.prompt || '').trim();
+      // Newest first, and the same instruction run twice should appear once.
+      if (!prompt || seen.has(prompt.toLowerCase())) continue;
+      seen.add(prompt.toLowerCase());
+      history.push({ value: prompt, kind: 'history' });
+      if (history.length >= HISTORY_SHOWN) break;
+    }
+
+    const suggestions = SUGGESTIONS.filter((suggestion) => !seen.has(suggestion.toLowerCase())).map(
+      (suggestion): PromptOption => ({ value: suggestion, kind: 'suggestion' }),
+    );
+
+    return [...history, ...suggestions];
+  }, [data]);
+
+  return (
+    <Autocomplete
+      freeSolo
+      fullWidth
+      openOnFocus
+      disableClearable
+      options={options}
+      inputValue={value}
+      onInputChange={(_event, next) => onChange(next)}
+      getOptionLabel={(option) => (typeof option === 'string' ? option : option.value)}
+      groupBy={(option) => (option.kind === 'history' ? 'Recent' : 'Try one of these')}
+      filterOptions={(list, state) => {
+        const query = state.inputValue.trim().toLowerCase();
+        if (!query) return list;
+        return list.filter((option) => option.value.toLowerCase().includes(query));
+      }}
+      renderOption={(props, option) => (
+        <Box component="li" {...props} key={`${option.kind}-${option.value}`} sx={{ gap: 1 }}>
+          {option.kind === 'history' ? (
+            <HistoryIcon fontSize="small" sx={{ color: 'text.disabled' }} />
+          ) : (
+            <LightbulbIcon fontSize="small" sx={{ color: 'text.disabled' }} />
+          )}
+          <Typography variant="body2" noWrap>
+            {option.value}
+          </Typography>
+        </Box>
+      )}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          size="small"
+          placeholder={placeholder ?? 'e.g. Open YouTube and search for lofi beats'}
+          onKeyDown={(event) => {
+            // Enter while the list is open picks an option; Autocomplete has
+            // already handled it by then, so only a plain Enter submits.
+            if (event.key === 'Enter' && !event.shiftKey && !event.defaultPrevented) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+      )}
+    />
+  );
+}

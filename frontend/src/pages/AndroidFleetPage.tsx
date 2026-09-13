@@ -57,6 +57,7 @@ import toast from 'react-hot-toast';
 import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
+import FleetPromptField from '@/components/android/FleetPromptField';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -630,19 +631,7 @@ export default function AndroidFleetPage() {
         </Stack>
 
         <Stack direction={{ xs: 'column', md: 'row' }} gap={1.5}>
-          <TextField
-            fullWidth
-            size="small"
-            placeholder="e.g. Open YouTube and search for lofi beats"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                handleRunOnSelected();
-              }
-            }}
-          />
+          <FleetPromptField value={prompt} onChange={setPrompt} onSubmit={handleRunOnSelected} />
           <TextField
             select
             size="small"
