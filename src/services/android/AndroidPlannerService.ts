@@ -31,6 +31,12 @@ const MAX_IDENTICAL_TOOL_STATES = 3;
 const MAX_UNCHANGED_OBSERVATIONS = 3;
 
 /** Step budget used when a caller does not supply one. */
+/** Time a sleeping phone gets to come up before its first action. */
+const WAKE_SETTLE_MS = 1_500;
+
+/** A longer pause for the retry, for the slowest handsets in a fleet. */
+const WAKE_RETRY_MS = 4_000;
+
 const DEFAULT_MAX_STEPS = 500;
 
 /**
@@ -492,12 +498,30 @@ export class AndroidPlannerService {
 
     // Wake the display before the first observation in case the device was idle.
     this.gatewayService.setAutomationSession(device.device_id, true);
+
+    // A phone that has been sitting idle needs a moment after the wake lock
+    // before its accessibility service answers. Without this pause the first
+    // action lands while the device is still coming up and times out — which
+    // is what made queued devices look broken while the same handset worked
+    // fine from the agent page, where the live view had already woken it.
+    await new Promise((resolve) => setTimeout(resolve, WAKE_SETTLE_MS));
+
     let initialScreenshot: string | undefined;
     try {
       initialScreenshot = await this.assertDeviceReady(device.device_id, userId);
     } catch (error) {
-      this.startingDevices.delete(device.device_id);
-      throw error;
+      // One retry, because the usual cause is a device that simply had not
+      // finished waking. A second failure is a real problem and is reported.
+      Logger.warn(`[AndroidPlanner] ${device.device_name} was not ready; waking it and retrying once`);
+      try {
+        this.gatewayService.setAutomationSession(device.device_id, true);
+        await new Promise((resolve) => setTimeout(resolve, WAKE_RETRY_MS));
+        initialScreenshot = await this.assertDeviceReady(device.device_id, userId);
+      } catch (retryError) {
+        this.startingDevices.delete(device.device_id);
+        this.gatewayService.setAutomationSession(device.device_id, false);
+        throw retryError;
+      }
     } finally {
       // The bounded task session is acquired again below after its DB record exists.
       this.gatewayService.setAutomationSession(device.device_id, false);
