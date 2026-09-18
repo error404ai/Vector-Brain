@@ -5,6 +5,7 @@ import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
+import { AndroidGatewayService } from './AndroidGatewayService';
 import { z } from 'zod';
 import { CreateProxyValidation, UpdateProxyValidation } from '@/validations/DeviceProxyValidation';
 
@@ -19,6 +20,8 @@ const IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
 
 @Service()
 export class ProxyRotationService {
+  constructor(private gatewayService: AndroidGatewayService) {}
+
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
 
@@ -141,7 +144,7 @@ export class ProxyRotationService {
         return;
       }
 
-      await this.callRotationUrl(proxy);
+      await this.callRotationUrl(proxy, { deviceId: device.id, deviceName: device.device_name });
     } catch (error) {
       Logger.warn('[Proxy] Rotation after task failed', error);
     }
@@ -162,7 +165,10 @@ export class ProxyRotationService {
     return query.getOne();
   }
 
-  private async callRotationUrl(proxy: DeviceProxy): Promise<{ ok: boolean; ip: string | null; status: string }> {
+  private async callRotationUrl(
+    proxy: DeviceProxy,
+    context?: { deviceId?: number; deviceName?: string },
+  ): Promise<{ ok: boolean; ip: string | null; status: string }> {
     let ok = false;
     let ip: string | null = null;
     let status: string;
@@ -194,6 +200,24 @@ export class ProxyRotationService {
     });
 
     if (!ok) Logger.warn(`[Proxy] "${proxy.name}" rotation failed: ${status}`);
+
+    // Announced to the dashboard, so a rotation is something the user watches
+    // happen rather than something they open a dialog to verify.
+    try {
+      this.gatewayService.broadcastToUser(proxy.user_id, 'proxy:rotated', {
+        proxyId: proxy.id,
+        proxyName: proxy.name,
+        ok,
+        oldIp: proxy.last_ip ?? null,
+        newIp: ip,
+        status,
+        deviceId: context?.deviceId ?? null,
+        deviceName: context?.deviceName ?? null,
+      });
+    } catch (error) {
+      Logger.warn('[Proxy] Could not announce the rotation', error);
+    }
+
     return { ok, ip, status };
   }
 

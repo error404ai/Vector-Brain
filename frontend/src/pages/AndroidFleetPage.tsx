@@ -314,6 +314,28 @@ export default function AndroidFleetPage() {
             });
             break;
           }
+          case 'proxy:rotated': {
+            // The rotation is the moment the user cares about: the phone is
+            // done and the lane now has a different address. Shown as it
+            // happens rather than left for them to discover.
+            const laneName = payload.proxyName ?? 'Proxy';
+            const finishedOn = payload.deviceName ? ` after ${payload.deviceName}` : '';
+
+            if (payload.ok) {
+              toast.success(
+                payload.newIp
+                  ? `${laneName}: new IP ${payload.newIp}${finishedOn}`
+                  : `${laneName}: rotated${finishedOn}`,
+                { duration: 5000 },
+              );
+            } else {
+              toast.error(`${laneName}: rotation failed — ${payload.status ?? 'unknown error'}`, { duration: 7000 });
+            }
+
+            // Keeps the lane header's IP honest without waiting for a refetch.
+            refetchProxies();
+            break;
+          }
           case 'task:completed':
             patchRuntime(deviceId, {
               isRunning: false,
@@ -1078,6 +1100,7 @@ export default function AndroidFleetPage() {
         startError: state.startError,
         proxyName: proxy?.name,
         proxyColor: proxyColor(laneId),
+        tag: device.tag ?? null,
       };
     });
 
