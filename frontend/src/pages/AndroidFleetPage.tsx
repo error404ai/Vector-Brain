@@ -261,9 +261,14 @@ export default function AndroidFleetPage() {
               startError: undefined,
             });
             break;
-          case 'task:step':
+          case 'task:step': {
+            // Narrowed here because the transcript update indexes by this id,
+            // and a step event without a device is not one we can place.
+            if (deviceId === undefined) break;
+            const stepDeviceId = deviceId;
+
             setRuntime((current) => {
-              const existing = current[deviceId] ?? emptyRuntime;
+              const existing = current[stepDeviceId] ?? emptyRuntime;
               const steps = [
                 ...(existing.steps ?? []),
                 { index: payload.stepIndex ?? 0, thought: payload.thought, action: payload.action?.type },
@@ -271,7 +276,7 @@ export default function AndroidFleetPage() {
 
               return {
                 ...current,
-                [deviceId]: {
+                [stepDeviceId]: {
                   ...existing,
                   isRunning: true,
                   stepIndex: payload.stepIndex ?? 0,
@@ -282,6 +287,7 @@ export default function AndroidFleetPage() {
               };
             });
             break;
+          }
           case 'task:completed':
             patchRuntime(deviceId, {
               isRunning: false,
