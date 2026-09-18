@@ -210,9 +210,17 @@ export class ProxyRotationService {
 
     try {
       const parsed = JSON.parse(trimmed);
-      for (const key of ['new_ip', 'newIp', 'current_ip', 'currentIp', 'ip', 'address']) {
-        const value = parsed?.[key];
-        if (typeof value === 'string' && IPV4.test(value)) return value.match(IPV4)?.[0] ?? null;
+      // Providers nest the address as often as not: hilink, for one, answers
+      // {"result":{"old_ip":"…","new_ip":"…"}}. Looking only at the top level
+      // would miss it and leave the match below to guess from raw text.
+      const candidates = [parsed, parsed?.result, parsed?.data, parsed?.payload];
+
+      for (const source of candidates) {
+        if (!source || typeof source !== 'object') continue;
+        for (const key of ['new_ip', 'newIp', 'current_ip', 'currentIp', 'ip', 'address']) {
+          const value = source[key];
+          if (typeof value === 'string' && IPV4.test(value)) return value.match(IPV4)?.[0] ?? null;
+        }
       }
     } catch {
       // Not JSON — fall through to the text match below.
