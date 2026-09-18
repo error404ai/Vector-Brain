@@ -314,6 +314,15 @@ export default function AndroidFleetPage() {
             });
             break;
           }
+          case 'queue:dropped': {
+            // Its turn came and the phone could not take it. Said out loud,
+            // because a queued card simply vanishing looks like a bug.
+            toast.error(`${payload.deviceName ?? 'A device'} was skipped: ${payload.reason ?? 'could not start'}`, {
+              duration: 7000,
+            });
+            refetchQueue();
+            break;
+          }
           case 'proxy:rotated': {
             // The rotation is the moment the user cares about: the phone is
             // done and the lane now has a different address. Shown as it

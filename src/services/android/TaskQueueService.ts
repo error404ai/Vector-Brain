@@ -6,6 +6,7 @@ import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
+import { AndroidGatewayService } from './AndroidGatewayService';
 
 /** Signature of the planner call the queue uses to launch a waiting task. */
 type TaskRunner = (
@@ -41,6 +42,8 @@ const MAX_QUEUE_AGE_MS = 6 * 60 * 60 * 1000;
  */
 @Service()
 export class TaskQueueService {
+  constructor(private gatewayService: AndroidGatewayService) {}
+
   private queueRepo = AppDataSource.getRepository(QueuedTask);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
@@ -214,6 +217,17 @@ export class TaskQueueService {
         next.last_error = 'Device was offline when its turn came';
         await this.queueRepo.save(next);
         await this.queueRepo.delete(next.id);
+
+        try {
+          this.gatewayService.broadcastToUser(next.user_id, 'queue:dropped', {
+            deviceId: next.device_id,
+            deviceName: device?.device_name ?? 'Device',
+            reason: next.last_error,
+          });
+        } catch {
+          // Best effort, as above.
+        }
+
         continue;
       }
 
@@ -230,12 +244,28 @@ export class TaskQueueService {
       } catch (error: any) {
         this.release(next.device_id);
         Logger.warn(`[Queue] Could not start queued task ${next.id}: ${error?.message ?? error}`);
-        next.status = 'QUEUED';
+
+        // The refusal belongs to this phone, not to the lane — an unresponsive
+        // accessibility service on one device says nothing about the next one.
+        // Stopping here let a single bad handset hold up everything behind it,
+        // so the entry is dropped and the lane carries on.
         next.last_error = String(error?.message ?? 'Could not start').slice(0, 255);
         await this.queueRepo.save(next);
-        // Stop here: whatever refused this task will refuse the next one too,
-        // and the sweep will try again shortly.
-        return;
+        await this.queueRepo.delete(next.id);
+
+        // Dropping it quietly would leave the user waiting for a run that is
+        // never coming, so the reason goes to the dashboard.
+        try {
+          this.gatewayService.broadcastToUser(next.user_id, 'queue:dropped', {
+            deviceId: next.device_id,
+            deviceName: device.device_name,
+            reason: next.last_error,
+          });
+        } catch {
+          // Telling the dashboard is best effort; the lane must keep moving.
+        }
+
+        continue;
       }
     }
   }
