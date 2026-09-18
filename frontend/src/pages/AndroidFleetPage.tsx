@@ -61,6 +61,7 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
+import FleetChatPanel from '@/components/android/FleetChatPanel';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
 import {
   useAssignDeviceProxyMutation,
@@ -71,6 +72,22 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
+/** One line of a device's run, kept so the chat panel can show a transcript. */
+export interface RuntimeStep {
+  index: number;
+  thought?: string;
+  action?: string;
+}
+
+/**
+ * Steps kept per device.
+ *
+ * Twenty-odd phones each holding an unbounded transcript would grow the page's
+ * memory for as long as it stays open, so only the recent part of a run is
+ * kept — enough to follow what a device is doing without becoming a log store.
+ */
+const MAX_STEPS_KEPT = 30;
+
 interface DeviceRuntime {
   screenshot?: string;
   taskId?: number;
@@ -79,6 +96,7 @@ interface DeviceRuntime {
   stepIndex: number;
   lastThought?: string;
   lastAction?: string;
+  steps?: RuntimeStep[];
   finishedAt?: number;
   finishedOk?: boolean;
   finishedMessage?: string;
@@ -168,6 +186,7 @@ export default function AndroidFleetPage() {
   const proxies = proxyData?.data ?? [];
   const proxyById = new Map(proxies.map((proxy) => [proxy.id, proxy]));
   const [groupByProxy, setGroupByProxy] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -234,17 +253,33 @@ export default function AndroidFleetPage() {
               taskId: payload.taskId,
               prompt: payload.prompt,
               stepIndex: 0,
+              // A new run starts a new transcript rather than continuing the
+              // previous one.
+              steps: [],
               finishedAt: undefined,
               finishedMessage: undefined,
               startError: undefined,
             });
             break;
           case 'task:step':
-            patchRuntime(deviceId, {
-              isRunning: true,
-              stepIndex: payload.stepIndex ?? 0,
-              lastThought: payload.thought,
-              lastAction: payload.action?.type,
+            setRuntime((current) => {
+              const existing = current[deviceId] ?? emptyRuntime;
+              const steps = [
+                ...(existing.steps ?? []),
+                { index: payload.stepIndex ?? 0, thought: payload.thought, action: payload.action?.type },
+              ].slice(-MAX_STEPS_KEPT);
+
+              return {
+                ...current,
+                [deviceId]: {
+                  ...existing,
+                  isRunning: true,
+                  stepIndex: payload.stepIndex ?? 0,
+                  lastThought: payload.thought,
+                  lastAction: payload.action?.type,
+                  steps,
+                },
+              };
             });
             break;
           case 'task:completed':
@@ -930,8 +965,33 @@ export default function AndroidFleetPage() {
   const historyTasks = historyDeviceId !== null ? tasksByDevice[historyDeviceId] ?? [] : [];
 
   // ---- Render ------------------------------------------------------------
+  /** What the chat panel needs about each selected device. */
+  const chatDevices = selectedIds
+    .map((deviceId) => devices.find((device) => device.id === deviceId))
+    .filter((device): device is AndroidDevice => Boolean(device))
+    .map((device) => {
+      const state = runtime[device.id] ?? emptyRuntime;
+      const proxy = device.proxy_id ? proxyById.get(device.proxy_id) : undefined;
+      return {
+        id: device.id,
+        name: device.device_name,
+        isOnline: device.status === 'ONLINE',
+        isRunning: state.isRunning,
+        isQueued: queuedByDevice.has(device.id),
+        prompt: state.prompt,
+        stepIndex: state.stepIndex,
+        steps: state.steps,
+        finishedOk: state.finishedOk,
+        finishedMessage: state.finishedMessage,
+        startError: state.startError,
+        proxyName: proxy?.name,
+        proxyColor: proxyColor(device.proxy_id),
+      };
+    });
+
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1680, mx: 'auto' }}>
+    <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
+      <Box sx={{ flexGrow: 1, minWidth: 0, p: { xs: 2, md: 3 }, maxWidth: 1680, mx: 'auto' }}>
       {/* Header */}
       <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 2.5 }}>
         <Box sx={{ minWidth: 0 }}>
@@ -1043,6 +1103,10 @@ export default function AndroidFleetPage() {
               </Button>
             </>
           )}
+
+          <Button size="small" onClick={() => setChatOpen((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
+            {chatOpen ? 'Hide chat' : 'Chat'}
+          </Button>
 
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
 
@@ -1428,6 +1492,18 @@ export default function AndroidFleetPage() {
       </Dialog>
     
       <ProxyManagerDialog open={proxyDialogOpen} onClose={() => { setProxyDialogOpen(false); refetchProxies(); refetch(); }} />
+      </Box>
+
+      {chatOpen && (
+        <FleetChatPanel
+          devices={chatDevices}
+          onClose={() => setChatOpen(false)}
+          onFollowUp={(deviceId, text) => dispatchTo([deviceId], text)}
+          onBroadcast={(text) => dispatchTo(selectedIds, text)}
+          onStop={(deviceId) => handleStopDevice(deviceId)}
+          onOpenFull={(deviceId) => navigate(`/android-agent?deviceId=${deviceId}`)}
+        />
+      )}
     </Box>
   );
 }
