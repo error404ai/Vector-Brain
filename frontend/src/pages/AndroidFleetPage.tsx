@@ -61,6 +61,7 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
+import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
 import {
   useAssignDeviceProxyMutation,
   useCancelQueuedTaskMutation,
@@ -165,6 +166,9 @@ export default function AndroidFleetPage() {
   const queuedByDevice = new Map((queueData?.data ?? []).map((entry) => [entry.device_id, entry]));
   const [assignProxy] = useAssignDeviceProxyMutation();
   const proxies = proxyData?.data ?? [];
+  const proxyById = new Map(proxies.map((proxy) => [proxy.id, proxy]));
+  const [groupByProxy, setGroupByProxy] = useState(true);
+  const [isAutoAssigning, setIsAutoAssigning] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -317,6 +321,402 @@ export default function AndroidFleetPage() {
     return [...devices].sort((a, b) => rank(a) - rank(b) || a.device_name.localeCompare(b.device_name));
   }, [devices, runtime]);
   const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
+  const renderDeviceCard = (device: AndroidDevice) => {
+            const state = runtime[device.id] ?? emptyRuntime;
+            const isOnline = device.status === 'ONLINE';
+            const isSelected = selectedIds.includes(device.id);
+            const historyCount = (tasksByDevice[device.id] ?? []).length;
+
+            return (
+              <Card
+                key={device.id}
+                variant="outlined"
+                sx={{
+                  position: 'relative',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                  borderWidth: isSelected || state.startError ? 2 : 1,
+                  borderColor: state.startError ? 'error.main' : isSelected ? 'primary.main' : undefined,
+                  // Offline cards keep full contrast; the spine carries the state
+                  // so the content stays readable.
+                  display: 'flex',
+                  flexDirection: 'column',
+                  pl: '5px',
+                  transition: 'border-color 180ms ease, box-shadow 180ms ease',
+                  ...(state.isRunning && { boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.28)' }),
+                }}
+              >
+                <FleetStatusSpine
+                  state={
+                    state.isRunning
+                      ? 'running'
+                      : state.startError
+                        ? 'failed'
+                        : isOnline
+                          ? 'idle'
+                          : 'offline'
+                  }
+                />
+                {/* The lane's colour, inset beside the status spine, so which
+                    proxy a phone is on is readable without opening anything. */}
+                {device.proxy_id && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      left: '5px',
+                      top: 0,
+                      bottom: 0,
+                      width: '4px',
+                      bgcolor: proxyColor(device.proxy_id),
+                    }}
+                  />
+                )}
+                {/* Header */}
+                <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
+                  <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
+                  <Typography variant="body2" noWrap sx={{ fontWeight: 700, flexGrow: 1, minWidth: 0 }}>
+                    {device.device_name}
+                  </Typography>
+                  {device.proxy_id && proxyById.has(device.proxy_id) && (
+                    <Tooltip title={`Proxy: ${proxyById.get(device.proxy_id)!.name}`}>
+                      <Chip
+                        size="small"
+                        label={proxyShortName(proxyById.get(device.proxy_id)!.name)}
+                        sx={{
+                          height: 20,
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          color: '#fff',
+                          bgcolor: proxyColor(device.proxy_id),
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+                  <Chip
+                    size="small"
+                    label={isOnline ? 'ONLINE' : 'OFFLINE'}
+                    color={isOnline ? 'success' : 'default'}
+                    sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
+                  />
+                </Stack>
+
+                <Stack direction="row" alignItems="center" gap={0.25} sx={{ px: 1, pb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ flexGrow: 1, minWidth: 0, pl: 0.5 }}>
+                    {device.device_model || 'Android'} · {device.device_id.slice(-8)}
+                  </Typography>
+                  <Tooltip title="Enlarge screen">
+                    <span>
+                      <IconButton size="small" disabled={!isOnline} onClick={() => setExpandedDeviceId(device.id)}>
+                        <OpenInFullIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={controlDeviceId === device.id ? 'Stop manual control' : 'Take manual control'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!isOnline}
+                        color={controlDeviceId === device.id ? 'primary' : 'default'}
+                        onClick={() => setControlDeviceId((prev) => (prev === device.id ? null : device.id))}
+                      >
+                        <TouchAppIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={`Task history (${historyCount})`}>
+                    <span>
+                      <IconButton size="small" disabled={historyCount === 0} onClick={() => setHistoryDeviceId(device.id)}>
+                        <HistoryIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Send a file to this device">
+                    <span>
+                      <IconButton size="small" onClick={() => setFileDeviceId(device.id)}>
+                        <AttachFileIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Open a settings screen on this phone">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={device.status !== 'ONLINE'}
+                        onClick={(event) => setSettingsMenu({ anchor: event.currentTarget, deviceId: device.id })}
+                      >
+                        <TuneIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Stack>
+
+                {state.isRunning && <LinearProgress />}
+
+                {/* Live screen */}
+                {/* A 9:16 box inside a grid column becomes ~750px tall, which turned
+                    every card into a column of black. On a board the screen is a
+                    thumbnail, not the subject — the full view is behind Enlarge.
+                    Fixed height keeps the rows aligned across the whole grid. */}
+                {/* A phone screen is portrait, so a full-width landscape box wasted
+                    most of its area on black bars and shrank the actual frame to a
+                    sliver. Constraining by height instead keeps the real 9:16 shape
+                    and gives every card the same row height. */}
+                <PhoneFrame3D
+                  width={248}
+                  // 9:19, matching the Android Agent page's mockup, so the two
+                  // views show a phone of the same shape.
+                  //
+                  // Taller while driving: turning control on makes
+                  // InteractiveDeviceScreen add a Back/Home/Recents row and a
+                  // 2px outline inside this same box, and at the fixed height
+                  // those squeezed the frame and spilled past its edges. The
+                  // extra room lets the row sit along the bottom of the glass,
+                  // where a real phone keeps its nav bar anyway.
+                  height={controlDeviceId === device.id ? 580 : 524}
+                  tilt={controlDeviceId !== device.id}
+                  active={state.isRunning}
+                  onClick={
+                    controlDeviceId === device.id
+                      ? undefined
+                      : () => navigate(`/android-agent?deviceId=${device.id}`)
+                  }
+                >
+                  <InteractiveDeviceScreen
+                    compact
+                    fill
+                    deviceId={device.id}
+                    screenshot={state.screenshot}
+                    onScreenshot={(base64) => patchRuntime(device.id, { screenshot: base64 })}
+                    controlEnabled={controlDeviceId === device.id}
+                    isAgentRunning={state.isRunning}
+                  />
+                </PhoneFrame3D>
+
+                <Divider />
+
+                {/* Status */}
+                <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
+                  {state.startError ? (
+                    <Stack direction="row" alignItems="flex-start" gap={0.75}>
+                      <ErrorOutlineIcon fontSize="small" color="error" />
+                      <Typography variant="caption" color="error">
+                        {state.startError}
+                      </Typography>
+                    </Stack>
+                  ) : state.isRunning ? (
+                    <Stack gap={0.5}>
+                      <Stack direction="row" alignItems="center" gap={0.75}>
+                        <Chip
+                          size="small"
+                          label={`Step ${state.stepIndex}`}
+                          color="warning"
+                          sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
+                        />
+                        {state.lastAction && (
+                          <Typography variant="caption" color="text.secondary" noWrap>
+                            {state.lastAction}
+                          </Typography>
+                        )}
+                        <Box sx={{ flexGrow: 1 }} />
+                        <Tooltip title="Stop this task">
+                          <IconButton size="small" color="error" onClick={() => handleStopDevice(device.id)}>
+                            <StopCircleIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                      >
+                        {state.lastThought || state.prompt || 'Working…'}
+                      </Typography>
+                    </Stack>
+                  ) : state.finishedAt ? (
+                    <Stack direction="row" alignItems="center" gap={0.75}>
+                      {state.finishedOk ? (
+                        <CheckCircleIcon fontSize="small" color="success" />
+                      ) : (
+                        <ErrorOutlineIcon fontSize="small" color="error" />
+                      )}
+                      <Typography variant="caption" color="text.secondary" noWrap>
+                        {state.finishedMessage || (state.finishedOk ? 'Completed' : 'Stopped')}
+                      </Typography>
+                    </Stack>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      {isOnline ? 'Idle — ready for a task' : 'Device offline'}
+                    </Typography>
+                  )}
+                </CardContent>
+
+                {/* Per-device model override */}
+                <Box sx={{ px: 1, pb: 0.75 }}>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    label="Model"
+                    disabled={state.isRunning}
+                    value={deviceConfigIds[device.id] ?? 0}
+                    onChange={(event) =>
+                      setDeviceConfigIds((prev) => ({ ...prev, [device.id]: Number(event.target.value) }))
+                    }
+                    sx={{ '& .MuiInputBase-input': { fontSize: 12 } }}
+                  >
+                    <MenuItem value={0} sx={{ fontSize: 12 }}>
+                      Use fleet default
+                    </MenuItem>
+                    {aiConfigs.map((config) => (
+                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 12 }}>
+                        {config.model}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Box>
+
+                {/* Waiting for its lane. Shown above the proxy picker so the
+                    reason a phone is idle is next to what it is waiting on. */}
+                {queuedByDevice.has(device.id) && (
+                  <Box sx={{ px: 1, pb: 0.5 }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      gap={1}
+                      sx={{ px: 1.25, py: 0.75, borderRadius: 1.5, bgcolor: 'warning.light', color: 'warning.contrastText' }}
+                    >
+                      <HourglassEmptyIcon fontSize="small" />
+                      <Typography variant="caption" sx={{ fontWeight: 700, flexGrow: 1 }} noWrap>
+                        Waiting for the proxy lane
+                      </Typography>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={async () => {
+                          const entry = queuedByDevice.get(device.id);
+                          if (!entry) return;
+                          try {
+                            await cancelQueued(entry.id).unwrap();
+                            refetchQueue();
+                            toast.success('Removed from the queue');
+                          } catch {
+                            toast.error('Could not cancel');
+                          }
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </Stack>
+                  </Box>
+                )}
+
+                {/* Which proxy lane this phone sits on. */}
+                {proxies.length > 0 && (
+                  <Box sx={{ px: 1, pb: 0.5 }}>
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Proxy"
+                      value={device.proxy_id ?? ''}
+                      onChange={async (event) => {
+                        const raw = event.target.value;
+                        try {
+                          await assignProxy({ device_id: device.id, proxy_id: raw === '' ? null : Number(raw) }).unwrap();
+                          refetch();
+                          refetchProxies();
+                        } catch {
+                          toast.error('Could not change the proxy');
+                        }
+                      }}
+                    >
+                      <MenuItem value="">No proxy</MenuItem>
+                      {proxies.map((proxy) => (
+                        <MenuItem key={proxy.id} value={proxy.id}>
+                          <Box
+                            component="span"
+                            sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id), mr: 1, display: 'inline-block' }}
+                          />
+                          {proxy.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Box>
+                )}
+
+                {/* One-tap controls for this phone alone. */}
+                <Stack direction="row" justifyContent="center" sx={{ px: 1, pb: 0.5 }}>
+                  <DeviceControls
+                    deviceIds={[device.id]}
+                    disabled={!isOnline}
+                    onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
+                  />
+                </Stack>
+
+                {/* Inline per-device prompt */}
+                <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    placeholder="Task for this device…"
+                    disabled={!isOnline || state.isRunning}
+                    value={cardPrompts[device.id] ?? ''}
+                    onChange={(event) => setCardPrompts((prev) => ({ ...prev, [device.id]: event.target.value }))}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        handleRunOnCard(device.id);
+                      }
+                    }}
+                    sx={{ '& .MuiInputBase-input': { fontSize: 13 } }}
+                  />
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    disabled={!isOnline || state.isRunning || !(cardPrompts[device.id] ?? '').trim()}
+                    onClick={() => handleRunOnCard(device.id)}
+                  >
+                    <SendIcon fontSize="small" />
+                  </IconButton>
+                </Stack>
+              </Card>
+            );
+  };
+
+
+  /** The card grid, used once per lane and once for the flat view. */
+  const DeviceGrid = ({ list }: { list: AndroidDevice[] }) => (
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            // auto-fill rather than a fixed count: two devices on a wide screen
+            // stay card-sized instead of stretching into two huge panels.
+            gridTemplateColumns: 'repeat(auto-fill, minmax(470px, 1fr))',
+            alignItems: 'start',
+          }}
+        >
+          {list.map((device) => renderDeviceCard(device))}
+        </Box>
+  );
+
+
+  /**
+   * Devices split into their proxy lanes.
+   *
+   * Which phone is on which proxy is the thing that is impossible to see in a
+   * flat grid of twenty-two cards, and it is exactly what decides when each one
+   * runs — so it becomes the page's structure rather than a field inside a card.
+   * Devices with no proxy collect at the end under their own heading.
+   */
+  const lanes = useMemo(() => {
+    const groups = proxies.map((proxy) => ({
+      proxy,
+      devices: orderedDevices.filter((device) => device.proxy_id === proxy.id),
+    }));
+    const unassigned = orderedDevices.filter((device) => !device.proxy_id);
+    return { groups, unassigned };
+  }, [proxies, orderedDevices]);
 
   const tasksByDevice = useMemo(() => {
     const map: Record<number, AndroidAgentTask[]> = {};
@@ -348,6 +748,39 @@ export default function AndroidFleetPage() {
   };
 
   /** Starts the same prompt on a set of devices and records what failed. */
+  /**
+   * Spread every device evenly over the proxies, round robin.
+   *
+   * Setting twenty-two dropdowns by hand is the part people give up on, and an
+   * even split is what almost everyone wants anyway. Anything unusual can still
+   * be changed per device afterwards.
+   */
+  const handleAutoAssign = async () => {
+    if (proxies.length === 0) return;
+    if (!confirm(`Spread ${devices.length} device(s) evenly across ${proxies.length} proxies? This replaces the current assignment.`)) return;
+
+    setIsAutoAssigning(true);
+    let done = 0;
+
+    try {
+      for (let index = 0; index < devices.length; index += 1) {
+        const proxy = proxies[index % proxies.length];
+        try {
+          await assignProxy({ device_id: devices[index].id, proxy_id: proxy.id }).unwrap();
+          done += 1;
+        } catch {
+          // Keep going: one failure should not leave the rest unassigned.
+        }
+      }
+      refetch();
+      refetchProxies();
+      if (done === devices.length) toast.success(`Assigned ${done} device${done === 1 ? '' : 's'}`);
+      else toast.error(`Assigned ${done} of ${devices.length}`);
+    } finally {
+      setIsAutoAssigning(false);
+    }
+  };
+
   const dispatchTo = async (deviceIds: number[], text: string) => {
     setIsDispatching(true);
     const outcomes = await Promise.allSettled(
@@ -637,6 +1070,22 @@ export default function AndroidFleetPage() {
             Proxies{proxies.length > 0 ? ` (${proxies.length})` : ''}
           </Button>
 
+          {proxies.length > 0 && (
+            <>
+              <Tooltip title="Spread every device evenly across the proxies">
+                <span>
+                  <Button size="small" disabled={isAutoAssigning} onClick={() => void handleAutoAssign()} sx={{ whiteSpace: 'nowrap' }}>
+                    Auto-assign
+                  </Button>
+                </span>
+              </Tooltip>
+
+              <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
+                {groupByProxy ? 'Ungroup' : 'Group by proxy'}
+              </Button>
+            </>
+          )}
+
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
 
           <Button size="small" onClick={selectAllOnline} disabled={onlineDevices.length === 0}>
@@ -720,6 +1169,42 @@ export default function AndroidFleetPage() {
             onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
           />
           <PasteToDevices deviceIds={selectedIds} />
+
+          {proxies.length > 0 && (
+            <TextField
+              select
+              size="small"
+              label="Assign selected to"
+              value=""
+              disabled={selectedIds.length === 0}
+              onChange={async (event) => {
+                const raw = event.target.value;
+                const proxyId = raw === 'none' ? null : Number(raw);
+                try {
+                  for (const deviceId of selectedIds) {
+                    await assignProxy({ device_id: deviceId, proxy_id: proxyId }).unwrap();
+                  }
+                  refetch();
+                  refetchProxies();
+                  toast.success(`Assigned ${selectedIds.length} device${selectedIds.length === 1 ? '' : 's'}`);
+                } catch {
+                  toast.error('Could not assign all devices');
+                }
+              }}
+              sx={{ minWidth: 190 }}
+            >
+              {proxies.map((proxy) => (
+                <MenuItem key={proxy.id} value={proxy.id}>
+                  <Box
+                    component="span"
+                    sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id), mr: 1, display: 'inline-block' }}
+                  />
+                  {proxy.name}
+                </MenuItem>
+              ))}
+              <MenuItem value="none">No proxy</MenuItem>
+            </TextField>
+          )}
         </Stack>
 
         {/* Dispatch result strip */}
@@ -775,344 +1260,60 @@ export default function AndroidFleetPage() {
           </Button>
         </Paper>
       ) : (
-        <Box
-          sx={{
-            display: 'grid',
-            gap: 2,
-            // auto-fill rather than a fixed count: two devices on a wide screen
-            // stay card-sized instead of stretching into two huge panels.
-            gridTemplateColumns: 'repeat(auto-fill, minmax(470px, 1fr))',
-            alignItems: 'start',
-          }}
-        >
-          {orderedDevices.map((device) => {
-            const state = runtime[device.id] ?? emptyRuntime;
-            const isOnline = device.status === 'ONLINE';
-            const isSelected = selectedIds.includes(device.id);
-            const historyCount = (tasksByDevice[device.id] ?? []).length;
-
-            return (
-              <Card
-                key={device.id}
-                variant="outlined"
-                sx={{
-                  position: 'relative',
-                  borderRadius: 2,
-                  overflow: 'hidden',
-                  borderWidth: isSelected || state.startError ? 2 : 1,
-                  borderColor: state.startError ? 'error.main' : isSelected ? 'primary.main' : undefined,
-                  // Offline cards keep full contrast; the spine carries the state
-                  // so the content stays readable.
-                  display: 'flex',
-                  flexDirection: 'column',
-                  pl: '5px',
-                  transition: 'border-color 180ms ease, box-shadow 180ms ease',
-                  ...(state.isRunning && { boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.28)' }),
-                }}
-              >
-                <FleetStatusSpine
-                  state={
-                    state.isRunning
-                      ? 'running'
-                      : state.startError
-                        ? 'failed'
-                        : isOnline
-                          ? 'idle'
-                          : 'offline'
-                  }
-                />
-                {/* Header */}
-                <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
-                  <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
-                  <Typography variant="body2" noWrap sx={{ fontWeight: 700, flexGrow: 1, minWidth: 0 }}>
-                    {device.device_name}
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={isOnline ? 'ONLINE' : 'OFFLINE'}
-                    color={isOnline ? 'success' : 'default'}
-                    sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
-                  />
-                </Stack>
-
-                <Stack direction="row" alignItems="center" gap={0.25} sx={{ px: 1, pb: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary" noWrap sx={{ flexGrow: 1, minWidth: 0, pl: 0.5 }}>
-                    {device.device_model || 'Android'} · {device.device_id.slice(-8)}
-                  </Typography>
-                  <Tooltip title="Enlarge screen">
-                    <span>
-                      <IconButton size="small" disabled={!isOnline} onClick={() => setExpandedDeviceId(device.id)}>
-                        <OpenInFullIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title={controlDeviceId === device.id ? 'Stop manual control' : 'Take manual control'}>
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={!isOnline}
-                        color={controlDeviceId === device.id ? 'primary' : 'default'}
-                        onClick={() => setControlDeviceId((prev) => (prev === device.id ? null : device.id))}
-                      >
-                        <TouchAppIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title={`Task history (${historyCount})`}>
-                    <span>
-                      <IconButton size="small" disabled={historyCount === 0} onClick={() => setHistoryDeviceId(device.id)}>
-                        <HistoryIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Send a file to this device">
-                    <span>
-                      <IconButton size="small" onClick={() => setFileDeviceId(device.id)}>
-                        <AttachFileIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Open a settings screen on this phone">
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={device.status !== 'ONLINE'}
-                        onClick={(event) => setSettingsMenu({ anchor: event.currentTarget, deviceId: device.id })}
-                      >
-                        <TuneIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </Stack>
-
-                {state.isRunning && <LinearProgress />}
-
-                {/* Live screen */}
-                {/* A 9:16 box inside a grid column becomes ~750px tall, which turned
-                    every card into a column of black. On a board the screen is a
-                    thumbnail, not the subject — the full view is behind Enlarge.
-                    Fixed height keeps the rows aligned across the whole grid. */}
-                {/* A phone screen is portrait, so a full-width landscape box wasted
-                    most of its area on black bars and shrank the actual frame to a
-                    sliver. Constraining by height instead keeps the real 9:16 shape
-                    and gives every card the same row height. */}
-                <PhoneFrame3D
-                  width={248}
-                  // 9:19, matching the Android Agent page's mockup, so the two
-                  // views show a phone of the same shape.
-                  //
-                  // Taller while driving: turning control on makes
-                  // InteractiveDeviceScreen add a Back/Home/Recents row and a
-                  // 2px outline inside this same box, and at the fixed height
-                  // those squeezed the frame and spilled past its edges. The
-                  // extra room lets the row sit along the bottom of the glass,
-                  // where a real phone keeps its nav bar anyway.
-                  height={controlDeviceId === device.id ? 580 : 524}
-                  tilt={controlDeviceId !== device.id}
-                  active={state.isRunning}
-                  onClick={
-                    controlDeviceId === device.id
-                      ? undefined
-                      : () => navigate(`/android-agent?deviceId=${device.id}`)
-                  }
-                >
-                  <InteractiveDeviceScreen
-                    compact
-                    fill
-                    deviceId={device.id}
-                    screenshot={state.screenshot}
-                    onScreenshot={(base64) => patchRuntime(device.id, { screenshot: base64 })}
-                    controlEnabled={controlDeviceId === device.id}
-                    isAgentRunning={state.isRunning}
-                  />
-                </PhoneFrame3D>
-
-                <Divider />
-
-                {/* Status */}
-                <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
-                  {state.startError ? (
-                    <Stack direction="row" alignItems="flex-start" gap={0.75}>
-                      <ErrorOutlineIcon fontSize="small" color="error" />
-                      <Typography variant="caption" color="error">
-                        {state.startError}
-                      </Typography>
-                    </Stack>
-                  ) : state.isRunning ? (
-                    <Stack gap={0.5}>
-                      <Stack direction="row" alignItems="center" gap={0.75}>
-                        <Chip
-                          size="small"
-                          label={`Step ${state.stepIndex}`}
-                          color="warning"
-                          sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
-                        />
-                        {state.lastAction && (
-                          <Typography variant="caption" color="text.secondary" noWrap>
-                            {state.lastAction}
-                          </Typography>
-                        )}
-                        <Box sx={{ flexGrow: 1 }} />
-                        <Tooltip title="Stop this task">
-                          <IconButton size="small" color="error" onClick={() => handleStopDevice(device.id)}>
-                            <StopCircleIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                      >
-                        {state.lastThought || state.prompt || 'Working…'}
-                      </Typography>
-                    </Stack>
-                  ) : state.finishedAt ? (
-                    <Stack direction="row" alignItems="center" gap={0.75}>
-                      {state.finishedOk ? (
-                        <CheckCircleIcon fontSize="small" color="success" />
-                      ) : (
-                        <ErrorOutlineIcon fontSize="small" color="error" />
-                      )}
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {state.finishedMessage || (state.finishedOk ? 'Completed' : 'Stopped')}
-                      </Typography>
-                    </Stack>
-                  ) : (
-                    <Typography variant="caption" color="text.secondary">
-                      {isOnline ? 'Idle — ready for a task' : 'Device offline'}
-                    </Typography>
-                  )}
-                </CardContent>
-
-                {/* Per-device model override */}
-                <Box sx={{ px: 1, pb: 0.75 }}>
-                  <TextField
-                    select
-                    fullWidth
-                    size="small"
-                    label="Model"
-                    disabled={state.isRunning}
-                    value={deviceConfigIds[device.id] ?? 0}
-                    onChange={(event) =>
-                      setDeviceConfigIds((prev) => ({ ...prev, [device.id]: Number(event.target.value) }))
-                    }
-                    sx={{ '& .MuiInputBase-input': { fontSize: 12 } }}
-                  >
-                    <MenuItem value={0} sx={{ fontSize: 12 }}>
-                      Use fleet default
-                    </MenuItem>
-                    {aiConfigs.map((config) => (
-                      <MenuItem key={config.id} value={config.id} sx={{ fontSize: 12 }}>
-                        {config.model}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Box>
-
-                {/* Waiting for its lane. Shown above the proxy picker so the
-                    reason a phone is idle is next to what it is waiting on. */}
-                {queuedByDevice.has(device.id) && (
-                  <Box sx={{ px: 1, pb: 0.5 }}>
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      gap={1}
-                      sx={{ px: 1.25, py: 0.75, borderRadius: 1.5, bgcolor: 'warning.light', color: 'warning.contrastText' }}
-                    >
-                      <HourglassEmptyIcon fontSize="small" />
-                      <Typography variant="caption" sx={{ fontWeight: 700, flexGrow: 1 }} noWrap>
-                        Waiting for the proxy lane
-                      </Typography>
-                      <Button
-                        size="small"
-                        color="inherit"
-                        onClick={async () => {
-                          const entry = queuedByDevice.get(device.id);
-                          if (!entry) return;
-                          try {
-                            await cancelQueued(entry.id).unwrap();
-                            refetchQueue();
-                            toast.success('Removed from the queue');
-                          } catch {
-                            toast.error('Could not cancel');
-                          }
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </Stack>
-                  </Box>
-                )}
-
-                {/* Which proxy lane this phone sits on. */}
-                {proxies.length > 0 && (
-                  <Box sx={{ px: 1, pb: 0.5 }}>
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label="Proxy"
-                      value={device.proxy_id ?? ''}
-                      onChange={async (event) => {
-                        const raw = event.target.value;
-                        try {
-                          await assignProxy({ device_id: device.id, proxy_id: raw === '' ? null : Number(raw) }).unwrap();
-                          refetch();
-                          refetchProxies();
-                        } catch {
-                          toast.error('Could not change the proxy');
-                        }
-                      }}
-                    >
-                      <MenuItem value="">No proxy</MenuItem>
-                      {proxies.map((proxy) => (
-                        <MenuItem key={proxy.id} value={proxy.id}>
-                          {proxy.name}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Box>
-                )}
-
-                {/* One-tap controls for this phone alone. */}
-                <Stack direction="row" justifyContent="center" sx={{ px: 1, pb: 0.5 }}>
-                  <DeviceControls
-                    deviceIds={[device.id]}
-                    disabled={!isOnline}
-                    onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
-                  />
-                </Stack>
-
-                {/* Inline per-device prompt */}
-                <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Task for this device…"
-                    disabled={!isOnline || state.isRunning}
-                    value={cardPrompts[device.id] ?? ''}
-                    onChange={(event) => setCardPrompts((prev) => ({ ...prev, [device.id]: event.target.value }))}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        handleRunOnCard(device.id);
-                      }
+        <Box>
+          {groupByProxy && proxies.length > 0 ? (
+            <Stack spacing={3}>
+              {lanes.groups.map(({ proxy, devices: laneDevices }) => (
+                <Box key={proxy.id}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={1}
+                    flexWrap="wrap"
+                    useFlexGap
+                    sx={{
+                      mb: 1,
+                      pl: 1.25,
+                      borderLeft: '4px solid',
+                      borderColor: proxyColor(proxy.id),
                     }}
-                    sx={{ '& .MuiInputBase-input': { fontSize: 13 } }}
-                  />
-                  <IconButton
-                    size="small"
-                    color="primary"
-                    disabled={!isOnline || state.isRunning || !(cardPrompts[device.id] ?? '').trim()}
-                    onClick={() => handleRunOnCard(device.id)}
                   >
-                    <SendIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
-              </Card>
-            );
-          })}
+                    <Typography sx={{ fontWeight: 800 }}>{proxy.name}</Typography>
+                    <Chip size="small" label={`${laneDevices.length} device${laneDevices.length === 1 ? '' : 's'}`} />
+                    {proxy.last_ip && <Chip size="small" variant="outlined" label={proxy.last_ip} />}
+                    <Typography variant="caption" color="text.secondary">
+                      {laneDevices.filter((device) => runtime[device.id]?.isRunning).length} running ·{' '}
+                      {laneDevices.filter((device) => queuedByDevice.has(device.id)).length} waiting · max{' '}
+                      {proxy.concurrency} at once
+                    </Typography>
+                  </Stack>
+
+                  {laneDevices.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ pl: 1.5 }}>
+                      No devices on this proxy yet.
+                    </Typography>
+                  ) : (
+                    <DeviceGrid list={laneDevices} />
+                  )}
+                </Box>
+              ))}
+
+              {lanes.unassigned.length > 0 && (
+                <Box>
+                  <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1, pl: 1.25, borderLeft: '4px solid', borderColor: 'divider' }}>
+                    <Typography sx={{ fontWeight: 800 }}>No proxy</Typography>
+                    <Chip size="small" label={`${lanes.unassigned.length} device${lanes.unassigned.length === 1 ? '' : 's'}`} />
+                    <Typography variant="caption" color="text.secondary">
+                      These run straight away, without queueing or rotation
+                    </Typography>
+                  </Stack>
+                  <DeviceGrid list={lanes.unassigned} />
+                </Box>
+              )}
+            </Stack>
+          ) : (
+            <DeviceGrid list={orderedDevices} />
+          )}
         </Box>
       )}
 

@@ -25,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useState } from 'react';
+import { proxyColor } from './proxyColors';
 import toast from 'react-hot-toast';
 
 interface ProxyManagerDialogProps {
@@ -116,6 +117,8 @@ export default function ProxyManagerDialog({ open, onClose }: ProxyManagerDialog
             {proxies.map((proxy) => (
               <Box key={proxy.id} sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
                 <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap>
+                  {/* Same colour the fleet cards use for this lane. */}
+                  <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: proxyColor(proxy.id), flexShrink: 0 }} />
                   <Typography sx={{ fontWeight: 700 }}>{proxy.name}</Typography>
                   <Chip size="small" label={`${proxy.device_count} device${proxy.device_count === 1 ? '' : 's'}`} />
                   {proxy.last_ip && <Chip size="small" variant="outlined" label={proxy.last_ip} />}
