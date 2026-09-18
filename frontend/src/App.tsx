@@ -9,7 +9,6 @@ import useAuthRedirect from './hooks/useAuthRedirect';
 import AgentTasksPage from './pages/AgentTasksPage';
 import AiRulesPage from './pages/AiRulesPage';
 import AndroidAgentPage from './pages/AndroidAgentPage';
-import PublicRunPage from './pages/PublicRunPage';
 import FlowsPage from './pages/FlowsPage';
 import SchedulesPage from './pages/SchedulesPage';
 import AndroidDevicesPage from './pages/AndroidDevicesPage';
@@ -77,7 +76,6 @@ const router = createBrowserRouter([
   {
     Component: RootShell,
     children: [
-      { path: '/r/:token', Component: PublicRunPage },
       // The landing page is full-bleed and dark, so it must not sit inside
       // GuestShell — that wraps its children in the narrow light card the
       // sign-in and sign-up forms are built around.

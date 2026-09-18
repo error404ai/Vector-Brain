@@ -13,7 +13,7 @@ const publicRoutes = ['/login', '/signup', '/'];
  * link has to open for a stranger with no session, and for a signed-in owner
  * without being pushed to the dashboard.
  */
-const openRoutePrefixes = ['/r/'];
+const openRoutePrefixes: string[] = [];
 
 export default function useAuthRedirect(skip: boolean = false) {
   const navigate = useNavigate();

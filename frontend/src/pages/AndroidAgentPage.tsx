@@ -14,12 +14,10 @@ import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigServi
 import authManager from '@/_helpers/authManager';
 import { explainError } from '@/utils/errorExplain';
 import { verifyResultClaims } from '@/utils/verifyResult';
-import { useShareRunMutation } from '@/RTKService/runShareService/runShareService';
 import { useSaveFlowMutation } from '@/RTKService/flowService/flowService';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import SearchIcon from '@mui/icons-material/Search';
 import BoltIcon from '@mui/icons-material/Bolt';
-import ShareIcon from '@mui/icons-material/Share';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -294,8 +292,6 @@ export function AndroidAgentPage() {
   // activeTaskId is cleared the moment a run ends, but sharing happens after
   // that, so the finished run is remembered separately.
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareRun, { isLoading: isSharingRun }] = useShareRunMutation();
   const [saveFlow, { isLoading: isSavingFlow }] = useSaveFlowMutation();
   const [savedFlowId, setSavedFlowId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -753,7 +749,6 @@ export function AndroidAgentPage() {
         } else if (msg.event === 'task:completed') {
           refetchSessions();
           setFinishedTaskId(msg.payload.taskId ?? activeTaskId);
-          setShareUrl(null);
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
           }
@@ -912,7 +907,6 @@ export function AndroidAgentPage() {
     setPromptInput('');
     setIsRunning(true);
     setFinishedTaskId(null);
-    setShareUrl(null);
     setSavedFlowId(null);
 
     // A vague instruction makes the agent spend its whole step budget deciding
@@ -2138,78 +2132,6 @@ export function AndroidAgentPage() {
                                   )}
                                 </Box>
 
-                                {shareUrl ? (
-                                    <Stack
-                                      direction="row"
-                                      alignItems="center"
-                                      gap={1}
-                                      sx={{
-                                        px: 1.5,
-                                        py: 1,
-                                        borderRadius: 2,
-                                        bgcolor: alpha(theme.palette.success.main, 0.08),
-                                        border: `1px solid ${alpha(theme.palette.success.main, 0.3)}`,
-                                        flexWrap: 'wrap',
-                                      }}
-                                    >
-                                      <Typography variant="caption" sx={{ fontWeight: 800, color: 'success.dark' }}>
-                                        Public link ready
-                                      </Typography>
-                                      <Typography
-                                        component="a"
-                                        href={shareUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        variant="caption"
-                                        sx={{ color: 'primary.main', wordBreak: 'break-all', flexGrow: 1 }}
-                                      >
-                                        {shareUrl}
-                                      </Typography>
-                                      <Button
-                                        size="small"
-                                        onClick={() => {
-                                          void navigator.clipboard.writeText(shareUrl);
-                                          toast.success('Link copied');
-                                        }}
-                                        sx={{ fontWeight: 700 }}
-                                      >
-                                        Copy
-                                      </Button>
-                                    </Stack>
-                                  ) : (
-                                    <Button
-                                      variant="contained"
-                                      startIcon={<ShareIcon />}
-                                      disabled={isSharingRun}
-                                      onClick={async () => {
-                                        try {
-                                          const res = await shareRun({ id: shareableTaskId }).unwrap();
-                                          const url = `${window.location.origin}/r/${res.data.token}`;
-                                          setShareUrl(url);
-                                          await navigator.clipboard.writeText(url).catch(() => undefined);
-                                          if (res.data.frames === 0) {
-                                            // Without recording there is nothing to replay, so say so
-                                            // rather than handing over an empty page.
-                                            toast('Link created, but no screens were captured — turn on Record and run it again for a replay.', {
-                                              icon: '⚠️',
-                                            });
-                                          } else {
-                                            toast.success(`Link copied · ${res.data.frames} screens`);
-                                          }
-                                        } catch (err: any) {
-                                          toast.error(err?.data?.message || 'Failed to create share link');
-                                        }
-                                      }}
-                                      sx={{
-                                        borderRadius: 2,
-                                        fontWeight: 800,
-                                        background: `linear-gradient(135deg, ${theme.palette.primary.main}, #a78bfa)`,
-                                        boxShadow: `0 6px 18px ${alpha(theme.palette.primary.main, 0.35)}`,
-                                      }}
-                                    >
-                                      Share this run
-                                    </Button>
-                                )}
                               </Box>
                             )}
                           </Box>
