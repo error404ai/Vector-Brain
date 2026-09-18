@@ -168,7 +168,6 @@ export default function AndroidFleetPage() {
   const proxies = proxyData?.data ?? [];
   const proxyById = new Map(proxies.map((proxy) => [proxy.id, proxy]));
   const [groupByProxy, setGroupByProxy] = useState(true);
-  const [isAutoAssigning, setIsAutoAssigning] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -748,39 +747,6 @@ export default function AndroidFleetPage() {
   };
 
   /** Starts the same prompt on a set of devices and records what failed. */
-  /**
-   * Spread every device evenly over the proxies, round robin.
-   *
-   * Setting twenty-two dropdowns by hand is the part people give up on, and an
-   * even split is what almost everyone wants anyway. Anything unusual can still
-   * be changed per device afterwards.
-   */
-  const handleAutoAssign = async () => {
-    if (proxies.length === 0) return;
-    if (!confirm(`Spread ${devices.length} device(s) evenly across ${proxies.length} proxies? This replaces the current assignment.`)) return;
-
-    setIsAutoAssigning(true);
-    let done = 0;
-
-    try {
-      for (let index = 0; index < devices.length; index += 1) {
-        const proxy = proxies[index % proxies.length];
-        try {
-          await assignProxy({ device_id: devices[index].id, proxy_id: proxy.id }).unwrap();
-          done += 1;
-        } catch {
-          // Keep going: one failure should not leave the rest unassigned.
-        }
-      }
-      refetch();
-      refetchProxies();
-      if (done === devices.length) toast.success(`Assigned ${done} device${done === 1 ? '' : 's'}`);
-      else toast.error(`Assigned ${done} of ${devices.length}`);
-    } finally {
-      setIsAutoAssigning(false);
-    }
-  };
-
   const dispatchTo = async (deviceIds: number[], text: string) => {
     setIsDispatching(true);
     const outcomes = await Promise.allSettled(
@@ -1072,14 +1038,6 @@ export default function AndroidFleetPage() {
 
           {proxies.length > 0 && (
             <>
-              <Tooltip title="Spread every device evenly across the proxies">
-                <span>
-                  <Button size="small" disabled={isAutoAssigning} onClick={() => void handleAutoAssign()} sx={{ whiteSpace: 'nowrap' }}>
-                    Auto-assign
-                  </Button>
-                </span>
-              </Tooltip>
-
               <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
                 {groupByProxy ? 'Ungroup' : 'Group by proxy'}
               </Button>

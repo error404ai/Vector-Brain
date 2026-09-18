@@ -63,6 +63,9 @@ import {
 import DownloadLogsButton from '@/components/android/DownloadLogsButton';
 import PlanningIndicator from '@/components/brand/PlanningIndicator';
 import VectorMark from '@/components/brand/VectorMark';
+import { useGetDeviceProxiesQuery } from '@/RTKService/androidService/proxyService';
+import SendFileButton from '@/components/android/SendFileButton';
+import { proxyColor } from '@/components/android/proxyColors';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
@@ -393,7 +396,9 @@ export function AndroidAgentPage() {
   const selectedDevice = devices.find((device) => device.id === effectiveSelectedDeviceId);
   selectedDeviceIdRef.current = effectiveSelectedDeviceId;
   selectedDeviceHardwareIdRef.current = selectedDevice?.device_id;
+  const { data: proxyData } = useGetDeviceProxiesQuery();
   const isDeviceOnline = selectedDevice?.status === 'ONLINE';
+  const selectedProxy = (proxyData?.data ?? []).find((proxy) => proxy.id === selectedDevice?.proxy_id);
   const hasAccessibility = selectedDevice?.capabilities?.accessibility === true;
   const hasScreenCapture = selectedDevice?.capabilities?.screenCapture === true;
   /**
@@ -1068,6 +1073,32 @@ export function AndroidAgentPage() {
                   sx={{ fontWeight: 800, height: 26 }}
                 />
               )}
+
+              {/* Which proxy lane this phone is on, and what its IP is right
+                  now. Running a task here rotates that IP, so it belongs next
+                  to the device rather than buried on another page. */}
+              {selectedDevice?.proxy_id && selectedProxy && (
+                <Tooltip
+                  title={
+                    selectedProxy.rotate_every_tasks > 0
+                      ? `Rotates after every ${selectedProxy.rotate_every_tasks === 1 ? 'task' : `${selectedProxy.rotate_every_tasks} tasks`}`
+                      : 'Rotation is off for this proxy'
+                  }
+                >
+                  <Chip
+                    size="small"
+                    label={`${selectedProxy.name}${selectedProxy.last_ip ? ` · ${selectedProxy.last_ip}` : ''}`}
+                    sx={{
+                      height: 26,
+                      fontWeight: 700,
+                      color: '#fff',
+                      bgcolor: proxyColor(selectedProxy.id),
+                    }}
+                  />
+                </Tooltip>
+              )}
+
+              {selectedDevice && <SendFileButton deviceIds={[selectedDevice.id]} disabled={!isDeviceOnline} />}
             </Stack>
 
             {/* Active Model Indicator & Actions */}

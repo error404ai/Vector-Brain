@@ -17,6 +17,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  MenuItem,
   Divider,
   IconButton,
   Stack,
@@ -103,11 +104,18 @@ export default function ProxyManagerDialog({ open, onClose }: ProxyManagerDialog
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      <DialogTitle sx={{ fontWeight: 700 }}>Proxies</DialogTitle>
+      <DialogTitle sx={{ fontWeight: 700 }}>Proxy rotation</DialogTitle>
       <DialogContent>
-        <Alert severity="info" sx={{ mb: 2.5 }}>
-          Set each phone's proxy app to the proxy it belongs to, once. Vector Brain only calls the rotation link — it
-          never changes settings inside that app.
+        <Alert severity="warning" sx={{ mb: 2.5 }}>
+          <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
+            This does not set up proxies on your phones.
+          </Typography>
+          <Typography variant="body2">
+            Put the proxy into each phone's own proxy app yourself, once. What you add here is the rotation link for
+            that proxy: Vector Brain calls it to get a fresh IP after a run, and keeps the phones sharing one proxy
+            from running at the same time. Group a phone under the proxy you actually configured on it, or the wrong
+            lane gets rotated.
+          </Typography>
         </Alert>
 
         {isLoading ? (
@@ -156,14 +164,21 @@ export default function ProxyManagerDialog({ open, onClose }: ProxyManagerDialog
                     sx={{ width: 170 }}
                   />
                   <TextField
-                    label="Rotate every N tasks"
-                    type="number"
+                    select
+                    label="Rotate the IP"
                     size="small"
-                    defaultValue={proxy.rotate_every_tasks}
-                    onBlur={(event) => void handleNumberChange(proxy, 'rotate_every_tasks', Number(event.target.value))}
-                    helperText="0 turns rotation off"
-                    sx={{ width: 190 }}
-                  />
+                    value={proxy.rotate_every_tasks}
+                    onChange={(event) => void handleNumberChange(proxy, 'rotate_every_tasks', Number(event.target.value))}
+                    helperText="When a task on this proxy finishes"
+                    sx={{ width: 210 }}
+                  >
+                    <MenuItem value={0}>Never</MenuItem>
+                    <MenuItem value={1}>After every task</MenuItem>
+                    <MenuItem value={2}>After every 2 tasks</MenuItem>
+                    <MenuItem value={3}>After every 3 tasks</MenuItem>
+                    <MenuItem value={5}>After every 5 tasks</MenuItem>
+                    <MenuItem value={10}>After every 10 tasks</MenuItem>
+                  </TextField>
                 </Stack>
 
                 {proxy.last_rotation_status && (
