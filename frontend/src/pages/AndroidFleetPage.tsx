@@ -432,8 +432,16 @@ export default function AndroidFleetPage() {
                   position: 'relative',
                   borderRadius: 2,
                   overflow: 'hidden',
-                  borderWidth: isSelected || state.startError ? 2 : 1,
-                  borderColor: state.startError ? 'error.main' : isSelected ? 'primary.main' : undefined,
+                  borderWidth: isSelected || state.startError || state.isRunning ? 2 : 1,
+                  borderColor: state.startError
+                    ? 'error.main'
+                    : state.isRunning
+                      ? 'primary.main'
+                      : isSelected
+                        ? 'primary.main'
+                        : undefined,
+                  // A running card lifts off the grid; the rest stay flat.
+                  boxShadow: state.isRunning ? 6 : undefined,
                   // Offline cards keep full contrast; the spine carries the state
                   // so the content stays readable.
                   display: 'flex',
@@ -608,7 +616,7 @@ export default function AndroidFleetPage() {
                     const tone = state.startError
                       ? { bg: 'error.main', fg: 'error.contrastText', icon: <ErrorOutlineIcon fontSize="small" />, label: 'Failed to start' }
                       : state.isRunning
-                        ? { bg: 'warning.main', fg: 'warning.contrastText', icon: <PlayArrowIcon fontSize="small" />, label: `Running · step ${state.stepIndex}` }
+                        ? { bg: 'primary.main', fg: 'primary.contrastText', icon: <PlayArrowIcon fontSize="small" />, label: `Running · step ${state.stepIndex}` }
                         : state.finishedAt
                           ? state.finishedOk
                             ? { bg: 'success.main', fg: 'success.contrastText', icon: <CheckCircleIcon fontSize="small" />, label: 'Completed' }
@@ -627,7 +635,24 @@ export default function AndroidFleetPage() {
                           direction="row"
                           alignItems="center"
                           gap={0.75}
-                          sx={{ px: 1, py: 0.5, borderRadius: 1.5, bgcolor: tone.bg, color: tone.fg }}
+                          sx={{
+                            px: 1,
+                            py: 0.5,
+                            borderRadius: 1.5,
+                            bgcolor: tone.bg,
+                            color: tone.fg,
+                            // Only the running state breathes, so movement on the
+                            // page always means work in progress.
+                            ...(state.isRunning
+                              ? {
+                                  animation: 'fleetPulse 1.8s ease-in-out infinite',
+                                  '@keyframes fleetPulse': {
+                                    '0%, 100%': { opacity: 1 },
+                                    '50%': { opacity: 0.78 },
+                                  },
+                                }
+                              : {}),
+                          }}
                         >
                           {tone.icon}
                           <Typography variant="caption" sx={{ fontWeight: 800, flexGrow: 1 }} noWrap>
@@ -730,7 +755,15 @@ export default function AndroidFleetPage() {
                       direction="row"
                       alignItems="center"
                       gap={1}
-                      sx={{ px: 1.25, py: 0.75, borderRadius: 1.5, bgcolor: 'warning.light', color: 'warning.contrastText' }}
+                      sx={{
+                        px: 1.25,
+                        py: 0.75,
+                        borderRadius: 1.5,
+                        border: '1px dashed',
+                        borderColor: 'divider',
+                        bgcolor: 'action.hover',
+                        color: 'text.secondary',
+                      }}
                     >
                       <HourglassEmptyIcon fontSize="small" />
                       <Typography variant="caption" sx={{ fontWeight: 700, flexGrow: 1 }} noWrap>
@@ -1449,15 +1482,15 @@ export default function AndroidFleetPage() {
                     <Box sx={{ flexGrow: 1 }} />
                     <Chip
                       size="small"
-                      color="warning"
+                      color="primary"
                       label={`${laneDevices.filter((device) => runtime[device.id]?.isRunning).length} running`}
-                      sx={{ fontWeight: 700 }}
+                      sx={{ fontWeight: 800 }}
                     />
                     <Chip
                       size="small"
                       variant="outlined"
                       label={`${laneDevices.filter((device) => queuedByDevice.has(device.id)).length} waiting`}
-                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
+                      sx={{ fontWeight: 700, color: 'text.secondary', borderStyle: 'dashed', bgcolor: 'transparent' }}
                     />
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
                       max {proxy.concurrency} at once
