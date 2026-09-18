@@ -35,6 +35,7 @@ import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
+import { DeviceProxyController } from './controllers/DeviceProxyController';
 import { SettingController } from './controllers/SettingController';
 import { TelegramController } from './controllers/TelegramController';
 import { UserController } from './controllers/UserController';
@@ -85,6 +86,7 @@ useExpressServer(app, {
     FlowController,
     PromptController,
     ScheduledTaskController,
+    DeviceProxyController,
     SettingController,
     TelegramController,
     UserController,
