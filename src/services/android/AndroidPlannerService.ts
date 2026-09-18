@@ -8,6 +8,7 @@ import { Service } from 'typedi';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfigService';
+import { ProxyRotationService } from './ProxyRotationService';
 import { AiProvider } from '@/entities/AiConfig';
 import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';

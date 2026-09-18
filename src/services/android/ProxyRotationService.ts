@@ -5,6 +5,8 @@ import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
+import { z } from 'zod';
+import { CreateProxyValidation, UpdateProxyValidation } from '@/validations/DeviceProxyValidation';
 
 /** A rotation link should answer quickly; anything slower is treated as failed. */
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -38,11 +40,18 @@ export class ProxyRotationService {
     };
   }
 
-  async create(userId: number, input: { name: string; rotation_url: string; concurrency?: number; settle_seconds?: number; rotate_every_tasks?: number }): Promise<ApiResponse> {
+  /**
+   * Types come from the schema rather than being written out here.
+   *
+   * The backend compiles with strict off, which makes zod infer every field as
+   * optional, so a hand-written signature with required fields will not match
+   * what the controller passes in.
+   */
+  async create(userId: number, input: z.infer<typeof CreateProxyValidation>): Promise<ApiResponse> {
     const proxy = this.proxyRepo.create({
       user_id: userId,
-      name: input.name.trim(),
-      rotation_url: input.rotation_url.trim(),
+      name: String(input.name ?? '').trim(),
+      rotation_url: String(input.rotation_url ?? '').trim(),
       concurrency: input.concurrency ?? 1,
       settle_seconds: input.settle_seconds ?? 5,
       rotate_every_tasks: input.rotate_every_tasks ?? 1,
@@ -52,11 +61,11 @@ export class ProxyRotationService {
     return { message: 'Proxy added', data: { id: proxy.id, name: proxy.name } };
   }
 
-  async update(userId: number, id: number, input: Partial<{ name: string; rotation_url: string; concurrency: number; settle_seconds: number; rotate_every_tasks: number }>): Promise<ApiResponse> {
+  async update(userId: number, id: number, input: z.infer<typeof UpdateProxyValidation>): Promise<ApiResponse> {
     const proxy = await this.proxyRepo.findOne({ where: { id, user_id: userId } });
     if (!proxy) throw new AppError('Proxy not found', 404);
 
-    if (input.name !== undefined) proxy.name = input.name.trim();
+    if (input.name !== undefined) proxy.name = String(input.name).trim();
     // An empty string means "leave the saved URL alone", so the browser never
     // has to send a secret back just to rename a proxy.
     if (input.rotation_url) proxy.rotation_url = input.rotation_url.trim();
