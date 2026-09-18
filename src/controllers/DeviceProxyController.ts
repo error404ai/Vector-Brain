@@ -1,4 +1,5 @@
 import { ProxyRotationService } from '@/services/android/ProxyRotationService';
+import { TaskQueueService } from '@/services/android/TaskQueueService';
 import { AssignProxyValidation, CreateProxyValidation, UpdateProxyValidation } from '@/validations/DeviceProxyValidation';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
@@ -9,7 +10,21 @@ import { z } from 'zod';
 @Authorized()
 @JsonController('/device-proxy')
 export class DeviceProxyController {
-  constructor(private proxyService: ProxyRotationService) {}
+  constructor(
+    private proxyService: ProxyRotationService,
+    private queueService: TaskQueueService,
+  ) {}
+
+  /** Everything waiting for a lane, across all of this user's proxies. */
+  @Get('/queue')
+  async listQueue(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.queueService.list(user.userId);
+  }
+
+  @Delete('/queue/:id')
+  async cancelQueued(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.queueService.cancel(user.userId, Number(id));
+  }
 
   @Get('/')
   async list(@CurrentUser({ required: true }) user: { userId: number }) {

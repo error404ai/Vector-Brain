@@ -14,6 +14,16 @@ export interface DeviceProxy {
   device_count: number;
 }
 
+export interface QueuedTask {
+  id: number;
+  device_id: number;
+  proxy_id: number;
+  prompt: string;
+  status: string;
+  last_error: string | null;
+  created_at: string;
+}
+
 export interface CreateProxyPayload {
   name: string;
   rotation_url: string;
@@ -47,6 +57,14 @@ export const proxyService = baseApi.injectEndpoints({
       query: (id) => ({ url: `/device-proxy/${id}/rotate`, method: 'POST' }),
     }),
 
+    getTaskQueue: builder.query<{ message: string; data: QueuedTask[] }, void>({
+      query: () => ({ url: '/device-proxy/queue', method: 'GET' }),
+    }),
+
+    cancelQueuedTask: builder.mutation<{ message: string }, number>({
+      query: (id) => ({ url: `/device-proxy/queue/${id}`, method: 'DELETE' }),
+    }),
+
     assignDeviceProxy: builder.mutation<{ message: string }, { device_id: number; proxy_id: number | null }>({
       query: (body) => ({ url: '/device-proxy/assign', method: 'POST', body }),
     }),
@@ -60,4 +78,6 @@ export const {
   useDeleteDeviceProxyMutation,
   useRotateDeviceProxyMutation,
   useAssignDeviceProxyMutation,
+  useGetTaskQueueQuery,
+  useCancelQueuedTaskMutation,
 } = proxyService;

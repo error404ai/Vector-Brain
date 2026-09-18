@@ -9,6 +9,7 @@ import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfigService';
 import { ProxyRotationService } from './ProxyRotationService';
+import { TaskQueueService } from './TaskQueueService';
 import { AiProvider } from '@/entities/AiConfig';
 import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';
@@ -403,7 +404,24 @@ export class AndroidPlannerService {
     private gatewayService: AndroidGatewayService,
     private aiConfigService: AiConfigService,
     private proxyRotationService: ProxyRotationService,
-  ) {}
+    private taskQueueService: TaskQueueService,
+  ) {
+    // The queue launches tasks through the planner, so it is handed the entry
+    // point rather than injecting the planner back — that would be a cycle.
+    this.taskQueueService.register(
+      (prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId) =>
+        this.runTask(prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId),
+      (deviceDbId) => this.isDeviceBusy(deviceDbId),
+    );
+  }
+
+  /** True while a run is in progress on this device, or about to be. */
+  private isDeviceBusy(deviceDbId: number): boolean {
+    for (const active of this.activeTasks.values()) {
+      if (active.deviceDbId === deviceDbId) return true;
+    }
+    return false;
+  }
 
   /**
    * Main autonomous reasoning loop for Android task execution powered by @eko-ai/eko.
@@ -443,6 +461,20 @@ export class AndroidPlannerService {
     }
     if (this.activeDeviceTasks.has(device.device_id) || this.startingDevices.has(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
+    }
+
+    // A phone behind a proxy shares one exit IP with the rest of its lane, so it
+    // waits its turn instead of starting alongside them. Devices with no proxy
+    // skip this entirely and behave exactly as they always have.
+    if (device.proxy_id && !existingTaskId && !(await this.taskQueueService.canStartNow(device.id))) {
+      return this.taskQueueService.enqueue({
+        userId,
+        deviceId: device.id,
+        proxyId: device.proxy_id,
+        prompt,
+        aiConfigId,
+        maxSteps,
+      });
     }
     this.startingDevices.add(device.device_id);
 
@@ -1070,7 +1102,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // Give this phone's proxy a fresh IP for whatever runs next. Deliberately
       // not awaited: the run is over, and a slow provider must not hold the
       // device marked busy or delay the result the user is waiting on.
-      void this.proxyRotationService.onTaskFinished(agentTask.device_id);
+      // Rotate first, then let the lane's next phone in — the wait for the new
+      // IP to settle happens inside onLaneFreed.
+      void this.proxyRotationService
+        .onTaskFinished(agentTask.device_id)
+        .then(() => this.taskQueueService.onDeviceFinished(agentTask.device_id))
+        .catch((error) => Logger.warn('[AndroidPlanner] Proxy rotation or queue drain failed:', error));
     }
   }
   private collapseRepeatingLoop(text: string, maxRepeats = 2): string {

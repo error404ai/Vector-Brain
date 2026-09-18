@@ -21,6 +21,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import PublicIcon from '@mui/icons-material/Public';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -60,7 +61,12 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
-import { useAssignDeviceProxyMutation, useGetDeviceProxiesQuery } from '@/RTKService/androidService/proxyService';
+import {
+  useAssignDeviceProxyMutation,
+  useCancelQueuedTaskMutation,
+  useGetDeviceProxiesQuery,
+  useGetTaskQueueQuery,
+} from '@/RTKService/androidService/proxyService';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -152,6 +158,11 @@ export default function AndroidFleetPage() {
   const [isRefreshingFrames, setIsRefreshingFrames] = useState(false);
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
   const { data: proxyData, refetch: refetchProxies } = useGetDeviceProxiesQuery();
+  // Polled: entries leave the queue on the server when a lane frees up, with no
+  // socket event of their own.
+  const { data: queueData, refetch: refetchQueue } = useGetTaskQueueQuery(undefined, { pollingInterval: 10000 });
+  const [cancelQueued] = useCancelQueuedTaskMutation();
+  const queuedByDevice = new Map((queueData?.data ?? []).map((entry) => [entry.device_id, entry]));
   const [assignProxy] = useAssignDeviceProxyMutation();
   const proxies = proxyData?.data ?? [];
   const [prompt, setPrompt] = useState('');
@@ -352,12 +363,16 @@ export default function AndroidFleetPage() {
     setIsDispatching(false);
 
     const startedIds: number[] = [];
+    const queuedIds: number[] = [];
     const failedIds: number[] = [];
 
     outcomes.forEach((outcome, index) => {
       const deviceId = deviceIds[index];
       if (outcome.status === 'fulfilled') {
-        startedIds.push(deviceId);
+        // A phone behind a busy proxy lane is accepted but not started yet, and
+        // saying "started" for it would be wrong — nothing is running on it.
+        if ((outcome.value as { data?: { queued?: boolean } })?.data?.queued) queuedIds.push(deviceId);
+        else startedIds.push(deviceId);
         patchRuntime(deviceId, { startError: undefined });
       } else {
         failedIds.push(deviceId);
@@ -368,8 +383,10 @@ export default function AndroidFleetPage() {
     setLastDispatch({ prompt: text, startedIds, failedIds });
     // Keep only the failed ones selected so a retry hits exactly those.
     setSelectedIds(failedIds);
+    if (queuedIds.length) refetchQueue();
 
     if (startedIds.length) toast.success(`Started on ${startedIds.length} device${startedIds.length > 1 ? 's' : ''}`);
+    if (queuedIds.length) toast.success(`${queuedIds.length} waiting for a free proxy lane`);
     if (failedIds.length) toast.error(`${failedIds.length} device${failedIds.length > 1 ? 's' : ''} could not start`);
   };
 
@@ -992,6 +1009,41 @@ export default function AndroidFleetPage() {
                     ))}
                   </TextField>
                 </Box>
+
+                {/* Waiting for its lane. Shown above the proxy picker so the
+                    reason a phone is idle is next to what it is waiting on. */}
+                {queuedByDevice.has(device.id) && (
+                  <Box sx={{ px: 1, pb: 0.5 }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      gap={1}
+                      sx={{ px: 1.25, py: 0.75, borderRadius: 1.5, bgcolor: 'warning.light', color: 'warning.contrastText' }}
+                    >
+                      <HourglassEmptyIcon fontSize="small" />
+                      <Typography variant="caption" sx={{ fontWeight: 700, flexGrow: 1 }} noWrap>
+                        Waiting for the proxy lane
+                      </Typography>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={async () => {
+                          const entry = queuedByDevice.get(device.id);
+                          if (!entry) return;
+                          try {
+                            await cancelQueued(entry.id).unwrap();
+                            refetchQueue();
+                            toast.success('Removed from the queue');
+                          } catch {
+                            toast.error('Could not cancel');
+                          }
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </Stack>
+                  </Box>
+                )}
 
                 {/* Which proxy lane this phone sits on. */}
                 {proxies.length > 0 && (
