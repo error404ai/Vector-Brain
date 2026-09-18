@@ -2,7 +2,7 @@ import { useGetAndroidTasksQuery } from '@/RTKService/androidService/androidServ
 import HistoryIcon from '@mui/icons-material/History';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import { Autocomplete, Box, TextField, Typography } from '@mui/material';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 /** Starting points for someone who has not run anything yet. */
 const SUGGESTIONS = [
@@ -24,9 +24,15 @@ interface PromptOption {
 }
 
 interface FleetPromptFieldProps {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
+  /** Called with the typed text when the user submits. */
+  onSubmit: (value: string) => void;
+  /**
+   * Debounced copy of the draft, for the page's Run button.
+   *
+   * Deliberately not per keystroke: the page only needs to know whether the box
+   * is empty, and telling it on every character is what made typing stall.
+   */
+  onDraftChange?: (value: string) => void;
   placeholder?: string;
 }
 
@@ -38,7 +44,27 @@ interface FleetPromptFieldProps {
  * fallback for an empty account. Free text is still the point — the list only
  * saves typing, it never restricts what can be sent.
  */
-export default function FleetPromptField({ value, onChange, onSubmit, placeholder }: FleetPromptFieldProps) {
+export default function FleetPromptField({ onSubmit, onDraftChange, placeholder }: FleetPromptFieldProps) {
+  /**
+   * The draft lives here rather than on the page.
+   *
+   * The fleet page renders a card per device, each holding a screenshot, so
+   * lifting this state up meant every keystroke redrew all of them and typing
+   * visibly stalled. Nothing outside this field needs the text until it is sent.
+   */
+  const [value, setValue] = useState('');
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setDraft = (next: string) => {
+    setValue(next);
+    if (!onDraftChange) return;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => onDraftChange(next), 300);
+  };
+
+  useEffect(() => () => {
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+  }, []);
   // Already cached by RTK for the tasks page, so this rarely costs a request.
   const { data } = useGetAndroidTasksQuery({ limit: HISTORY_LIMIT });
 
@@ -70,7 +96,7 @@ export default function FleetPromptField({ value, onChange, onSubmit, placeholde
       disableClearable
       options={options}
       inputValue={value}
-      onInputChange={(_event, next) => onChange(next)}
+      onInputChange={(_event, next) => setDraft(next)}
       getOptionLabel={(option) => (typeof option === 'string' ? option : option.value)}
       groupBy={(option) => (option.kind === 'history' ? 'Recent' : 'Try one of these')}
       filterOptions={(list, state) => {
@@ -100,7 +126,7 @@ export default function FleetPromptField({ value, onChange, onSubmit, placeholde
             // already handled it by then, so only a plain Enter submits.
             if (event.key === 'Enter' && !event.shiftKey && !event.defaultPrevented) {
               event.preventDefault();
-              onSubmit();
+              onSubmit(value);
             }
           }}
         />

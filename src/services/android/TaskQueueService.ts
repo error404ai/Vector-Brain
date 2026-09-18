@@ -23,6 +23,9 @@ type BusyCheck = (deviceDbId: number) => boolean;
 /** Catches lanes that stalled — a lost end event, or a restart mid-run. */
 const SWEEP_INTERVAL_MS = 30_000;
 
+/** How long a lane slot may be held by a run that has not started yet. */
+const RESERVATION_MAX_AGE_MS = 2 * 60 * 1000;
+
 /** A queued task this old is dropped rather than run against a stale screen. */
 const MAX_QUEUE_AGE_MS = 6 * 60 * 60 * 1000;
 
@@ -49,6 +52,17 @@ export class TaskQueueService {
   private draining = new Set<number>();
 
   /**
+   * Devices that hold a lane slot but have not registered as running yet.
+   *
+   * The planner marks a device active well after it accepts the task, and the
+   * fleet dispatches every selected device at once — so without this, six
+   * devices on one lane all check "is there room?" before any of them has taken
+   * the slot, and all six start. A reservation is taken the moment admission is
+   * granted and released when the run ends.
+   */
+  private reserved = new Map<number, number>();
+
+  /**
    * Wired up by the planner at boot.
    *
    * The planner depends on this service, so this one must not depend on the
@@ -69,15 +83,35 @@ export class TaskQueueService {
    *
    * True for anything without a proxy, and for a lane with room left.
    */
-  async canStartNow(deviceDbId: number): Promise<boolean> {
+  async tryAdmit(deviceDbId: number): Promise<boolean> {
     const device = await this.deviceRepo.findOne({ where: { id: deviceDbId } });
     if (!device?.proxy_id) return true;
 
     const proxy = await this.proxyRepo.findOne({ where: { id: device.proxy_id } });
     if (!proxy) return true;
 
-    const running = await this.countRunningOnLane(proxy.id, deviceDbId);
-    return running < Math.max(1, proxy.concurrency);
+    const laneDevices = await this.deviceRepo.find({ where: { proxy_id: proxy.id } });
+
+    // Everything from here runs without awaiting, so two callers cannot both
+    // see the same free slot: the first one's reservation is already in place
+    // by the time the second gets here.
+    const taken = laneDevices.filter(
+      (candidate) => candidate.id !== deviceDbId && (this.reserved.has(candidate.id) || this.isBusy(candidate.id)),
+    ).length;
+
+    if (taken >= Math.max(1, proxy.concurrency)) return false;
+
+    this.reserved.set(deviceDbId, Date.now());
+    return true;
+  }
+
+  /** Give the slot back — the run ended, or never started. */
+  release(deviceDbId: number): void {
+    this.reserved.delete(deviceDbId);
+  }
+
+  private isBusy(deviceDbId: number): boolean {
+    return this.isDeviceBusy ? this.isDeviceBusy(deviceDbId) : false;
   }
 
   async enqueue(input: {
@@ -194,6 +228,7 @@ export class TaskQueueService {
         );
         await this.queueRepo.delete(next.id);
       } catch (error: any) {
+        this.release(next.device_id);
         Logger.warn(`[Queue] Could not start queued task ${next.id}: ${error?.message ?? error}`);
         next.status = 'QUEUED';
         next.last_error = String(error?.message ?? 'Could not start').slice(0, 255);
@@ -213,6 +248,14 @@ export class TaskQueueService {
    */
   private async sweep(): Promise<void> {
     try {
+      // A reservation is only meant to cover the seconds between admission and
+      // the run registering as active. Anything older belongs to a launch that
+      // died on the way, and holding it would strand the lane.
+      const staleReservation = Date.now() - RESERVATION_MAX_AGE_MS;
+      for (const [deviceDbId, takenAt] of this.reserved) {
+        if (takenAt < staleReservation && !this.isBusy(deviceDbId)) this.reserved.delete(deviceDbId);
+      }
+
       const cutoff = new Date(Date.now() - MAX_QUEUE_AGE_MS);
       await this.queueRepo
         .createQueryBuilder()
@@ -260,7 +303,9 @@ export class TaskQueueService {
     if (!this.isDeviceBusy) return 0;
 
     const devices = await this.deviceRepo.find({ where: { proxy_id: proxyId } });
-    return devices.filter((device) => device.id !== ignoreDeviceId && this.isDeviceBusy!(device.id)).length;
+    return devices.filter(
+      (device) => device.id !== ignoreDeviceId && (this.reserved.has(device.id) || this.isDeviceBusy!(device.id)),
+    ).length;
   }
 
   // ---------------------------------------------------------------------------

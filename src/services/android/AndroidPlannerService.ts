@@ -466,15 +466,20 @@ export class AndroidPlannerService {
     // A phone behind a proxy shares one exit IP with the rest of its lane, so it
     // waits its turn instead of starting alongside them. Devices with no proxy
     // skip this entirely and behave exactly as they always have.
-    if (device.proxy_id && !existingTaskId && !(await this.taskQueueService.canStartNow(device.id))) {
-      return this.taskQueueService.enqueue({
-        userId,
-        deviceId: device.id,
-        proxyId: device.proxy_id,
-        prompt,
-        aiConfigId,
-        maxSteps,
-      });
+    if (device.proxy_id && !existingTaskId) {
+      // Admission reserves the lane slot as it grants it, so devices dispatched
+      // together cannot all be told the lane is free.
+      const admitted = await this.taskQueueService.tryAdmit(device.id);
+      if (!admitted) {
+        return this.taskQueueService.enqueue({
+          userId,
+          deviceId: device.id,
+          proxyId: device.proxy_id,
+          prompt,
+          aiConfigId,
+          maxSteps,
+        });
+      }
     }
     this.startingDevices.add(device.device_id);
 
@@ -1102,6 +1107,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // Give this phone's proxy a fresh IP for whatever runs next. Deliberately
       // not awaited: the run is over, and a slow provider must not hold the
       // device marked busy or delay the result the user is waiting on.
+      // The slot goes back before rotation, so the lane is free the moment the
+      // new IP has settled.
+      this.taskQueueService.release(agentTask.device_id);
+
       // Rotate first, then let the lane's next phone in — the wait for the new
       // IP to settle happens inside onLaneFreed.
       void this.proxyRotationService

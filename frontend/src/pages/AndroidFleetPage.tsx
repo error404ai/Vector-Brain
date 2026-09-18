@@ -185,6 +185,17 @@ export default function AndroidFleetPage() {
   const [assignProxy] = useAssignDeviceProxyMutation();
   const proxies = proxyData?.data ?? [];
   const proxyById = new Map(proxies.map((proxy) => [proxy.id, proxy]));
+
+  /**
+   * Proxy choices applied locally before the server confirms them.
+   *
+   * The dropdown reads its value from the device list, which only refreshes on
+   * its poll — so without this the first pick appears to do nothing and people
+   * pick again. Refetching instead would redraw every card mid-click.
+   */
+  const [proxyOverrides, setProxyOverrides] = useState<Record<number, number | null>>({});
+  const proxyIdFor = (device: AndroidDevice): number | null =>
+    device.id in proxyOverrides ? proxyOverrides[device.id] : (device.proxy_id ?? null);
   const [groupByProxy, setGroupByProxy] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -399,7 +410,7 @@ export default function AndroidFleetPage() {
                 />
                 {/* The lane's colour, inset beside the status spine, so which
                     proxy a phone is on is readable without opening anything. */}
-                {device.proxy_id && (
+                {proxyIdFor(device) && (
                   <Box
                     sx={{
                       position: 'absolute',
@@ -407,7 +418,7 @@ export default function AndroidFleetPage() {
                       top: 0,
                       bottom: 0,
                       width: '4px',
-                      bgcolor: proxyColor(device.proxy_id),
+                      bgcolor: proxyColor(proxyIdFor(device)),
                     }}
                   />
                 )}
@@ -417,21 +428,26 @@ export default function AndroidFleetPage() {
                   <Typography variant="body2" noWrap sx={{ fontWeight: 700, flexGrow: 1, minWidth: 0 }}>
                     {device.device_name}
                   </Typography>
-                  {device.proxy_id && proxyById.has(device.proxy_id) && (
-                    <Tooltip title={`Proxy: ${proxyById.get(device.proxy_id)!.name}`}>
-                      <Chip
-                        size="small"
-                        label={proxyShortName(proxyById.get(device.proxy_id)!.name)}
-                        sx={{
-                          height: 20,
-                          fontSize: '0.68rem',
-                          fontWeight: 700,
-                          color: '#fff',
-                          bgcolor: proxyColor(device.proxy_id),
-                        }}
-                      />
-                    </Tooltip>
-                  )}
+                  {(() => {
+                    const laneId = proxyIdFor(device);
+                    const lane = laneId ? proxyById.get(laneId) : undefined;
+                    if (!lane) return null;
+                    return (
+                      <Tooltip title={`Proxy: ${lane.name}`}>
+                        <Chip
+                          size="small"
+                          label={proxyShortName(lane.name)}
+                          sx={{
+                            height: 20,
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            color: '#fff',
+                            bgcolor: proxyColor(laneId),
+                          }}
+                        />
+                      </Tooltip>
+                    );
+                  })()}
                   <Chip
                     size="small"
                     label={isOnline ? 'ONLINE' : 'OFFLINE'}
@@ -658,14 +674,21 @@ export default function AndroidFleetPage() {
                       fullWidth
                       size="small"
                       label="Proxy"
-                      value={device.proxy_id ?? ''}
+                      value={proxyIdFor(device) ?? ''}
                       onChange={async (event) => {
                         const raw = event.target.value;
+                        const nextProxyId = raw === '' ? null : Number(raw);
+                        const previous = proxyIdFor(device);
+
+                        // Shown straight away; the device list catches up on its
+                        // own poll rather than redrawing every card right now.
+                        setProxyOverrides((current) => ({ ...current, [device.id]: nextProxyId }));
+
                         try {
-                          await assignProxy({ device_id: device.id, proxy_id: raw === '' ? null : Number(raw) }).unwrap();
-                          refetch();
+                          await assignProxy({ device_id: device.id, proxy_id: nextProxyId }).unwrap();
                           refetchProxies();
                         } catch {
+                          setProxyOverrides((current) => ({ ...current, [device.id]: previous }));
                           toast.error('Could not change the proxy');
                         }
                       }}
@@ -752,11 +775,11 @@ export default function AndroidFleetPage() {
   const lanes = useMemo(() => {
     const groups = proxies.map((proxy) => ({
       proxy,
-      devices: orderedDevices.filter((device) => device.proxy_id === proxy.id),
+      devices: orderedDevices.filter((device) => proxyIdFor(device) === proxy.id),
     }));
-    const unassigned = orderedDevices.filter((device) => !device.proxy_id);
+    const unassigned = orderedDevices.filter((device) => !proxyIdFor(device));
     return { groups, unassigned };
-  }, [proxies, orderedDevices]);
+  }, [proxies, orderedDevices, proxyOverrides]);
 
   const tasksByDevice = useMemo(() => {
     const map: Record<number, AndroidAgentTask[]> = {};
@@ -903,8 +926,10 @@ export default function AndroidFleetPage() {
     }
   };
 
-  const handleRunOnSelected = async () => {
-    const text = prompt.trim();
+  const handleRunOnSelected = async (typed?: string) => {
+    // The prompt box keeps its own draft and hands it over on submit, so the
+    // typed value wins over the debounced copy the page holds.
+    const text = (typed ?? prompt).trim();
     if (!text) return toast.error('Enter a task first');
     if (selectedIds.length === 0) return toast.error('Select at least one device');
     if (!ensureReady()) return;
@@ -977,7 +1002,8 @@ export default function AndroidFleetPage() {
     .filter((device): device is AndroidDevice => Boolean(device))
     .map((device) => {
       const state = runtime[device.id] ?? emptyRuntime;
-      const proxy = device.proxy_id ? proxyById.get(device.proxy_id) : undefined;
+      const laneId = proxyIdFor(device);
+      const proxy = laneId ? proxyById.get(laneId) : undefined;
       return {
         id: device.id,
         name: device.device_name,
@@ -991,7 +1017,7 @@ export default function AndroidFleetPage() {
         finishedMessage: state.finishedMessage,
         startError: state.startError,
         proxyName: proxy?.name,
-        proxyColor: proxyColor(device.proxy_id),
+        proxyColor: proxyColor(laneId),
       };
     });
 
@@ -1136,7 +1162,7 @@ export default function AndroidFleetPage() {
         </Stack>
 
         <Stack direction={{ xs: 'column', md: 'row' }} gap={1.5}>
-          <FleetPromptField value={prompt} onChange={setPrompt} onSubmit={handleRunOnSelected} />
+          <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} />
           <TextField
             select
             size="small"
@@ -1168,7 +1194,7 @@ export default function AndroidFleetPage() {
             disableElevation
             startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
             disabled={isDispatching || selectedIds.length === 0 || !prompt.trim()}
-            onClick={handleRunOnSelected}
+            onClick={() => void handleRunOnSelected()}
             sx={{
               whiteSpace: 'nowrap',
               minWidth: 170,
@@ -1208,14 +1234,22 @@ export default function AndroidFleetPage() {
               onChange={async (event) => {
                 const raw = event.target.value;
                 const proxyId = raw === 'none' ? null : Number(raw);
+                // Applied locally first, for the same reason as the per-device
+                // picker: the list only refreshes on its poll.
+                setProxyOverrides((current) => {
+                  const next = { ...current };
+                  for (const deviceId of selectedIds) next[deviceId] = proxyId;
+                  return next;
+                });
+
                 try {
                   for (const deviceId of selectedIds) {
                     await assignProxy({ device_id: deviceId, proxy_id: proxyId }).unwrap();
                   }
-                  refetch();
                   refetchProxies();
                   toast.success(`Assigned ${selectedIds.length} device${selectedIds.length === 1 ? '' : 's'}`);
                 } catch {
+                  refetch();
                   toast.error('Could not assign all devices');
                 }
               }}
