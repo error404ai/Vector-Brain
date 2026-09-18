@@ -38,6 +38,7 @@ import { FlowController } from './controllers/FlowController';
 import { PublicRunController, RunShareController } from './controllers/RunShareController';
 import { RunMediaService } from './services/android/RunMediaService';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
+import { DeviceProxyController } from './controllers/DeviceProxyController';
 import { SettingController } from './controllers/SettingController';
 import { TelegramController } from './controllers/TelegramController';
 import { UserController } from './controllers/UserController';
@@ -90,6 +91,7 @@ useExpressServer(app, {
     PublicRunController,
     RunShareController,
     ScheduledTaskController,
+    DeviceProxyController,
     SettingController,
     TelegramController,
     UserController,

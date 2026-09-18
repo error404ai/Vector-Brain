@@ -20,6 +20,7 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
+import PublicIcon from '@mui/icons-material/Public';
 import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -58,6 +59,8 @@ import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFi
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
+import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
+import { useAssignDeviceProxyMutation, useGetDeviceProxiesQuery } from '@/RTKService/androidService/proxyService';
 import { useNavigate } from 'react-router-dom';
 
 /** Live state tracked per device from the WebSocket stream. */
@@ -147,6 +150,10 @@ export default function AndroidFleetPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [queueFile, { isLoading: isSendingFile }] = useQueueDeviceFileMutation();
   const [isRefreshingFrames, setIsRefreshingFrames] = useState(false);
+  const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
+  const { data: proxyData, refetch: refetchProxies } = useGetDeviceProxiesQuery();
+  const [assignProxy] = useAssignDeviceProxyMutation();
+  const proxies = proxyData?.data ?? [];
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -609,6 +616,10 @@ export default function AndroidFleetPage() {
             </span>
           </Tooltip>
 
+          <Button size="small" startIcon={<PublicIcon fontSize="small" />} onClick={() => setProxyDialogOpen(true)} sx={{ whiteSpace: 'nowrap' }}>
+            Proxies{proxies.length > 0 ? ` (${proxies.length})` : ''}
+          </Button>
+
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
 
           <Button size="small" onClick={selectAllOnline} disabled={onlineDevices.length === 0}>
@@ -982,6 +993,36 @@ export default function AndroidFleetPage() {
                   </TextField>
                 </Box>
 
+                {/* Which proxy lane this phone sits on. */}
+                {proxies.length > 0 && (
+                  <Box sx={{ px: 1, pb: 0.5 }}>
+                    <TextField
+                      select
+                      fullWidth
+                      size="small"
+                      label="Proxy"
+                      value={device.proxy_id ?? ''}
+                      onChange={async (event) => {
+                        const raw = event.target.value;
+                        try {
+                          await assignProxy({ device_id: device.id, proxy_id: raw === '' ? null : Number(raw) }).unwrap();
+                          refetch();
+                          refetchProxies();
+                        } catch {
+                          toast.error('Could not change the proxy');
+                        }
+                      }}
+                    >
+                      <MenuItem value="">No proxy</MenuItem>
+                      {proxies.map((proxy) => (
+                        <MenuItem key={proxy.id} value={proxy.id}>
+                          {proxy.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Box>
+                )}
+
                 {/* One-tap controls for this phone alone. */}
                 <Stack direction="row" justifyContent="center" sx={{ px: 1, pb: 0.5 }}>
                   <DeviceControls
@@ -1174,6 +1215,8 @@ export default function AndroidFleetPage() {
           )}
         </DialogContent>
       </Dialog>
+    
+      <ProxyManagerDialog open={proxyDialogOpen} onClose={() => { setProxyDialogOpen(false); refetchProxies(); refetch(); }} />
     </Box>
   );
 }

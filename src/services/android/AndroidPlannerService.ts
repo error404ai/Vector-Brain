@@ -401,6 +401,7 @@ export class AndroidPlannerService {
     private deviceService: AndroidDeviceService,
     private gatewayService: AndroidGatewayService,
     private aiConfigService: AiConfigService,
+    private proxyRotationService: ProxyRotationService,
   ) {}
 
   /**
@@ -1064,6 +1065,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
         this.activeDeviceTasks.delete(hardwareDeviceId);
       }
+
+      // Give this phone's proxy a fresh IP for whatever runs next. Deliberately
+      // not awaited: the run is over, and a slow provider must not hold the
+      // device marked busy or delay the result the user is waiting on.
+      void this.proxyRotationService.onTaskFinished(agentTask.device_id);
     }
   }
   private collapseRepeatingLoop(text: string, maxRepeats = 2): string {

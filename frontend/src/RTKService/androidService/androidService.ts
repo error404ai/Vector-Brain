@@ -8,6 +8,8 @@ export interface AndroidDevice {
   device_model?: string;
   android_version?: string;
   status: 'ONLINE' | 'OFFLINE' | 'BUSY';
+  /** The proxy lane this phone sits on, or null when it runs without one. */
+  proxy_id?: number | null;
   last_seen_at?: string;
   capabilities?: {
     accessibility: boolean;

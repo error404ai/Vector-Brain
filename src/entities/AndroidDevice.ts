@@ -36,6 +36,15 @@ export class AndroidDevice {
   @Column({ type: 'varchar', length: 255, nullable: true, select: false })
   device_token: string | null;
 
+  /**
+   * The proxy lane this phone sits on, if any.
+   *
+   * Null means the device does not go through a proxy and is never queued or
+   * rotated — the behaviour every device has today.
+   */
+  @Column({ type: 'int', nullable: true })
+  proxy_id: number | null;
+
   @Column({ type: 'enum', enum: AndroidDeviceStatus, default: AndroidDeviceStatus.OFFLINE })
   status: AndroidDeviceStatus;
 
