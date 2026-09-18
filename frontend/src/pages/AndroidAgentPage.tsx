@@ -396,6 +396,17 @@ export function AndroidAgentPage() {
   const selectedDevice = devices.find((device) => device.id === effectiveSelectedDeviceId);
   selectedDeviceIdRef.current = effectiveSelectedDeviceId;
   selectedDeviceHardwareIdRef.current = selectedDevice?.device_id;
+  const [deviceSearch, setDeviceSearch] = useState('');
+  const visibleDevices = devices.filter((candidate) => {
+    const needle = deviceSearch.trim().toLowerCase();
+    if (!needle) return true;
+    return (
+      candidate.device_name.toLowerCase().includes(needle) ||
+      (candidate.device_model ?? '').toLowerCase().includes(needle) ||
+      (candidate.tag ?? '').toLowerCase().includes(needle)
+    );
+  });
+
   const { data: proxyData } = useGetDeviceProxiesQuery();
   const isDeviceOnline = selectedDevice?.status === 'ONLINE';
   const selectedProxy = (proxyData?.data ?? []).find((proxy) => proxy.id === selectedDevice?.proxy_id);
@@ -1045,7 +1056,31 @@ export function AndroidAgentPage() {
                 disabled={isRunning}
                 sx={{ minWidth: 200, fontWeight: 700, borderRadius: 2 }}
               >
-                {devices.map((d) => (
+                {/* Pinned search. With two dozen handsets the list is faster to
+                    filter than to scroll, and names repeat across identical
+                    models — so the user's own note is searchable too. */}
+                <Box sx={{ px: 1, pb: 1, position: 'sticky', top: 0, zIndex: 1, bgcolor: 'background.paper' }}>
+                  <TextField
+                    autoFocus
+                    fullWidth
+                    size="small"
+                    placeholder="Search devices…"
+                    value={deviceSearch}
+                    onChange={(event) => setDeviceSearch(event.target.value)}
+                    // The Select treats typing as jump-to-letter, which steals
+                    // the keystrokes before the field sees them.
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </Box>
+
+                {visibleDevices.length === 0 && (
+                  <MenuItem disabled>
+                    <Typography variant="body2">No device matches that</Typography>
+                  </MenuItem>
+                )}
+
+                {visibleDevices.map((d) => (
                   <MenuItem key={d.id} value={d.id}>
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Box
@@ -1059,6 +1094,9 @@ export function AndroidAgentPage() {
                       <Typography variant="body2" fontWeight={700}>
                         {d.device_name}
                       </Typography>
+                      {d.tag && (
+                        <Chip size="small" label={d.tag} sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />
+                      )}
                     </Stack>
                   </MenuItem>
                 ))}

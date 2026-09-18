@@ -128,3 +128,8 @@ export const DirectActionValidation = z.object({
   device_id: z.number(),
   action: AutomationActionValidation,
 });
+
+/** An empty string clears the tag, so the field is not nullable-only. */
+export const UpdateDeviceTagValidation = z.object({
+  tag: z.string().trim().max(40),
+});

@@ -3,7 +3,7 @@ import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
 import { LiveScreenService } from '@/services/android/LiveScreenService';
 import { AutomationAction } from '@/services/android/AndroidProtocol';
-import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation } from '@/validations/AndroidDeviceValidation';
+import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation, UpdateDeviceTagValidation } from '@/validations/AndroidDeviceValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -61,6 +61,20 @@ export class AndroidDeviceController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     return this.deviceService.renameDevice(id, user.userId, String(request.device_name));
+  }
+
+  /**
+   * Set the user's own note on a device. An empty string clears it.
+   */
+  @Authorized()
+  @Patch('/:id/tag')
+  @UseBefore(zodValidationMiddleware(UpdateDeviceTagValidation))
+  async setDeviceTag(
+    @Param('id') id: number,
+    @Body() request: z.infer<typeof UpdateDeviceTagValidation>,
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.deviceService.setDeviceTag(id, user.userId, String(request.tag ?? ''));
   }
 
   /**

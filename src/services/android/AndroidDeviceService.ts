@@ -173,6 +173,20 @@ export class AndroidDeviceService {
   /**
    * Unpair and delete a device.
    */
+  /** Set or clear the user's own note on a device. */
+  async setDeviceTag(id: number, userId: number, tag: string): Promise<ApiResponse> {
+    const device = await this.deviceRepo.findOne({ where: { id, user_id: userId } });
+    if (!device) {
+      throw new AppError('Device not found', 404);
+    }
+
+    const trimmed = tag.trim();
+    device.tag = trimmed.length > 0 ? trimmed : null;
+    await this.deviceRepo.save(device);
+
+    return { message: trimmed ? 'Tag saved' : 'Tag removed', data: { id: device.id, tag: device.tag } };
+  }
+
   async renameDevice(id: number, userId: number, deviceName: string): Promise<ApiResponse> {
     const device = await this.deviceRepo.findOne({
       where: { id, user_id: userId },

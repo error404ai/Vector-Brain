@@ -3,6 +3,7 @@ import {
   useGetAndroidDevicesQuery,
   useGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
+  useSetDeviceTagMutation,
   type AndroidAgentTask,
   type AndroidDevice,
   useSendDirectActionMutation,
@@ -21,6 +22,8 @@ import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import PublicIcon from '@mui/icons-material/Public';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -198,6 +201,18 @@ export default function AndroidFleetPage() {
     device.id in proxyOverrides ? proxyOverrides[device.id] : (device.proxy_id ?? null);
   const [groupByProxy, setGroupByProxy] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
+  const [editingTagFor, setEditingTagFor] = useState<number | null>(null);
+  const [setDeviceTag] = useSetDeviceTagMutation();
+
+  const saveTag = async (deviceId: number, value: string) => {
+    setEditingTagFor(null);
+    try {
+      await setDeviceTag({ id: deviceId, tag: value.trim() }).unwrap();
+      refetch();
+    } catch {
+      toast.error('Could not save the note');
+    }
+  };
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(40);
   // 0 = use the account's active provider
@@ -425,7 +440,11 @@ export default function AndroidFleetPage() {
                 {/* Header */}
                 <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
                   <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
-                  <Typography variant="body2" noWrap sx={{ fontWeight: 700, flexGrow: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    noWrap
+                    sx={{ fontWeight: 800, fontSize: 14.5, flexGrow: 1, minWidth: 0, letterSpacing: '-0.01em' }}
+                  >
                     {device.device_name}
                   </Typography>
                   {(() => {
@@ -550,60 +569,65 @@ export default function AndroidFleetPage() {
 
                 <Divider />
 
-                {/* Status */}
+                {/* Status
+                    Colour-coded and full width: with two dozen cards on screen
+                    the one that failed has to be findable without reading. */}
                 <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
-                  {state.startError ? (
-                    <Stack direction="row" alignItems="flex-start" gap={0.75}>
-                      <ErrorOutlineIcon fontSize="small" color="error" />
-                      <Typography variant="caption" color="error">
-                        {state.startError}
-                      </Typography>
-                    </Stack>
-                  ) : state.isRunning ? (
-                    <Stack gap={0.5}>
-                      <Stack direction="row" alignItems="center" gap={0.75}>
-                        <Chip
-                          size="small"
-                          label={`Step ${state.stepIndex}`}
-                          color="warning"
-                          sx={{ height: 20, fontSize: 10, fontWeight: 700 }}
-                        />
-                        {state.lastAction && (
-                          <Typography variant="caption" color="text.secondary" noWrap>
-                            {state.lastAction}
+                  {(() => {
+                    const tone = state.startError
+                      ? { bg: 'error.main', fg: 'error.contrastText', icon: <ErrorOutlineIcon fontSize="small" />, label: 'Failed to start' }
+                      : state.isRunning
+                        ? { bg: 'warning.main', fg: 'warning.contrastText', icon: <PlayArrowIcon fontSize="small" />, label: `Running · step ${state.stepIndex}` }
+                        : state.finishedAt
+                          ? state.finishedOk
+                            ? { bg: 'success.main', fg: 'success.contrastText', icon: <CheckCircleIcon fontSize="small" />, label: 'Completed' }
+                            : { bg: 'error.main', fg: 'error.contrastText', icon: <ErrorOutlineIcon fontSize="small" />, label: 'Failed' }
+                          : isOnline
+                            ? { bg: 'action.hover', fg: 'text.secondary', icon: null, label: 'Idle — ready for a task' }
+                            : { bg: 'action.disabledBackground', fg: 'text.disabled', icon: null, label: 'Offline' };
+
+                    const detail = state.startError
+                      || (state.isRunning ? state.lastThought || state.prompt || 'Working…' : '')
+                      || (state.finishedAt ? state.finishedMessage ?? '' : '');
+
+                    return (
+                      <Stack gap={0.75}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          gap={0.75}
+                          sx={{ px: 1, py: 0.5, borderRadius: 1.5, bgcolor: tone.bg, color: tone.fg }}
+                        >
+                          {tone.icon}
+                          <Typography variant="caption" sx={{ fontWeight: 800, flexGrow: 1 }} noWrap>
+                            {tone.label}
+                          </Typography>
+                          {state.lastAction && state.isRunning && (
+                            <Typography variant="caption" sx={{ opacity: 0.85 }} noWrap>
+                              {state.lastAction}
+                            </Typography>
+                          )}
+                          {state.isRunning && (
+                            <Tooltip title="Stop this task">
+                              <IconButton size="small" sx={{ color: 'inherit' }} onClick={() => handleStopDevice(device.id)}>
+                                <StopCircleIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </Stack>
+
+                        {detail && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                          >
+                            {detail}
                           </Typography>
                         )}
-                        <Box sx={{ flexGrow: 1 }} />
-                        <Tooltip title="Stop this task">
-                          <IconButton size="small" color="error" onClick={() => handleStopDevice(device.id)}>
-                            <StopCircleIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
                       </Stack>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                      >
-                        {state.lastThought || state.prompt || 'Working…'}
-                      </Typography>
-                    </Stack>
-                  ) : state.finishedAt ? (
-                    <Stack direction="row" alignItems="center" gap={0.75}>
-                      {state.finishedOk ? (
-                        <CheckCircleIcon fontSize="small" color="success" />
-                      ) : (
-                        <ErrorOutlineIcon fontSize="small" color="error" />
-                      )}
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {state.finishedMessage || (state.finishedOk ? 'Completed' : 'Stopped')}
-                      </Typography>
-                    </Stack>
-                  ) : (
-                    <Typography variant="caption" color="text.secondary">
-                      {isOnline ? 'Idle — ready for a task' : 'Device offline'}
-                    </Typography>
-                  )}
+                    );
+                  })()}
                 </CardContent>
 
                 {/* Per-device model override */}
@@ -629,6 +653,42 @@ export default function AndroidFleetPage() {
                       </MenuItem>
                     ))}
                   </TextField>
+                </Box>
+
+                {/* The user's own note on this phone. */}
+                <Box sx={{ px: 1, pb: 0.5 }}>
+                  {editingTagFor === device.id ? (
+                    <TextField
+                      autoFocus
+                      fullWidth
+                      size="small"
+                      placeholder="Note for this phone…"
+                      defaultValue={device.tag ?? ''}
+                      onBlur={(event) => void saveTag(device.id, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                        if (event.key === 'Escape') setEditingTagFor(null);
+                      }}
+                      inputProps={{ maxLength: 40 }}
+                    />
+                  ) : device.tag ? (
+                    <Chip
+                      size="small"
+                      icon={<LocalOfferIcon fontSize="small" />}
+                      label={device.tag}
+                      onClick={() => setEditingTagFor(device.id)}
+                      sx={{ fontWeight: 700, maxWidth: '100%' }}
+                    />
+                  ) : (
+                    <Button
+                      size="small"
+                      startIcon={<LocalOfferIcon fontSize="small" />}
+                      onClick={() => setEditingTagFor(device.id)}
+                      sx={{ color: 'text.disabled', fontSize: 12, px: 0.5 }}
+                    >
+                      Add a note
+                    </Button>
+                  )}
                 </Box>
 
                 {/* Waiting for its lane. Shown above the proxy picker so the
@@ -1334,19 +1394,41 @@ export default function AndroidFleetPage() {
                     flexWrap="wrap"
                     useFlexGap
                     sx={{
-                      mb: 1,
-                      pl: 1.25,
-                      borderLeft: '4px solid',
+                      mb: 1.5,
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
+                      // The lane's own colour, faint enough to sit behind text.
+                      bgcolor: alpha(proxyColor(proxy.id) ?? '#888', 0.12),
+                      borderLeft: '5px solid',
                       borderColor: proxyColor(proxy.id),
                     }}
                   >
-                    <Typography sx={{ fontWeight: 800 }}>{proxy.name}</Typography>
-                    <Chip size="small" label={`${laneDevices.length} device${laneDevices.length === 1 ? '' : 's'}`} />
-                    {proxy.last_ip && <Chip size="small" variant="outlined" label={proxy.last_ip} />}
-                    <Typography variant="caption" color="text.secondary">
-                      {laneDevices.filter((device) => runtime[device.id]?.isRunning).length} running ·{' '}
-                      {laneDevices.filter((device) => queuedByDevice.has(device.id)).length} waiting · max{' '}
-                      {proxy.concurrency} at once
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id) }} />
+                    <Typography sx={{ fontWeight: 800, fontSize: 15 }}>{proxy.name}</Typography>
+                    <Chip
+                      size="small"
+                      label={`${laneDevices.length} device${laneDevices.length === 1 ? '' : 's'}`}
+                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
+                    />
+                    {proxy.last_ip && (
+                      <Chip size="small" variant="outlined" label={proxy.last_ip} sx={{ fontFamily: 'monospace', bgcolor: 'background.paper' }} />
+                    )}
+                    <Box sx={{ flexGrow: 1 }} />
+                    <Chip
+                      size="small"
+                      color="warning"
+                      label={`${laneDevices.filter((device) => runtime[device.id]?.isRunning).length} running`}
+                      sx={{ fontWeight: 700 }}
+                    />
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={`${laneDevices.filter((device) => queuedByDevice.has(device.id)).length} waiting`}
+                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                      max {proxy.concurrency} at once
                     </Typography>
                   </Stack>
 
@@ -1362,9 +1444,29 @@ export default function AndroidFleetPage() {
 
               {lanes.unassigned.length > 0 && (
                 <Box>
-                  <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1, pl: 1.25, borderLeft: '4px solid', borderColor: 'divider' }}>
-                    <Typography sx={{ fontWeight: 800 }}>No proxy</Typography>
-                    <Chip size="small" label={`${lanes.unassigned.length} device${lanes.unassigned.length === 1 ? '' : 's'}`} />
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={1}
+                    flexWrap="wrap"
+                    useFlexGap
+                    sx={{
+                      mb: 1.5,
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
+                      bgcolor: 'action.hover',
+                      borderLeft: '5px solid',
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: 'text.disabled' }} />
+                    <Typography sx={{ fontWeight: 800, fontSize: 15 }}>No proxy</Typography>
+                    <Chip
+                      size="small"
+                      label={`${lanes.unassigned.length} device${lanes.unassigned.length === 1 ? '' : 's'}`}
+                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
+                    />
                     <Typography variant="caption" color="text.secondary">
                       These run straight away, without queueing or rotation
                     </Typography>

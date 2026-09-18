@@ -10,6 +10,8 @@ export interface AndroidDevice {
   status: 'ONLINE' | 'OFFLINE' | 'BUSY';
   /** The proxy lane this phone sits on, or null when it runs without one. */
   proxy_id?: number | null;
+  /** The user's own short note on this phone. */
+  tag?: string | null;
   last_seen_at?: string;
   capabilities?: {
     accessibility: boolean;
@@ -121,6 +123,10 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    setDeviceTag: builder.mutation<{ message: string; data: { id: number; tag: string | null } }, { id: number; tag: string }>({
+      query: ({ id, tag }) => ({ url: `/android/devices/${id}/tag`, method: 'PATCH', body: { tag } }),
+    }),
+
     sendDirectAction: builder.mutation<{ message: string; data: any }, DirectActionPayload>({
       query: (body) => ({
         url: '/android/devices/action/direct',
@@ -200,6 +206,7 @@ export const {
   useRenameDeviceMutation,
   useUnpairDeviceMutation,
   useSendDirectActionMutation,
+  useSetDeviceTagMutation,
   useRunAndroidTaskMutation,
   useCancelAndroidTaskMutation,
   useGetAndroidTaskLogsQuery,

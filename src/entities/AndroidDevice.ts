@@ -37,6 +37,16 @@ export class AndroidDevice {
   device_token: string | null;
 
   /**
+   * A short note the user attaches to this phone.
+   *
+   * Free text rather than a fixed list: what people need to remember about a
+   * handset — which account is signed in, what it is being used for, that its
+   * battery is going — is not something the product can enumerate for them.
+   */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  tag: string | null;
+
+  /**
    * The proxy lane this phone sits on, if any.
    *
    * Null means the device does not go through a proxy and is never queued or
