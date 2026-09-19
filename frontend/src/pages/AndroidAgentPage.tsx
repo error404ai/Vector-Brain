@@ -419,7 +419,13 @@ export function AndroidAgentPage() {
    */
   const shareableTaskId = finishedTaskId ?? requestedTaskId ?? null;
 
-  const deviceReady = isDeviceOnline && hasAccessibility && hasScreenCapture;
+  // screenCapture is intentionally NOT gated here. On Android 11+ it rides with
+  // accessibility, and persisting it only every ~30s meant one flap (a reboot,
+  // screen off, an app restart) briefly flipped it false and the dashboard
+  // showed a paired, working phone as "Service Needed". Accessibility is the
+  // real requirement for automation; capture availability is surfaced softly in
+  // the live-view panel instead of gating the whole device.
+  const deviceReady = isDeviceOnline && hasAccessibility;
 
   /** Past runs on the selected device, newest first. */
   const sessions = useMemo(

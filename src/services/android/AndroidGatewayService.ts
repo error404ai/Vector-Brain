@@ -25,6 +25,14 @@ export class AndroidGatewayService {
   // Request ID -> Pending Action promise handler
   private pendingRequests = new Map<string, PendingRequest>();
 
+  // Device ID -> pending "mark offline" timer. A dropped socket does not flip
+  // the dashboard to Offline immediately: a fleet phone often reconnects within
+  // seconds (WiFi blip, quick app restart, doze wake), and flipping to Offline
+  // and back was the flicker users saw. We wait out a grace window and only
+  // mark offline if the device has not come back on a fresh socket.
+  private offlineTimers = new Map<string, NodeJS.Timeout>();
+  private static readonly OFFLINE_GRACE_MS = 15_000;
+
   // Heartbeats arrive every five seconds. Persist periodically (or whenever
   // capabilities change) instead of writing the same row on every heartbeat.
   private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string }>();
@@ -54,6 +62,13 @@ export class AndroidGatewayService {
     const existing = this.deviceSockets.get(deviceId);
     if (existing && existing !== ws && existing.readyState === WebSocket.OPEN) {
       existing.close(1000, 'Replaced by newer connection');
+    }
+
+    // Device is back on a live socket — cancel any pending offline flip.
+    const pendingOffline = this.offlineTimers.get(deviceId);
+    if (pendingOffline) {
+      clearTimeout(pendingOffline);
+      this.offlineTimers.delete(deviceId);
     }
 
     this.deviceSockets.set(deviceId, ws);
@@ -188,7 +203,25 @@ export class AndroidGatewayService {
       });
     }
 
-    // Update DB status to OFFLINE
+    // Grace window before marking offline: if a fresh socket registers for this
+    // device before it elapses, registerDevice cancels this and no flicker is
+    // seen. Only if the phone is genuinely gone does the Offline flip land.
+    const existing = this.offlineTimers.get(deviceId);
+    if (existing) clearTimeout(existing);
+    this.offlineTimers.set(
+      deviceId,
+      setTimeout(() => {
+        void this.markDeviceOffline(deviceId);
+      }, AndroidGatewayService.OFFLINE_GRACE_MS),
+    );
+  }
+
+  /** Writes OFFLINE and notifies the dashboard, unless the device reconnected. */
+  private async markDeviceOffline(deviceId: string) {
+    this.offlineTimers.delete(deviceId);
+    // Reconnected during the grace window — nothing to do.
+    if (this.deviceSockets.has(deviceId)) return;
+
     await this.deviceService.updateDeviceStatus(deviceId, AndroidDeviceStatus.OFFLINE);
 
     const device = await this.deviceService.getDeviceByHardwareId(deviceId);
