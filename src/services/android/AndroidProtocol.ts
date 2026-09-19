@@ -1,6 +1,6 @@
 export type SwipeDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
-export type GlobalAction = 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS';
+export type GlobalAction = 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS' | 'POWER_DIALOG';
 
 /**
  * Keys the companion app can press on the focused text field.
@@ -32,6 +32,8 @@ export type SettingsScreen =
   | 'ACCESSIBILITY'
   | 'DEVELOPER'
   | 'ABOUT'
+  | 'SECURITY'
+  | 'LOCK_SCREEN'
   | 'ROOT';
 
 export type SafetyLevel = 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED';
@@ -59,6 +61,7 @@ export type AutomationAction =
   | { type: 'ListApps' }
   | { type: 'SetClipboard'; text: string }
   | { type: 'Paste' }
+  | { type: 'ReadClipboard' }
   | { type: 'OpenSettings'; screen: SettingsScreen }
   | { type: 'ReadNotifications'; packageName?: string; limit?: number };
 

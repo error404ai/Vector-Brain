@@ -59,6 +59,14 @@ useContainer(new TypeDIAdapter());
 
 const app: express.Application = express();
 
+// Raw binary body for chunked file uploads (APK auto-update). Scoped to the
+// chunk route and octet-stream only, so every other route still parses as JSON.
+// Registered before express.json so the raw parser claims the body first.
+app.use(
+  '/api/android/files/chunk',
+  express.raw({ type: 'application/octet-stream', limit: '12mb' }),
+);
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

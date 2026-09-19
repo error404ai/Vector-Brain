@@ -441,14 +441,15 @@ export class AndroidAgent extends Agent {
       },
       {
         name: 'global_action',
-        description: 'Trigger Android system navigation: BACK to go back, HOME to go home screen.',
+        description:
+          'Trigger Android system navigation. BACK = go back, HOME = home screen, RECENTS = recents, NOTIFICATIONS = pull down the shade, POWER_DIALOG = open the power menu. To reboot the phone, call POWER_DIALOG then tap Restart in the menu that appears — there is no power-off action, and never turn the phone off, only restart it.',
         parameters: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS'],
-              description: 'BACK = go back one screen, HOME = go to home screen',
+              enum: ['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS', 'POWER_DIALOG'],
+              description: 'BACK = go back one screen, HOME = go to home screen, POWER_DIALOG = open the power menu (then tap Restart to reboot)',
             },
           },
           required: ['action'],
@@ -459,7 +460,7 @@ export class AndroidAgent extends Agent {
           return this.runDeviceAction(
             {
               type: 'Global',
-              action: args.action as 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS',
+              action: args.action as 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS' | 'POWER_DIALOG',
             },
             'global_action',
             args,
@@ -591,6 +592,15 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'read_clipboard',
+        description:
+          'Read the current text on the device clipboard. Use this after copying something in one app (a code, a link, a reference number) to carry it into another, or to confirm what set_clipboard put there.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction({ type: 'ReadClipboard' }, 'read_clipboard', args);
+        },
+      },
+      {
         name: 'open_settings',
         description:
           'Open a Settings screen directly. Always prefer this over launching the Settings app and navigating: manufacturers nest and rename these pages differently, so navigating costs several steps and often fails, while this lands on the same screen on every phone.',
@@ -602,9 +612,9 @@ export class AndroidAgent extends Agent {
               enum: [
                 'DATE_TIME', 'LANGUAGE', 'WIFI', 'MOBILE_NETWORK', 'DISPLAY', 'SOUND',
                 'LOCATION', 'BATTERY', 'STORAGE', 'APPS', 'ACCESSIBILITY', 'DEVELOPER',
-                'ABOUT', 'ROOT',
+                'ABOUT', 'SECURITY', 'LOCK_SCREEN', 'ROOT',
               ],
-              description: 'DATE_TIME for time and timezone, LANGUAGE for language and region, ROOT for the Settings home page',
+              description: 'DATE_TIME for time and timezone, LANGUAGE for language and region, SECURITY for the security page, LOCK_SCREEN for screen lock and PIN, ROOT for the Settings home page',
             },
           },
           required: ['screen'],

@@ -46,11 +46,12 @@ export class DeviceFileTransfer {
   sha256: string;
 
   /**
-   * Never selected by default — a listing query must not drag megabytes of file
-   * content into memory for every row.
+   * Legacy inline copy. Nullable and unused by new uploads, which store the
+   * bytes once in device_file_blobs keyed by {@link sha256} and leave this null.
+   * Kept so rows written by the old code path still deliver.
    */
-  @Column({ type: 'longblob', select: false })
-  content: Buffer;
+  @Column({ type: 'longblob', select: false, nullable: true })
+  content: Buffer | null;
 
   @Column({ type: 'enum', enum: DeviceFileStatus, default: DeviceFileStatus.PENDING })
   status: DeviceFileStatus;

@@ -1,6 +1,12 @@
 import {
+  INLINE_UPLOAD_LIMIT,
+  UPLOAD_CHUNK_SIZE,
+  sha256Hex,
+  uploadChunk,
   useDeleteDeviceFileMutation,
+  useFinishDeviceUploadMutation,
   useGetDeviceFilesQuery,
+  useInitDeviceUploadMutation,
   useQueueDeviceFileMutation,
   type DeviceFile,
 } from '@/RTKService/androidService/deviceFileService';
@@ -29,7 +35,7 @@ import { useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 
 /** Matches MAX_FILE_BYTES in DeviceFileService so the error arrives before the upload does. */
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 interface SendFileDialogProps {
   open: boolean;
@@ -84,7 +90,10 @@ export default function SendFileDialog({ open, deviceId, deviceName, isOnline, o
     pollingInterval: open ? 5000 : 0,
   });
   const [queueFile] = useQueueDeviceFileMutation();
+  const [initUpload] = useInitDeviceUploadMutation();
+  const [finishUpload] = useFinishDeviceUploadMutation();
   const [deleteFile] = useDeleteDeviceFileMutation();
+  const [progress, setProgress] = useState<number | null>(null);
 
   const files = data?.data ?? [];
 
@@ -94,25 +103,59 @@ export default function SendFileDialog({ open, deviceId, deviceName, isOnline, o
     if (!file || deviceId === null) return;
 
     if (file.size > MAX_FILE_BYTES) {
-      toast.error(`That file is ${formatSize(file.size)}. The limit is 10 MB.`);
+      toast.error(`That file is ${formatSize(file.size)}. The limit is 100 MB.`);
       return;
     }
 
     setBusy(true);
+    setProgress(null);
     try {
-      const content_base64 = await readAsBase64(file);
-      await queueFile({
-        device_id: deviceId,
-        file_name: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        content_base64,
-      }).unwrap();
+      if (file.size <= INLINE_UPLOAD_LIMIT) {
+        const content_base64 = await readAsBase64(file);
+        await queueFile({
+          device_id: deviceId,
+          file_name: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          content_base64,
+        }).unwrap();
+      } else {
+        await sendChunked(file, deviceId);
+      }
       toast.success(isOnline ? 'Sent. It should land on the phone shortly.' : 'Queued. It will arrive when the phone is back online.');
     } catch (error: any) {
-      toast.error(error?.data?.message || 'Could not send the file');
+      toast.error(error?.data?.message || error?.message || 'Could not send the file');
     } finally {
       setBusy(false);
+      setProgress(null);
     }
+  };
+
+  /**
+   * Uploads a large file in raw chunks: hash it, open an upload, stream each
+   * chunk, then finish. The bytes are stored once server-side and queued for the
+   * device — an APK for auto-update takes exactly this path.
+   */
+  const sendChunked = async (file: File, targetDeviceId: number) => {
+    const sha256 = await sha256Hex(file);
+    const totalChunks = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
+    const init = await initUpload({
+      device_id: targetDeviceId,
+      file_name: file.name,
+      mime_type: file.type || 'application/octet-stream',
+      size_bytes: file.size,
+      sha256,
+      total_chunks: totalChunks,
+    }).unwrap();
+
+    const uploadId = init.data.upload_id;
+    for (let index = 0; index < totalChunks; index += 1) {
+      const start = index * UPLOAD_CHUNK_SIZE;
+      const slice = file.slice(start, Math.min(start + UPLOAD_CHUNK_SIZE, file.size));
+      await uploadChunk(uploadId, index, slice);
+      setProgress(Math.round(((index + 1) / totalChunks) * 100));
+    }
+
+    await finishUpload({ upload_id: uploadId }).unwrap();
   };
 
   const handleDelete = async (id: number) => {
@@ -153,7 +196,7 @@ export default function SendFileDialog({ open, deviceId, deviceName, isOnline, o
           onClick={() => inputRef.current?.click()}
           sx={{ py: 2, borderStyle: 'dashed' }}
         >
-          {busy ? 'Sending…' : 'Choose a file (up to 10 MB)'}
+          {busy ? (progress !== null ? `Uploading… ${progress}%` : 'Sending…') : 'Choose a file (up to 100 MB)'}
         </Button>
 
         <Divider sx={{ my: 2 }} />
