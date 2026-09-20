@@ -16,6 +16,7 @@ import FleetStatusSpine from '@/components/android/FleetStatusSpine';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
@@ -647,17 +648,23 @@ export default function AndroidFleetPage() {
                     the one that failed has to be findable without reading. */}
                 <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
                   {(() => {
+                    // Each status gets a soft tinted surface + a saturated accent
+                    // (used for the left rail, icon and label) so it reads at a
+                    // glance across two dozen cards without shouting.
+                    const failed = Boolean(state.startError) || (Boolean(state.finishedAt) && !state.finishedOk);
                     const tone = state.startError
-                      ? { bg: 'error.main', fg: 'error.contrastText', icon: <ErrorOutlineIcon fontSize="small" />, label: 'Failed to start' }
+                      ? { surface: alpha('#dc2626', 0.10), accent: '#dc2626', icon: <ErrorOutlineIcon fontSize=\"small\" />, label: 'Failed to start' }
                       : state.isRunning
-                        ? { bg: 'primary.main', fg: 'primary.contrastText', icon: <PlayArrowIcon fontSize="small" />, label: `Running · step ${state.stepIndex}` }
+                        ? { surface: alpha('#2563eb', 0.10), accent: '#2563eb', icon: <PlayArrowIcon fontSize=\"small\" />, label: `Running · step ${state.stepIndex}` }
                         : state.finishedAt
                           ? state.finishedOk
-                            ? { bg: 'success.main', fg: 'success.contrastText', icon: <CheckCircleIcon fontSize="small" />, label: 'Completed' }
-                            : { bg: 'error.main', fg: 'error.contrastText', icon: <ErrorOutlineIcon fontSize="small" />, label: 'Failed' }
-                          : isOnline
-                            ? { bg: 'action.hover', fg: 'text.secondary', icon: null, label: 'Idle — ready for a task' }
-                            : { bg: 'action.disabledBackground', fg: 'text.disabled', icon: null, label: 'Offline' };
+                            ? { surface: alpha('#059669', 0.10), accent: '#059669', icon: <CheckCircleIcon fontSize=\"small\" />, label: 'Completed' }
+                            : { surface: alpha('#dc2626', 0.10), accent: '#dc2626', icon: <ErrorOutlineIcon fontSize=\"small\" />, label: 'Failed' }
+                          : queuedByDevice.has(device.id)
+                            ? { surface: alpha('#d97706', 0.12), accent: '#b45309', icon: <HourglassEmptyIcon fontSize=\"small\" />, label: 'Waiting for a free lane' }
+                            : isOnline
+                              ? { surface: 'action.hover', accent: 'text.secondary', icon: <CheckCircleOutlineIcon fontSize=\"small\" />, label: 'Ready for a task' }
+                              : { surface: 'action.disabledBackground', accent: 'text.disabled', icon: null, label: 'Offline' };
 
                     const detail = state.startError
                       || (state.isRunning ? state.lastThought || state.prompt || 'Working…' : '')
@@ -665,55 +672,93 @@ export default function AndroidFleetPage() {
 
                     return (
                       <Stack gap={0.75}>
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          gap={0.75}
+                        <Box
                           sx={{
-                            px: 1,
-                            py: 0.5,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.75,
+                            pl: 1.25,
+                            pr: 0.75,
+                            py: 0.6,
                             borderRadius: 1.5,
-                            bgcolor: tone.bg,
-                            color: tone.fg,
-                            // Only the running state breathes, so movement on the
-                            // page always means work in progress.
-                            ...(state.isRunning
-                              ? {
-                                  animation: 'fleetPulse 1.8s ease-in-out infinite',
-                                  '@keyframes fleetPulse': {
-                                    '0%, 100%': { opacity: 1 },
-                                    '50%': { opacity: 0.78 },
-                                  },
-                                }
-                              : {}),
+                            bgcolor: tone.surface,
+                            color: tone.accent,
+                            position: 'relative',
+                            overflow: 'hidden',
+                            // Saturated left rail marks the state without filling
+                            // the whole strip with colour.
+                            '&::before': {
+                              content: '""',
+                              position: 'absolute',
+                              left: 0, top: 0, bottom: 0,
+                              width: 3,
+                              bgcolor: tone.accent,
+                            },
+                            ...(state.isRunning && {
+                              animation: 'fleetPulse 1.8s ease-in-out infinite',
+                              '@keyframes fleetPulse': {
+                                '0%, 100%': { opacity: 1 },
+                                '50%': { opacity: 0.72 },
+                              },
+                            }),
                           }}
                         >
                           {tone.icon}
-                          <Typography variant="caption" sx={{ fontWeight: 800, flexGrow: 1 }} noWrap>
+                          <Typography variant=\"caption\" sx={{ fontWeight: 800, flexGrow: 1, letterSpacing: 0.1 }} noWrap>
                             {tone.label}
                           </Typography>
                           {state.lastAction && state.isRunning && (
-                            <Typography variant="caption" sx={{ opacity: 0.85 }} noWrap>
+                            <Typography variant=\"caption\" sx={{ opacity: 0.85, fontFamily: 'monospace', fontSize: 11 }} noWrap>
                               {state.lastAction}
                             </Typography>
                           )}
                           {state.isRunning && (
-                            <Tooltip title="Stop this task">
-                              <IconButton size="small" sx={{ color: 'inherit' }} onClick={() => handleStopDevice(device.id)}>
-                                <StopCircleIcon fontSize="small" />
+                            <Tooltip title=\"Stop this task\">
+                              <IconButton size=\"small\" sx={{ color: 'inherit', p: 0.25 }} onClick={() => handleStopDevice(device.id)}>
+                                <StopCircleIcon fontSize=\"small\" />
                               </IconButton>
                             </Tooltip>
                           )}
-                        </Stack>
+                          {failed && state.prompt && (
+                            <Tooltip title=\"Retry this task\">
+                              <IconButton
+                                size=\"small\"
+                                sx={{ color: 'inherit', p: 0.25 }}
+                                onClick={() => void dispatchTo([device.id], state.prompt as string)}
+                              >
+                                <ReplayIcon fontSize=\"small\" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </Box>
 
                         {detail && (
                           <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                            variant=\"caption\"
+                            color=\"text.secondary\"
+                            sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', px: 0.25 }}
                           >
                             {detail}
                           </Typography>
+                        )}
+
+                        {failed && state.prompt && (
+                          <Button
+                            size=\"small\"
+                            startIcon={<ReplayIcon fontSize=\"small\" />}
+                            onClick={() => void dispatchTo([device.id], state.prompt as string)}
+                            sx={{
+                              alignSelf: 'flex-start',
+                              textTransform: 'none',
+                              fontWeight: 700,
+                              color: '#dc2626',
+                              bgcolor: alpha('#dc2626', 0.08),
+                              '&:hover': { bgcolor: alpha('#dc2626', 0.16) },
+                              px: 1.25,
+                            }}
+                          >
+                            Retry task
+                          </Button>
                         )}
                       </Stack>
                     );
