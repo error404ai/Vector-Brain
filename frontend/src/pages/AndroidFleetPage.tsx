@@ -270,19 +270,15 @@ export default function AndroidFleetPage() {
     setRuntime((prev) => {
       let changed = false;
       const next: RuntimeMap = { ...prev };
-      // Turn on devices the backend says are running.
+      // Only ever turn running ON here — this effect exists to restore running
+      // state after a reload, when the live runtime map is empty. Turning it
+      // OFF was wrong: the tasks poll lags a few seconds behind the live
+      // WebSocket, so a just-started task still shows is_running=false in the
+      // list, and forcing false here flipped a genuinely running phone back to
+      // "Idle". Completion is already handled by the task:complete WS event.
       runningDeviceIds.forEach((deviceId) => {
         if (!next[deviceId]?.isRunning) {
           next[deviceId] = { ...(next[deviceId] ?? emptyRuntime), isRunning: true };
-          changed = true;
-        }
-      });
-      // Turn off devices we had marked running but the backend no longer does —
-      // covers a task that finished while we were away from the page.
-      (Object.keys(next) as unknown as number[]).forEach((key) => {
-        const deviceId = Number(key);
-        if (next[deviceId]?.isRunning && !runningDeviceIds.has(deviceId)) {
-          next[deviceId] = { ...next[deviceId], isRunning: false };
           changed = true;
         }
       });
