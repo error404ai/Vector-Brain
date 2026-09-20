@@ -12,18 +12,24 @@ import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigServi
 import authManager from '@/_helpers/authManager';
 import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScreen';
 import FleetCoverageStrip from '@/components/android/FleetCoverageStrip';
+import {
+  DeviceStatusBadge,
+  FleetStatusSummary,
+  RetryButton,
+  TaskProgress,
+  type FleetCounts,
+  type FleetStatus,
+} from '@/components/android/FleetStatusUI';
 import FleetStatusSpine from '@/components/android/FleetStatusSpine';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import PublicIcon from '@mui/icons-material/Public';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -97,6 +103,7 @@ interface DeviceRuntime {
   taskId?: number;
   prompt?: string;
   isRunning: boolean;
+  startedAt?: number;
   stepIndex: number;
   lastThought?: string;
   lastAction?: string;
@@ -216,6 +223,7 @@ export default function AndroidFleetPage() {
   };
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(200);
+  const [statusFilter, setStatusFilter] = useState<FleetStatus | null>(null);
   // 0 = use the account's active provider
   const [broadcastConfigId, setBroadcastConfigId] = useState(0);
   const [deviceConfigIds, setDeviceConfigIds] = useState<Record<number, number>>({});
@@ -279,7 +287,13 @@ export default function AndroidFleetPage() {
       // "Idle". Completion is already handled by the task:complete WS event.
       runningDeviceIds.forEach((deviceId) => {
         if (!next[deviceId]?.isRunning) {
-          next[deviceId] = { ...(next[deviceId] ?? emptyRuntime), isRunning: true };
+          next[deviceId] = {
+            ...(next[deviceId] ?? emptyRuntime),
+            isRunning: true,
+            // Restored after a reload — we don't know the true start, so the
+            // elapsed clock starts from when we noticed. Better than no clock.
+            startedAt: next[deviceId]?.startedAt ?? Date.now(),
+          };
           changed = true;
         }
       });
@@ -311,6 +325,7 @@ export default function AndroidFleetPage() {
           case 'task:started':
             patchRuntime(deviceId, {
               isRunning: true,
+              startedAt: Date.now(),
               taskId: payload.taskId,
               prompt: payload.prompt,
               stepIndex: 0,
@@ -453,6 +468,32 @@ export default function AndroidFleetPage() {
     return [...devices].sort((a, b) => rank(a) - rank(b) || a.device_name.localeCompare(b.device_name));
   }, [devices, runtime]);
   const runningCount = (Object.values(runtime) as DeviceRuntime[]).filter((state) => state.isRunning).length;
+  // Single source of truth for a device's status, mapped only from data that
+  // exists — used by both the card badge and the fleet summary so they never
+  // disagree.
+  const deviceStatusOf = (device: AndroidDevice): FleetStatus => {
+    if (device.status !== 'ONLINE') return 'offline';
+    const state = runtime[device.id];
+    if (state?.startError) return 'failed';
+    if (state?.isRunning) return 'running';
+    if (state?.finishedAt) return state.finishedOk ? 'completed' : 'failed';
+    if (queuedByDevice.has(device.id)) return 'waiting';
+    return 'idle';
+  };
+
+  const fleetCounts: FleetCounts = devices.reduce(
+    (acc, device) => {
+      acc.total += 1;
+      acc[deviceStatusOf(device)] += 1;
+      return acc;
+    },
+    { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, offline: 0 } as FleetCounts,
+  );
+
+  // When a status filter is active, a device is shown only if it matches.
+  const matchesFilter = (device: AndroidDevice) =>
+    statusFilter === null || deviceStatusOf(device) === statusFilter;
+
   const renderDeviceCard = (device: AndroidDevice) => {
             const state = runtime[device.id] ?? emptyRuntime;
             const isOnline = device.status === 'ONLINE';
@@ -643,99 +684,51 @@ export default function AndroidFleetPage() {
 
                 <Divider />
 
-                {/* Status
-                    Colour-coded and full width: with two dozen cards on screen
-                    the one that failed has to be findable without reading. */}
+                {/* Status — the visual priority of the card. Rendered from
+                    reusable status components so every state looks consistent. */}
                 <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
                   {(() => {
-                    // Each status gets a soft tinted surface + a saturated accent
-                    // (used for the left rail, icon and label) so it reads at a
-                    // glance across two dozen cards without shouting.
-                    const failed = Boolean(state.startError) || (Boolean(state.finishedAt) && !state.finishedOk);
-                    const tone = state.startError
-                      ? { surface: alpha('#dc2626', 0.10), accent: '#dc2626', icon: <ErrorOutlineIcon fontSize=\"small\" />, label: 'Failed to start' }
-                      : state.isRunning
-                        ? { surface: alpha('#2563eb', 0.10), accent: '#2563eb', icon: <PlayArrowIcon fontSize=\"small\" />, label: `Running · step ${state.stepIndex}` }
-                        : state.finishedAt
-                          ? state.finishedOk
-                            ? { surface: alpha('#059669', 0.10), accent: '#059669', icon: <CheckCircleIcon fontSize=\"small\" />, label: 'Completed' }
-                            : { surface: alpha('#dc2626', 0.10), accent: '#dc2626', icon: <ErrorOutlineIcon fontSize=\"small\" />, label: 'Failed' }
-                          : queuedByDevice.has(device.id)
-                            ? { surface: alpha('#d97706', 0.12), accent: '#b45309', icon: <HourglassEmptyIcon fontSize=\"small\" />, label: 'Waiting for a free lane' }
-                            : isOnline
-                              ? { surface: 'action.hover', accent: 'text.secondary', icon: <CheckCircleOutlineIcon fontSize=\"small\" />, label: 'Ready for a task' }
-                              : { surface: 'action.disabledBackground', accent: 'text.disabled', icon: null, label: 'Offline' };
-
+                    const status = deviceStatusOf(device);
+                    const failed = status === 'failed';
                     const detail = state.startError
                       || (state.isRunning ? state.lastThought || state.prompt || 'Working…' : '')
                       || (state.finishedAt ? state.finishedMessage ?? '' : '');
 
                     return (
                       <Stack gap={0.75}>
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.75,
-                            pl: 1.25,
-                            pr: 0.75,
-                            py: 0.6,
-                            borderRadius: 1.5,
-                            bgcolor: tone.surface,
-                            color: tone.accent,
-                            position: 'relative',
-                            overflow: 'hidden',
-                            // Saturated left rail marks the state without filling
-                            // the whole strip with colour.
-                            '&::before': {
-                              content: '""',
-                              position: 'absolute',
-                              left: 0, top: 0, bottom: 0,
-                              width: 3,
-                              bgcolor: tone.accent,
-                            },
-                            ...(state.isRunning && {
-                              animation: 'fleetPulse 1.8s ease-in-out infinite',
-                              '@keyframes fleetPulse': {
-                                '0%, 100%': { opacity: 1 },
-                                '50%': { opacity: 0.72 },
-                              },
-                            }),
-                          }}
-                        >
-                          {tone.icon}
-                          <Typography variant=\"caption\" sx={{ fontWeight: 800, flexGrow: 1, letterSpacing: 0.1 }} noWrap>
-                            {tone.label}
-                          </Typography>
-                          {state.lastAction && state.isRunning && (
-                            <Typography variant=\"caption\" sx={{ opacity: 0.85, fontFamily: 'monospace', fontSize: 11 }} noWrap>
-                              {state.lastAction}
-                            </Typography>
-                          )}
-                          {state.isRunning && (
-                            <Tooltip title=\"Stop this task\">
-                              <IconButton size=\"small\" sx={{ color: 'inherit', p: 0.25 }} onClick={() => handleStopDevice(device.id)}>
-                                <StopCircleIcon fontSize=\"small\" />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                          {failed && state.prompt && (
-                            <Tooltip title=\"Retry this task\">
-                              <IconButton
-                                size=\"small\"
-                                sx={{ color: 'inherit', p: 0.25 }}
-                                onClick={() => void dispatchTo([device.id], state.prompt as string)}
-                              >
-                                <ReplayIcon fontSize=\"small\" />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                        </Box>
+                        <DeviceStatusBadge
+                          status={status}
+                          labelSuffix={status === 'running' ? `· step ${state.stepIndex}` : undefined}
+                          trailing={
+                            state.isRunning ? (
+                              <Tooltip title="Stop this task">
+                                <IconButton size="small" sx={{ color: 'inherit', p: 0.25 }} onClick={() => handleStopDevice(device.id)}>
+                                  <StopCircleIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            ) : failed && state.prompt ? (
+                              <Tooltip title="Retry this task">
+                                <IconButton size="small" sx={{ color: 'inherit', p: 0.25 }} onClick={() => void dispatchTo([device.id], state.prompt as string)}>
+                                  <ReplayIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            ) : undefined
+                          }
+                        />
+
+                        {state.isRunning && (
+                          <TaskProgress
+                            step={state.stepIndex}
+                            budget={maxSteps}
+                            startedAt={state.startedAt}
+                            action={state.lastAction}
+                          />
+                        )}
 
                         {detail && (
                           <Typography
-                            variant=\"caption\"
-                            color=\"text.secondary\"
+                            variant="caption"
+                            color="text.secondary"
                             sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', px: 0.25 }}
                           >
                             {detail}
@@ -743,22 +736,7 @@ export default function AndroidFleetPage() {
                         )}
 
                         {failed && state.prompt && (
-                          <Button
-                            size=\"small\"
-                            startIcon={<ReplayIcon fontSize=\"small\" />}
-                            onClick={() => void dispatchTo([device.id], state.prompt as string)}
-                            sx={{
-                              alignSelf: 'flex-start',
-                              textTransform: 'none',
-                              fontWeight: 700,
-                              color: '#dc2626',
-                              bgcolor: alpha('#dc2626', 0.08),
-                              '&:hover': { bgcolor: alpha('#dc2626', 0.16) },
-                              px: 1.25,
-                            }}
-                          >
-                            Retry task
-                          </Button>
+                          <RetryButton onClick={() => void dispatchTo([device.id], state.prompt as string)} />
                         )}
                       </Stack>
                     );
@@ -951,7 +929,16 @@ export default function AndroidFleetPage() {
 
 
   /** The card grid, used once per lane and once for the flat view. */
-  const DeviceGrid = ({ list }: { list: AndroidDevice[] }) => (
+  const DeviceGrid = ({ list }: { list: AndroidDevice[] }) => {
+    const shown = list.filter(matchesFilter);
+    if (shown.length === 0) {
+      return (
+        <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 2, display: 'block' }}>
+          No devices match this filter.
+        </Typography>
+      );
+    }
+    return (
         <Box
           sx={{
             display: 'grid',
@@ -962,9 +949,10 @@ export default function AndroidFleetPage() {
             alignItems: 'start',
           }}
         >
-          {list.map((device) => renderDeviceCard(device))}
+          {shown.map((device) => renderDeviceCard(device))}
         </Box>
-  );
+    );
+  };
 
 
   /**
@@ -1293,6 +1281,8 @@ export default function AndroidFleetPage() {
       </Stack>
 
       <FleetCoverageStrip devices={devices} />
+
+      <FleetStatusSummary counts={fleetCounts} activeFilter={statusFilter} onFilter={setStatusFilter} />
 
       {/* Broadcast bar — the primary control on the page, so it is raised out of
           the flat outlined-paper treatment the rest of the page uses. */}
