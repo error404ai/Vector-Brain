@@ -985,9 +985,26 @@ export default function AndroidFleetPage() {
    * together saturates the uplink and times half of them out. A device that
    * fails is skipped quietly — its card keeps whatever it had.
    */
-  const handleRefreshAllFrames = async () => {
+  // Auto-pull every screen once the fleet page has online devices, so frames
+  // appear on load without the user clicking "Show all screens". Guarded to run
+  // a single time per mount: it flips true as soon as one auto-run fires, and
+  // resets only when the page is left and re-entered (component remount).
+  const didAutoShowRef = useRef(false);
+  useEffect(() => {
+    if (didAutoShowRef.current) return;
+    if (isRefreshingFrames) return;
+    if (onlineDevices.length === 0) return;
+    didAutoShowRef.current = true;
+    void handleRefreshAllFrames(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlineDevices.length]);
+
+  const handleRefreshAllFrames = async (silent = false) => {
     const targets = onlineDevices;
-    if (targets.length === 0) return toast.error('No devices are online');
+    if (targets.length === 0) {
+      if (!silent) toast.error('No devices are online');
+      return;
+    }
 
     setIsRefreshingFrames(true);
     let captured = 0;
@@ -1010,9 +1027,11 @@ export default function AndroidFleetPage() {
         captured += results.filter((result) => result.status === 'fulfilled' && result.value).length;
       }
 
-      if (captured === 0) toast.error('No phone returned a frame');
-      else if (captured < targets.length) toast.success(`Got ${captured} of ${targets.length} screens`);
-      else toast.success(`Refreshed ${captured} screens`);
+      if (!silent) {
+        if (captured === 0) toast.error('No phone returned a frame');
+        else if (captured < targets.length) toast.success(`Got ${captured} of ${targets.length} screens`);
+        else toast.success(`Refreshed ${captured} screens`);
+      }
     } finally {
       setIsRefreshingFrames(false);
     }
@@ -1227,7 +1246,7 @@ export default function AndroidFleetPage() {
                 size="small"
                 startIcon={isRefreshingFrames ? <CircularProgress size={14} color="inherit" /> : <PhotoCameraIcon fontSize="small" />}
                 disabled={isRefreshingFrames || onlineDevices.length === 0}
-                onClick={handleRefreshAllFrames}
+                onClick={() => handleRefreshAllFrames(false)}
                 sx={{ whiteSpace: 'nowrap' }}
               >
                 Show all screens
