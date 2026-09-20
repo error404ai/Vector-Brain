@@ -261,10 +261,11 @@ export default function AndroidFleetPage() {
   // ones are running (is_running); this reflects that into the runtime map so a
   // reload shows the true state. Live WebSocket events still update it on top.
   useEffect(() => {
-    const runningDeviceIds = new Set(
+    const runningDeviceIds = new Set<number>(
       (tasksData?.data ?? [])
         .filter((task) => task.is_running)
-        .map((task) => task.device_id),
+        .map((task) => task.device_id)
+        .filter((id): id is number => typeof id === 'number'),
     );
     setRuntime((prev) => {
       let changed = false;
