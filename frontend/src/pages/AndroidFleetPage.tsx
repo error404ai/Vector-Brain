@@ -162,7 +162,7 @@ export default function AndroidFleetPage() {
   const { data: devicesData, isLoading, refetch } = useGetAndroidDevicesQuery(undefined, {
     pollingInterval: 20_000,
   });
-  const { data: tasksData } = useGetAndroidTasksQuery({ limit: 100 }, { pollingInterval: 20_000 });
+  const { data: tasksData } = useGetAndroidTasksQuery({ limit: 100 }, { pollingInterval: 8_000 });
   const { data: aiConfigsData } = useGetAiConfigsQuery();
 
   const [runTask] = useRunAndroidTaskMutation();
@@ -253,6 +253,43 @@ export default function AndroidFleetPage() {
     if (deviceId === undefined || deviceId === null) return;
     setRuntime((prev) => ({ ...prev, [deviceId]: { ...(prev[deviceId] ?? emptyRuntime), ...patch } }));
   };
+
+  // Rebuild running-state from the backend on load and on every task poll.
+  // The live runtime map lives only in React memory, so a page refresh or a
+  // trip to another page wiped it — tasks that were genuinely still running on
+  // the phones came back showing "Idle". The tasks query already knows which
+  // ones are running (is_running); this reflects that into the runtime map so a
+  // reload shows the true state. Live WebSocket events still update it on top.
+  useEffect(() => {
+    const runningDeviceIds = new Set(
+      (tasksData?.data ?? [])
+        .filter((task) => task.is_running)
+        .map((task) => task.device_id),
+    );
+    setRuntime((prev) => {
+      let changed = false;
+      const next: RuntimeMap = { ...prev };
+      // Turn on devices the backend says are running.
+      runningDeviceIds.forEach((deviceId) => {
+        if (!next[deviceId]?.isRunning) {
+          next[deviceId] = { ...(next[deviceId] ?? emptyRuntime), isRunning: true };
+          changed = true;
+        }
+      });
+      // Turn off devices we had marked running but the backend no longer does —
+      // covers a task that finished while we were away from the page.
+      (Object.keys(next) as unknown as number[]).forEach((key) => {
+        const deviceId = Number(key);
+        if (next[deviceId]?.isRunning && !runningDeviceIds.has(deviceId)) {
+          next[deviceId] = { ...next[deviceId], isRunning: false };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksData]);
+
 
   // ---- Live stream -------------------------------------------------------
   useEffect(() => {
