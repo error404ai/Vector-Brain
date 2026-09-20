@@ -214,7 +214,7 @@ export default function AndroidFleetPage() {
     }
   };
   const [prompt, setPrompt] = useState('');
-  const [maxSteps, setMaxSteps] = useState(40);
+  const [maxSteps, setMaxSteps] = useState(200);
   // 0 = use the account's active provider
   const [broadcastConfigId, setBroadcastConfigId] = useState(0);
   const [deviceConfigIds, setDeviceConfigIds] = useState<Record<number, number>>({});
@@ -1229,17 +1229,39 @@ export default function AndroidFleetPage() {
           transition: 'border-color 200ms ease, background-color 200ms ease',
         }}
       >
-        <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+        {/* Header row: title on the left, live selection count + select-all on
+            the right. Utilities moved to their own toolbar below so this row
+            stays clean and the count is always visible. */}
+        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1.5 }}>
           <SmartToyIcon fontSize="small" color="primary" />
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
             Run one task on many devices
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            {selectedIds.length} of {onlineDevices.length} selected
+          </Typography>
+          <Button size="small" variant="text" onClick={selectAllOnline} disabled={onlineDevices.length === 0} sx={{ fontWeight: 600 }}>
+            {selectedIds.length === onlineDevices.length && onlineDevices.length > 0 ? 'Clear' : 'Select all'}
+          </Button>
+        </Stack>
 
-          {/* Fleet-wide utilities. They belong beside the selection control
-              rather than in the run form below: neither one uses the prompt,
-              the model or the step budget, and crowding them into that row
-              pushed the primary Run button off the edge. */}
+        {/* Utility toolbar: fleet-wide tools grouped and right-aligned, visually
+            separated from the run form. A subtle surface + border sets it apart
+            from the prompt row without competing with the primary Run button. */}
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 0.5,
+            mb: 1.5,
+            p: 0.5,
+            borderRadius: 2,
+            bgcolor: 'background.default',
+            border: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
           <Tooltip title={onlineDevices.length ? `Pull a fresh frame from all ${onlineDevices.length} online phones` : 'No devices online'}>
             <span>
               <Button
@@ -1249,7 +1271,7 @@ export default function AndroidFleetPage() {
                 onClick={() => handleRefreshAllFrames(false)}
                 sx={{ whiteSpace: 'nowrap' }}
               >
-                Show all screens
+                Screens
               </Button>
             </span>
           </Tooltip>
@@ -1273,23 +1295,15 @@ export default function AndroidFleetPage() {
           </Button>
 
           {proxies.length > 0 && (
-            <>
-              <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
-                {groupByProxy ? 'Ungroup' : 'Group by proxy'}
-              </Button>
-            </>
+            <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
+              {groupByProxy ? 'Ungroup' : 'Group by proxy'}
+            </Button>
           )}
+
+          <Box sx={{ flexGrow: 1 }} />
 
           <Button size="small" onClick={() => setChatOpen((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
             {chatOpen ? 'Hide chat' : 'Chat'}
-          </Button>
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-          <Button size="small" onClick={selectAllOnline} disabled={onlineDevices.length === 0}>
-            {selectedIds.length === onlineDevices.length && onlineDevices.length > 0
-              ? 'Clear selection'
-              : 'Select all online'}
           </Button>
 
           <input
@@ -1303,7 +1317,7 @@ export default function AndroidFleetPage() {
               if (file) void handleSendFile(file);
             }}
           />
-        </Stack>
+        </Box>
 
         <Stack direction={{ xs: 'column', md: 'row' }} gap={1.5}>
           <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} />
@@ -1328,8 +1342,8 @@ export default function AndroidFleetPage() {
             label="Steps"
             value={maxSteps}
             onChange={(event) => setMaxSteps(Number(event.target.value))}
-            onBlur={() => setMaxSteps((prev) => Math.min(200, Math.max(1, prev || 40)))}
-            inputProps={{ min: 1, max: 200 }}
+            onBlur={() => setMaxSteps((prev) => Math.min(20000, Math.max(1, prev || 200)))}
+            inputProps={{ min: 1, max: 20000 }}
             helperText="1–20000"
             sx={{ width: 120 }}
           />
