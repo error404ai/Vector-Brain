@@ -1220,27 +1220,68 @@ export default function AndroidFleetPage() {
       <Paper
         elevation={0}
         sx={{
-          p: 2.25,
+          position: 'relative',
+          overflow: 'hidden',
+          p: 2.5,
           mb: 3,
-          borderRadius: 2.5,
+          borderRadius: 3,
           border: '1px solid',
-          borderColor: selectedIds.length > 0 ? 'primary.main' : 'divider',
-          bgcolor: selectedIds.length > 0 ? 'action.hover' : 'background.paper',
-          transition: 'border-color 200ms ease, background-color 200ms ease',
+          borderColor: selectedIds.length > 0 ? alpha('#2563eb', 0.45) : 'divider',
+          bgcolor: 'background.paper',
+          boxShadow: selectedIds.length > 0
+            ? '0 8px 30px rgba(37, 99, 235, 0.10)'
+            : '0 1px 2px rgba(16, 24, 40, 0.04)',
+          transition: 'border-color 220ms ease, box-shadow 220ms ease',
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 0, left: 0, right: 0,
+            height: 3,
+            background: 'linear-gradient(90deg, #2563eb 0%, #0f766e 100%)',
+            opacity: selectedIds.length > 0 ? 1 : 0.35,
+            transition: 'opacity 220ms ease',
+          },
         }}
       >
         {/* Header row: title on the left, live selection count + select-all on
             the right. Utilities moved to their own toolbar below so this row
             stays clean and the count is always visible. */}
-        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1.5 }}>
-          <SmartToyIcon fontSize="small" color="primary" />
-          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-            Run one task on many devices
-          </Typography>
+        <Stack direction="row" alignItems="center" gap={1.25} sx={{ mb: 2 }}>
+          <Box
+            sx={{
+              display: 'grid',
+              placeItems: 'center',
+              width: 34, height: 34,
+              borderRadius: 2,
+              color: '#fff',
+              background: 'linear-gradient(135deg, #2563eb 0%, #0f766e 100%)',
+              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.30)',
+            }}
+          >
+            <SmartToyIcon sx={{ fontSize: 20 }} />
+          </Box>
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+              Run one task on many devices
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              One instruction, every selected phone at once
+            </Typography>
+          </Box>
           <Box sx={{ flexGrow: 1 }} />
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            {selectedIds.length} of {onlineDevices.length} selected
-          </Typography>
+          <Box
+            sx={{
+              px: 1.25, py: 0.5,
+              borderRadius: 5,
+              fontSize: 12,
+              fontWeight: 700,
+              color: selectedIds.length > 0 ? 'primary.dark' : 'text.secondary',
+              bgcolor: selectedIds.length > 0 ? alpha('#2563eb', 0.10) : 'action.hover',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {selectedIds.length} / {onlineDevices.length} selected
+          </Box>
           <Button size="small" variant="text" onClick={selectAllOnline} disabled={onlineDevices.length === 0} sx={{ fontWeight: 600 }}>
             {selectedIds.length === onlineDevices.length && onlineDevices.length > 0 ? 'Clear' : 'Select all'}
           </Button>
@@ -1319,7 +1360,7 @@ export default function AndroidFleetPage() {
           />
         </Box>
 
-        <Stack direction={{ xs: 'column', md: 'row' }} gap={1.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} gap={1.25} alignItems="stretch">
           <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} />
           <TextField
             select
@@ -1327,7 +1368,15 @@ export default function AndroidFleetPage() {
             label="Model"
             value={broadcastConfigId}
             onChange={(event) => setBroadcastConfigId(Number(event.target.value))}
-            sx={{ minWidth: 200 }}
+            sx={{
+              minWidth: 210,
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                bgcolor: 'background.default',
+                '& fieldset': { borderColor: 'divider' },
+                '&:hover fieldset': { borderColor: alpha('#2563eb', 0.5) },
+              },
+            }}
           >
             <MenuItem value={0}>Active — {activeAiConfig?.model ?? 'none'}</MenuItem>
             {aiConfigs.map((config) => (
@@ -1344,8 +1393,16 @@ export default function AndroidFleetPage() {
             onChange={(event) => setMaxSteps(Number(event.target.value))}
             onBlur={() => setMaxSteps((prev) => Math.min(20000, Math.max(1, prev || 200)))}
             inputProps={{ min: 1, max: 20000 }}
-            helperText="1–20000"
-            sx={{ width: 120 }}
+            sx={{
+              width: 96,
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                bgcolor: 'background.default',
+                fontWeight: 700,
+                '& fieldset': { borderColor: 'divider' },
+                '&:hover fieldset': { borderColor: alpha('#2563eb', 0.5) },
+              },
+            }}
           />
           <Button
             variant="contained"
@@ -1355,16 +1412,23 @@ export default function AndroidFleetPage() {
             onClick={() => void handleRunOnSelected()}
             sx={{
               whiteSpace: 'nowrap',
-              minWidth: 170,
+              minWidth: 168,
+              px: 2.5,
+              borderRadius: 2,
               fontWeight: 700,
-              // The one action on this card that starts work on every selected
-              // phone, so it is the only thing here that carries a shadow.
-              boxShadow: (theme) => `0 6px 18px ${alpha(theme.palette.primary.main, 0.32)}`,
-              '&:hover': { boxShadow: (theme) => `0 8px 22px ${alpha(theme.palette.primary.main, 0.42)}` },
-              '&.Mui-disabled': { boxShadow: 'none' },
+              textTransform: 'none',
+              fontSize: 15,
+              color: '#fff',
+              background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+              boxShadow: '0 6px 18px rgba(37, 99, 235, 0.32)',
+              '&:hover': {
+                background: 'linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%)',
+                boxShadow: '0 8px 24px rgba(37, 99, 235, 0.44)',
+              },
+              '&.Mui-disabled': { background: '#e5e7eb', color: '#9ca3af', boxShadow: 'none' },
             }}
           >
-            Run on {selectedIds.length || 0}
+            {isDispatching ? 'Starting…' : `Run on ${selectedIds.length || 0}`}
           </Button>
         </Stack>
 
