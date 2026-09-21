@@ -79,6 +79,7 @@ import {
   useCancelQueuedTaskMutation,
   useGetDeviceProxiesQuery,
   useGetTaskQueueQuery,
+  useClearAllQueuedMutation,
 } from '@/RTKService/androidService/proxyService';
 import { useNavigate } from 'react-router-dom';
 
@@ -192,6 +193,7 @@ export default function AndroidFleetPage() {
   // Polled: entries leave the queue on the server when a lane frees up, with no
   // socket event of their own.
   const { data: queueData, refetch: refetchQueue } = useGetTaskQueueQuery(undefined, { pollingInterval: 10000 });
+  const [clearAllQueued] = useClearAllQueuedMutation();
   const [cancelQueued] = useCancelQueuedTaskMutation();
   const queuedByDevice = new Map((queueData?.data ?? []).map((entry) => [entry.device_id, entry]));
   const [assignProxy] = useAssignDeviceProxyMutation();
@@ -1246,6 +1248,17 @@ export default function AndroidFleetPage() {
   };
 
   const handleStopAll = async () => {
+    // Clear the waiting queue FIRST. Cancelling a running task frees its lane,
+    // which immediately drains the queue and starts the next waiting phone — so
+    // without this, Stop All stopped the running ones and started the waiting
+    // ones. With the queue emptied, a cancelled task has nothing to hand its
+    // lane to.
+    try {
+      await clearAllQueued().unwrap();
+    } catch {
+      // Non-fatal: still cancel the running tasks below.
+    }
+
     // Collect every task id that is running — from the live runtime map AND from
     // the backend task list. The list is the source of truth (it catches tasks
     // started before this page was open, or on another tab), so a Stop all can

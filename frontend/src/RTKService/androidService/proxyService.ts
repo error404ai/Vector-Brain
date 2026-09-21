@@ -63,6 +63,10 @@ export const proxyService = baseApi.injectEndpoints({
 
     cancelQueuedTask: builder.mutation<{ message: string }, number>({
       query: (id) => ({ url: `/device-proxy/queue/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['TASK_QUEUE' as any],
+    }),
+    clearAllQueued: builder.mutation<{ message: string; data: { cleared: number } }, void>({
+      query: () => ({ url: '/device-proxy/queue/all', method: 'DELETE' }),
     }),
 
     assignDeviceProxy: builder.mutation<{ message: string }, { device_id: number; proxy_id: number | null }>({
@@ -79,5 +83,6 @@ export const {
   useRotateDeviceProxyMutation,
   useAssignDeviceProxyMutation,
   useGetTaskQueueQuery,
+  useClearAllQueuedMutation,
   useCancelQueuedTaskMutation,
 } = proxyService;

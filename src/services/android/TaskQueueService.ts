@@ -382,4 +382,17 @@ export class TaskQueueService {
     await this.queueRepo.delete({ user_id: userId, device_id: deviceId });
     return { message: 'Queue cleared for this device' };
   }
+
+  /**
+   * Wipes every queued task for a user.
+   *
+   * Stop All must actually stop everything: cancelling the running tasks alone
+   * let the queue drain and the waiting phones started right after — the
+   * opposite of what the user asked for. Clearing the queue first means a
+   * cancelled task has nothing to hand the lane to.
+   */
+  async clearAll(userId: number): Promise<ApiResponse> {
+    const { affected } = await this.queueRepo.delete({ user_id: userId, status: 'QUEUED' });
+    return { message: `Cleared ${affected ?? 0} queued task${affected === 1 ? '' : 's'}`, data: { cleared: affected ?? 0 } };
+  }
 }

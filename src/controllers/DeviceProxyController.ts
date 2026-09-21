@@ -21,6 +21,13 @@ export class DeviceProxyController {
     return this.queueService.list(user.userId);
   }
 
+  /** Clears the whole waiting queue — used by Stop All. Declared before the
+      :id route so "all" is never parsed as an id. */
+  @Delete('/queue/all')
+  async clearQueue(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.queueService.clearAll(user.userId);
+  }
+
   @Delete('/queue/:id')
   async cancelQueued(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.queueService.cancel(user.userId, Number(id));
