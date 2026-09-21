@@ -11,19 +11,25 @@ import {
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import KeyIcon from '@mui/icons-material/Key';
+import RemoveRedEyeIcon from '@mui/icons-material/RemoveRedEye';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import {
   Alert,
+  alpha,
   Box,
   Button,
   Chip,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   FormControl,
   FormControlLabel,
   FormHelperText,
@@ -134,6 +140,7 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
   const [configType, setConfigType] = useState<AiConfigType>('vision');
   const [isActive, setIsActive] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
 
@@ -265,178 +272,192 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
           </Typography>
         </DialogTitle>
 
-        <DialogContent dividers>
+        <DialogContent dividers sx={{ px: 3, py: 2.5 }}>
           <Stack spacing={2.5}>
-            {/* Provider Selection */}
-            <FormControl fullWidth size="small">
-              <InputLabel>AI Provider</InputLabel>
-              <Select
-                value={provider}
-                label="AI Provider"
-                onChange={(e) => handleProviderChange(e.target.value as AiProvider)}
-              >
-                {Object.entries(PROVIDER_PRESETS).map(([key, value]) => (
-                  <MenuItem key={key} value={key}>
-                    {value.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
 
-            {/* Quick Model Presets Selector & Chips */}
-            {PROVIDER_PRESETS[provider].models.length > 0 && (
-              <Box>
-                <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
-                  <InputLabel>Select Model Preset</InputLabel>
-                  <Select
-                    value={PROVIDER_PRESETS[provider].models.some((m) => m.id === model) ? model : 'custom_model'}
-                    label="Select Model Preset"
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val !== 'custom_model') {
-                        const selected = PROVIDER_PRESETS[provider].models.find((m) => m.id === val);
-                        if (selected) {
-                          handleModelPresetClick(selected.id, selected.isVision);
-                        }
-                      }
-                    }}
-                  >
-                    {PROVIDER_PRESETS[provider].models.map((m) => (
-                      <MenuItem key={m.id} value={m.id}>
-                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" width="100%">
-                          <Typography variant="body2">{m.name}</Typography>
-                          <Chip
-                            label={m.isVision ? 'Vision' : 'Text'}
-                            size="small"
-                            color={m.isVision ? 'primary' : 'default'}
-                            variant="outlined"
-                            sx={{ height: 20, fontSize: '0.65rem' }}
-                          />
-                        </Stack>
-                      </MenuItem>
-                    ))}
-                    <MenuItem value="custom_model">
-                      <em>Custom model identifier...</em>
+            {/* --- Provider & model --------------------------------------- */}
+            <Box>
+              <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.6 }}>
+                Provider & model
+              </Typography>
+
+              <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+                <InputLabel>AI provider</InputLabel>
+                <Select value={provider} label="AI provider" onChange={(e) => handleProviderChange(e.target.value as AiProvider)}>
+                  {Object.entries(PROVIDER_PRESETS).map(([key, value]) => (
+                    <MenuItem key={key} value={key}>
+                      {value.label}
                     </MenuItem>
-                  </Select>
-                </FormControl>
+                  ))}
+                </Select>
+              </FormControl>
 
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
-                  Or click a quick preset:
+              {/* Vision guidance — the agent reads screenshots, so this is the
+                  single most important thing to get right. */}
+              <Box
+                sx={{
+                  mt: 1.5,
+                  display: 'flex',
+                  gap: 1,
+                  p: 1.25,
+                  borderRadius: 2,
+                  bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                }}
+              >
+                <RemoveRedEyeIcon fontSize="small" color="primary" sx={{ mt: 0.2 }} />
+                <Typography variant="caption" color="primary.dark" sx={{ lineHeight: 1.5 }}>
+                  Pick a <strong>vision</strong> model — the agent reads phone screenshots, so a text-only model can't drive the phone.
                 </Typography>
-                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              </Box>
+
+              {/* Model chips — one place, vision marked. */}
+              {PROVIDER_PRESETS[provider].models.length > 0 && (
+                <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
                   {PROVIDER_PRESETS[provider].models.map((m) => (
                     <Chip
                       key={m.id}
                       label={m.name.split(' (')[0]}
                       size="small"
                       clickable
+                      icon={m.isVision ? <RemoveRedEyeIcon sx={{ fontSize: 15 }} /> : undefined}
                       color={model === m.id ? 'primary' : 'default'}
                       variant={model === m.id ? 'filled' : 'outlined'}
                       onClick={() => handleModelPresetClick(m.id, m.isVision)}
-                      sx={{ mb: 0.5 }}
                     />
                   ))}
                 </Stack>
-              </Box>
-            )}
+              )}
 
-            {/* Model Name */}
-            <TextField
-              label="Model Name / ID"
-              size="small"
-              fullWidth
-              required
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="e.g. gpt-4o, gemini-2.0-flash, claude-3-7-sonnet-20250219"
-              helperText="The exact model identifier passed to the provider API."
-            />
+              <TextField
+                label="Model name / ID"
+                size="small"
+                fullWidth
+                required
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. gpt-4o, gemini-2.0-flash"
+                sx={{ mt: 1.5 }}
+              />
 
-            {/* Friendly Label */}
-            <TextField
-              label="Friendly Label (Optional)"
+              {/* Live capability line + warning for text-only picks. */}
+              {(() => {
+                const known = PROVIDER_PRESETS[provider].models.find((m) => m.id === model);
+                const isVision = known ? known.isVision : configType === 'vision';
+                return isVision ? (
+                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.75, color: 'success.main' }}>
+                    <RemoveRedEyeIcon sx={{ fontSize: 16 }} />
+                    <Typography variant="caption">Vision — can read the phone screen</Typography>
+                  </Stack>
+                ) : (
+                  <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ mt: 1, p: 1, borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.warning.main, 0.12) }}>
+                    <WarningAmberIcon sx={{ fontSize: 16, color: 'warning.dark', mt: 0.2 }} />
+                    <Typography variant="caption" color="warning.dark" sx={{ lineHeight: 1.5 }}>
+                      Heads up: <code>{model || 'this model'}</code> is text-only. It won't be able to see the screen.
+                    </Typography>
+                  </Stack>
+                );
+              })()}
+            </Box>
 
-              size="small"
-              fullWidth
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g. My Fast Work Model, Personal OpenAI"
-            />
+            <Divider />
 
-            {/* API Key */}
-            <TextField
-              label={configToEdit ? 'API Key (Leave blank to keep existing key)' : 'API Key'}
-              size="small"
-              fullWidth
-              required={!configToEdit}
-              type={showApiKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={configToEdit?.has_api_key ? '••••••••••••••••••••••••' : 'sk-...'}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <KeyIcon fontSize="small" color="action" />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setShowApiKey(!showApiKey)} edge="end">
-                      {showApiKey ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-              helperText="Encrypted securely with AES-256-GCM at rest. Never exposed in API responses."
-            />
+            {/* --- Credentials -------------------------------------------- */}
+            <Box>
+              <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.6 }}>
+                Credentials
+              </Typography>
 
-            {/* Base URL (Optional/Custom) */}
-            <TextField
-              label="Custom Base URL (Optional)"
-              size="small"
-              fullWidth
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.openai.com/v1"
-              helperText="Leave empty for standard official endpoints. Useful for OpenRouter, DeepSeek, or self-hosted proxies."
-            />
+              <TextField
+                label={configToEdit ? 'API key (leave blank to keep existing)' : 'API key'}
+                size="small"
+                fullWidth
+                required={!configToEdit}
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={configToEdit?.has_api_key ? '••••••••••••••••••••••••' : 'sk-...'}
+                sx={{ mt: 1 }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <KeyIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  ),
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton size="small" onClick={() => setShowApiKey(!showApiKey)} edge="end">
+                        {showApiKey ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }}
+                helperText="Encrypted with AES-256-GCM at rest. Never shown in responses."
+              />
+            </Box>
 
-            {/* Capability Type */}
-            <FormControl fullWidth size="small">
-              <InputLabel>Capability Type</InputLabel>
-              <Select
-                value={configType}
-                label="Capability Type"
-                onChange={(e) => setConfigType(e.target.value as AiConfigType)}
+            {/* --- Advanced (collapsed) ----------------------------------- */}
+            <Box>
+              <Button
+                size="small"
+                onClick={() => setShowAdvanced((v) => !v)}
+                endIcon={<ExpandMoreIcon sx={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />}
+                sx={{ textTransform: 'none', color: 'text.secondary', px: 0 }}
               >
-                <MenuItem value="vision">Vision / Multimodal (Screenshots + UI Hierarchy)</MenuItem>
-                <MenuItem value="text">Text-Only (UI Hierarchy only - faster & lower cost)</MenuItem>
-              </Select>
-              <FormHelperText>
-                {configType === 'vision'
-                  ? 'Sends both live screen captures and UI trees to the agent.'
-                  : 'Sends only the structured UI tree (best for DeepSeek, Groq, or text-only models).'}
-              </FormHelperText>
-            </FormControl>
+                Advanced — label, custom URL, capability
+              </Button>
+              <Collapse in={showAdvanced}>
+                <Stack spacing={2} sx={{ mt: 1 }}>
+                  <TextField
+                    label="Friendly label (optional)"
+                    size="small"
+                    fullWidth
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="e.g. My work model"
+                  />
+                  <TextField
+                    label="Custom base URL (optional)"
+                    size="small"
+                    fullWidth
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://api.openai.com/v1"
+                    helperText="Leave empty for official endpoints. For OpenRouter, DeepSeek, or self-hosted proxies."
+                  />
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Capability type</InputLabel>
+                    <Select value={configType} label="Capability type" onChange={(e) => setConfigType(e.target.value as AiConfigType)}>
+                      <MenuItem value="vision">Vision / multimodal (screenshots + UI hierarchy)</MenuItem>
+                      <MenuItem value="text">Text-only (UI hierarchy only — faster, cheaper)</MenuItem>
+                    </Select>
+                    <FormHelperText>
+                      {configType === 'vision'
+                        ? 'Sends live screen captures and UI trees to the agent.'
+                        : 'Sends only the UI tree (best for DeepSeek, Groq, or text-only models).'}
+                    </FormHelperText>
+                  </FormControl>
+                </Stack>
+              </Collapse>
+            </Box>
 
-            {/* Set as Active Switch */}
+            <Divider />
+
+            {/* --- Active + test ------------------------------------------ */}
             <FormControlLabel
               control={<Switch checked={isActive} onChange={(e) => setIsActive(e.target.checked)} color="primary" />}
               label={
                 <Box>
                   <Typography variant="body2" fontWeight={600}>
-                    Set as Active Configuration
+                    Set as active
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Use this model for all upcoming Android automation and AI interactions.
+                    Use this model for all upcoming runs.
                   </Typography>
                 </Box>
               }
             />
 
-            {/* Test Connection Button & Result */}
-            <Box sx={{ pt: 1 }}>
+            <Box>
               <Button
                 variant="outlined"
                 color="secondary"
@@ -445,9 +466,8 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
                 onClick={handleTestConnection}
                 disabled={isTesting || (!apiKey.trim() && !configToEdit?.has_api_key)}
               >
-                {isTesting ? 'Testing Connection...' : 'Test Connection'}
+                {isTesting ? 'Testing…' : 'Test connection'}
               </Button>
-
               {testResult && (
                 <Alert
                   severity={testResult.success ? 'success' : 'error'}

@@ -1201,7 +1201,7 @@ export default function AndroidFleetPage() {
       patchRuntime(deviceId, { startError: message });
       toast.error(message);
     }
-  };
+  }, [runTask, maxSteps, deviceConfigIds, broadcastConfigId, ensureReady, patchRuntime]);
 
   const handleStopDevice = async (deviceId: number) => {
     // Prefer the taskId we hold; fall back to the backend's running task for this
