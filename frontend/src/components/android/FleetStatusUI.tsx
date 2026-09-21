@@ -98,6 +98,26 @@ export function DeviceStatusBadge({
             '50%': { opacity: 0.4, transform: 'scale(0.82)' },
           },
         }),
+        // A light gleam sweeps across a just-completed badge, so a successful
+        // finish reads as a small celebration rather than a flat green bar. It
+        // runs a few times then settles — attention without distraction.
+        ...(status === 'completed' && {
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: '-40%',
+            width: '40%',
+            background: `linear-gradient(100deg, transparent 0%, ${alpha('#ffffff', 0.65)} 50%, transparent 100%)`,
+            transform: 'skewX(-18deg)',
+            animation: 'fleetShine 2.2s ease-in-out 3',
+          },
+          '@keyframes fleetShine': {
+            '0%': { left: '-40%' },
+            '60%, 100%': { left: '140%' },
+          },
+        }),
       }}
     >
       {style.live ? (
@@ -106,7 +126,21 @@ export function DeviceStatusBadge({
           sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: style.accent, flexShrink: 0 }}
         />
       ) : (
-        style.icon
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-flex',
+            ...(status === 'completed' && {
+              animation: 'fleetPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 1',
+              '@keyframes fleetPop': {
+                '0%': { transform: 'scale(0.2)', opacity: 0 },
+                '100%': { transform: 'scale(1)', opacity: 1 },
+              },
+            }),
+          }}
+        >
+          {style.icon}
+        </Box>
       )}
       <Typography variant="caption" sx={{ fontWeight: 800, flexGrow: 1, letterSpacing: 0.1 }} noWrap>
         {style.label}
