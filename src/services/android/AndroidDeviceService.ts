@@ -214,4 +214,22 @@ export class AndroidDeviceService {
     await this.deviceRepo.remove(device);
     return { message: 'Device unpaired successfully' };
   }
+
+  /**
+   * Removes every OFFLINE device for a user in one call.
+   *
+   * The reinstall bug used to mint a fresh id per install, leaving a trail of
+   * orphaned offline rows that could only be deleted one at a time. This clears
+   * them together. ONLINE devices are never touched, so a phone that is simply
+   * asleep-but-connected is safe.
+   */
+  async deleteOfflineDevices(userId: number): Promise<ApiResponse> {
+    const offline = await this.deviceRepo.find({
+      where: { user_id: userId, status: AndroidDeviceStatus.OFFLINE },
+    });
+    if (offline.length > 0) {
+      await this.deviceRepo.remove(offline);
+    }
+    return { message: `Removed ${offline.length} offline device${offline.length === 1 ? '' : 's'}`, data: { removed: offline.length } };
+  }
 }

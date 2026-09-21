@@ -103,6 +103,14 @@ export class AndroidDeviceController {
    * Unpair / remove a device.
    */
   @Authorized()
+  @Delete('/offline')
+  async deleteOffline(@CurrentUser({ required: true }) user: { userId: number }) {
+    // Declared before Delete('/:id') so routing-controllers matches the literal
+    // /offline path instead of treating "offline" as an id.
+    return this.deviceService.deleteOfflineDevices(user.userId);
+  }
+
+  @Authorized()
   @Delete('/:id')
   async unpairDevice(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     const device = await this.deviceService.getDeviceById(id, user.userId);

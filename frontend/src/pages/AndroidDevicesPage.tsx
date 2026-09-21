@@ -4,6 +4,7 @@ import {
   useRequestPairingCodeMutation,
   useSendDirectActionMutation,
   useUnpairDeviceMutation,
+  useDeleteOfflineDevicesMutation,
 } from '@/RTKService/androidService/androidService';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -11,6 +12,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import QrCodeIcon from '@mui/icons-material/QrCode';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SendIcon from '@mui/icons-material/Send';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -48,6 +50,19 @@ export function AndroidDevicesPage() {
 
   const [requestPairing, { isLoading: isPairingLoading }] = useRequestPairingCodeMutation();
   const [unpairDevice] = useUnpairDeviceMutation();
+  const [deleteOfflineDevices, { isLoading: isClearingOffline }] = useDeleteOfflineDevicesMutation();
+  const offlineCount = devices.filter((device) => device.status === 'OFFLINE').length;
+
+  const handleDeleteOffline = async () => {
+    if (offlineCount === 0) return;
+    if (!window.confirm(`Remove ${offlineCount} offline device${offlineCount === 1 ? '' : 's'}? Online devices are kept.`)) return;
+    try {
+      const res = await deleteOfflineDevices().unwrap();
+      toast.success(res.message || 'Offline devices removed');
+    } catch {
+      toast.error('Could not remove offline devices');
+    }
+  };
   const [renameDevice, { isLoading: isRenaming }] = useRenameDeviceMutation();
   // Which device the rename dialog is editing, plus the in-progress name.
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
@@ -131,6 +146,18 @@ export function AndroidDevicesPage() {
         </Box>
 
         <Stack direction="row" spacing={1.5}>
+          {offlineCount > 0 && (
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteSweepIcon />}
+              onClick={handleDeleteOffline}
+              disabled={isClearingOffline}
+              sx={{ borderRadius: 2 }}
+            >
+              Clear offline ({offlineCount})
+            </Button>
+          )}
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => refetch()} sx={{ borderRadius: 2 }}>
             Refresh
           </Button>

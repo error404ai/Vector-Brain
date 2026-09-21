@@ -123,6 +123,11 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    deleteOfflineDevices: builder.mutation<{ message: string; data: { removed: number } }, void>({
+      query: () => ({ url: '/android/devices/offline', method: 'DELETE' }),
+      invalidatesTags: ['ANDROID_DEVICES' as any],
+    }),
+
     setDeviceTag: builder.mutation<{ message: string; data: { id: number; tag: string | null } }, { id: number; tag: string }>({
       query: ({ id, tag }) => ({ url: `/android/devices/${id}/tag`, method: 'PATCH', body: { tag } }),
     }),
@@ -205,6 +210,7 @@ export const {
   useRequestPairingCodeMutation,
   useRenameDeviceMutation,
   useUnpairDeviceMutation,
+  useDeleteOfflineDevicesMutation,
   useSendDirectActionMutation,
   useSetDeviceTagMutation,
   useRunAndroidTaskMutation,
