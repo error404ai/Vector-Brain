@@ -329,13 +329,24 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
               )}
 
               <TextField
-                label="Model name / ID"
+                label="Name (optional)"
+                size="small"
+                fullWidth
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. Claude 3.7 Sonnet — a name you'll recognise"
+                sx={{ mt: 1.5 }}
+              />
+
+              <TextField
+                label="Model ID"
                 size="small"
                 fullWidth
                 required
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. gpt-4o, gemini-2.0-flash"
+                placeholder="e.g. anthropic/claude-3.7-sonnet"
+                helperText="The exact identifier the provider's API expects — not the display name."
                 sx={{ mt: 1.5 }}
               />
 
@@ -403,18 +414,10 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
                 endIcon={<ExpandMoreIcon sx={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />}
                 sx={{ textTransform: 'none', color: 'text.secondary', px: 0 }}
               >
-                Advanced — label, custom URL, capability
+                Advanced — custom URL, capability
               </Button>
               <Collapse in={showAdvanced}>
                 <Stack spacing={2} sx={{ mt: 1 }}>
-                  <TextField
-                    label="Friendly label (optional)"
-                    size="small"
-                    fullWidth
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    placeholder="e.g. My work model"
-                  />
                   <TextField
                     label="Custom base URL (optional)"
                     size="small"
