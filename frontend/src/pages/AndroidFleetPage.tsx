@@ -1081,15 +1081,56 @@ export default function AndroidFleetPage() {
   // appear on load without the user clicking "Show all screens". Guarded to run
   // a single time per mount: it flips true as soon as one auto-run fires, and
   // resets only when the page is left and re-entered (component remount).
-  const didAutoShowRef = useRef(false);
+  // Captures a fresh frame from a specific set of devices, in small batches so
+  // a big fleet does not fire two dozen captures at once. Returns how many
+  // returned a frame. Shared by the manual "Screens" button and the auto-show.
+  const captureFrames = async (targets: AndroidDevice[]): Promise<number> => {
+    let captured = 0;
+    const BATCH = 4;
+    for (let start = 0; start < targets.length; start += BATCH) {
+      const batch = targets.slice(start, start + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(async (device) => {
+          const response = await sendDirectAction({
+            device_id: device.id,
+            action: { type: 'CaptureScreen' },
+          }).unwrap();
+          const base64 = response?.data?.screenCapture?.base64Data;
+          if (base64) patchRuntime(device.id, { screenshot: base64 });
+          return Boolean(base64);
+        }),
+      );
+      captured += results.filter((result) => result.status === 'fulfilled' && result.value).length;
+    }
+    return captured;
+  };
+
+  // Auto-pull screens so the fleet page shows frames without a click. Unlike the
+  // one-shot version, this also fills in any device that is still frameless —
+  // whether it just came online, or missed the first capture because it was busy
+  // or slow. It targets only the phones actually missing a frame, so it is cheap
+  // and self-healing rather than a full re-capture on every change.
+  const autoShowInFlight = useRef(false);
   useEffect(() => {
-    if (didAutoShowRef.current) return;
-    if (isRefreshingFrames) return;
-    if (onlineDevices.length === 0) return;
-    didAutoShowRef.current = true;
-    void handleRefreshAllFrames(true);
+    const missing = onlineDevices.filter((device) => !runtime[device.id]?.screenshot);
+    if (missing.length === 0) return;
+    if (autoShowInFlight.current || isRefreshingFrames) return;
+
+    autoShowInFlight.current = true;
+    void (async () => {
+      try {
+        await captureFrames(missing);
+        // A second pass a moment later mops up phones that were mid-task or slow
+        // on the first try, so a card does not sit black indefinitely.
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        const stillMissing = onlineDevices.filter((device) => !runtime[device.id]?.screenshot);
+        if (stillMissing.length > 0) await captureFrames(stillMissing);
+      } finally {
+        autoShowInFlight.current = false;
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onlineDevices.length]);
+  }, [onlineDevices.map((device) => device.id).join(','), isRefreshingFrames]);
 
   const handleRefreshAllFrames = async (silent = false) => {
     const targets = onlineDevices;
@@ -1099,26 +1140,8 @@ export default function AndroidFleetPage() {
     }
 
     setIsRefreshingFrames(true);
-    let captured = 0;
-
     try {
-      const BATCH = 4;
-      for (let start = 0; start < targets.length; start += BATCH) {
-        const batch = targets.slice(start, start + BATCH);
-        const results = await Promise.allSettled(
-          batch.map(async (device) => {
-            const response = await sendDirectAction({
-              device_id: device.id,
-              action: { type: 'CaptureScreen' },
-            }).unwrap();
-            const base64 = response?.data?.screenCapture?.base64Data;
-            if (base64) patchRuntime(device.id, { screenshot: base64 });
-            return Boolean(base64);
-          }),
-        );
-        captured += results.filter((result) => result.status === 'fulfilled' && result.value).length;
-      }
-
+      const captured = await captureFrames(targets);
       if (!silent) {
         if (captured === 0) toast.error('No phone returned a frame');
         else if (captured < targets.length) toast.success(`Got ${captured} of ${targets.length} screens`);
