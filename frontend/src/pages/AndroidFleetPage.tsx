@@ -1382,12 +1382,6 @@ export default function AndroidFleetPage() {
 
       <FleetStatusSummary counts={fleetCounts} activeFilter={statusFilter} onFilter={setStatusFilter} />
 
-      <FleetActivityPanel
-        tasks={tasksData?.data ?? []}
-        devices={devices}
-        onRetry={(deviceId, prompt) => void dispatchTo([deviceId], prompt)}
-      />
-
       {/* Broadcast bar — the primary control on the page, so it is raised out of
           the flat outlined-paper treatment the rest of the page uses. */}
       <Paper
@@ -1981,6 +1975,30 @@ export default function AndroidFleetPage() {
           onOpenFull={(deviceId) => navigate(`/android-agent?deviceId=${deviceId}`)}
         />
       )}
+
+      {/* Live run activity, docked to the side so it stays visible while you
+          scroll the phone grid — and off the top, which the grid needs. Sticky
+          so it follows down a long fleet; hidden on narrow screens where the
+          grid already fills the width. */}
+      <Box
+        component="aside"
+        sx={{
+          display: { xs: 'none', lg: 'block' },
+          width: 320,
+          flexShrink: 0,
+          position: 'sticky',
+          top: 16,
+          alignSelf: 'flex-start',
+          p: 2,
+          pl: 0,
+        }}
+      >
+        <FleetActivityPanel
+          tasks={tasksData?.data ?? []}
+          devices={devices}
+          onRetry={(deviceId, prompt) => void dispatchTo([deviceId], prompt)}
+        />
+      </Box>
     </Box>
   );
 }
