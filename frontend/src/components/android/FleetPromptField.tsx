@@ -27,6 +27,12 @@ interface FleetPromptFieldProps {
   /** Called with the typed text when the user submits. */
   onSubmit: (value: string) => void;
   /**
+   * Bumped by the parent after a successful run started from the page's Run
+   * button. The field clears when it changes, so the box empties whether the
+   * task was sent with Enter here or with the button outside.
+   */
+  resetSignal?: number;
+  /**
    * Debounced copy of the draft, for the page's Run button.
    *
    * Deliberately not per keystroke: the page only needs to know whether the box
@@ -44,7 +50,7 @@ interface FleetPromptFieldProps {
  * fallback for an empty account. Free text is still the point — the list only
  * saves typing, it never restricts what can be sent.
  */
-export default function FleetPromptField({ onSubmit, onDraftChange, placeholder }: FleetPromptFieldProps) {
+export default function FleetPromptField({ onSubmit, onDraftChange, placeholder, resetSignal }: FleetPromptFieldProps) {
   /**
    * The draft lives here rather than on the page.
    *
@@ -65,6 +71,14 @@ export default function FleetPromptField({ onSubmit, onDraftChange, placeholder 
   useEffect(() => () => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
   }, []);
+
+  // Parent signalled a run started elsewhere (the Run button) — empty the box.
+  useEffect(() => {
+    if (resetSignal === undefined) return;
+    setValue('');
+    onDraftChange?.('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetSignal]);
   // Already cached by RTK for the tasks page, so this rarely costs a request.
   const { data } = useGetAndroidTasksQuery({ limit: HISTORY_LIMIT });
 
@@ -126,7 +140,12 @@ export default function FleetPromptField({ onSubmit, onDraftChange, placeholder 
             // already handled it by then, so only a plain Enter submits.
             if (event.key === 'Enter' && !event.shiftKey && !event.defaultPrevented) {
               event.preventDefault();
-              onSubmit(value);
+              const submitted = value.trim();
+              if (!submitted) return;
+              onSubmit(submitted);
+              // Clear immediately so the box doesn't look like nothing happened.
+              setValue('');
+              onDraftChange?.('');
             }
           }}
         />

@@ -224,6 +224,7 @@ export default function AndroidFleetPage() {
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(200);
   const [statusFilter, setStatusFilter] = useState<FleetStatus | null>(null);
+  const [promptResetSignal, setPromptResetSignal] = useState(0);
   // 0 = use the account's active provider
   const [broadcastConfigId, setBroadcastConfigId] = useState(0);
   const [deviceConfigIds, setDeviceConfigIds] = useState<Record<number, number>>({});
@@ -478,6 +479,11 @@ export default function AndroidFleetPage() {
     if (state?.isRunning) return 'running';
     if (state?.finishedAt) return state.finishedOk ? 'completed' : 'failed';
     if (queuedByDevice.has(device.id)) return 'waiting';
+    // Connected but the accessibility service is off — after a reboot Android
+    // disables it, and the socket reconnects on its own, so the device reads
+    // ONLINE while it actually can't run anything. Surface that instead of a
+    // false "Ready", which would only fail the moment a task is sent.
+    if (device.capabilities && device.capabilities.accessibility === false) return 'needs_setup';
     return 'idle';
   };
 
@@ -487,7 +493,7 @@ export default function AndroidFleetPage() {
       acc[deviceStatusOf(device)] += 1;
       return acc;
     },
-    { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, offline: 0 } as FleetCounts,
+    { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, needs_setup: 0, offline: 0 } as FleetCounts,
   );
 
   // When a status filter is active, a device is shown only if it matches.
@@ -1003,6 +1009,18 @@ export default function AndroidFleetPage() {
 
   /** Starts the same prompt on a set of devices and records what failed. */
   const dispatchTo = async (deviceIds: number[], text: string) => {
+    // Flag devices whose accessibility is off — they read connected but can't
+    // act, so a task would just fail. Warn once rather than sending into a wall.
+    const notReady = deviceIds
+      .map((id) => devices.find((device) => device.id === id))
+      .filter((device): device is AndroidDevice => Boolean(device) && device!.capabilities?.accessibility === false);
+    if (notReady.length > 0) {
+      toast.error(
+        notReady.length === 1
+          ? `${notReady[0].device_name} needs its accessibility service turned back on`
+          : `${notReady.length} devices need accessibility turned back on`,
+      );
+    }
     setIsDispatching(true);
     const outcomes = await Promise.allSettled(
       deviceIds.map((deviceId) =>
@@ -1144,6 +1162,9 @@ export default function AndroidFleetPage() {
     if (selectedIds.length === 0) return toast.error('Select at least one device');
     if (!ensureReady()) return;
     await dispatchTo(selectedIds, text);
+    // Task is on its way — empty the box so it doesn't look unsent.
+    setPrompt('');
+    setPromptResetSignal((value) => value + 1);
   };
 
   const handleRetryFailed = async () => {
@@ -1430,7 +1451,7 @@ export default function AndroidFleetPage() {
         </Box>
 
         <Stack direction={{ xs: 'column', md: 'row' }} gap={1.25} alignItems="stretch">
-          <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} />
+          <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} resetSignal={promptResetSignal} />
           <TextField
             select
             size="small"
