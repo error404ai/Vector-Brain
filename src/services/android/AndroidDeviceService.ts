@@ -119,7 +119,11 @@ export class AndroidDeviceService {
   async listUserDevices(userId: number): Promise<ApiResponse> {
     const devices = await this.deviceRepo.find({
       where: { user_id: userId },
-      order: { updated_at: 'DESC' },
+      // Stable order by when the device was first paired, NOT updated_at. Every
+      // heartbeat bumps updated_at, so an updated_at sort made cards jump around
+      // on each poll as different phones checked in — impossible to find a phone.
+      // created_at never changes, so a card keeps its place.
+      order: { created_at: 'ASC' },
     });
 
     // Filter out pending unpaired devices
