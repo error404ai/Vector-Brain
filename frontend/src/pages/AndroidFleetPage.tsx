@@ -70,6 +70,7 @@ import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFi
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
+import DeviceCardPrompt from '@/components/android/DeviceCardPrompt';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
@@ -254,7 +255,6 @@ export default function AndroidFleetPage() {
   const [lastDispatch, setLastDispatch] = useState<DispatchResult | null>(null);
 
   // Per-device inline prompt inputs
-  const [cardPrompts, setCardPrompts] = useState<Record<number, string>>({});
   const [historyDeviceId, setHistoryDeviceId] = useState<number | null>(null);
   // Only one device streams frames at a time so the fleet view stays light.
   const [controlDeviceId, setControlDeviceId] = useState<number | null>(null);
@@ -902,32 +902,12 @@ export default function AndroidFleetPage() {
                   />
                 </Stack>
 
-                {/* Inline per-device prompt */}
-                <Stack direction="row" gap={0.75} sx={{ px: 1, pb: 1 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Task for this device…"
-                    disabled={!isOnline || state.isRunning}
-                    value={cardPrompts[device.id] ?? ''}
-                    onChange={(event) => setCardPrompts((prev) => ({ ...prev, [device.id]: event.target.value }))}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        handleRunOnCard(device.id);
-                      }
-                    }}
-                    sx={{ '& .MuiInputBase-input': { fontSize: 13 } }}
-                  />
-                  <IconButton
-                    size="small"
-                    color="primary"
-                    disabled={!isOnline || state.isRunning || !(cardPrompts[device.id] ?? '').trim()}
-                    onClick={() => handleRunOnCard(device.id)}
-                  >
-                    <SendIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
+                {/* Inline per-device prompt — isolated component so typing here
+                    doesn't re-render the whole fleet. */}
+                <DeviceCardPrompt
+                  disabled={!isOnline || state.isRunning}
+                  onSubmit={(text) => handleRunOnCard(device.id, text)}
+                />
               </Card>
             );
   };
@@ -1202,20 +1182,19 @@ export default function AndroidFleetPage() {
   };
 
   /** Runs a device-specific prompt typed directly on its card. */
-  const handleRunOnCard = async (deviceId: number) => {
-    const text = (cardPrompts[deviceId] ?? '').trim();
-    if (!text) return;
+  const handleRunOnCard = useCallback(async (deviceId: number, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
     if (!ensureReady()) return;
 
     try {
       await runTask({
         device_id: deviceId,
-        prompt: text,
+        prompt: trimmed,
         max_steps: maxSteps,
         ai_config_id: deviceConfigIds[deviceId] || broadcastConfigId || undefined,
       }).unwrap();
       patchRuntime(deviceId, { startError: undefined });
-      setCardPrompts((prev) => ({ ...prev, [deviceId]: '' }));
       toast.success('Task started');
     } catch (error) {
       const message = errorMessage(error);
