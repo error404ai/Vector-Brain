@@ -79,7 +79,22 @@ export default function DeviceControls({ deviceIds, onFrame, variant = 'compact'
           batch.map(async (deviceId) => {
             const response = await sendDirectAction({ device_id: deviceId, action: control.action }).unwrap();
             const frame = response?.data?.screenCapture?.base64Data;
-            if (frame && onFrame) onFrame(deviceId, frame);
+            if (frame && onFrame) {
+              onFrame(deviceId, frame);
+            } else if (onFrame && control.action.type !== 'CaptureScreen') {
+              // Back/Home/Recents/Notifications return no frame, so the dashboard
+              // kept showing the pre-action screen even though the phone moved.
+              // Pull one right after — a short delay lets the screen settle — so
+              // the card reflects what actually happened on the device.
+              await new Promise((resolve) => setTimeout(resolve, 350));
+              try {
+                const shot = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
+                const settled = shot?.data?.screenCapture?.base64Data;
+                if (settled) onFrame(deviceId, settled);
+              } catch {
+                // Best effort — the next auto-show pass will catch it.
+              }
+            }
             return true;
           }),
         );
