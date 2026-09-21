@@ -71,6 +71,7 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
+import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import FleetChatPanel from '@/components/android/FleetChatPanel';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
@@ -1380,6 +1381,12 @@ export default function AndroidFleetPage() {
       <FleetCoverageStrip devices={devices} />
 
       <FleetStatusSummary counts={fleetCounts} activeFilter={statusFilter} onFilter={setStatusFilter} />
+
+      <FleetActivityPanel
+        tasks={tasksData?.data ?? []}
+        devices={devices}
+        onRetry={(deviceId, prompt) => void dispatchTo([deviceId], prompt)}
+      />
 
       {/* Broadcast bar — the primary control on the page, so it is raised out of
           the flat outlined-paper treatment the rest of the page uses. */}
