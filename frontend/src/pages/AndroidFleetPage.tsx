@@ -73,7 +73,6 @@ import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
-import FleetChatPanel from '@/components/android/FleetChatPanel';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
 import {
   useAssignDeviceProxyMutation,
@@ -232,7 +231,6 @@ export default function AndroidFleetPage() {
   const proxyIdFor = (device: AndroidDevice): number | null =>
     device.id in proxyOverrides ? proxyOverrides[device.id] : (device.proxy_id ?? null);
   const [groupByProxy, setGroupByProxy] = useState(true);
-  const [chatOpen, setChatOpen] = useState(false);
   const [editingTagFor, setEditingTagFor] = useState<number | null>(null);
   const [setDeviceTag] = useSetDeviceTagMutation();
 
@@ -1304,31 +1302,6 @@ export default function AndroidFleetPage() {
   const historyTasks = historyDeviceId !== null ? tasksByDevice[historyDeviceId] ?? [] : [];
 
   // ---- Render ------------------------------------------------------------
-  /** What the chat panel needs about each selected device. */
-  const chatDevices = selectedIds
-    .map((deviceId) => devices.find((device) => device.id === deviceId))
-    .filter((device): device is AndroidDevice => Boolean(device))
-    .map((device) => {
-      const state = runtime[device.id] ?? emptyRuntime;
-      const laneId = proxyIdFor(device);
-      const proxy = laneId ? proxyById.get(laneId) : undefined;
-      return {
-        id: device.id,
-        name: device.device_name,
-        isOnline: device.status === 'ONLINE',
-        isRunning: state.isRunning,
-        isQueued: queuedByDevice.has(device.id),
-        prompt: state.prompt,
-        stepIndex: state.stepIndex,
-        steps: state.steps,
-        finishedOk: state.finishedOk,
-        finishedMessage: state.finishedMessage,
-        startError: state.startError,
-        proxyName: proxy?.name,
-        proxyColor: proxyColor(laneId),
-        tag: device.tag ?? null,
-      };
-    });
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
@@ -1509,10 +1482,6 @@ export default function AndroidFleetPage() {
           )}
 
           <Box sx={{ flexGrow: 1 }} />
-
-          <Button size="small" onClick={() => setChatOpen((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
-            {chatOpen ? 'Hide chat' : 'Chat'}
-          </Button>
 
           <input
             ref={fileInputRef}
@@ -1965,32 +1934,21 @@ export default function AndroidFleetPage() {
       <ProxyManagerDialog open={proxyDialogOpen} onClose={() => { setProxyDialogOpen(false); refetchProxies(); refetch(); }} />
       </Box>
 
-      {chatOpen && (
-        <FleetChatPanel
-          devices={chatDevices}
-          onClose={() => setChatOpen(false)}
-          onFollowUp={(deviceId, text) => dispatchTo([deviceId], text)}
-          onBroadcast={(text) => dispatchTo(selectedIds, text)}
-          onStop={(deviceId) => handleStopDevice(deviceId)}
-          onOpenFull={(deviceId) => navigate(`/android-agent?deviceId=${deviceId}`)}
-        />
-      )}
-
-      {/* Live run activity, docked to the side so it stays visible while you
-          scroll the phone grid — and off the top, which the grid needs. Sticky
-          so it follows down a long fleet; hidden on narrow screens where the
-          grid already fills the width. */}
+      {/* Live run activity, floated bottom-right at half height — it grows up
+          from the corner rather than filling the whole side, and stays put as
+          the grid scrolls. Collapsible from its own header. Hidden on narrow
+          screens where it would cover the grid. */}
       <Box
-        component="aside"
         sx={{
           display: { xs: 'none', lg: 'block' },
-          width: 320,
-          flexShrink: 0,
-          position: 'sticky',
-          top: 16,
-          alignSelf: 'flex-start',
-          p: 2,
-          pl: 0,
+          position: 'fixed',
+          right: 16,
+          bottom: 16,
+          width: 340,
+          maxHeight: '55vh',
+          zIndex: (theme) => theme.zIndex.drawer,
+          boxShadow: '0 10px 40px rgba(16, 24, 40, 0.18)',
+          borderRadius: 3,
         }}
       >
         <FleetActivityPanel

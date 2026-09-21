@@ -134,7 +134,7 @@ export default function FleetActivityPanel({
 
       <Collapse in={open}>
         <Divider />
-        <Box sx={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
+        <Box sx={{ maxHeight: 'calc(55vh - 56px)', overflowY: 'auto' }}>
           {shown.map((task) => {
             const failed = !task.is_running && !task.success;
             const accent = task.is_running ? '#2563eb' : task.success ? '#059669' : '#dc2626';
