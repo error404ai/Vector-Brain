@@ -869,6 +869,18 @@ export default function AndroidFleetPage() {
                       size="small"
                       label="Proxy"
                       value={proxyIdFor(device) ?? ''}
+                      SelectProps={{
+                        // Background polls (screenshots, heartbeats) re-render the
+                        // page while the menu is open, which was collapsing it
+                        // mid-click — the user had to try three times. Mounting
+                        // the menu once and disabling the scroll-lock keeps it
+                        // open and stable across those re-renders.
+                        MenuProps: {
+                          keepMounted: true,
+                          disableScrollLock: true,
+                          transitionDuration: 0,
+                        },
+                      }}
                       onChange={async (event) => {
                         const raw = event.target.value;
                         const nextProxyId = raw === '' ? null : Number(raw);
