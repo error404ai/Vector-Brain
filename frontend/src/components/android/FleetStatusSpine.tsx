@@ -9,24 +9,22 @@ interface FleetStatusSpineProps {
 /**
  * The coloured edge down the left of each device card.
  *
- * State used to be carried by dimming the whole offline card to 65% opacity,
- * which makes the card's real content harder to read in exchange for one bit of
- * information. A spine keeps the content at full strength and puts the state
- * somewhere the eye can scan down a whole column at once — the way a board of
- * machines is actually read.
+ * A spine keeps the card's content at full strength and puts the state where
+ * the eye can scan a whole column at once — the way a board of machines is read.
  *
- * Two states move. Running has a highlight travelling down it continuously,
- * meaning work in progress. Completed gets a brighter gleam that sweeps a few
- * times and then settles — a small celebration on the whole left edge so a
- * finished run catches the eye without a card that animates forever.
+ * Idle is a quiet grey, not green: green used to mean both "ready" and "just
+ * finished", so a completed run was indistinguishable from an untouched phone.
+ * Now green belongs only to completion, and completion alone gets a colour that
+ * moves — a multi-hue sweep that plays a few times then settles into solid
+ * green — so a finished task is unmistakable across a grid of still edges.
  */
 export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
   const base = {
     running: 'primary.main',
     failed: 'error.main',
-    completed: 'success.main',
-    idle: 'success.main',
-    offline: 'grey.400',
+    completed: '#059669',
+    idle: 'grey.400',
+    offline: 'grey.300',
   }[state];
 
   return (
@@ -46,13 +44,7 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
           '100%': { transform: 'translateY(100%)' },
         },
 
-        // Completed sweeps a bright gleam a few times then stops, leaving a
-        // faint sheen — a finish that celebrates without animating forever.
-        '@keyframes fleetSpineCelebrate': {
-          '0%': { transform: 'translateY(-100%)' },
-          '55%, 100%': { transform: 'translateY(100%)' },
-        },
-
+        // A white highlight travels down a running spine forever.
         ...(state === 'running' && {
           '&::after': {
             content: '""',
@@ -64,14 +56,24 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
           },
         }),
 
+        // Completed: a multi-colour band sweeps the spine a few times, then the
+        // spine is left solid green. Celebration that ends, not a card that
+        // animates forever.
         ...(state === 'completed' && {
+          '@keyframes fleetSpineParty': {
+            '0%': { backgroundPosition: '0% 0%' },
+            '100%': { backgroundPosition: '0% 300%' },
+          },
           '&::after': {
             content: '""',
             position: 'absolute',
             inset: 0,
-            background: 'linear-gradient(180deg, transparent 0%, #ffffff 55%, transparent 100%)',
-            opacity: 0.95,
-            animation: 'fleetSpineCelebrate 1.5s ease-in-out 3',
+            backgroundImage: 'linear-gradient(180deg, #059669 0%, #10b981 20%, #06b6d4 40%, #6366f1 60%, #10b981 80%, #059669 100%)',
+            backgroundSize: '100% 300%',
+            animation: 'fleetSpineParty 1.4s ease-in-out 3',
+            // After the 3 runs the gradient stops on its last frame; fade its
+            // opacity so the solid green base shows through and it looks settled.
+            opacity: 0.9,
           },
         }),
 

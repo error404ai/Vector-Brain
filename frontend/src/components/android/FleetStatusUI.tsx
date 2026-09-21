@@ -107,15 +107,17 @@ export function DeviceStatusBadge({
             position: 'absolute',
             top: 0,
             bottom: 0,
-            left: '-40%',
-            width: '40%',
-            background: `linear-gradient(100deg, transparent 0%, ${alpha('#ffffff', 0.65)} 50%, transparent 100%)`,
+            left: '-45%',
+            width: '45%',
+            // A colourful band, not a plain white gleam, so completion reads as a
+            // small celebration and never blends into the quiet grey of idle.
+            background: `linear-gradient(100deg, transparent 0%, ${alpha('#10b981', 0.55)} 30%, ${alpha('#06b6d4', 0.55)} 50%, ${alpha('#6366f1', 0.5)} 70%, transparent 100%)`,
             transform: 'skewX(-18deg)',
-            animation: 'fleetShine 2.2s ease-in-out 3',
+            animation: 'fleetShine 2s ease-in-out 3',
           },
           '@keyframes fleetShine': {
-            '0%': { left: '-40%' },
-            '60%, 100%': { left: '140%' },
+            '0%': { left: '-45%' },
+            '60%, 100%': { left: '150%' },
           },
         }),
       }}
