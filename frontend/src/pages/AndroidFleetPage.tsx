@@ -537,11 +537,13 @@ export default function AndroidFleetPage() {
                   state={
                     state.isRunning
                       ? 'running'
-                      : state.startError
+                      : state.startError || (state.finishedAt && !state.finishedOk)
                         ? 'failed'
-                        : isOnline
-                          ? 'idle'
-                          : 'offline'
+                        : state.finishedAt && state.finishedOk
+                          ? 'completed'
+                          : isOnline
+                            ? 'idle'
+                            : 'offline'
                   }
                 />
                 {/* The lane's colour, inset beside the status spine, so which

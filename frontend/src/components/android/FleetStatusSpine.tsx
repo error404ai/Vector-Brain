@@ -1,6 +1,6 @@
 import { Box } from '@mui/material';
 
-export type FleetDeviceState = 'running' | 'failed' | 'idle' | 'offline';
+export type FleetDeviceState = 'running' | 'failed' | 'completed' | 'idle' | 'offline';
 
 interface FleetStatusSpineProps {
   state: FleetDeviceState;
@@ -15,13 +15,16 @@ interface FleetStatusSpineProps {
  * somewhere the eye can scan down a whole column at once — the way a board of
  * machines is actually read.
  *
- * Only the running state moves. If every card animated, none of them would mean
- * anything; one travelling highlight in a grid of still edges is unmissable.
+ * Two states move. Running has a highlight travelling down it continuously,
+ * meaning work in progress. Completed gets a brighter gleam that sweeps a few
+ * times and then settles — a small celebration on the whole left edge so a
+ * finished run catches the eye without a card that animates forever.
  */
 export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
   const base = {
     running: 'primary.main',
     failed: 'error.main',
+    completed: 'success.main',
     idle: 'success.main',
     offline: 'grey.400',
   }[state];
@@ -43,6 +46,13 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
           '100%': { transform: 'translateY(100%)' },
         },
 
+        // Completed sweeps a bright gleam a few times then stops, leaving a
+        // faint sheen — a finish that celebrates without animating forever.
+        '@keyframes fleetSpineCelebrate': {
+          '0%': { transform: 'translateY(-100%)' },
+          '55%, 100%': { transform: 'translateY(100%)' },
+        },
+
         ...(state === 'running' && {
           '&::after': {
             content: '""',
@@ -51,6 +61,17 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
             background: 'linear-gradient(180deg, transparent 0%, #ffffff 50%, transparent 100%)',
             opacity: 0.85,
             animation: 'fleetSpine 1.8s linear infinite',
+          },
+        }),
+
+        ...(state === 'completed' && {
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(180deg, transparent 0%, #ffffff 55%, transparent 100%)',
+            opacity: 0.95,
+            animation: 'fleetSpineCelebrate 1.5s ease-in-out 3',
           },
         }),
 
