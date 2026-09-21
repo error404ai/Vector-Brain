@@ -64,12 +64,13 @@ import {
   Typography,
   Menu,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
+import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import FleetChatPanel from '@/components/android/FleetChatPanel';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
@@ -194,7 +195,7 @@ export default function AndroidFleetPage() {
   const [cancelQueued] = useCancelQueuedTaskMutation();
   const queuedByDevice = new Map((queueData?.data ?? []).map((entry) => [entry.device_id, entry]));
   const [assignProxy] = useAssignDeviceProxyMutation();
-  const proxies = proxyData?.data ?? [];
+  const proxies = useMemo(() => proxyData?.data ?? [], [proxyData]);
   const proxyById = new Map(proxies.map((proxy) => [proxy.id, proxy]));
 
   /**
@@ -205,6 +206,26 @@ export default function AndroidFleetPage() {
    * pick again. Refetching instead would redraw every card mid-click.
    */
   const [proxyOverrides, setProxyOverrides] = useState<Record<number, number | null>>({});
+
+  // Stable handler so the memoized proxy picker is not re-created every render.
+  const handleProxyChange = useCallback(
+    async (deviceId: number, nextProxyId: number | null) => {
+      let previous: number | null = null;
+      setProxyOverrides((current) => {
+        previous = current[deviceId] ?? null;
+        return { ...current, [deviceId]: nextProxyId };
+      });
+      try {
+        await assignProxy({ device_id: deviceId, proxy_id: nextProxyId }).unwrap();
+        refetchProxies();
+      } catch {
+        setProxyOverrides((current) => ({ ...current, [deviceId]: previous }));
+        toast.error('Could not change the proxy');
+      }
+    },
+    [assignProxy, refetchProxies],
+  );
+
   const proxyIdFor = (device: AndroidDevice): number | null =>
     device.id in proxyOverrides ? proxyOverrides[device.id] : (device.proxy_id ?? null);
   const [groupByProxy, setGroupByProxy] = useState(true);
@@ -860,57 +881,15 @@ export default function AndroidFleetPage() {
                   </Box>
                 )}
 
-                {/* Which proxy lane this phone sits on. */}
+                {/* Which proxy lane this phone sits on. Memoized so background
+                    frame/heartbeat re-renders don't collapse the open menu. */}
                 {proxies.length > 0 && (
-                  <Box sx={{ px: 1, pb: 0.5 }}>
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label="Proxy"
-                      value={proxyIdFor(device) ?? ''}
-                      SelectProps={{
-                        // Background polls (screenshots, heartbeats) re-render the
-                        // page while the menu is open, which was collapsing it
-                        // mid-click — the user had to try three times. Mounting
-                        // the menu once and disabling the scroll-lock keeps it
-                        // open and stable across those re-renders.
-                        MenuProps: {
-                          keepMounted: true,
-                          disableScrollLock: true,
-                          transitionDuration: 0,
-                        },
-                      }}
-                      onChange={async (event) => {
-                        const raw = event.target.value;
-                        const nextProxyId = raw === '' ? null : Number(raw);
-                        const previous = proxyIdFor(device);
-
-                        // Shown straight away; the device list catches up on its
-                        // own poll rather than redrawing every card right now.
-                        setProxyOverrides((current) => ({ ...current, [device.id]: nextProxyId }));
-
-                        try {
-                          await assignProxy({ device_id: device.id, proxy_id: nextProxyId }).unwrap();
-                          refetchProxies();
-                        } catch {
-                          setProxyOverrides((current) => ({ ...current, [device.id]: previous }));
-                          toast.error('Could not change the proxy');
-                        }
-                      }}
-                    >
-                      <MenuItem value="">No proxy</MenuItem>
-                      {proxies.map((proxy) => (
-                        <MenuItem key={proxy.id} value={proxy.id}>
-                          <Box
-                            component="span"
-                            sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id), mr: 1, display: 'inline-block' }}
-                          />
-                          {proxy.name}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Box>
+                  <DeviceProxySelect
+                    deviceId={device.id}
+                    value={proxyIdFor(device)}
+                    proxies={proxies}
+                    onChange={handleProxyChange}
+                  />
                 )}
 
                 {/* One-tap controls for this phone alone. */}
