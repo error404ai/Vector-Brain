@@ -271,12 +271,14 @@ export default function AndroidFleetPage() {
   // ones are running (is_running); this reflects that into the runtime map so a
   // reload shows the true state. Live WebSocket events still update it on top.
   useEffect(() => {
-    const runningDeviceIds = new Set<number>(
-      (tasksData?.data ?? [])
-        .filter((task) => task.is_running)
-        .map((task) => task.device_id)
-        .filter((id): id is number => typeof id === 'number'),
-    );
+    // device_id -> the running task on it, so we can restore taskId (needed to
+    // cancel it) and prompt (needed to retry it), not just the isRunning flag.
+    const runningByDevice = new Map<number, { taskId: number; prompt: string }>();
+    for (const task of tasksData?.data ?? []) {
+      if (task.is_running && typeof task.device_id === 'number') {
+        runningByDevice.set(task.device_id, { taskId: task.id, prompt: task.prompt ?? '' });
+      }
+    }
     setRuntime((prev) => {
       let changed = false;
       const next: RuntimeMap = { ...prev };
@@ -286,14 +288,17 @@ export default function AndroidFleetPage() {
       // WebSocket, so a just-started task still shows is_running=false in the
       // list, and forcing false here flipped a genuinely running phone back to
       // "Idle". Completion is already handled by the task:complete WS event.
-      runningDeviceIds.forEach((deviceId) => {
-        if (!next[deviceId]?.isRunning) {
+      runningByDevice.forEach(({ taskId, prompt: taskPrompt }, deviceId) => {
+        const existing = next[deviceId];
+        // Restore isRunning, and — crucially — the taskId, so Stop all can
+        // cancel a task that started before this page was open.
+        if (!existing?.isRunning || existing.taskId === undefined) {
           next[deviceId] = {
-            ...(next[deviceId] ?? emptyRuntime),
+            ...(existing ?? emptyRuntime),
             isRunning: true,
-            // Restored after a reload — we don't know the true start, so the
-            // elapsed clock starts from when we noticed. Better than no clock.
-            startedAt: next[deviceId]?.startedAt ?? Date.now(),
+            taskId,
+            prompt: existing?.prompt || taskPrompt,
+            startedAt: existing?.startedAt ?? Date.now(),
           };
           changed = true;
         }
@@ -1205,23 +1210,65 @@ export default function AndroidFleetPage() {
   };
 
   const handleStopDevice = async (deviceId: number) => {
-    const taskId = runtime[deviceId]?.taskId;
-    if (!taskId) return;
+    // Prefer the taskId we hold; fall back to the backend's running task for this
+    // device, so a stop works even for a task that started before this page.
+    const device = devices.find((d) => d.id === deviceId);
+    const taskId =
+      runtime[deviceId]?.taskId ??
+      (tasksData?.data ?? []).find((task) => task.is_running && task.device_id === deviceId)?.id;
+    if (typeof taskId !== 'number') {
+      toast('Nothing is running on this device');
+      return;
+    }
+    // Clear immediately so the stop feels instant.
+    patchRuntime(deviceId, { isRunning: false });
     try {
       await cancelTask(taskId).unwrap();
-      toast.success('Stop requested');
+      toast.success(device ? `Stopped ${device.device_name}` : 'Stop requested');
     } catch {
       toast.error('Could not stop the task');
+      refetchQueue();
     }
   };
 
   const handleStopAll = async () => {
-    const ids = (Object.values(runtime) as DeviceRuntime[])
-      .filter((state) => state.isRunning && typeof state.taskId === 'number')
-      .map((state) => state.taskId as number);
-    if (ids.length === 0) return;
-    await Promise.allSettled(ids.map((taskId) => cancelTask(taskId).unwrap()));
-    toast.success('Stop requested on all running devices');
+    // Collect every task id that is running — from the live runtime map AND from
+    // the backend task list. The list is the source of truth (it catches tasks
+    // started before this page was open, or on another tab), so a Stop all can
+    // never miss a running phone just because our in-memory map lagged.
+    const taskIds = new Set<number>();
+    for (const state of Object.values(runtime) as DeviceRuntime[]) {
+      if (state.isRunning && typeof state.taskId === 'number') taskIds.add(state.taskId);
+    }
+    for (const task of tasksData?.data ?? []) {
+      if (task.is_running && typeof task.id === 'number') taskIds.add(task.id);
+    }
+
+    if (taskIds.size === 0) {
+      toast('Nothing is running');
+      return;
+    }
+
+    const ids = Array.from(taskIds);
+    // Optimistically clear running state so the UI reacts instantly, before the
+    // cancels round-trip — a stop must feel immediate.
+    setRuntime((prev) => {
+      const next: RuntimeMap = { ...prev };
+      for (const key of Object.keys(next) as unknown as number[]) {
+        if (next[key]?.isRunning) next[key] = { ...next[key], isRunning: false };
+      }
+      return next;
+    });
+
+    const results = await Promise.allSettled(ids.map((taskId) => cancelTask(taskId).unwrap()));
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed === 0) {
+      toast.success(`Stopped ${ids.length} task${ids.length === 1 ? '' : 's'}`);
+    } else {
+      toast.error(`${failed} of ${ids.length} could not be stopped — retrying may help`);
+    }
+    // Re-sync from the backend so anything that refused to cancel reappears.
+    refetchQueue();
   };
 
   const historyDevice = devices.find((device) => device.id === historyDeviceId);
