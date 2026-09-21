@@ -53,6 +53,15 @@ export class DeviceProxy {
   @Column({ type: 'int', default: 1 })
   rotate_every_tasks: number;
 
+  /**
+   * Shortest gap between two rotation calls, in seconds. Providers rate-limit
+   * their rotation endpoint (ours allows one rotation per 60s and returns 429
+   * if hit sooner), so even when tasks finish back-to-back we must not call it
+   * again inside this window. Defaults to 60s to match the common provider cap.
+   */
+  @Column({ type: 'int', default: 60 })
+  min_rotation_gap_seconds: number;
+
   /** Counts finished tasks towards rotate_every_tasks. */
   @Column({ type: 'int', default: 0 })
   tasks_since_rotation: number;

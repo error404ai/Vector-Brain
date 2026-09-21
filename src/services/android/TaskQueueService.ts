@@ -85,25 +85,33 @@ export class TaskQueueService {
    * Whether this device may start immediately.
    *
    * True for anything without a proxy, and for a lane with room left.
+   *
+   * The check-and-reserve must be atomic. The fleet dispatches every selected
+   * device at once, so many tryAdmit calls run concurrently; if any await sits
+   * between counting the lane and taking the slot, they all see the lane empty
+   * and all start — the exact bug that put 22 devices on 2 lanes at once and
+   * rotated the providers into a 429. So all awaits (loading the proxy id and
+   * the lane's members) happen first, then a single synchronous block counts
+   * reservations and reserves — with no await in between, JS runs it to
+   * completion before the next caller gets the CPU.
    */
   async tryAdmit(deviceDbId: number): Promise<boolean> {
     const device = await this.deviceRepo.findOne({ where: { id: deviceDbId } });
     if (!device?.proxy_id) return true;
 
-    const proxy = await this.proxyRepo.findOne({ where: { id: device.proxy_id } });
+    const proxyId = device.proxy_id;
+    const proxy = await this.proxyRepo.findOne({ where: { id: proxyId } });
     if (!proxy) return true;
+    const capacity = Math.max(1, proxy.concurrency);
 
-    const laneDevices = await this.deviceRepo.find({ where: { proxy_id: proxy.id } });
+    // Cache lane membership so the count below needs no await.
+    const laneDeviceIds = (await this.deviceRepo.find({ where: { proxy_id: proxyId } })).map((d) => d.id);
 
-    // Everything from here runs without awaiting, so two callers cannot both
-    // see the same free slot: the first one's reservation is already in place
-    // by the time the second gets here.
-    const taken = laneDevices.filter(
-      (candidate) => candidate.id !== deviceDbId && (this.reserved.has(candidate.id) || this.isBusy(candidate.id)),
+    // ---- synchronous critical section: no await from here to the return ----
+    const taken = laneDeviceIds.filter(
+      (id) => id !== deviceDbId && (this.reserved.has(id) || this.isBusy(id)),
     ).length;
-
-    if (taken >= Math.max(1, proxy.concurrency)) return false;
-
+    if (taken >= capacity) return false;
     this.reserved.set(deviceDbId, Date.now());
     return true;
   }

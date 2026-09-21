@@ -144,6 +144,17 @@ export class ProxyRotationService {
         return;
       }
 
+      // Respect the provider's minimum gap. Even when it's time to rotate by
+      // task count, calling the endpoint inside the cooldown just earns a 429,
+      // so we hold off until the window passes. The counter stays at the
+      // threshold (not reset), so the very next finished task after the window
+      // rotates immediately rather than waiting for another N tasks.
+      const gapMs = Math.max(0, (proxy.min_rotation_gap_seconds ?? 60) * 1000);
+      if (proxy.last_rotated_at && Date.now() - new Date(proxy.last_rotated_at).getTime() < gapMs) {
+        await this.proxyRepo.update(proxy.id, { tasks_since_rotation: proxy.rotate_every_tasks });
+        return;
+      }
+
       await this.callRotationUrl(proxy, { deviceId: device.id, deviceName: device.device_name });
     } catch (error) {
       Logger.warn('[Proxy] Rotation after task failed', error);
