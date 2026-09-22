@@ -564,6 +564,10 @@ export default function AndroidFleetPage() {
     const state = runtime[device.id];
     if (state?.startError) return 'failed';
     if (state?.isRunning) return 'running';
+    // Waiting for a lane is what this phone is doing now, so it outranks how its
+    // previous run ended — otherwise a queued phone kept showing yesterday's
+    // result until the page was reloaded.
+    if (queuedByDevice.has(device.id)) return 'waiting';
     // Nothing live for this phone in this tab — use the server's answer, which
     // is what keeps a result on the card after a reload.
     const server = serverStateByDevice.get(device.id);
@@ -574,7 +578,6 @@ export default function AndroidFleetPage() {
       if (state.finishedReason === 'USER_CANCELLED') return 'cancelled';
       return 'failed';
     }
-    if (queuedByDevice.has(device.id)) return 'waiting';
     // Connected but the accessibility service is off — after a reboot Android
     // disables it, and the socket reconnects on its own, so the device reads
     // ONLINE while it actually can't run anything. Surface that instead of a
@@ -1135,6 +1138,21 @@ export default function AndroidFleetPage() {
           : `${notReady.length} devices need accessibility turned back on`,
       );
     }
+    // The previous run's result is no longer this phone's state the moment a new
+    // task is sent, so it goes before anything comes back.
+    for (const deviceId of deviceIds) {
+      patchRuntime(deviceId, {
+        finishedAt: undefined,
+        finishedOk: undefined,
+        finishedMessage: undefined,
+        finishedReason: undefined,
+        startError: undefined,
+        stepIndex: 0,
+        lastThought: undefined,
+        lastAction: undefined,
+      });
+    }
+
     setIsDispatching(true);
     const outcomes = await Promise.allSettled(
       deviceIds.map((deviceId) =>
