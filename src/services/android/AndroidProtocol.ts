@@ -53,7 +53,14 @@ export type AutomationAction =
   | { type: 'Wait'; durationMillis: number }
   | { type: 'WaitForNode'; nodePath?: string; viewId?: string; text?: string; timeoutMillis?: number }
   | { type: 'ReadUiTree' }
-  | { type: 'CaptureScreen' }
+  /**
+   * `preview` asks the phone for a small, cheaper frame (≈640px wide) — right
+   * for the live view, where a full-resolution screenshot is many times larger
+   * than it needs to be and holds up the device's single socket, delaying the
+   * taps the user is making. `awaitStability` false skips waiting for the UI to
+   * settle, which is what a live feed wants.
+   */
+  | { type: 'CaptureScreen'; preview?: boolean; awaitStability?: boolean }
   | { type: 'ObserveScreen' }
   | { type: 'PressKey'; key: DeviceKey }
   | { type: 'ScrollNode'; nodePath?: string; viewId?: string; text?: string; direction?: ScrollDirection }

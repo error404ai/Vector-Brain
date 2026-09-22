@@ -70,7 +70,11 @@ export const AutomationActionValidation = z.discriminatedUnion('type', [
   z.object({ type: z.literal('Global'), action: z.enum(['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS']) }),
   z.object({ type: z.literal('Wait'), durationMillis: z.number().int().min(1).max(60_000) }),
   z.object({ type: z.literal('ReadUiTree') }),
-  z.object({ type: z.literal('CaptureScreen') }),
+  z.object({
+    type: z.literal('CaptureScreen'),
+    preview: z.boolean().optional(),
+    awaitStability: z.boolean().optional(),
+  }),
   // The union had fallen behind the protocol: WaitForNode and ObserveScreen
   // shipped without being listed, so a direct action of either type was
   // rejected here even though every device supports it.

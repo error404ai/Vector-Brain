@@ -50,6 +50,8 @@ export default function InteractiveDeviceScreen({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const pointerStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const busyRef = useRef(false);
+  /** True while a tap/swipe is in flight, so frames yield the socket to it. */
+  const actionBusyRef = useRef(false);
 
   // Parents often pass an inline callback. Keeping it in a ref stops the polling
   // effect from tearing down and restarting on every render.
@@ -58,12 +60,19 @@ export default function InteractiveDeviceScreen({
     onScreenshotRef.current = onScreenshot;
   }, [onScreenshot]);
 
-  /** Pulls one frame. Skips if a previous pull is still in flight. */
+  /**
+   * Pulls one frame. Skips if a previous pull is still in flight, or if the user
+   * is mid-action: the phone has a single socket, so a full-size frame in flight
+   * delays the tap behind it. Live frames are small previews for the same reason.
+   */
   const captureFrame = useCallback(async () => {
-    if (!deviceId || busyRef.current) return;
+    if (!deviceId || busyRef.current || actionBusyRef.current) return;
     busyRef.current = true;
     try {
-      const res = await sendDirectAction({ device_id: deviceId, action: { type: 'CaptureScreen' } }).unwrap();
+      const res = await sendDirectAction({
+        device_id: deviceId,
+        action: { type: 'CaptureScreen', preview: true, awaitStability: false },
+      }).unwrap();
       const base64 = res?.data?.screenCapture?.base64Data;
       if (base64) onScreenshotRef.current?.(base64);
     } catch {
@@ -74,11 +83,27 @@ export default function InteractiveDeviceScreen({
   }, [deviceId, sendDirectAction]);
 
   // ---- Live frames -------------------------------------------------------
+  // Paced by the phone rather than by a fixed interval: the next frame is asked
+  // for once the previous one has arrived. A fixed timer on a slow link just
+  // queues requests the device cannot answer yet, which is what made the feed
+  // stutter and manual taps feel late.
   useEffect(() => {
     if (!controlEnabled || !deviceId) return;
-    captureFrame();
-    const timer = setInterval(captureFrame, refreshMs);
-    return () => clearInterval(timer);
+    let stopped = false;
+    let timer: number | undefined;
+
+    const loop = async () => {
+      if (stopped) return;
+      await captureFrame();
+      if (stopped) return;
+      timer = window.setTimeout(loop, Math.max(refreshMs, 120));
+    };
+    void loop();
+
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [controlEnabled, deviceId, refreshMs, captureFrame]);
 
   // ---- Coordinate mapping ------------------------------------------------
@@ -110,17 +135,20 @@ export default function InteractiveDeviceScreen({
 
   const runAction = async (action: Record<string, unknown>, label: string) => {
     if (!deviceId) return;
+    actionBusyRef.current = true;
     try {
       const res = await sendDirectAction({ device_id: deviceId, action }).unwrap();
       const base64 = res?.data?.screenCapture?.base64Data;
       if (base64) onScreenshotRef.current?.(base64);
 
       // Most actions return no frame, so pull one right away rather than waiting
-      // for the next interval tick. The short delay lets the UI settle first.
+      // for the next tick. The short delay lets the UI settle first.
       window.setTimeout(() => {
+        actionBusyRef.current = false;
         void captureFrame();
       }, 250);
     } catch (error) {
+      actionBusyRef.current = false;
       const message = (error as { data?: { message?: string } })?.data?.message;
       toast.error(message ? `${label}: ${message}` : `${label} failed`);
     }
