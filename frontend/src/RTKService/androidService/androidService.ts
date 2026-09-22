@@ -40,6 +40,49 @@ export interface AndroidTaskLog {
   created_at: string;
 }
 
+/** One device's state as the server computes it — the surfaces do not re-derive it. */
+export type FleetDeviceState =
+  | 'offline'
+  | 'running'
+  | 'waiting'
+  | 'needs_setup'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'cancelled'
+  | 'idle';
+
+export interface FleetStateDevice {
+  id: number;
+  device_id: string;
+  name: string;
+  model?: string | null;
+  online: boolean;
+  accessibility: boolean | null;
+  tag: string | null;
+  proxy_id: number | null;
+  last_seen_at?: string | null;
+  state: FleetDeviceState;
+  queue_position: number | null;
+  task: {
+    id: number;
+    status: string;
+    reason_code: string | null;
+    prompt: string;
+    message?: string | null;
+    total_steps: number;
+    started_at?: string | null;
+    finished_at?: string | null;
+  } | null;
+}
+
+export interface FleetState {
+  generated_at: string;
+  counts: Record<string, number>;
+  devices: FleetStateDevice[];
+  lanes: { id: number; name: string; concurrency: number; running: number; waiting: number; blocked_reason: string | null }[];
+}
+
 export interface AndroidAgentTask {
   id: number;
   device_id?: number | null;
@@ -123,6 +166,11 @@ const androidApi = baseApi.injectEndpoints({
         method: 'DELETE',
       }),
       invalidatesTags: ['ANDROID_DEVICES' as any],
+    }),
+
+    getFleetState: builder.query<{ message: string; data: FleetState }, void>({
+      query: () => ({ url: '/android/devices/fleet-state', method: 'GET' }),
+      providesTags: ['ANDROID_DEVICES' as any],
     }),
 
     deleteOfflineDevices: builder.mutation<{ message: string; data: { removed: number } }, void>({
@@ -213,6 +261,7 @@ export const {
   useRenameDeviceMutation,
   useUnpairDeviceMutation,
   useDeleteOfflineDevicesMutation,
+  useGetFleetStateQuery,
   useSendDirectActionMutation,
   useSetDeviceTagMutation,
   useRunAndroidTaskMutation,

@@ -1,6 +1,7 @@
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
+  useGetFleetStateQuery,
   useGetAndroidTasksQuery,
   useRunAndroidTaskMutation,
   useSetDeviceTagMutation,
@@ -21,7 +22,7 @@ import {
   type FleetStatus,
 } from '@/components/android/FleetStatusUI';
 import FleetStatusSpine from '@/components/android/FleetStatusSpine';
-import { isInterruption } from '@/components/android/taskReasons';
+import { isInterruption, reasonLabel } from '@/components/android/taskReasons';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -203,6 +204,15 @@ export default function AndroidFleetPage() {
 
   const devices = useMemo<AndroidDevice[]>(() => devicesData?.data ?? [], [devicesData]);
   const tasks = useMemo<AndroidAgentTask[]>(() => tasksData?.data ?? [], [tasksData]);
+
+  // What the server says every phone is doing. The page used to work this out
+  // from three separate lists and forgot all of it on reload; this survives a
+  // refresh and cannot disagree with the agent page or Telegram.
+  const { data: fleetStateData } = useGetFleetStateQuery(undefined, { pollingInterval: 5_000 });
+  const serverStateByDevice = useMemo(
+    () => new Map((fleetStateData?.data?.devices ?? []).map((entry) => [entry.id, entry])),
+    [fleetStateData],
+  );
   const aiConfigs = useMemo(() => aiConfigsData?.data ?? [], [aiConfigsData]);
   const activeAiConfig = aiConfigs.find((config) => config.is_active);
 
@@ -533,6 +543,10 @@ export default function AndroidFleetPage() {
     const state = runtime[device.id];
     if (state?.startError) return 'failed';
     if (state?.isRunning) return 'running';
+    // Nothing live for this phone in this tab — use the server's answer, which
+    // is what keeps a result on the card after a reload.
+    const server = serverStateByDevice.get(device.id);
+    if (server && !state?.finishedAt && server.state !== 'idle') return server.state as FleetStatus;
     if (state?.finishedAt) {
       if (state.finishedOk) return 'completed';
       if (isInterruption(state.finishedReason)) return 'interrupted';
@@ -798,9 +812,15 @@ export default function AndroidFleetPage() {
                     const status = deviceStatusOf(device);
                     // Anything that ended without finishing can be retried.
                     const failed = status === 'failed' || status === 'interrupted' || status === 'cancelled';
+                    const server = serverStateByDevice.get(device.id);
                     const detail = state.startError
                       || (state.isRunning ? state.lastThought || state.prompt || 'Working…' : '')
-                      || (state.finishedAt ? state.finishedMessage ?? '' : '');
+                      || (state.finishedAt ? state.finishedMessage ?? '' : '')
+                      // After a reload the live runtime is empty, so fall back to
+                      // what the server recorded for the last run.
+                      || (server?.task && server.state !== 'idle'
+                        ? reasonLabel(server.task.reason_code) || server.task.message || ''
+                        : '');
 
                     return (
                       <Stack gap={0.75}>
@@ -814,9 +834,13 @@ export default function AndroidFleetPage() {
                                   <StopCircleIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
-                            ) : failed && state.prompt ? (
+                            ) : failed && (state.prompt || server?.task?.prompt) ? (
                               <Tooltip title="Retry this task">
-                                <IconButton size="small" sx={{ color: 'inherit', p: 0.25 }} onClick={() => void dispatchTo([device.id], state.prompt as string)}>
+                                <IconButton
+                                  size="small"
+                                  sx={{ color: 'inherit', p: 0.25 }}
+                                  onClick={() => void dispatchTo([device.id], (state.prompt ?? server?.task?.prompt) as string)}
+                                >
                                   <ReplayIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
@@ -843,8 +867,8 @@ export default function AndroidFleetPage() {
                           </Typography>
                         )}
 
-                        {failed && state.prompt && (
-                          <RetryButton onClick={() => void dispatchTo([device.id], state.prompt as string)} />
+                        {failed && (state.prompt || server?.task?.prompt) && (
+                          <RetryButton onClick={() => void dispatchTo([device.id], (state.prompt ?? server?.task?.prompt) as string)} />
                         )}
                       </Stack>
                     );
@@ -953,6 +977,7 @@ export default function AndroidFleetPage() {
     return [
       device,
       runtime[device.id],
+      serverStateByDevice.get(device.id),
       selectedIds.includes(device.id),
       queuedByDevice.get(device.id),
       (tasksByDevice[device.id] ?? []).length,

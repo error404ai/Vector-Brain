@@ -1,3 +1,4 @@
+import { FleetStateService } from '@/services/android/FleetStateService';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
@@ -15,7 +16,18 @@ export class AndroidDeviceController {
     private deviceService: AndroidDeviceService,
     private gatewayService: AndroidGatewayService,
     private liveScreenService: LiveScreenService,
+    private fleetStateService: FleetStateService,
   ) {}
+
+  /**
+   * One answer for "what is every phone doing right now?", derived from stored
+   * state. Surfaces render this instead of working it out from separate lists.
+   */
+  @Authorized()
+  @Get('/fleet-state')
+  async fleetState(@CurrentUser({ required: true }) user: { userId: number }) {
+    return { message: 'Fleet state retrieved successfully', data: await this.fleetStateService.getState(user.userId) };
+  }
 
   /**
    * Request a 6-digit pairing code from the Web dashboard.

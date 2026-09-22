@@ -325,6 +325,49 @@ const scenarios = [
     },
   },
   {
+    name: 'fleet state reports what the database actually says',
+    async run() {
+      const state = async () => (await api('GET', '/android/devices/fleet-state')).data;
+      const of = (snapshot, name) => snapshot.devices.find((d) => d.id === phones[name].dbId);
+
+      // A phone that never connected reads offline, not "ready".
+      await db.query("UPDATE android_devices SET status = 'OFFLINE' WHERE id = ?", [phones.lane5.dbId]);
+      // Connected but with accessibility off must not read ready either.
+      await db.query(
+        `UPDATE android_devices SET capabilities = '{"accessibility": false, "screenCapture": true}' WHERE id = ?`,
+        [phones.free2.dbId],
+      );
+
+      const t0 = Date.now();
+      await run('free1', 'open chrome [sim steps=30 delay=400]');
+      await waitFor(async () => (await tasksSince(t0, ['free1'])).some((r) => r.status === 'RUNNING'), 15_000);
+
+      let snapshot = await state();
+      if (of(snapshot, 'free1').state !== 'running') return `running phone read as ${of(snapshot, 'free1').state}`;
+      if (of(snapshot, 'lane5').state !== 'offline') return `offline phone read as ${of(snapshot, 'lane5').state}`;
+      if (of(snapshot, 'free2').state !== 'needs_setup') return `accessibility-off phone read as ${of(snapshot, 'free2').state}`;
+      if (snapshot.counts.running < 1) return 'counts do not include the running phone';
+
+      // Stopping it must be visible in the same snapshot, with its reason.
+      const runningTask = (await tasksSince(t0, ['free1'])).find((r) => r.status === 'RUNNING');
+      await api('POST', `/android/agent/cancel/${runningTask.id}`);
+      const cancelled = await waitFor(async () => {
+        const next = await state();
+        return of(next, 'free1').state === 'cancelled' ? next : null;
+      }, 20_000, 500);
+      if (!cancelled) return 'cancelled run never showed up in the fleet state';
+      if (of(cancelled, 'free1').task?.reason_code !== 'USER_CANCELLED') {
+        return `reason came back as ${of(cancelled, 'free1').task?.reason_code}`;
+      }
+
+      await db.query("UPDATE android_devices SET status = 'ONLINE' WHERE id = ?", [phones.lane5.dbId]);
+      await db.query(
+        `UPDATE android_devices SET capabilities = '{"accessibility": true, "screenCapture": true}' WHERE id = ?`,
+        [phones.free2.dbId],
+      );
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();
