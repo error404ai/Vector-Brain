@@ -26,7 +26,13 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # ffmpeg renders shared runs into an MP4, and the DejaVu font is what its
 # drawtext filter uses for the social preview card. Both are system packages,
 # so the pnpm lockfile stays untouched.
-RUN apk add --no-cache ffmpeg ttf-dejavu
+# font-dejavu is the package's real name; ttf-dejavu is an old alias that newer
+# Alpine indexes no longer carry. The retry is for the mirror itself: a failed
+# index fetch (seen as "TLS: unspecified error") leaves apk unable to resolve
+# anything, and that has already failed one deploy on a build that was fine.
+RUN apk add --no-cache ffmpeg font-dejavu \
+ || (sleep 5 && apk update && apk add --no-cache ffmpeg font-dejavu) \
+ || (sleep 15 && apk update && apk add --no-cache ffmpeg font-dejavu)
 
 WORKDIR /app
 
