@@ -239,13 +239,19 @@ export class AndroidCompanionController {
    */
   @Get('/files/:id/content')
   async downloadFile(@Param('id') id: string, @Req() req: any, @Res() res: Response) {
-    const file = await this.fileService.loadForDelivery(req.deviceToken.deviceId, Number(id));
+    const file = await this.fileService.describeForDelivery(req.deviceToken.deviceId, Number(id));
 
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
     res.setHeader('Content-Length', String(file.size_bytes));
     res.setHeader('X-File-Sha256', file.sha256);
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
-    return res.send(file.content);
+
+    // Sent in slices rather than as one buffer, so a fleet collecting the same
+    // APK does not put a copy per phone in memory at once.
+    for await (const chunk of this.fileService.streamForDelivery(req.deviceToken.deviceId, Number(id))) {
+      if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve));
+    }
+    return res.end();
   }
 
   /**

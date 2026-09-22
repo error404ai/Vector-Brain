@@ -339,6 +339,65 @@ export class DeviceFileService {
    * New rows carry no inline content, so the bytes come from the shared blob by
    * sha256; a legacy row with its own content still works.
    */
+  /**
+   * Streams a stored file to a phone in slices.
+   *
+   * Delivery used to read the whole file into memory before sending it, which
+   * is fine once and expensive twenty-two times: a 24 MB APK being collected by
+   * a whole fleet is half a gigabyte of buffers on a box that is already tight
+   * on RAM. SUBSTRING pulls a few megabytes at a time straight out of the row,
+   * so the cost per phone stays flat.
+   */
+  async *streamForDelivery(deviceIdString: string, fileId: number, chunkBytes = 4 * 1024 * 1024) {
+    const meta = await this.describeForDelivery(deviceIdString, fileId);
+    const table = meta.fromBlob ? 'device_file_blobs' : 'device_file_transfers';
+    const column = 'content';
+    const idColumn = meta.fromBlob ? 'sha256' : 'id';
+    const idValue = meta.fromBlob ? meta.sha256 : fileId;
+
+    for (let offset = 0; offset < meta.size_bytes; offset += chunkBytes) {
+      // SUBSTRING is 1-based over the stored bytes.
+      const [row] = await this.fileRepo.query(
+        `SELECT SUBSTRING(\`${column}\`, ?, ?) AS part FROM \`${table}\` WHERE \`${idColumn}\` = ? LIMIT 1`,
+        [offset + 1, chunkBytes, idValue],
+      );
+      const part: Buffer | null = row?.part ?? null;
+      if (!part || part.length === 0) break;
+      yield part;
+    }
+  }
+
+  /** Delivery metadata without pulling the bytes. */
+  async describeForDelivery(deviceIdString: string, fileId: number) {
+    const device = await this.deviceRepo.findOne({ where: { device_id: deviceIdString } });
+    if (!device) throw new AppError('Device not found', 404);
+
+    const file = await this.fileRepo.findOne({ where: { id: fileId, device_id: device.id } });
+    if (!file) throw new AppError('File not found', 404);
+    if (new Date() > new Date(file.expires_at)) throw new AppError('This file has expired', 410);
+
+    const [inline] = await this.fileRepo.query(
+      'SELECT LENGTH(content) AS length FROM device_file_transfers WHERE id = ? LIMIT 1',
+      [fileId],
+    );
+    const inlineLength = Number(inline?.length ?? 0);
+    if (inlineLength === 0) {
+      const [blob] = await this.blobRepo.query(
+        'SELECT LENGTH(content) AS length FROM device_file_blobs WHERE sha256 = ? LIMIT 1',
+        [file.sha256],
+      );
+      if (!Number(blob?.length ?? 0)) throw new AppError('File content is no longer available', 410);
+    }
+
+    return {
+      file_name: file.file_name,
+      mime_type: file.mime_type,
+      size_bytes: file.size_bytes,
+      sha256: file.sha256,
+      fromBlob: inlineLength === 0,
+    };
+  }
+
   async loadForDelivery(
     deviceIdString: string,
     fileId: number,
