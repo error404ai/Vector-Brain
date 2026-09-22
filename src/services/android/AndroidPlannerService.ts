@@ -427,6 +427,8 @@ global.prompts.set(GlobalPromptKey.planner_example, ANDROID_PLANNER_EXAMPLES);
 @Service()
 export class AndroidPlannerService {
   private agentTaskRepo = AppDataSource.getRepository(AgentTask);
+  /** Set once the process has been told to stop; finished runs then leave the DB alone. */
+  private shuttingDown = false;
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
   private activeTasks = new Map<
     number,
@@ -455,6 +457,56 @@ export class AndroidPlannerService {
     // timer. unref() so the timer never keeps a shutting-down process alive.
     setTimeout(() => void this.sweepExpiredLeases(), 5_000).unref();
     setInterval(() => void this.sweepExpiredLeases(), LEASE_SWEEP_MS).unref();
+
+    // A deploy stops the old container with SIGTERM. Close out our own runs
+    // right away (instead of waiting for their leases to expire) and stop the
+    // phones, so a device is never left acting for a process that is gone.
+    process.once('SIGTERM', () => void this.shutdown('SIGTERM'));
+    process.once('SIGINT', () => void this.shutdown('SIGINT'));
+  }
+
+  private async shutdown(signal: string): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    const running = Array.from(this.activeTasks.entries()).filter(([, entry]) => !entry.cancelled);
+    Logger.warn(`[AndroidPlanner] ${signal} received — interrupting ${running.length} running task(s).`);
+
+    const message = 'Task stopped: the server was restarting (a deploy or restart). Run it again to continue.';
+    await Promise.allSettled(
+      running.map(async ([taskId, entry]) => {
+        entry.cancelled = true;
+        try {
+          if (entry.eko && entry.ekoTaskId) entry.eko.abortTask(entry.ekoTaskId, 'Server shutting down');
+        } catch {
+          // best effort
+        }
+        this.gatewayService.cancelDeviceActions(entry.deviceId);
+        this.gatewayService.setAutomationSession(entry.deviceId, false);
+        const task = await this.agentTaskRepo.findOne({ where: { id: taskId }, select: ['id', 'user_id', 'device_id'] });
+        await this.agentTaskRepo.update(
+          { id: taskId, status: 'RUNNING' },
+          {
+            status: 'INTERRUPTED',
+            reason_code: 'SERVER_RESTART',
+            success: false,
+            message,
+            finished_at: new Date(),
+            lease_until: null,
+          },
+        );
+        if (task) {
+          this.gatewayService.broadcastToUser(task.user_id, 'task:error', {
+            taskId,
+            deviceId: task.device_id,
+            error: message,
+            reasonCode: 'SERVER_RESTART',
+          });
+        }
+      }),
+    );
+    // Give the socket messages a moment to flush, then exit — without a handler
+    // Node would have died instantly; with one it must leave on its own.
+    setTimeout(() => process.exit(0), 1_500).unref();
   }
 
   /**
@@ -500,6 +552,7 @@ export class AndroidPlannerService {
             taskId: task.id,
             deviceId: task.device_id,
             error: message,
+            reasonCode: 'SERVER_RESTART',
           });
         }
       }
@@ -1228,7 +1281,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       agentTask.reason_code = terminal.reason;
       agentTask.finished_at = new Date();
       agentTask.lease_until = null;
-      await this.agentTaskRepo.save(agentTask);
+      if (!this.shuttingDown) await this.agentTaskRepo.save(agentTask);
 
       if (!wasCancelled) {
         this.gatewayService.broadcastToUser(userId, 'task:completed', {
@@ -1237,6 +1290,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           success: agentTask.success,
           message: agentTask.message,
           totalSteps: stepCount,
+          reasonCode: agentTask.reason_code,
         });
       }
     } catch (err: any) {
@@ -1257,6 +1311,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           taskId: agentTask.id,
           deviceId: deviceDbId,
           error: err.message,
+          reasonCode: agentTask.reason_code,
         });
       }
     } finally {

@@ -1,6 +1,6 @@
 import { Box } from '@mui/material';
 
-export type FleetDeviceState = 'running' | 'failed' | 'completed' | 'idle' | 'offline';
+export type FleetDeviceState = 'running' | 'failed' | 'completed' | 'interrupted' | 'cancelled' | 'idle' | 'offline';
 
 interface FleetStatusSpineProps {
   state: FleetDeviceState;
@@ -23,6 +23,8 @@ export default function FleetStatusSpine({ state }: FleetStatusSpineProps) {
     running: 'primary.main',
     failed: 'error.main',
     completed: '#059669',
+    interrupted: '#7c3aed',
+    cancelled: 'grey.500',
     idle: 'grey.400',
     offline: 'grey.300',
   }[state];

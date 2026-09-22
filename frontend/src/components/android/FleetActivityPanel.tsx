@@ -5,6 +5,9 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ReplayIcon from '@mui/icons-material/Replay';
+import BlockIcon from '@mui/icons-material/Block';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import { reasonLabel } from '@/components/android/taskReasons';
 import {
   Box,
   Button,
@@ -18,7 +21,27 @@ import {
 } from '@mui/material';
 import { memo, useMemo, useState } from 'react';
 
-type Filter = 'all' | 'failed' | 'success';
+type Filter = 'all' | 'failed' | 'success' | 'stopped';
+
+type Outcome = 'running' | 'success' | 'failed' | 'interrupted' | 'cancelled';
+
+/** Prefers the stored status; falls back to the old success flag for older rows. */
+function outcomeOf(task: AndroidAgentTask): Outcome {
+  if (task.is_running || task.status === 'RUNNING') return 'running';
+  if (task.status === 'SUCCEEDED') return 'success';
+  if (task.status === 'INTERRUPTED') return 'interrupted';
+  if (task.status === 'CANCELLED') return 'cancelled';
+  if (task.status === 'FAILED') return 'failed';
+  return task.success ? 'success' : 'failed';
+}
+
+const OUTCOME_COLOR: Record<Outcome, string> = {
+  running: '#2563eb',
+  success: '#059669',
+  failed: '#dc2626',
+  interrupted: '#7c3aed',
+  cancelled: '#64748b',
+};
 
 /**
  * A single place that answers "what happened across the fleet?" — which phones
@@ -61,17 +84,21 @@ function FleetActivityPanel({
     let running = 0;
     let success = 0;
     let failed = 0;
+    let stopped = 0;
     for (const task of recent) {
-      if (task.is_running) running += 1;
-      else if (task.success) success += 1;
-      else failed += 1;
+      const outcome = outcomeOf(task);
+      if (outcome === 'running') running += 1;
+      else if (outcome === 'success') success += 1;
+      else if (outcome === 'failed') failed += 1;
+      else stopped += 1;
     }
-    return { running, success, failed, total: recent.length };
+    return { running, success, failed, stopped, total: recent.length };
   }, [recent]);
 
   const shown = useMemo(() => {
-    if (filter === 'failed') return recent.filter((t) => !t.is_running && !t.success);
-    if (filter === 'success') return recent.filter((t) => !t.is_running && t.success);
+    if (filter === 'failed') return recent.filter((t) => outcomeOf(t) === 'failed');
+    if (filter === 'success') return recent.filter((t) => outcomeOf(t) === 'success');
+    if (filter === 'stopped') return recent.filter((t) => ['interrupted', 'cancelled'].includes(outcomeOf(t)));
     return recent;
   }, [recent, filter]);
 
@@ -128,6 +155,7 @@ function FleetActivityPanel({
           {counts.running > 0 && chip('running', counts.running, '#2563eb', 'all')}
           {chip('ok', counts.success, '#059669', 'success')}
           {chip('failed', counts.failed, '#dc2626', 'failed')}
+          {counts.stopped > 0 && chip('stopped', counts.stopped, '#7c3aed', 'stopped')}
         </Stack>
         <IconButton size="small">{open ? <ExpandLessIcon /> : <ExpandMoreIcon />}</IconButton>
       </Stack>
@@ -136,8 +164,10 @@ function FleetActivityPanel({
         <Divider />
         <Box sx={{ maxHeight: 'calc(55vh - 56px)', overflowY: 'auto' }}>
           {shown.map((task) => {
-            const failed = !task.is_running && !task.success;
-            const accent = task.is_running ? '#2563eb' : task.success ? '#059669' : '#dc2626';
+            const outcome = outcomeOf(task);
+            const failed = outcome === 'failed' || outcome === 'interrupted' || outcome === 'cancelled';
+            const accent = OUTCOME_COLOR[outcome];
+            const reason = reasonLabel(task.reason_code);
             return (
               <Stack
                 key={task.id}
@@ -153,10 +183,14 @@ function FleetActivityPanel({
                 }}
               >
                 <Box sx={{ color: accent, display: 'flex' }}>
-                  {task.is_running ? (
+                  {outcome === 'running' ? (
                     <PlayArrowIcon fontSize="small" />
-                  ) : task.success ? (
+                  ) : outcome === 'success' ? (
                     <CheckCircleIcon fontSize="small" />
+                  ) : outcome === 'interrupted' ? (
+                    <RestartAltIcon fontSize="small" />
+                  ) : outcome === 'cancelled' ? (
+                    <BlockIcon fontSize="small" />
                   ) : (
                     <ErrorOutlineIcon fontSize="small" />
                   )}
@@ -167,10 +201,10 @@ function FleetActivityPanel({
                     {deviceName(task.device_id)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
-                    {task.is_running
+                    {outcome === 'running'
                       ? task.prompt || 'Running…'
                       : failed
-                        ? task.message || 'Failed'
+                        ? reason || task.message || 'Failed'
                         : task.message || task.prompt || 'Completed'}
                   </Typography>
                 </Box>
@@ -184,7 +218,7 @@ function FleetActivityPanel({
 
                 {failed && task.device_id != null && task.prompt && (
                   <Tooltip title="Retry this task">
-                    <IconButton size="small" sx={{ color: '#dc2626' }} onClick={() => onRetry(task.device_id as number, task.prompt)}>
+                    <IconButton size="small" sx={{ color: accent }} onClick={() => onRetry(task.device_id as number, task.prompt)}>
                       <ReplayIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>

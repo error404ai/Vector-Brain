@@ -51,6 +51,8 @@ export interface AndroidAgentTask {
   total_steps: number;
   total_duration_seconds: number;
   is_running?: boolean;
+  status?: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
+  reason_code?: string | null;
   created_at: string;
   updated_at?: string;
 }

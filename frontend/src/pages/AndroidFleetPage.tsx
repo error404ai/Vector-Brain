@@ -21,6 +21,7 @@ import {
   type FleetStatus,
 } from '@/components/android/FleetStatusUI';
 import FleetStatusSpine from '@/components/android/FleetStatusSpine';
+import { isInterruption } from '@/components/android/taskReasons';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -114,6 +115,8 @@ interface DeviceRuntime {
   finishedAt?: number;
   finishedOk?: boolean;
   finishedMessage?: string;
+  /** Backend reason code for a finished run (SERVER_RESTART, USER_CANCELLED, ...). */
+  finishedReason?: string;
   startError?: string;
 }
 
@@ -452,6 +455,7 @@ export default function AndroidFleetPage() {
               finishedAt: Date.now(),
               finishedOk: Boolean(payload.success),
               finishedMessage: payload.message,
+              finishedReason: payload.reasonCode ?? undefined,
             });
             break;
           case 'task:cancelled':
@@ -460,6 +464,7 @@ export default function AndroidFleetPage() {
               finishedAt: Date.now(),
               finishedOk: false,
               finishedMessage: 'Cancelled',
+              finishedReason: 'USER_CANCELLED',
             });
             break;
           case 'task:error':
@@ -468,6 +473,7 @@ export default function AndroidFleetPage() {
               finishedAt: Date.now(),
               finishedOk: false,
               finishedMessage: payload.error,
+              finishedReason: payload.reasonCode ?? undefined,
             });
             break;
           default:
@@ -527,7 +533,12 @@ export default function AndroidFleetPage() {
     const state = runtime[device.id];
     if (state?.startError) return 'failed';
     if (state?.isRunning) return 'running';
-    if (state?.finishedAt) return state.finishedOk ? 'completed' : 'failed';
+    if (state?.finishedAt) {
+      if (state.finishedOk) return 'completed';
+      if (isInterruption(state.finishedReason)) return 'interrupted';
+      if (state.finishedReason === 'USER_CANCELLED') return 'cancelled';
+      return 'failed';
+    }
     if (queuedByDevice.has(device.id)) return 'waiting';
     // Connected but the accessibility service is off — after a reboot Android
     // disables it, and the socket reconnects on its own, so the device reads
@@ -543,7 +554,7 @@ export default function AndroidFleetPage() {
       acc[deviceStatusOf(device)] += 1;
       return acc;
     },
-    { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, needs_setup: 0, offline: 0 } as FleetCounts,
+    { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, needs_setup: 0, interrupted: 0, cancelled: 0, offline: 0 } as FleetCounts,
   );
 
   // When a status filter is active, a device is shown only if it matches.
@@ -620,17 +631,17 @@ export default function AndroidFleetPage() {
                 }}
               >
                 <FleetStatusSpine
-                  state={
-                    state.isRunning
-                      ? 'running'
-                      : state.startError || (state.finishedAt && !state.finishedOk)
-                        ? 'failed'
-                        : state.finishedAt && state.finishedOk
-                          ? 'completed'
-                          : isOnline
-                            ? 'idle'
-                            : 'offline'
-                  }
+                  state={(() => {
+                    const current = deviceStatusOf(device);
+                    return current === 'running' ||
+                      current === 'failed' ||
+                      current === 'completed' ||
+                      current === 'interrupted' ||
+                      current === 'cancelled' ||
+                      current === 'offline'
+                      ? current
+                      : 'idle';
+                  })()}
                 />
                 {/* The lane's colour, inset beside the status spine, so which
                     proxy a phone is on is readable without opening anything. */}
@@ -785,7 +796,8 @@ export default function AndroidFleetPage() {
                 <CardContent sx={{ py: 1.25, flexGrow: 1, '&:last-child': { pb: 1.25 } }}>
                   {(() => {
                     const status = deviceStatusOf(device);
-                    const failed = status === 'failed';
+                    // Anything that ended without finishing can be retried.
+                    const failed = status === 'failed' || status === 'interrupted' || status === 'cancelled';
                     const detail = state.startError
                       || (state.isRunning ? state.lastThought || state.prompt || 'Working…' : '')
                       || (state.finishedAt ? state.finishedMessage ?? '' : '');

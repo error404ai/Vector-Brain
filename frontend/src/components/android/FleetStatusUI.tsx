@@ -1,3 +1,5 @@
+import BlockIcon from '@mui/icons-material/Block';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -22,6 +24,8 @@ export type FleetStatus =
   | 'completed'
   | 'idle'
   | 'needs_setup'
+  | 'interrupted'
+  | 'cancelled'
   | 'offline';
 
 interface StatusStyle {
@@ -39,6 +43,8 @@ const STATUS_STYLES: Record<FleetStatus, StatusStyle> = {
   failed: { label: 'Failed', accent: '#dc2626', surface: alpha('#dc2626', 0.10), icon: <ErrorOutlineIcon fontSize="small" /> },
   completed: { label: 'Completed', accent: '#059669', surface: alpha('#059669', 0.10), icon: <CheckCircleIcon fontSize="small" /> },
   idle: { label: 'Ready', accent: '#6b7280', surface: alpha('#6b7280', 0.10), icon: <CheckCircleOutlineIcon fontSize="small" /> },
+  interrupted: { label: 'Interrupted', accent: '#7c3aed', surface: alpha('#7c3aed', 0.10), icon: <RestartAltIcon fontSize="small" /> },
+  cancelled: { label: 'Cancelled', accent: '#64748b', surface: alpha('#64748b', 0.12), icon: <BlockIcon fontSize="small" /> },
   needs_setup: { label: 'Service needed', accent: '#ea580c', surface: alpha('#ea580c', 0.12), icon: <ReportProblemIcon fontSize="small" /> },
   offline: { label: 'Offline', accent: '#9ca3af', surface: alpha('#9ca3af', 0.14), icon: <WifiOffIcon fontSize="small" /> },
 };
@@ -243,6 +249,8 @@ export interface FleetCounts {
   completed: number;
   idle: number;
   needs_setup: number;
+  interrupted: number;
+  cancelled: number;
   offline: number;
 }
 
@@ -265,6 +273,8 @@ export function FleetStatusSummary({
     { key: 'running', count: counts.running },
     { key: 'waiting', count: counts.waiting },
     { key: 'failed', count: counts.failed },
+    { key: 'interrupted', count: counts.interrupted },
+    { key: 'cancelled', count: counts.cancelled },
     { key: 'completed', count: counts.completed },
     { key: 'idle', count: counts.idle },
     { key: 'needs_setup', count: counts.needs_setup },
@@ -288,7 +298,10 @@ export function FleetStatusSummary({
         {counts.total} devices
       </Box>
 
-      {chips.map(({ key, count }) => {
+      {chips
+        // Interrupted and Cancelled only appear when something is in them.
+        .filter(({ key, count }) => !((key === 'interrupted' || key === 'cancelled') && count === 0 && activeFilter !== key))
+        .map(({ key, count }) => {
         const accent = statusAccent(key);
         const active = activeFilter === key;
         const style = STATUS_STYLES[key];
