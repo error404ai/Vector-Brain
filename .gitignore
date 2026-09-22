@@ -47,4 +47,4 @@ public/vite.svg
 public/fleet/
 
 # Test harness run logs
-test/harness/.logs/
+test/harness/logs/

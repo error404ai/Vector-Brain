@@ -37,7 +37,7 @@ for (const key of ['MYSQLHOST', 'MYSQLPORT', 'MYSQLUSERNAME', 'MYSQLPASSWORD', '
 }
 const BASE = `http://127.0.0.1:${env.PORT}`;
 const WS = `ws://127.0.0.1:${env.PORT}/ws/android`;
-const logDir = path.join(here, '.logs');
+const logDir = path.join(here, 'logs');
 fs.mkdirSync(logDir, { recursive: true });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,6 +52,17 @@ async function resetDatabase() {
     user: env.MYSQLUSERNAME,
     password: env.MYSQLPASSWORD,
   });
+  // Same sql_mode as MySQL 8 in CI. MariaDB's looser default quietly coerced
+  // a NULL into a NOT NULL column that CI rejected; this makes the local run
+  // refuse it too. GLOBAL so the backend's own pool picks it up. (Reserved
+  // words still differ — MySQL 8 locally is the only full match for CI.)
+  try {
+    await admin.query(
+      "SET GLOBAL sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'",
+    );
+  } catch (err) {
+    log(`! could not set strict sql_mode (${err.code ?? err.message}) — run as a user with SUPER/SYSTEM_VARIABLES_ADMIN`);
+  }
   await admin.query(`DROP DATABASE IF EXISTS \`${env.DATABASE}\``);
   await admin.query(`CREATE DATABASE \`${env.DATABASE}\` CHARACTER SET utf8mb4`);
   await admin.end();
@@ -69,7 +80,7 @@ function runNode(args, label) {
   return new Promise((resolve, reject) => {
     const out = fs.openSync(path.join(logDir, `${label}.log`), 'w');
     const child = spawn(process.execPath, args, { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', out, out] });
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${label} exited with ${code} (see .logs/${label}.log)`))));
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${label} exited with ${code} (see logs/${label}.log)`))));
   });
 }
 
@@ -82,7 +93,7 @@ async function startBackend() {
   backend = spawn(process.execPath, ['dist/app.js'], { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', out, out] });
   const started = Date.now();
   while (Date.now() - started < 40_000) {
-    if (backend.exitCode !== null) throw new Error(`backend exited during boot (see .logs/backend-${backendRuns}.log)`);
+    if (backend.exitCode !== null) throw new Error(`backend exited during boot (see logs/backend-${backendRuns}.log)`);
     try {
       const res = await fetch(`${BASE}/api/health`);
       if (res.ok) return;

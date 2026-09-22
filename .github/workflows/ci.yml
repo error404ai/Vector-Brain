@@ -82,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: harness-logs
-          path: test/harness/.logs/
+          path: test/harness/logs/
 
   promote:
     needs: [build, harness]

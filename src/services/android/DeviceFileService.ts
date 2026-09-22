@@ -386,10 +386,13 @@ export class DeviceFileService {
    * does not match, this throws and nothing is queued.
    */
   private async writeBlobInSlices(sha256: string, content: Buffer, sliceBytes = 4 * 1024 * 1024): Promise<void> {
-    // The metadata row carries no bytes; the slices below do.
+    // The metadata row carries no bytes; the slices below do. `content` is
+    // NOT NULL, so it gets an empty buffer — MariaDB quietly coerces a NULL
+    // there, MySQL 8 does not. (`stored` is also reserved in MySQL 8, which is
+    // why the length aliases below are `stored_bytes`.)
     await this.blobRepo.query(
-      'INSERT IGNORE INTO device_file_blobs (sha256, size_bytes, content, created_at) VALUES (?, ?, NULL, NOW())',
-      [sha256, content.length],
+      'INSERT IGNORE INTO device_file_blobs (sha256, size_bytes, content, created_at) VALUES (?, ?, ?, NOW())',
+      [sha256, content.length, Buffer.alloc(0)],
     );
     await this.blobRepo.query('DELETE FROM device_file_blob_chunks WHERE sha256 = ?', [sha256]);
 
@@ -404,10 +407,10 @@ export class DeviceFileService {
     }
 
     const [row] = await this.blobRepo.query(
-      'SELECT COALESCE(SUM(size_bytes), 0) AS stored FROM device_file_blob_chunks WHERE sha256 = ?',
+      'SELECT COALESCE(SUM(size_bytes), 0) AS stored_bytes FROM device_file_blob_chunks WHERE sha256 = ?',
       [sha256],
     );
-    const stored = Number(row?.stored ?? 0);
+    const stored = Number(row?.stored_bytes ?? 0);
     if (stored !== content.length) {
       // Nothing is queued for a file whose bytes are not all there.
       await this.blobRepo.query('DELETE FROM device_file_blob_chunks WHERE sha256 = ?', [sha256]);
@@ -433,10 +436,10 @@ export class DeviceFileService {
 
     if (!Number(inline?.length ?? 0)) {
       const [chunks] = await this.blobRepo.query(
-        'SELECT COALESCE(SUM(size_bytes), 0) AS stored FROM device_file_blob_chunks WHERE sha256 = ?',
+        'SELECT COALESCE(SUM(size_bytes), 0) AS stored_bytes FROM device_file_blob_chunks WHERE sha256 = ?',
         [file.sha256],
       );
-      if (Number(chunks?.stored ?? 0) > 0) {
+      if (Number(chunks?.stored_bytes ?? 0) > 0) {
         source = 'chunks';
       } else {
         // Files stored before slices existed keep their bytes in one column.
