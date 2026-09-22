@@ -95,6 +95,25 @@ const LEASE_SWEEP_MS = 15_000;
 
 const leaseFromNow = () => new Date(Date.now() + LEASE_MS);
 
+/**
+ * Test-harness only. With AGENT_SIMULATION=1 (and never in production) a run
+ * skips the AI model and instead performs a few real device actions over the
+ * socket, so queues, leases, cancel and shutdown can be exercised against fake
+ * phones without spending tokens. Tune per task with "[sim steps=6 delay=400 fail]"
+ * anywhere in the prompt.
+ */
+const AGENT_SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
+
+function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean } {
+  const match = /\[sim([^\]]*)\]/i.exec(prompt);
+  const text = match?.[1] ?? '';
+  const number = (key: string, fallback: number) => {
+    const found = new RegExp(`${key}=(\\d+)`).exec(text);
+    return found ? Number(found[1]) : fallback;
+  };
+  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text) };
+}
+
 /** Best-effort mapping of a thrown error to a stable reason code. */
 function classifyFailure(message: string | undefined): string {
   const text = (message || '').toLowerCase();
@@ -461,6 +480,7 @@ export class AndroidPlannerService {
     // A deploy stops the old container with SIGTERM. Close out our own runs
     // right away (instead of waiting for their leases to expire) and stop the
     // phones, so a device is never left acting for a process that is gone.
+    if (AGENT_SIMULATION) Logger.warn('[AndroidPlanner] AGENT_SIMULATION is ON — runs use fake steps, not the AI model.');
     process.once('SIGTERM', () => void this.shutdown('SIGTERM'));
     process.once('SIGINT', () => void this.shutdown('SIGINT'));
   }
@@ -1236,7 +1256,30 @@ Use the current visible Android screen and UI state as context. Continue from wh
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         rejectTaskTimeout = reject;
       });
-      const result = await Promise.race([ekoInstance.run(prompt, ekoTaskId), timeoutPromise]);
+      const simulate = async () => {
+        const options = simulationOptions(prompt);
+        for (let index = 0; index < options.steps; index += 1) {
+          if (this.activeTasks.get(agentTask.id)?.cancelled) {
+            wasCancelled = true;
+            return { success: false, stopReason: 'abort', result: 'Cancelled' };
+          }
+          if (guardStopReason) throw new Error(guardStopReason);
+          const outcome = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
+          stepCount += 1;
+          noteActivity();
+          noteDeviceAction();
+          if (outcome.status !== 'SUCCESS') {
+            throw new Error('message' in outcome ? outcome.message : 'Simulated device action failed');
+          }
+          await new Promise((resolve) => setTimeout(resolve, options.delay));
+        }
+        if (options.fail) throw new Error('Simulated failure');
+        return { success: true, stopReason: 'done', result: `Simulated run finished after ${options.steps} steps.` };
+      };
+      const result = (await Promise.race([
+        AGENT_SIMULATION ? simulate() : ekoInstance.run(prompt, ekoTaskId),
+        timeoutPromise,
+      ])) as Awaited<ReturnType<typeof ekoInstance.run>>;
       const terminalAgentResult = (finalMessage || result.result || '').trim();
       const agentFinished = terminalAgentResult.toLowerCase() !== 'unfinished';
       const isSuccess =
