@@ -27,6 +27,8 @@ export class FakePhone {
     this.latencyMs = latencyMs;
     this.accessibility = accessibility;
     this.failActions = false;
+    /** What this phone claims it is doing, as the real companion reports. */
+    this.automationActive = false;
     this.silent = false; // receive actions but never answer (a hung phone)
     this.actionsReceived = 0;
     this.otherEvents = [];
@@ -73,7 +75,7 @@ export class FakePhone {
           setTimeout(() => this.answer(msg), this.latencyMs);
           return;
         }
-        this.otherEvents.push(msg.event);
+        this.otherEvents.push(msg);
       });
 
       ws.on('error', (error) => {
@@ -90,7 +92,15 @@ export class FakePhone {
   sendHeartbeat() {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(
-      JSON.stringify({ event: 'device:heartbeat', payload: { deviceId: this.deviceId, capabilities: this.capabilities() } }),
+      JSON.stringify({
+        event: 'device:heartbeat',
+        payload: {
+          deviceId: this.deviceId,
+          capabilities: this.capabilities(),
+          automationActive: this.automationActive,
+          appVersion: '0.9.0-harness',
+        },
+      }),
     );
   }
 

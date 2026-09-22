@@ -67,6 +67,7 @@ export class AndroidDevice {
     screenCapture: boolean;
     screenWidth?: number;
     screenHeight?: number;
+    appVersion?: string;
   } | null;
 
   @CreateDateColumn({ type: 'datetime' })

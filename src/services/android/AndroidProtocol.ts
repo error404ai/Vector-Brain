@@ -140,6 +140,8 @@ export interface DeviceCapabilities {
   screenCapture: boolean;
   screenWidth?: number;
   screenHeight?: number;
+  /** Companion build the phone is running — shows who still needs an update. */
+  appVersion?: string;
 }
 
 // WebSocket Message Envelopes
@@ -161,6 +163,15 @@ export type AndroidWsClientMessage =
         deviceId: string;
         foregroundPackage?: string;
         batteryLevel?: number;
+        /**
+         * What the phone believes it is doing. When it says a run is in
+         * progress and the server has no record of one — the usual aftermath of
+         * a restart — the server tells it to stand down, instead of leaving the
+         * companion stuck on "task in progress" forever.
+         */
+        automationActive?: boolean;
+        /** Companion build, recorded so a fleet can be checked for stale APKs. */
+        appVersion?: string;
         capabilities?: DeviceCapabilities;
       };
     }

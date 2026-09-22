@@ -1,3 +1,5 @@
+import { AgentTask } from '@/entities/AgentTask';
+import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction } from './AndroidProtocol';
 import { AndroidDeviceService } from './AndroidDeviceService';
@@ -141,16 +143,23 @@ export class AndroidGatewayService {
           }
           const devId = this.socketToDeviceId.get(ws) || authenticatedDeviceId;
           const now = Date.now();
-          const capabilities = JSON.stringify(msg.payload.capabilities || {});
+          // The phone reports its build alongside its capabilities; keeping it
+          // on the device record is what makes "who is still on the old APK?"
+          // answerable without walking round the desk.
+          const reported = msg.payload.capabilities
+            ? { ...msg.payload.capabilities, ...(msg.payload.appVersion ? { appVersion: msg.payload.appVersion } : {}) }
+            : msg.payload.capabilities;
+          const capabilities = JSON.stringify(reported || {});
           const lastPersistence = this.lastHeartbeatPersistence.get(devId);
           if (
             !lastPersistence ||
             now - lastPersistence.at >= 30_000 ||
             capabilities !== lastPersistence.capabilities
           ) {
-            await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, msg.payload.capabilities);
+            await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, reported);
             this.lastHeartbeatPersistence.set(devId, { at: now, capabilities });
           }
+          if (msg.payload.automationActive) await this.reconcileAutomationSession(devId);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ event: 'server:heartbeat_ack', timestamp: Date.now() }));
           }
@@ -356,6 +365,34 @@ export class AndroidGatewayService {
    * Tell the companion when a complete AI task starts/stops. The Android side
    * uses this to keep the device awake between individual model actions.
    */
+  /**
+   * The phone says it is mid-run; the database is the judge.
+   *
+   * After a restart the companion keeps its "task in progress" state — wake
+   * locks held, banner up — for a run nothing is driving any more. Rather than
+   * trusting either side blindly, the stored task decides: no live run means the
+   * phone is told to stand down.
+   */
+  private async reconcileAutomationSession(hardwareDeviceId: string): Promise<void> {
+    try {
+      const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
+      if (!device) return;
+      const live = await AppDataSource.getRepository(AgentTask)
+        .createQueryBuilder('task')
+        .where('task.device_id = :deviceId', { deviceId: device.id })
+        .andWhere('task.status = :status', { status: 'RUNNING' })
+        .andWhere('task.lease_until > :now', { now: new Date() })
+        .getCount();
+      if (live > 0) return;
+
+      Logger.warn(`[AndroidGateway] ${hardwareDeviceId} reported a run nothing owns — telling it to stand down.`);
+      this.cancelDeviceActions(hardwareDeviceId);
+      this.setAutomationSession(hardwareDeviceId, false);
+    } catch (error) {
+      Logger.warn('[AndroidGateway] Could not reconcile the automation session', error);
+    }
+  }
+
   setAutomationSession(deviceId: string, active: boolean) {
     const ws = this.deviceSockets.get(deviceId);
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;

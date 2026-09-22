@@ -119,6 +119,7 @@ export class FleetStateService {
         model: device.device_model,
         online,
         accessibility: device.capabilities?.accessibility ?? null,
+        app_version: device.capabilities?.appVersion ?? null,
         tag: device.tag,
         proxy_id: device.proxy_id ?? null,
         last_seen_at: device.last_seen_at,

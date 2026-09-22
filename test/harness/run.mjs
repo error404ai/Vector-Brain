@@ -368,6 +368,45 @@ const scenarios = [
     },
   },
   {
+    name: 'a phone stuck on "in progress" is told to stand down',
+    async run() {
+      const phone = phones.free1.phone;
+      phone.otherEvents.length = 0;
+      // Nothing is running for this device, but the phone believes otherwise —
+      // exactly what a companion looks like after the server restarted under it.
+      phone.automationActive = true;
+      phone.sendHeartbeat();
+
+      const told = await waitFor(
+        async () =>
+          phone.otherEvents.find(
+            (event) => event.event === 'server:automation_session' && event.payload?.active === false,
+          ),
+        15_000,
+        250,
+      );
+      phone.automationActive = false;
+      if (!told) return 'server never told the phone to stop';
+
+      // And it must not do that to a phone that really is running.
+      const t0 = Date.now();
+      await run('free2', 'open chrome [sim steps=20 delay=400]');
+      const running = await waitFor(async () => (await tasksSince(t0, ['free2'])).find((r) => r.status === 'RUNNING'), 15_000);
+      if (!running) return 'second phone never started';
+      const busy = phones.free2.phone;
+      busy.otherEvents.length = 0;
+      busy.automationActive = true;
+      busy.sendHeartbeat();
+      await sleep(3_000);
+      const wrongly = busy.otherEvents.find(
+        (event) => event.event === 'server:automation_session' && event.payload?.active === false,
+      );
+      busy.automationActive = false;
+      await api('POST', `/android/agent/cancel/${running.id}`);
+      if (wrongly) return 'a genuinely running phone was told to stop';
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();
