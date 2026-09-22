@@ -30,6 +30,10 @@ const env = Object.fromEntries(
     .filter((line) => line.trim() && !line.startsWith('#'))
     .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
 );
+// CI supplies its own database; everything else stays as the file says.
+for (const key of ['MYSQLHOST', 'MYSQLPORT', 'MYSQLUSERNAME', 'MYSQLPASSWORD', 'DATABASE']) {
+  if (process.env[key]) env[key] = process.env[key];
+}
 const BASE = `http://127.0.0.1:${env.PORT}`;
 const WS = `ws://127.0.0.1:${env.PORT}/ws/android`;
 const logDir = path.join(here, '.logs');

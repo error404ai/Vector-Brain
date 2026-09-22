@@ -1,9 +1,9 @@
-# Phase 0 — build gate.
+# Build gate.
 #
-# All work is pushed to `develop`. This workflow builds the backend and the
-# frontend exactly as the production Dockerfile does. Only if both builds pass
-# does it fast-forward `production` to the same commit, which is what Coolify
-# watches and deploys. A change that doesn't compile can never reach production.
+# Work is pushed to `develop`. The backend and frontend are built exactly as the
+# production Dockerfile does, then the test harness runs the real server against
+# a throwaway database with fake phones. Only when both pass is `production`
+# fast-forwarded — which is what Coolify watches and deploys.
 name: Build gate
 
 on:
@@ -23,33 +23,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout develop
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node 24 (same as Dockerfile.prod)
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
-
       - name: Enable pnpm via corepack
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Backend — install
         run: pnpm install --frozen-lockfile
-
       - name: Backend — build (tsc)
         run: pnpm run build
 
       - name: Frontend — install
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-
       - name: Frontend — build (tsc + vite)
         working-directory: frontend
         run: pnpm run build
 
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: harness
+          MYSQL_DATABASE: vb_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pharness"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      MYSQLHOST: 127.0.0.1
+      MYSQLPORT: '3306'
+      MYSQLUSERNAME: root
+      MYSQLPASSWORD: harness
+      DATABASE: vb_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@latest --activate
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build backend (the harness runs dist/app.js)
+        run: pnpm run build
+      - name: Run harness
+        run: pnpm run harness
+      - name: Upload harness logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-logs
+          path: test/harness/.logs/
+
+  promote:
+    needs: [build, harness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # Fast-forward only. If someone pushed straight to production and it is no
       # longer an ancestor of develop, this fails loudly instead of overwriting.
       - name: Promote to production
