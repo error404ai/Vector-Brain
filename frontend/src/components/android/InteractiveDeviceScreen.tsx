@@ -285,13 +285,6 @@ export default function InteractiveDeviceScreen({
         </Typography>
       )}
 
-      {/* Where the feed's time goes — only while control is on. */}
-      {interactive && frameStats && (
-        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5, fontVariantNumeric: 'tabular-nums' }}>
-          live frame {frameStats.kb} KB · phone {frameStats.device} ms · link {frameStats.rest} ms
-        </Typography>
-      )}
-
       {/* Screen */}
       <Box
         sx={{
@@ -342,6 +335,14 @@ export default function InteractiveDeviceScreen({
           </Tooltip>
         )}
       </Box>
+
+      {/* Where a frame's time goes, measured on the taps that still fetch one.
+          Kept under the screen so it never sits on top of the picture. */}
+      {interactive && frameStats && (
+        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5, fontVariantNumeric: 'tabular-nums' }}>
+          frame {frameStats.kb} KB · phone {frameStats.device} ms · link {frameStats.rest} ms
+        </Typography>
+      )}
 
       {/* Navigation + keyboard */}
       {interactive && (
