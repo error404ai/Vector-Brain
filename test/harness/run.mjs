@@ -503,6 +503,56 @@ const scenarios = [
     },
   },
   {
+    name: 'a run that needs no IP skips the lane without holding it',
+    async run() {
+      const t0 = Date.now();
+      const rotationsBefore = rotation.calls.length;
+
+      // A long browsing run takes the lane.
+      await run('lane1', 'open chrome and read the news [sim steps=25 delay=400]');
+      const holder = await waitFor(async () => (await tasksSince(t0, ['lane1'])).find((r) => r.status === 'RUNNING'), 20_000);
+      if (!holder) return 'the lane holder never started';
+
+      // A settings change on another phone of the same lane: no exit IP, so it
+      // should start straight away rather than queue behind the browsing run.
+      const exempt = await api('POST', '/android/agent/run', {
+        device_id: phones.lane2.dbId,
+        prompt: 'open date and time settings [sim steps=3 delay=200]',
+        max_steps: 50,
+        skip_proxy_lane: true,
+      });
+      if (exempt?.data?.queued) return 'the exempt run was queued anyway';
+
+      const ranBoth = await waitFor(async () => {
+        const rows = await tasksSince(t0, ['lane1', 'lane2']);
+        return rows.filter((r) => r.status === 'RUNNING').length >= 2 ? rows : null;
+      }, 15_000, 200);
+      if (!ranBoth) return 'the exempt run did not run alongside the lane holder';
+
+      // And a normal run on the same lane must still wait its turn.
+      const normal = await api('POST', '/android/agent/run', {
+        device_id: phones.lane3.dbId,
+        prompt: 'open chrome and search something [sim steps=3 delay=200]',
+        max_steps: 50,
+      });
+      if (!normal?.data?.queued) return 'a normal run skipped the lane too';
+
+      const exemptDone = await waitFor(async () => {
+        const [row] = await tasksSince(t0, ['lane2']);
+        return row && TERMINAL.has(row.status) ? row : null;
+      }, 30_000);
+      if (!exemptDone) return 'the exempt run never finished';
+      if (exemptDone.status !== 'SUCCEEDED') return `exempt run ended as ${exemptDone.status}/${exemptDone.reason_code}`;
+      // Finishing it must not have rotated the provider: it never used the IP.
+      if (rotation.calls.length !== rotationsBefore) return 'an exempt run rotated the proxy';
+
+      await api('DELETE', '/device-proxy/queue/all');
+      const running = (await tasksSince(t0, ['lane1'])).find((r) => r.status === 'RUNNING');
+      if (running) await api('POST', `/android/agent/cancel/${running.id}`);
+      await sleep(3_000);
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();

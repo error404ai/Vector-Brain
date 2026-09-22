@@ -71,6 +71,9 @@ export class TaskQueueService {
       .where('device.proxy_id = :proxyId', { proxyId })
       .andWhere('task.status = :status', { status: 'RUNNING' })
       .andWhere('task.lease_until > :now', { now: new Date() })
+      // A run that needs no exit IP shares the phone, not the address, so it
+      // must not make the lane look occupied.
+      .andWhere('task.lane_exempt = 0')
       .getRawMany<{ device_id: number }>();
     return new Set(rows.map((row) => Number(row.device_id)));
   }

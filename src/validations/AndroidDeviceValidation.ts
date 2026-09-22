@@ -43,6 +43,9 @@ export const DispatchAndroidPromptValidation = z.object({
   ai_config_id: z.number().optional(),
   /** Keep every screen frame so the run can be replayed or shared. */
   record: z.boolean().optional(),
+
+  /** The run needs no exit IP, so it neither waits for a proxy lane nor holds one. */
+  skip_proxy_lane: z.boolean().optional(),
 });
 
 const nodeSelectorShape = {

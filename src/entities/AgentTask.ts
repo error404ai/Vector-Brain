@@ -44,6 +44,10 @@ export class AgentTask {
   @Column({ type: 'varchar', length: 40, nullable: true })
   reason_code: string | null;
 
+  /** True when this run needs no exit IP, so it neither waits for a proxy lane nor holds one. */
+  @Column({ type: 'boolean', default: false })
+  lane_exempt: boolean;
+
   @Column({ type: 'datetime', nullable: true })
   started_at: Date | null;
 

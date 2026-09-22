@@ -37,6 +37,7 @@ export class AndroidAgentController {
       // task silently used the active provider.
       request.ai_config_id,
       Boolean(request.record),
+      Boolean(request.skip_proxy_lane),
     );
   }
 

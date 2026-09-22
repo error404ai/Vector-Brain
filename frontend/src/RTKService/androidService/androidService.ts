@@ -127,6 +127,8 @@ export interface DispatchAndroidPromptPayload {
   ai_config_id?: number;
   /** Keep every screen frame so the run can be replayed and shared. */
   record?: boolean;
+  /** The run needs no exit IP, so it neither waits for a proxy lane nor holds one. */
+  skip_proxy_lane?: boolean;
 }
 
 export interface DirectActionPayload {

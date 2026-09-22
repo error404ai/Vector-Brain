@@ -49,6 +49,7 @@ import {
   Card,
   CardContent,
   Checkbox,
+  FormControlLabel,
   Chip,
   CircularProgress,
   Dialog,
@@ -303,6 +304,12 @@ export default function AndroidFleetPage() {
   };
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(200);
+  /**
+   * Some work never touches the internet — a settings change, something inside
+   * an app — so there is no exit IP to share and no reason to wait for the
+   * phone's proxy lane. Unassigning the proxy used to be the only way round it.
+   */
+  const [skipProxyLane, setSkipProxyLane] = useState(false);
   const [statusFilter, setStatusFilter] = useState<FleetStatus | null>(null);
   // One tag at a time, like the status filter. Keyed by lowercased tag text;
   // UNTAGGED picks phones with no tag.
@@ -1174,6 +1181,7 @@ export default function AndroidFleetPage() {
           prompt: text,
           max_steps: maxSteps,
           ai_config_id: deviceConfigIds[deviceId] || broadcastConfigId || undefined,
+          skip_proxy_lane: skipProxyLane || undefined,
         }).unwrap(),
       ),
     );
@@ -1781,6 +1789,26 @@ export default function AndroidFleetPage() {
               },
             }}
           />
+          <Tooltip title="For work that never opens the internet — settings, in-app steps. These run straight away instead of waiting for the proxy lane, and they neither hold the lane nor rotate its IP.">
+            <FormControlLabel
+              sx={{ mr: 0, ml: 0.5 }}
+              control={
+                <Checkbox
+                  size="small"
+                  checked={skipProxyLane}
+                  onChange={(event) => setSkipProxyLane(event.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                  No internet needed
+                  <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                    skip the proxy queue
+                  </Typography>
+                </Typography>
+              }
+            />
+          </Tooltip>
           <Button
             variant="contained"
             disableElevation

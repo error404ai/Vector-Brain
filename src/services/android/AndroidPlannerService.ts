@@ -452,7 +452,7 @@ export class AndroidPlannerService {
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
   private activeTasks = new Map<
     number,
-    { cancelled: boolean; deviceId: string; deviceDbId?: number; eko?: Eko; ekoTaskId?: string }
+    { cancelled: boolean; deviceId: string; deviceDbId?: number; laneExempt?: boolean; eko?: Eko; ekoTaskId?: string }
   >();
   private activeDeviceTasks = new Map<string, number>();
   private startingDevices = new Set<string>();
@@ -583,9 +583,15 @@ export class AndroidPlannerService {
   }
 
   /** True while a run is in progress on this device, or about to be. */
+  /**
+   * True while a run is in progress on this device, or about to be.
+   *
+   * The queue asks this to decide whether a lane is occupied, so runs that need
+   * no exit IP are not counted: they share the phone, not the address.
+   */
   private isDeviceBusy(deviceDbId: number): boolean {
     for (const active of this.activeTasks.values()) {
-      if (active.deviceDbId === deviceDbId) return true;
+      if (active.deviceDbId === deviceDbId && !active.laneExempt) return true;
     }
     return false;
   }
@@ -603,6 +609,11 @@ export class AndroidPlannerService {
     aiConfigId?: number,
     /** Keep every screen frame so the run can be shared or replayed later. */
     record = false,
+    /**
+     * The run uses no exit IP — a settings change, something inside an app — so
+     * it neither waits for the phone's proxy lane nor occupies it.
+     */
+    skipProxyLane = false,
   ): Promise<ApiResponse> {
     // A task can pin a specific provider so different devices can run different
     // models simultaneously; otherwise fall back to the user's active config.
@@ -647,7 +658,7 @@ export class AndroidPlannerService {
     // A phone behind a proxy shares one exit IP with the rest of its lane, so it
     // waits its turn instead of starting alongside them. Devices with no proxy
     // skip this entirely and behave exactly as they always have.
-    if (device.proxy_id && !existingTaskId) {
+    if (device.proxy_id && !existingTaskId && !skipProxyLane) {
       // Admission reserves the lane slot as it grants it, so devices dispatched
       // together cannot all be told the lane is free.
       const admitted = await this.taskQueueService.tryAdmit(device.id);
@@ -765,6 +776,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
             started_at: new Date(),
             finished_at: null,
             lease_until: leaseFromNow(),
+            lane_exempt: skipProxyLane,
             total_steps: 0,
             total_duration_seconds: 0,
             logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
@@ -787,6 +799,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           total_steps: 0,
           total_duration_seconds: 0,
           logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
+          lane_exempt: skipProxyLane,
         });
         await this.agentTaskRepo.save(agentTask);
       }
@@ -798,7 +811,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // Keep the device CPU/display active for the complete automation session,
     // including the time spent waiting for the model between device actions.
     this.gatewayService.setAutomationSession(device.device_id, true);
-    this.activeTasks.set(agentTask.id, { cancelled: false, deviceId: device.device_id, deviceDbId: device.id });
+    this.activeTasks.set(agentTask.id, {
+      cancelled: false,
+      deviceId: device.device_id,
+      deviceDbId: device.id,
+      laneExempt: skipProxyLane,
+    });
     this.activeDeviceTasks.set(device.device_id, agentTask.id);
     this.startingDevices.delete(device.device_id);
     const startTime = Date.now();
@@ -1395,6 +1413,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // The slot goes back before rotation, so the lane is free the moment the
       // new IP has settled.
       this.taskQueueService.release(agentTask.device_id);
+
+      // A run that used no exit IP has nothing to rotate away from, and it was
+      // never holding the lane, so neither the provider nor the queue is touched.
+      if (agentTask.lane_exempt) return;
 
       // Rotate first, then let the lane's next phone in — the wait for the new
       // IP to settle happens inside onLaneFreed.
