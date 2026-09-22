@@ -113,9 +113,15 @@ export class AndroidGatewayService {
     }
     this.userWebSockets.get(userId)!.add(ws);
     Logger.info(`[AndroidGateway] Web UI client connected for user ${userId}`);
+    const openedAt = Date.now();
 
-    ws.on('close', () => {
+    ws.on('close', (code: number, reason: Buffer) => {
       this.userWebSockets.get(userId)?.delete(ws);
+      // The dashboard socket was seen reconnecting every ~20s; the code and
+      // lifetime show whether the browser, a proxy timeout or the server ends it.
+      Logger.info(
+        `[AndroidGateway] Web UI client closed for user ${userId} code=${code}${reason?.length ? ` reason="${reason.toString()}"` : ''} after=${Math.round((Date.now() - openedAt) / 1000)}s buffered=${ws.bufferedAmount}`,
+      );
     });
   }
 
@@ -186,7 +192,7 @@ export class AndroidGatewayService {
   /**
    * Cleans up disconnected device WebSocket.
    */
-  async handleDeviceDisconnect(ws: WebSocket) {
+  async handleDeviceDisconnect(ws: WebSocket, code?: number, reason?: string) {
     const deviceId = this.socketToDeviceId.get(ws);
     if (!deviceId) return;
 
@@ -196,7 +202,14 @@ export class AndroidGatewayService {
     // Only mark the device offline when this is still its active socket.
     if (this.deviceSockets.get(deviceId) !== ws) return;
 
-    Logger.info(`[AndroidGateway] Device disconnected: ${deviceId}`);
+    // Close code says who ended it: 1000/1001 the phone closed cleanly, 1006
+    // the connection just died (network, proxy, phone killed the app), 1008 the
+    // server refused it. Silence before the close tells a hung link from a drop.
+    const lastMessageAt = (ws as any).lastMessageAt as number | undefined;
+    const silentFor = lastMessageAt ? `${Math.round((Date.now() - lastMessageAt) / 1000)}s` : 'never spoke';
+    Logger.info(
+      `[AndroidGateway] Device disconnected: ${deviceId} code=${code ?? '?'}${reason ? ` reason="${reason}"` : ''} silent=${silentFor}`,
+    );
     this.deviceSockets.delete(deviceId);
     this.lastHeartbeatPersistence.delete(deviceId);
 

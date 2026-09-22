@@ -65,6 +65,7 @@ export function initializeWebSocketServer(server: http.Server): WebSocketServer 
     }
 
     ws.on('message', (data) => {
+      (ws as any).lastMessageAt = Date.now();
       const str = data.toString();
       if (clientType === 'device') {
         void gatewayService.handleDeviceMessage(ws, str, clientInfo.deviceId).catch((error) => {
@@ -73,9 +74,9 @@ export function initializeWebSocketServer(server: http.Server): WebSocketServer 
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code: number, reason: Buffer) => {
       if (clientType === 'device') {
-        void gatewayService.handleDeviceDisconnect(ws).catch((error) => {
+        void gatewayService.handleDeviceDisconnect(ws, code, reason?.toString()).catch((error) => {
           Logger.error('[WebSocket] Device disconnect handler failed:', error);
         });
       }
