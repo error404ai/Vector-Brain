@@ -224,15 +224,7 @@ export class DeviceFileService {
     // The bytes go in exactly once. If this file (or an identical one) is already
     // stored, the insert is a no-op - that is the whole point of keying on sha256.
     const existing = await this.blobRepo.findOne({ where: { sha256 } });
-    if (!existing) {
-      await this.blobRepo
-        .createQueryBuilder()
-        .insert()
-        .into(DeviceFileBlob)
-        .values({ sha256, size_bytes: content.length, content })
-        .orIgnore() // tolerate a concurrent upload of the same bytes
-        .execute();
-    }
+    if (!existing) await this.writeBlobInSlices(sha256, content);
 
     const records = devices.map((device) =>
       this.fileRepo.create({
@@ -350,20 +342,77 @@ export class DeviceFileService {
    */
   async *streamForDelivery(deviceIdString: string, fileId: number, chunkBytes = 4 * 1024 * 1024) {
     const meta = await this.describeForDelivery(deviceIdString, fileId);
-    const table = meta.fromBlob ? 'device_file_blobs' : 'device_file_transfers';
-    const column = 'content';
-    const idColumn = meta.fromBlob ? 'sha256' : 'id';
-    const idValue = meta.fromBlob ? meta.sha256 : fileId;
+
+    if (meta.source === 'chunks') {
+      const rows: { chunk_index: number }[] = await this.blobRepo.query(
+        'SELECT chunk_index FROM device_file_blob_chunks WHERE sha256 = ? ORDER BY chunk_index ASC',
+        [meta.sha256],
+      );
+      for (const row of rows) {
+        const [chunk] = await this.blobRepo.query(
+          'SELECT content FROM device_file_blob_chunks WHERE sha256 = ? AND chunk_index = ? LIMIT 1',
+          [meta.sha256, row.chunk_index],
+        );
+        if (chunk?.content) yield chunk.content as Buffer;
+      }
+      return;
+    }
+
+    // Inline bytes on the transfer row, or a blob written before slices existed.
+    const table = meta.source === 'blob' ? 'device_file_blobs' : 'device_file_transfers';
+    const idColumn = meta.source === 'blob' ? 'sha256' : 'id';
+    const idValue = meta.source === 'blob' ? meta.sha256 : fileId;
 
     for (let offset = 0; offset < meta.size_bytes; offset += chunkBytes) {
       // SUBSTRING is 1-based over the stored bytes.
       const [row] = await this.fileRepo.query(
-        `SELECT SUBSTRING(\`${column}\`, ?, ?) AS part FROM \`${table}\` WHERE \`${idColumn}\` = ? LIMIT 1`,
+        `SELECT SUBSTRING(content, ?, ?) AS part FROM \`${table}\` WHERE \`${idColumn}\` = ? LIMIT 1`,
         [offset + 1, chunkBytes, idValue],
       );
       const part: Buffer | null = row?.part ?? null;
       if (!part || part.length === 0) break;
       yield part;
+    }
+  }
+
+  /**
+   * Writes a blob a few megabytes at a time.
+   *
+   * MySQL refuses any single statement larger than max_allowed_packet, so a
+   * 24 MB APK sent as one INSERT is rejected outright — and the transfer rows
+   * were still queued afterwards, which is how a phone ended up being offered a
+   * file whose bytes had never been stored and answering "download failed (410)".
+   * The row is created empty and appended to, then checked: if the stored length
+   * does not match, this throws and nothing is queued.
+   */
+  private async writeBlobInSlices(sha256: string, content: Buffer, sliceBytes = 4 * 1024 * 1024): Promise<void> {
+    // The metadata row carries no bytes; the slices below do.
+    await this.blobRepo.query(
+      'INSERT IGNORE INTO device_file_blobs (sha256, size_bytes, content, created_at) VALUES (?, ?, NULL, NOW())',
+      [sha256, content.length],
+    );
+    await this.blobRepo.query('DELETE FROM device_file_blob_chunks WHERE sha256 = ?', [sha256]);
+
+    let index = 0;
+    for (let offset = 0; offset < content.length; offset += sliceBytes) {
+      const slice = content.subarray(offset, Math.min(offset + sliceBytes, content.length));
+      await this.blobRepo.query(
+        'INSERT INTO device_file_blob_chunks (sha256, chunk_index, content, size_bytes) VALUES (?, ?, ?, ?)',
+        [sha256, index, slice, slice.length],
+      );
+      index += 1;
+    }
+
+    const [row] = await this.blobRepo.query(
+      'SELECT COALESCE(SUM(size_bytes), 0) AS stored FROM device_file_blob_chunks WHERE sha256 = ?',
+      [sha256],
+    );
+    const stored = Number(row?.stored ?? 0);
+    if (stored !== content.length) {
+      // Nothing is queued for a file whose bytes are not all there.
+      await this.blobRepo.query('DELETE FROM device_file_blob_chunks WHERE sha256 = ?', [sha256]);
+      await this.blobRepo.query('DELETE FROM device_file_blobs WHERE sha256 = ?', [sha256]);
+      throw new AppError(`The file could not be stored (kept ${stored} of ${content.length} bytes). Please try again.`, 500);
     }
   }
 
@@ -380,13 +429,24 @@ export class DeviceFileService {
       'SELECT LENGTH(content) AS length FROM device_file_transfers WHERE id = ? LIMIT 1',
       [fileId],
     );
-    const inlineLength = Number(inline?.length ?? 0);
-    if (inlineLength === 0) {
-      const [blob] = await this.blobRepo.query(
-        'SELECT LENGTH(content) AS length FROM device_file_blobs WHERE sha256 = ? LIMIT 1',
+    let source: 'inline' | 'chunks' | 'blob' = 'inline';
+
+    if (!Number(inline?.length ?? 0)) {
+      const [chunks] = await this.blobRepo.query(
+        'SELECT COALESCE(SUM(size_bytes), 0) AS stored FROM device_file_blob_chunks WHERE sha256 = ?',
         [file.sha256],
       );
-      if (!Number(blob?.length ?? 0)) throw new AppError('File content is no longer available', 410);
+      if (Number(chunks?.stored ?? 0) > 0) {
+        source = 'chunks';
+      } else {
+        // Files stored before slices existed keep their bytes in one column.
+        const [blob] = await this.blobRepo.query(
+          'SELECT LENGTH(content) AS length FROM device_file_blobs WHERE sha256 = ? LIMIT 1',
+          [file.sha256],
+        );
+        if (!Number(blob?.length ?? 0)) throw new AppError('File content is no longer available', 410);
+        source = 'blob';
+      }
     }
 
     return {
@@ -394,7 +454,7 @@ export class DeviceFileService {
       mime_type: file.mime_type,
       size_bytes: file.size_bytes,
       sha256: file.sha256,
-      fromBlob: inlineLength === 0,
+      source,
     };
   }
 
@@ -511,6 +571,11 @@ export class DeviceFileService {
       await this.blobRepo.query(
         `DELETE b FROM device_file_blobs b
          LEFT JOIN device_file_transfers t ON t.sha256 = b.sha256
+         WHERE t.id IS NULL`,
+      );
+      await this.blobRepo.query(
+        `DELETE c FROM device_file_blob_chunks c
+         LEFT JOIN device_file_transfers t ON t.sha256 = c.sha256
          WHERE t.id IS NULL`,
       );
     } catch {

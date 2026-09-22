@@ -13,6 +13,7 @@
 // and a built backend (pnpm run build).
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -442,6 +443,63 @@ const scenarios = [
       if (!Array.isArray(report.tables) || report.tables.length === 0) return 'no tables reported';
       if (!report.tables.some((t) => t.table_name === 'agent_tasks')) return 'agent_tasks missing from the report';
       if (typeof report.counts?.task_logs !== 'number') return 'counts are missing';
+    },
+  },
+  {
+    name: 'a large file uploads in chunks and downloads back byte for byte',
+    async run() {
+      // Bigger than the inline limit, so it takes the chunked path an APK takes.
+      const payload = crypto.randomBytes(20 * 1024 * 1024);
+      const sha256 = crypto.createHash('sha256').update(payload).digest('hex');
+      const chunkSize = 8 * 1024 * 1024;
+      const totalChunks = Math.ceil(payload.length / chunkSize);
+
+      const init = await api('POST', '/android/files/init', {
+        device_ids: [phones.free1.dbId, phones.free2.dbId],
+        file_name: 'harness.apk',
+        mime_type: 'application/vnd.android.package-archive',
+        size_bytes: payload.length,
+        sha256,
+        total_chunks: totalChunks,
+      });
+      const uploadId = init.data.upload_id;
+
+      for (let index = 0; index < totalChunks; index += 1) {
+        const slice = payload.subarray(index * chunkSize, Math.min((index + 1) * chunkSize, payload.length));
+        const res = await fetch(`${BASE}/api/android/files/chunk?upload_id=${uploadId}&index=${index}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${userToken}` },
+          body: slice,
+        });
+        if (!res.ok) return `chunk ${index} refused: ${res.status} ${(await res.text()).slice(0, 120)}`;
+      }
+      await api('POST', '/android/files/finish', { upload_id: uploadId });
+
+      // Now collect it the way the phone does, with the device's own token.
+      const listed = await fetch(`${BASE}/api/android/companion/files`, {
+        headers: { Authorization: `Bearer ${phones.free1.phone.token}` },
+      }).then((r) => r.json());
+      const entry = (listed.data ?? []).find((f) => f.name === 'harness.apk');
+      if (!entry) return 'the phone was not offered the file';
+
+      const download = await fetch(`${BASE}/api/android/companion/files/${entry.id}/content`, {
+        headers: { Authorization: `Bearer ${phones.free1.phone.token}` },
+      });
+      if (!download.ok) return `download refused: ${download.status} ${(await download.text()).slice(0, 160)}`;
+      const received = Buffer.from(await download.arrayBuffer());
+      if (received.length !== payload.length) return `got ${received.length} bytes, expected ${payload.length}`;
+      if (crypto.createHash('sha256').update(received).digest('hex') !== sha256) return 'downloaded bytes do not match';
+
+      // The second phone must still be able to collect the same stored bytes.
+      const second = await fetch(`${BASE}/api/android/companion/files`, {
+        headers: { Authorization: `Bearer ${phones.free2.phone.token}` },
+      }).then((r) => r.json());
+      const secondEntry = (second.data ?? []).find((f) => f.name === 'harness.apk');
+      if (!secondEntry) return 'the second phone was not offered the file';
+      const secondDownload = await fetch(`${BASE}/api/android/companion/files/${secondEntry.id}/content`, {
+        headers: { Authorization: `Bearer ${phones.free2.phone.token}` },
+      });
+      if (!secondDownload.ok) return `second download refused: ${secondDownload.status}`;
     },
   },
   {
