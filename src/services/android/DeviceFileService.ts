@@ -42,6 +42,13 @@ const UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
  */
 const SERIALIZE_ID_AS_STRING = true;
 
+/**
+ * Unfinished downloads allowed before a transfer is given up on. A phone that
+ * crashes while downloading keeps coming back for the same file; without a cap
+ * it never stays connected long enough to do anything else.
+ */
+const MAX_DOWNLOAD_ATTEMPTS = 3;
+
 /** An in-flight chunked upload, held in memory until finished or expired. */
 interface UploadSession {
   userId: number;
@@ -307,6 +314,20 @@ export class DeviceFileService {
     const device = await this.deviceRepo.findOne({ where: { device_id: deviceIdString } });
     if (!device) return { success: true, data: [], files: [] };
 
+    // Stop offering what this phone has started and never finished too often.
+    await this.fileRepo.query(
+      `UPDATE device_file_transfers
+          SET status = ?, failure_message = ?
+        WHERE device_id = ? AND status = ? AND download_attempts >= ?`,
+      [
+        DeviceFileStatus.FAILED,
+        `The phone started this download ${MAX_DOWNLOAD_ATTEMPTS} times and never finished it (it may be crashing mid-download). Update the app on this phone, then send the file again.`,
+        device.id,
+        DeviceFileStatus.PENDING,
+        MAX_DOWNLOAD_ATTEMPTS,
+      ],
+    );
+
     const files = await this.fileRepo.find({
       where: { device_id: device.id, status: DeviceFileStatus.PENDING },
       order: { created_at: 'ASC' },
@@ -342,6 +363,11 @@ export class DeviceFileService {
    */
   async *streamForDelivery(deviceIdString: string, fileId: number, chunkBytes = 4 * 1024 * 1024) {
     const meta = await this.describeForDelivery(deviceIdString, fileId);
+    // One count per started download; the receipt is what settles the row.
+    await this.fileRepo.query(
+      'UPDATE device_file_transfers SET download_attempts = download_attempts + 1 WHERE id = ? AND status = ?',
+      [fileId, DeviceFileStatus.PENDING],
+    );
 
     if (meta.source === 'chunks') {
       const rows: { chunk_index: number }[] = await this.blobRepo.query(

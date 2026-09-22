@@ -514,6 +514,59 @@ const scenarios = [
     },
   },
   {
+    name: 'a download the phone never finishes is given up on, not offered forever',
+    async run() {
+      // A phone that dies mid-download (old APK, low memory) comes back and asks
+      // for the same file again, dies again, and never reports a result. The
+      // server has to stop offering it, or that phone never stays connected.
+      const payload = crypto.randomBytes(6 * 1024 * 1024);
+      const sha256 = crypto.createHash('sha256').update(payload).digest('hex');
+      const init = await api('POST', '/android/files/init', {
+        device_ids: [phones.free1.dbId],
+        file_name: 'crashes-the-phone.apk',
+        mime_type: 'application/vnd.android.package-archive',
+        size_bytes: payload.length,
+        sha256,
+        total_chunks: 1,
+      });
+      const uploadId = init.data.upload_id;
+      const put = await fetch(`${BASE}/api/android/files/chunk?upload_id=${uploadId}&index=0`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${userToken}` },
+        body: payload,
+      });
+      if (!put.ok) return `chunk refused: ${put.status}`;
+      await api('POST', '/android/files/finish', { upload_id: uploadId });
+
+      const auth = { Authorization: `Bearer ${phones.free1.phone.token}` };
+      const offered = async () => {
+        const listed = await fetch(`${BASE}/api/android/companion/files`, { headers: auth }).then((r) => r.json());
+        return (listed.data ?? []).find((f) => f.name === 'crashes-the-phone.apk');
+      };
+
+      // Three starts that die after the first bytes, never a receipt.
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const entry = await offered();
+        if (!entry) return `not offered on attempt ${attempt} — gave up too early`;
+        const abort = new AbortController();
+        const res = await fetch(`${BASE}/api/android/companion/files/${entry.id}/content`, { headers: auth, signal: abort.signal });
+        if (!res.ok) return `attempt ${attempt} refused: ${res.status}`;
+        const reader = res.body.getReader();
+        await reader.read();
+        abort.abort();
+        await reader.cancel().catch(() => {});
+        await sleep(200);
+      }
+
+      if (await offered()) return 'still offered after three unfinished downloads';
+      const [[row]] = await db.query(
+        "SELECT status, failure_message FROM device_file_transfers WHERE file_name = 'crashes-the-phone.apk' LIMIT 1",
+      );
+      if (row?.status !== 'FAILED') return `transfer is ${row?.status}, expected FAILED`;
+      if (!row.failure_message) return 'no failure message for the dashboard';
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

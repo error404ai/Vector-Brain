@@ -56,6 +56,10 @@ export class DeviceFileTransfer {
   @Column({ type: 'enum', enum: DeviceFileStatus, default: DeviceFileStatus.PENDING })
   status: DeviceFileStatus;
 
+  /** Downloads started for this row that never ended in a receipt. */
+  @Column({ type: 'int', default: 0 })
+  download_attempts: number;
+
   /** Set from the receipt the device posts back after a failed save. */
   @Column({ type: 'varchar', length: 500, nullable: true })
   failure_message: string | null;
