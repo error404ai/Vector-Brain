@@ -177,6 +177,21 @@ const androidApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/android/devices/${id}/unwatch`, method: 'POST' }),
     }),
 
+    getDbSpace: builder.query<
+      {
+        message: string;
+        data: {
+          total_mb: number;
+          reclaimable_mb: number;
+          counts: Record<string, number>;
+          tables: { table_name: string; rows: number; data_mb: number; index_mb: number; free_mb: number }[];
+        };
+      },
+      void
+    >({
+      query: () => ({ url: '/maintenance/db-space', method: 'GET' }),
+    }),
+
     getFleetState: builder.query<{ message: string; data: FleetState }, void>({
       query: () => ({ url: '/android/devices/fleet-state', method: 'GET' }),
       providesTags: ['ANDROID_DEVICES' as any],
@@ -274,6 +289,7 @@ export const {
   useUnpairDeviceMutation,
   useDeleteOfflineDevicesMutation,
   useGetFleetStateQuery,
+  useGetDbSpaceQuery,
   useWatchDeviceScreenMutation,
   useUnwatchDeviceScreenMutation,
   useSendDirectActionMutation,
