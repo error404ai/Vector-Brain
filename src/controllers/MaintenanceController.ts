@@ -55,6 +55,19 @@ export class MaintenanceController {
         (SELECT COUNT(*) FROM device_file_transfers) AS file_transfers
     `);
 
+    // android_task_logs is usually the big one, and the reason is one column,
+    // not the row count — so the report names the column rather than leaving the
+    // choice between "delete history" and "keep paying for it".
+    const [stepColumns] = await AppDataSource.query(`
+      SELECT
+        ROUND(SUM(LENGTH(COALESCE(ui_tree_snapshot, ''))) / 1048576, 1) AS ui_tree_mb,
+        ROUND(SUM(LENGTH(COALESCE(thought_reasoning, ''))) / 1048576, 1) AS thought_mb,
+        ROUND(SUM(LENGTH(COALESCE(action_payload, ''))) / 1048576, 1) AS action_mb,
+        ROUND(SUM(LENGTH(COALESCE(result_message, ''))) / 1048576, 1) AS result_mb,
+        ROUND(SUM(LENGTH(COALESCE(error_message, ''))) / 1048576, 1) AS error_mb
+      FROM android_task_logs
+    `);
+
     const totalMb = tables.reduce((sum, table) => sum + table.data_mb + table.index_mb, 0);
     const freeMb = tables.reduce((sum, table) => sum + table.free_mb, 0);
 
@@ -66,6 +79,9 @@ export class MaintenanceController {
         // disk: an OPTIMIZE TABLE is what actually hands it back.
         reclaimable_mb: Math.round(freeMb),
         counts: Object.fromEntries(Object.entries(detail ?? {}).map(([key, value]) => [key, Number(value)])),
+        step_log_columns: Object.fromEntries(
+          Object.entries(stepColumns ?? {}).map(([key, value]) => [key, Number(value ?? 0)]),
+        ),
         tables,
       },
     };

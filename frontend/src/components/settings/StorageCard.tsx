@@ -49,6 +49,14 @@ export default function StorageCard() {
               </Typography>
             )}
 
+            {report.step_log_columns && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                Inside step logs: UI snapshots {report.step_log_columns.ui_tree_mb ?? 0} MB · reasoning{' '}
+                {report.step_log_columns.thought_mb ?? 0} MB · actions {report.step_log_columns.action_mb ?? 0} MB ·
+                results {report.step_log_columns.result_mb ?? 0} MB
+              </Typography>
+            )}
+
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
               Largest tables
             </Typography>

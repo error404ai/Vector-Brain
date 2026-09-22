@@ -184,6 +184,7 @@ const androidApi = baseApi.injectEndpoints({
           total_mb: number;
           reclaimable_mb: number;
           counts: Record<string, number>;
+          step_log_columns?: Record<string, number>;
           tables: { table_name: string; rows: number; data_mb: number; index_mb: number; free_mb: number }[];
         };
       },
