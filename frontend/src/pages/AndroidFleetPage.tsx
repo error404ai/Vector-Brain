@@ -64,7 +64,7 @@ import {
   Typography,
   Menu,
 } from '@mui/material';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import toast from 'react-hot-toast';
 import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
 import DeviceControls from '@/components/android/DeviceControls';
@@ -126,6 +126,22 @@ interface DispatchResult {
 }
 
 const emptyRuntime: DeviceRuntime = { isRunning: false, stepIndex: 0 };
+
+/**
+ * Renders one device card, but only when something that card actually shows
+ * has changed. The fleet page re-renders constantly — every task step, frame
+ * and poll — and redrawing two dozen heavy cards (phone frame, screenshot, MUI
+ * controls) each time pinned the main thread, so every click on the page lagged
+ * one or two seconds. `deps` lists exactly what a card depends on; when none of
+ * it moved, the previous output is reused and the card costs nothing.
+ */
+const MemoCard = memo(
+  function MemoCard({ render }: { render: () => ReactNode; deps: unknown[] }) {
+    return <>{render()}</>;
+  },
+  (prev, next) =>
+    prev.deps.length === next.deps.length && prev.deps.every((value, index) => Object.is(value, next.deps[index])),
+);
 
 function timeAgo(iso?: string): string {
   if (!iso) return '';
@@ -914,7 +930,35 @@ export default function AndroidFleetPage() {
 
 
   /** The card grid, used once per lane and once for the flat view. */
-  const DeviceGrid = ({ list }: { list: AndroidDevice[] }) => {
+  // What a single card depends on. Values that are rebuilt every render (the
+  // proxy map, per-device task arrays) are reduced to stable values here so the
+  // memo only breaks when the card's real content changes.
+  const cardDeps = (device: AndroidDevice): unknown[] => {
+    const laneId = proxyIdFor(device);
+    return [
+      device,
+      runtime[device.id],
+      selectedIds.includes(device.id),
+      queuedByDevice.get(device.id),
+      (tasksByDevice[device.id] ?? []).length,
+      laneId,
+      laneId ? proxyById.get(laneId) : undefined,
+      proxies,
+      controlDeviceId,
+      editingTagFor,
+      maxSteps,
+      deviceConfigIds[device.id],
+      broadcastConfigId,
+      aiConfigs,
+      activeAiConfig?.id,
+    ];
+  };
+
+  // A plain render function, NOT a component. Declared as a component inside
+  // the page, it got a new identity on every render, so React unmounted and
+  // remounted the entire grid — every card, image and control — on each frame
+  // or poll. That was the root of the fleet page's sluggishness.
+  const renderDeviceGrid = (list: AndroidDevice[]) => {
     const shown = list.filter(matchesFilter);
     if (shown.length === 0) {
       return (
@@ -934,7 +978,9 @@ export default function AndroidFleetPage() {
             alignItems: 'start',
           }}
         >
-          {shown.map((device) => renderDeviceCard(device))}
+          {shown.map((device) => (
+            <MemoCard key={device.id} render={() => renderDeviceCard(device)} deps={cardDeps(device)} />
+          ))}
         </Box>
     );
   };
@@ -1168,6 +1214,15 @@ export default function AndroidFleetPage() {
     setPrompt('');
     setPromptResetSignal((value) => value + 1);
   };
+
+  // Stable identity for the activity panel's retry, so the memoized panel does
+  // not redraw its whole list on every page render. The ref always points at the
+  // latest dispatchTo, so a retry never runs with stale settings.
+  const dispatchRef = useRef(dispatchTo);
+  dispatchRef.current = dispatchTo;
+  const retryFromPanel = useCallback((deviceId: number, taskPrompt: string) => {
+    void dispatchRef.current([deviceId], taskPrompt);
+  }, []);
 
   const handleRetryFailed = async () => {
     if (!lastDispatch?.failedIds.length) return;
@@ -1714,7 +1769,7 @@ export default function AndroidFleetPage() {
                       No devices on this proxy yet.
                     </Typography>
                   ) : (
-                    <DeviceGrid list={laneDevices} />
+                    {renderDeviceGrid(laneDevices)}
                   )}
                 </Box>
               ))}
@@ -1748,12 +1803,12 @@ export default function AndroidFleetPage() {
                       These run straight away, without queueing or rotation
                     </Typography>
                   </Stack>
-                  <DeviceGrid list={lanes.unassigned} />
+                  {renderDeviceGrid(lanes.unassigned)}
                 </Box>
               )}
             </Stack>
           ) : (
-            <DeviceGrid list={orderedDevices} />
+            {renderDeviceGrid(orderedDevices)}
           )}
         </Box>
       )}
@@ -1930,11 +1985,7 @@ export default function AndroidFleetPage() {
           borderRadius: 3,
         }}
       >
-        <FleetActivityPanel
-          tasks={tasksData?.data ?? []}
-          devices={devices}
-          onRetry={(deviceId, prompt) => void dispatchTo([deviceId], prompt)}
-        />
+        <FleetActivityPanel tasks={tasks} devices={devices} onRetry={retryFromPanel} />
       </Box>
     </Box>
   );

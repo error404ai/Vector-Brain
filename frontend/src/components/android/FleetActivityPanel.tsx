@@ -16,7 +16,7 @@ import {
   Typography,
   alpha,
 } from '@mui/material';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 type Filter = 'all' | 'failed' | 'success';
 
@@ -29,7 +29,7 @@ type Filter = 'all' | 'failed' | 'success';
  * one-click retry; the whole thing collapses so it never gets in the way when
  * you don't need it.
  */
-export default function FleetActivityPanel({
+function FleetActivityPanel({
   tasks,
   devices,
   onRetry,
@@ -132,7 +132,7 @@ export default function FleetActivityPanel({
         <IconButton size="small">{open ? <ExpandLessIcon /> : <ExpandMoreIcon />}</IconButton>
       </Stack>
 
-      <Collapse in={open}>
+      <Collapse in={open} timeout={140}>
         <Divider />
         <Box sx={{ maxHeight: 'calc(55vh - 56px)', overflowY: 'auto' }}>
           {shown.map((task) => {
@@ -213,3 +213,7 @@ export default function FleetActivityPanel({
     </Box>
   );
 }
+
+// Memoized: the fleet page re-renders often; this only redraws when its tasks,
+// devices or retry handler actually change.
+export default memo(FleetActivityPanel);
