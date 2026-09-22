@@ -52,6 +52,15 @@ export default function InteractiveDeviceScreen({
   const busyRef = useRef(false);
   /** True while a tap/swipe is in flight, so frames yield the socket to it. */
   const actionBusyRef = useRef(false);
+  /**
+   * The phone's real screen width in pixels.
+   *
+   * Live frames are downscaled previews, so a click measured against the
+   * displayed image is in preview pixels — send that to the phone and the tap
+   * lands short of where the user pointed. One full-size frame, taken when
+   * control is switched on, gives the true width to scale by.
+   */
+  const deviceWidthRef = useRef<number | null>(null);
 
   // Parents often pass an inline callback. Keeping it in a ref stops the polling
   // effect from tearing down and restarting on every render.
@@ -82,6 +91,22 @@ export default function InteractiveDeviceScreen({
     }
   }, [deviceId, sendDirectAction]);
 
+  /** One full-resolution frame, purely to learn the device's real width. */
+  const measureDevice = useCallback(async () => {
+    if (!deviceId) return;
+    try {
+      const res = await sendDirectAction({
+        device_id: deviceId,
+        action: { type: 'CaptureScreen', awaitStability: false },
+      }).unwrap();
+      const snapshot = res?.data?.screenCapture;
+      if (snapshot?.width) deviceWidthRef.current = snapshot.width;
+      if (snapshot?.base64Data) onScreenshotRef.current?.(snapshot.base64Data);
+    } catch {
+      // Without it taps are unscaled — the same behaviour as before previews.
+    }
+  }, [deviceId, sendDirectAction]);
+
   // ---- Live frames -------------------------------------------------------
   // Paced by the phone rather than by a fixed interval: the next frame is asked
   // for once the previous one has arrived. A fixed timer on a slow link just
@@ -94,6 +119,8 @@ export default function InteractiveDeviceScreen({
 
     const loop = async () => {
       if (stopped) return;
+      if (deviceWidthRef.current === null) await measureDevice();
+      if (stopped) return;
       await captureFrame();
       if (stopped) return;
       timer = window.setTimeout(loop, Math.max(refreshMs, 120));
@@ -104,7 +131,11 @@ export default function InteractiveDeviceScreen({
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [controlEnabled, deviceId, refreshMs, captureFrame]);
+  }, [controlEnabled, deviceId, refreshMs, captureFrame, measureDevice]);
+
+  useEffect(() => {
+    deviceWidthRef.current = null;
+  }, [deviceId]);
 
   // ---- Coordinate mapping ------------------------------------------------
   /**
@@ -130,7 +161,10 @@ export default function InteractiveDeviceScreen({
     const localX = Math.min(Math.max(clientX - rect.left - offsetX, 0), drawnW);
     const localY = Math.min(Math.max(clientY - rect.top - offsetY, 0), drawnH);
 
-    return { x: Math.round(localX / scale), y: Math.round(localY / scale) };
+    // The displayed frame is a preview; the phone taps in its own pixels.
+    const preview = deviceWidthRef.current && img.naturalWidth ? deviceWidthRef.current / img.naturalWidth : 1;
+
+    return { x: Math.round((localX / scale) * preview), y: Math.round((localY / scale) * preview) };
   };
 
   const runAction = async (action: Record<string, unknown>, label: string) => {
