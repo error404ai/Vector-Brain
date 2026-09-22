@@ -170,6 +170,13 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    watchDeviceScreen: builder.mutation<{ message: string; data: { streaming: boolean } }, { id: number; interval_ms?: number }>({
+      query: ({ id, interval_ms }) => ({ url: `/android/devices/${id}/watch`, method: 'POST', body: { interval_ms } }),
+    }),
+    unwatchDeviceScreen: builder.mutation<{ message: string }, number>({
+      query: (id) => ({ url: `/android/devices/${id}/unwatch`, method: 'POST' }),
+    }),
+
     getFleetState: builder.query<{ message: string; data: FleetState }, void>({
       query: () => ({ url: '/android/devices/fleet-state', method: 'GET' }),
       providesTags: ['ANDROID_DEVICES' as any],
@@ -267,6 +274,8 @@ export const {
   useUnpairDeviceMutation,
   useDeleteOfflineDevicesMutation,
   useGetFleetStateQuery,
+  useWatchDeviceScreenMutation,
+  useUnwatchDeviceScreenMutation,
   useSendDirectActionMutation,
   useSetDeviceTagMutation,
   useRunAndroidTaskMutation,

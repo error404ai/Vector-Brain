@@ -125,7 +125,13 @@ export class LiveScreenService {
 
     state.busy = true;
     try {
-      const result = await this.gatewayService.executeAction(state.deviceId, { type: 'CaptureScreen' });
+      // Small preview frames: the viewer is looking at a thumbnail, and a full
+      // capture is many times the bytes on the phone's single socket.
+      const result = await this.gatewayService.executeAction(state.deviceId, {
+        type: 'CaptureScreen',
+        preview: true,
+        awaitStability: false,
+      });
       const frame = result.status === 'SUCCESS' ? result.screenCapture?.base64Data : undefined;
       if (frame) {
         this.gatewayService.broadcastToUser(state.userId, 'device:screen_capture', {

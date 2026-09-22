@@ -1,4 +1,8 @@
-import { useSendDirectActionMutation } from '@/RTKService/androidService/androidService';
+import {
+  useSendDirectActionMutation,
+  useUnwatchDeviceScreenMutation,
+  useWatchDeviceScreenMutation,
+} from '@/RTKService/androidService/androidService';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
 import HomeIcon from '@mui/icons-material/Home';
@@ -44,6 +48,8 @@ export default function InteractiveDeviceScreen({
   fill,
 }: InteractiveDeviceScreenProps) {
   const [sendDirectAction] = useSendDirectActionMutation();
+  const [watchDeviceScreen] = useWatchDeviceScreenMutation();
+  const [unwatchDeviceScreen] = useUnwatchDeviceScreenMutation();
   const [typeText, setTypeText] = useState('');
   const [showKeyboard, setShowKeyboard] = useState(false);
 
@@ -129,30 +135,37 @@ export default function InteractiveDeviceScreen({
   }, [deviceId, sendDirectAction]);
 
   // ---- Live frames -------------------------------------------------------
-  // Paced by the phone rather than by a fixed interval: the next frame is asked
-  // for once the previous one has arrived. A fixed timer on a slow link just
-  // queues requests the device cannot answer yet, which is what made the feed
-  // stutter and manual taps feel late.
+  // The server pulls the frames and pushes them down the socket the dashboard
+  // already has open. Asking for each frame over HTTP cost a whole extra
+  // browser-to-server round trip per frame — measured at more than the phone
+  // itself took — and that is the leg this removes. The parent receives the
+  // pushed frames and hands them back through `screenshot`.
   useEffect(() => {
     if (!controlEnabled || !deviceId) return;
     let stopped = false;
-    let timer: number | undefined;
 
-    const loop = async () => {
-      if (stopped) return;
+    const start = async () => {
       if (deviceWidthRef.current === null) await measureDevice();
       if (stopped) return;
-      await captureFrame();
-      if (stopped) return;
-      timer = window.setTimeout(loop, Math.max(refreshMs, 120));
+      try {
+        await watchDeviceScreen({ id: deviceId, interval_ms: Math.max(refreshMs, 300) }).unwrap();
+      } catch {
+        // Falls back to the frames the agent pushes while it works.
+      }
     };
-    void loop();
+    void start();
+
+    // The server stops streaming if nobody says they are still watching.
+    const keepAlive = window.setInterval(() => {
+      void watchDeviceScreen({ id: deviceId, interval_ms: Math.max(refreshMs, 300) }).unwrap().catch(() => undefined);
+    }, 20_000);
 
     return () => {
       stopped = true;
-      if (timer) window.clearTimeout(timer);
+      window.clearInterval(keepAlive);
+      void unwatchDeviceScreen(deviceId).unwrap().catch(() => undefined);
     };
-  }, [controlEnabled, deviceId, refreshMs, captureFrame, measureDevice]);
+  }, [controlEnabled, deviceId, refreshMs, measureDevice, watchDeviceScreen, unwatchDeviceScreen]);
 
   useEffect(() => {
     deviceWidthRef.current = null;
