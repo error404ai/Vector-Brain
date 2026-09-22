@@ -70,7 +70,8 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
-import DeviceTagChip from '@/components/android/DeviceTagChip';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import DeviceTagChip, { TAG_COLORS, parseTag, type TagColor } from '@/components/android/DeviceTagChip';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
@@ -125,6 +126,9 @@ interface DispatchResult {
 }
 
 const emptyRuntime: DeviceRuntime = { isRunning: false, stepIndex: 0 };
+
+/** Tag-filter key for phones with no tag. */
+const UNTAGGED = '__untagged__';
 
 /**
  * Renders one device card, but only when something that card actually shows
@@ -263,6 +267,9 @@ export default function AndroidFleetPage() {
   const [prompt, setPrompt] = useState('');
   const [maxSteps, setMaxSteps] = useState(200);
   const [statusFilter, setStatusFilter] = useState<FleetStatus | null>(null);
+  // One tag at a time, like the status filter. Keyed by lowercased tag text;
+  // UNTAGGED picks phones with no tag.
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [promptResetSignal, setPromptResetSignal] = useState(0);
   // 0 = use the account's active provider
   const [broadcastConfigId, setBroadcastConfigId] = useState(0);
@@ -540,8 +547,44 @@ export default function AndroidFleetPage() {
   );
 
   // When a status filter is active, a device is shown only if it matches.
+  const tagKeyOf = (device: AndroidDevice): string => {
+    const parsed = parseTag(device.tag);
+    return parsed ? parsed.text.toLowerCase() : UNTAGGED;
+  };
+
+  // Every distinct tag in the fleet with its colour and how many phones carry it.
+  const tagSummary = useMemo(() => {
+    const byKey = new Map<string, { text: string; color: TagColor; count: number }>();
+    let untagged = 0;
+    for (const device of devices) {
+      const parsed = parseTag(device.tag);
+      if (!parsed) {
+        untagged += 1;
+        continue;
+      }
+      const key = parsed.text.toLowerCase();
+      const entry = byKey.get(key);
+      if (entry) entry.count += 1;
+      else byKey.set(key, { text: parsed.text, color: parsed.color, count: 1 });
+    }
+    const tags = Array.from(byKey.entries())
+      .map(([key, value]) => ({ key, ...value }))
+      .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
+    return { tags, untagged };
+  }, [devices]);
+
+  // A tag filter pointing at a tag nobody has any more would hide everything.
+  useEffect(() => {
+    if (tagFilter === null) return;
+    const stillThere =
+      tagFilter === UNTAGGED ? tagSummary.untagged > 0 : tagSummary.tags.some((tag) => tag.key === tagFilter);
+    if (!stillThere) setTagFilter(null);
+  }, [tagFilter, tagSummary]);
+
+  // Status and tag filters combine: both must match.
   const matchesFilter = (device: AndroidDevice) =>
-    statusFilter === null || deviceStatusOf(device) === statusFilter;
+    (statusFilter === null || deviceStatusOf(device) === statusFilter) &&
+    (tagFilter === null || tagKeyOf(device) === tagFilter);
 
   const renderDeviceCard = (device: AndroidDevice) => {
             const state = runtime[device.id] ?? emptyRuntime;
@@ -1327,6 +1370,80 @@ export default function AndroidFleetPage() {
       <FleetCoverageStrip devices={devices} />
 
       <FleetStatusSummary counts={fleetCounts} activeFilter={statusFilter} onFilter={setStatusFilter} />
+
+      {tagSummary.tags.length > 0 && (
+        <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap" useFlexGap sx={{ mt: -1, mb: 2 }}>
+          <Stack direction="row" alignItems="center" gap={0.5} sx={{ color: 'text.secondary', mr: 0.25 }}>
+            <LocalOfferIcon sx={{ fontSize: 15 }} />
+            <Typography variant="caption" sx={{ fontWeight: 600 }}>
+              Tags
+            </Typography>
+          </Stack>
+          {tagSummary.tags.map((tag) => {
+            const active = tagFilter === tag.key;
+            const color = TAG_COLORS[tag.color];
+            return (
+              <Box
+                key={tag.key}
+                role="button"
+                onClick={() => setTagFilter(active ? null : tag.key)}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.6,
+                  px: 1.25,
+                  py: 0.4,
+                  borderRadius: 5,
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color: active ? '#fff' : color,
+                  bgcolor: active ? color : alpha(color, 0.12),
+                  border: '1px solid',
+                  borderColor: active ? color : 'transparent',
+                  transition: 'all 120ms ease',
+                  '&:hover': { borderColor: color },
+                }}
+              >
+                {tag.text}
+                <Box
+                  component="span"
+                  sx={{ px: 0.6, borderRadius: 2, fontSize: 11, bgcolor: active ? 'rgba(255,255,255,0.25)' : alpha(color, 0.14) }}
+                >
+                  {tag.count}
+                </Box>
+              </Box>
+            );
+          })}
+          {tagSummary.untagged > 0 && (
+            <Box
+              role="button"
+              onClick={() => setTagFilter(tagFilter === UNTAGGED ? null : UNTAGGED)}
+              sx={{
+                px: 1.25,
+                py: 0.4,
+                borderRadius: 5,
+                cursor: 'pointer',
+                userSelect: 'none',
+                fontSize: 12.5,
+                fontWeight: 600,
+                border: '1px dashed',
+                borderColor: tagFilter === UNTAGGED ? 'text.primary' : 'divider',
+                color: tagFilter === UNTAGGED ? 'text.primary' : 'text.secondary',
+                bgcolor: tagFilter === UNTAGGED ? 'action.selected' : 'transparent',
+              }}
+            >
+              Untagged {tagSummary.untagged}
+            </Box>
+          )}
+          {tagFilter !== null && (
+            <Button size="small" variant="text" onClick={() => setTagFilter(null)} sx={{ fontWeight: 600, minWidth: 0 }}>
+              Clear
+            </Button>
+          )}
+        </Stack>
+      )}
 
       {/* Broadcast bar — the primary control on the page, so it is raised out of
           the flat outlined-paper treatment the rest of the page uses. */}

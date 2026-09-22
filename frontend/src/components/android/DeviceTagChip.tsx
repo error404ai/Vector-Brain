@@ -1,8 +1,9 @@
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import { Box, Button, Popover, Stack, TextField, Tooltip, Typography, alpha } from '@mui/material';
 import { memo, useEffect, useState, type MouseEvent } from 'react';
 
 /** The eight tag colours. Keys are what gets stored, so keep them short. */
-const TAG_COLORS = {
+export const TAG_COLORS = {
   rose: '#e11d48',
   orange: '#ea580c',
   amber: '#ca8a04',
@@ -13,12 +14,12 @@ const TAG_COLORS = {
   slate: '#6b7280',
 } as const;
 
-type TagColor = keyof typeof TAG_COLORS;
+export type TagColor = keyof typeof TAG_COLORS;
 
 /** Short on purpose: a tag is a glanceable label on a card header, not a note. */
 const MAX_TAG_LENGTH = 10;
 
-interface ParsedTag {
+export interface ParsedTag {
   color: TagColor;
   text: string;
 }
@@ -28,7 +29,7 @@ interface ParsedTag {
  * backend change was needed. Anything without a known colour prefix is an older
  * free-text note — shown as a grey tag rather than dropped.
  */
-function parseTag(raw: string | null | undefined): ParsedTag | null {
+export function parseTag(raw: string | null | undefined): ParsedTag | null {
   if (!raw) return null;
   const match = /^([a-z]+):(.*)$/.exec(raw);
   if (match && match[1] in TAG_COLORS) {
@@ -85,23 +86,27 @@ function DeviceTagChipBase({ tag, onSave }: DeviceTagChipProps) {
         sx={{
           border: 'none',
           cursor: 'pointer',
-          px: 1,
-          py: '1px',
-          borderRadius: 5,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.4,
+          px: 0.9,
+          py: '2px',
+          borderRadius: 1.5,
           fontSize: 11.5,
           fontWeight: 700,
-          lineHeight: '18px',
-          maxWidth: 110,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          lineHeight: '17px',
+          maxWidth: 120,
           flexShrink: 0,
-          color: TAG_COLORS[current.color],
-          bgcolor: alpha(TAG_COLORS[current.color], 0.14),
-          '&:hover': { bgcolor: alpha(TAG_COLORS[current.color], 0.22) },
+          color: '#fff',
+          bgcolor: TAG_COLORS[current.color],
+          boxShadow: `0 1px 4px ${alpha(TAG_COLORS[current.color], 0.35)}`,
+          '&:hover': { filter: 'brightness(1.08)' },
         }}
       >
-        {current.text}
+        <LocalOfferIcon sx={{ fontSize: 12 }} />
+        <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {current.text}
+        </Box>
       </Box>
     </Tooltip>
   ) : (
@@ -189,8 +194,8 @@ function DeviceTagChipBase({ tag, onSave }: DeviceTagChipProps) {
                 fontSize: 11.5,
                 fontWeight: 700,
                 lineHeight: '18px',
-                color: TAG_COLORS[draftColor],
-                bgcolor: alpha(TAG_COLORS[draftColor], 0.14),
+                color: '#fff',
+                bgcolor: TAG_COLORS[draftColor],
               }}
             >
               {draftText.trim()}
