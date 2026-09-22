@@ -74,6 +74,14 @@ function stripScreenDump(text: string): string {
  * guards cover the opposite case, where the loop is busy but going nowhere.
  */
 const STALL_TIMEOUT_MS = 3 * 60_000;
+/**
+ * How long a run may go without a single action reaching the phone. The stall
+ * watchdog above counts any model message as life, so a model that keeps
+ * thinking, streaming or retrying without ever choosing a step reset it forever
+ * and a task could sit on "Step 1" for many minutes. This one only counts real
+ * device actions, so such a run is stopped with a reason instead of hanging.
+ */
+const NO_ACTION_TIMEOUT_MS = 4 * 60_000;
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
 const MAX_HISTORY_THOUGHT_CHARS = 200; // cap per-step thought when building follow-up context
 
@@ -808,6 +816,19 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let rejectTaskTimeout: ((error: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogArmed = false;
+    let noActionTimer: ReturnType<typeof setTimeout> | undefined;
+    const noteDeviceAction = () => {
+      if (!watchdogArmed) return;
+      if (noActionTimer) clearTimeout(noActionTimer);
+      noActionTimer = setTimeout(() => {
+        const minutes = Math.round(NO_ACTION_TIMEOUT_MS / 60_000);
+        const reason =
+          `Task stopped: the AI model did not take any action on the phone for ${minutes} minutes. ` +
+          `It kept thinking without choosing a step — try again or switch to a different model.`;
+        stopForSafety(reason);
+        rejectTaskTimeout?.(new Error(reason));
+      }, NO_ACTION_TIMEOUT_MS);
+    };
     const noteActivity = () => {
       if (!watchdogArmed) return;
       if (stallTimer) clearTimeout(stallTimer);
@@ -825,6 +846,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       onStepExecuted: (info) => {
         // A device action came back, including waits. Proof the phone is alive.
         noteActivity();
+        noteDeviceAction();
         if (info.screenshotBase64) {
           lastScreenshot = info.screenshotBase64;
           this.gatewayService.broadcastToUser(userId, 'device:screen_capture', {
@@ -1049,6 +1071,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // take — only on how long it may be completely silent.
     watchdogArmed = true;
     noteActivity();
+    noteDeviceAction();
 
     try {
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -1117,6 +1140,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       clearInterval(keepAwakeTimer);
       watchdogArmed = false;
       if (stallTimer) clearTimeout(stallTimer);
+      if (noActionTimer) clearTimeout(noActionTimer);
       try {
         ekoInstance.deleteTask(ekoTaskId);
       } catch (error) {

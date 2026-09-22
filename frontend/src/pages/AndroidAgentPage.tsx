@@ -1,3 +1,4 @@
+import { TAG_COLORS, parseTag } from '@/components/android/DeviceTagChip';
 import {
   useCancelAndroidTaskMutation,
   useGetAndroidDevicesQuery,
@@ -63,7 +64,7 @@ import {
 import DownloadLogsButton from '@/components/android/DownloadLogsButton';
 import PlanningIndicator from '@/components/brand/PlanningIndicator';
 import VectorMark from '@/components/brand/VectorMark';
-import { useGetDeviceProxiesQuery } from '@/RTKService/androidService/proxyService';
+import { useCancelQueuedTaskMutation, useGetDeviceProxiesQuery } from '@/RTKService/androidService/proxyService';
 import SendFileButton from '@/components/android/SendFileButton';
 import { proxyColor } from '@/components/android/proxyColors';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -292,6 +293,11 @@ export function AndroidAgentPage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | undefined>(initialDeviceId);
   const [promptInput, setPromptInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+  // Set when this phone's proxy lane was busy and the run went into the queue
+  // instead of starting. The page shows "waiting" rather than a fake "executing",
+  // and Stop removes the queue entry so it can't start later on its own.
+  const [queuedEntry, setQueuedEntry] = useState<{ queueId: number; position: number } | null>(null);
+  const [cancelQueuedTask] = useCancelQueuedTaskMutation();
   // activeTaskId is cleared the moment a run ends, but sharing happens after
   // that, so the finished run is remembered separately.
   const [finishedTaskId, setFinishedTaskId] = useState<number | null>(null);
@@ -403,7 +409,7 @@ export function AndroidAgentPage() {
     return (
       candidate.device_name.toLowerCase().includes(needle) ||
       (candidate.device_model ?? '').toLowerCase().includes(needle) ||
-      (candidate.tag ?? '').toLowerCase().includes(needle)
+      (parseTag(candidate.tag)?.text ?? '').toLowerCase().includes(needle)
     );
   });
 
@@ -503,6 +509,7 @@ export function AndroidAgentPage() {
     setMessages([]);
     setActiveTaskId(null);
     setViewingTaskId(null);
+    setQueuedEntry(null);
     setClarification(null);
     setLatestScreenshot(null);
     setManualControl(false);
@@ -654,6 +661,7 @@ export function AndroidAgentPage() {
 
         if (msg.event === 'task:started') {
           setIsRunning(true);
+          setQueuedEntry(null);
           setActiveTaskId(msg.payload.taskId);
           if (msg.payload.screenshot) {
             setLatestScreenshot(msg.payload.screenshot);
@@ -967,6 +975,16 @@ export function AndroidAgentPage() {
         ai_config_id: selectedConfigId || undefined,
       }).unwrap();
 
+      // A phone behind a busy proxy lane is queued, not started — the response
+      // then carries no taskId. The run attaches itself via task:started once the
+      // lane frees up.
+      const queued = (res as { data?: { queued?: boolean; queueId?: number; position?: number } }).data;
+      if (queued?.queued && typeof queued.queueId === 'number') {
+        setQueuedEntry({ queueId: queued.queueId, position: queued.position ?? 0 });
+        toast(`Waiting for the proxy lane — ${queued.position ?? 0} ahead`);
+        return;
+      }
+
       setActiveTaskId(res.data.taskId);
       setViewingTaskId(res.data.taskId);
     } catch (err: unknown) {
@@ -981,6 +999,15 @@ export function AndroidAgentPage() {
 
   const handleCancel = async () => {
     if (!activeTaskId) {
+      if (queuedEntry) {
+        try {
+          await cancelQueuedTask(queuedEntry.queueId).unwrap();
+          toast.success('Removed from the proxy queue');
+        } catch {
+          toast.error('Could not remove it from the queue');
+        }
+        setQueuedEntry(null);
+      }
       setIsRunning(false);
       return;
     }
@@ -1004,6 +1031,7 @@ export function AndroidAgentPage() {
     setMessages([]);
     setActiveTaskId(null);
     setViewingTaskId(null);
+    setQueuedEntry(null);
     setClarification(null);
     setTokenStats({ promptTokens: 0, completionTokens: 0 });
     contextCharsRef.current = 0;
@@ -1100,8 +1128,18 @@ export function AndroidAgentPage() {
                       <Typography variant="body2" fontWeight={700}>
                         {d.device_name}
                       </Typography>
-                      {d.tag && (
-                        <Chip size="small" label={d.tag} sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />
+                      {parseTag(d.tag) && (
+                        <Chip
+                          size="small"
+                          label={parseTag(d.tag)!.text}
+                          sx={{
+                            height: 18,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: '#fff',
+                            bgcolor: TAG_COLORS[parseTag(d.tag)!.color],
+                          }}
+                        />
                       )}
                     </Stack>
                   </MenuItem>
@@ -1710,7 +1748,15 @@ export function AndroidAgentPage() {
                             <Box sx={{ mb: 1.5 }}>
                               {/* Before any step lands there is nothing to show
                                   but an empty bar, so the mark carries the wait. */}
-                              {running && doneSteps === 0 && <PlanningIndicator />}
+                              {running && doneSteps === 0 && (
+                                <PlanningIndicator
+                                  label={
+                                    queuedEntry
+                                      ? `Waiting for the proxy lane — ${queuedEntry.position} ahead. Starts automatically.`
+                                      : undefined
+                                  }
+                                />
+                              )}
                               <Stack
                                 direction="row"
                                 justifyContent="space-between"
