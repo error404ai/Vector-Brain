@@ -70,7 +70,6 @@ import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFi
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
-import DeviceCardPrompt from '@/components/android/DeviceCardPrompt';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
@@ -918,12 +917,6 @@ export default function AndroidFleetPage() {
                   />
                 </Stack>
 
-                {/* Inline per-device prompt — isolated component so typing here
-                    doesn't re-render the whole fleet. */}
-                <DeviceCardPrompt
-                  disabled={!isOnline || state.isRunning}
-                  onSubmit={(text) => handleRunOnCard(device.id, text)}
-                />
               </Card>
             );
   };
@@ -1237,26 +1230,6 @@ export default function AndroidFleetPage() {
   };
 
   /** Runs a device-specific prompt typed directly on its card. */
-  const handleRunOnCard = useCallback(async (deviceId: number, text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    if (!ensureReady()) return;
-
-    try {
-      await runTask({
-        device_id: deviceId,
-        prompt: trimmed,
-        max_steps: maxSteps,
-        ai_config_id: deviceConfigIds[deviceId] || broadcastConfigId || undefined,
-      }).unwrap();
-      patchRuntime(deviceId, { startError: undefined });
-      toast.success('Task started');
-    } catch (error) {
-      const message = errorMessage(error);
-      patchRuntime(deviceId, { startError: message });
-      toast.error(message);
-    }
-  }, [runTask, maxSteps, deviceConfigIds, broadcastConfigId, ensureReady, patchRuntime]);
 
   const handleStopDevice = async (deviceId: number) => {
     // Prefer the taskId we hold; fall back to the backend's running task for this
@@ -1769,7 +1742,7 @@ export default function AndroidFleetPage() {
                       No devices on this proxy yet.
                     </Typography>
                   ) : (
-                    {renderDeviceGrid(laneDevices)}
+                    renderDeviceGrid(laneDevices)
                   )}
                 </Box>
               ))}
@@ -1808,7 +1781,7 @@ export default function AndroidFleetPage() {
               )}
             </Stack>
           ) : (
-            {renderDeviceGrid(orderedDevices)}
+            renderDeviceGrid(orderedDevices)
           )}
         </Box>
       )}
