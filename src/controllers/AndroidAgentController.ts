@@ -79,6 +79,10 @@ export class AndroidAgentController {
         message: true,
         total_steps: true,
         total_duration_seconds: true,
+        status: true,
+        reason_code: true,
+        started_at: true,
+        finished_at: true,
         created_at: true,
         updated_at: true,
       },
@@ -90,7 +94,9 @@ export class AndroidAgentController {
       message: 'Android tasks retrieved successfully',
       data: tasks.map((task) => ({
         ...task,
-        is_running: runningTaskIds.includes(task.id),
+        // The stored status survives restarts; the in-memory set also covers
+        // runs started before this field existed.
+        is_running: task.status === 'RUNNING' || runningTaskIds.includes(task.id),
       })),
     };
   }
@@ -106,7 +112,23 @@ export class AndroidAgentController {
   ) {
     const parsedDeviceId =
       deviceId !== undefined && deviceId !== null && !Number.isNaN(Number(deviceId)) ? Number(deviceId) : undefined;
-    const taskId = this.plannerService.getActiveTaskIdForDevice(parsedDeviceId);
+    let taskId = this.plannerService.getActiveTaskIdForDevice(parsedDeviceId);
+
+    // Not in this process's memory — e.g. right after a deploy while the old
+    // container is still finishing it. Fall back to a stored RUNNING run whose
+    // lease is still alive.
+    if (!taskId && parsedDeviceId !== undefined) {
+      const stored = await this.agentTaskRepo
+        .createQueryBuilder('task')
+        .select(['task.id'])
+        .where('task.user_id = :userId', { userId: user.userId })
+        .andWhere('task.device_id = :deviceId', { deviceId: parsedDeviceId })
+        .andWhere('task.status = :status', { status: 'RUNNING' })
+        .andWhere('task.lease_until > :now', { now: new Date() })
+        .orderBy('task.id', 'DESC')
+        .getOne();
+      taskId = stored?.id;
+    }
 
     if (!taskId) {
       return { message: 'No active task', data: null };
@@ -168,8 +190,10 @@ export class AndroidAgentController {
         success: task.success,
         message: task.message,
         total_steps: task.total_steps,
+        status: task.status,
+        reason_code: task.reason_code,
         created_at: task.created_at,
-        is_running: this.plannerService.getActiveTaskIds().includes(task.id),
+        is_running: task.status === 'RUNNING' || this.plannerService.getActiveTaskIds().includes(task.id),
       },
     };
   }

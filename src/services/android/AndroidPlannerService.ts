@@ -1,4 +1,4 @@
-import { AgentTask } from '@/entities/AgentTask';
+import { AgentTask, type AgentTaskStatus } from '@/entities/AgentTask';
 import { AndroidStepStatus, AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -82,6 +82,28 @@ const STALL_TIMEOUT_MS = 3 * 60_000;
  * device actions, so such a run is stopped with a reason instead of hanging.
  */
 const NO_ACTION_TIMEOUT_MS = 4 * 60_000;
+
+/**
+ * Task leases. A running task renews its lease every LEASE_RENEW_MS; if the
+ * process running it dies, renewals stop and after LEASE_MS the sweeper closes
+ * the task as INTERRUPTED. The lease is several renew periods long so a slow
+ * database write or a busy event loop never kills a healthy run.
+ */
+const LEASE_MS = 45_000;
+const LEASE_RENEW_MS = 10_000;
+const LEASE_SWEEP_MS = 15_000;
+
+const leaseFromNow = () => new Date(Date.now() + LEASE_MS);
+
+/** Best-effort mapping of a thrown error to a stable reason code. */
+function classifyFailure(message: string | undefined): string {
+  const text = (message || '').toLowerCase();
+  if (/\b429\b|rate limit|too many requests/.test(text)) return 'LLM_RATE_LIMIT';
+  if (/\b401\b|\b402\b|api key|unauthori[sz]ed|insufficient|credit/.test(text)) return 'LLM_AUTH_OR_CREDIT';
+  if (/offline|not connected|disconnected/.test(text)) return 'DEVICE_OFFLINE';
+  if (/timed out|timeout/.test(text)) return 'TIMEOUT';
+  return 'ERROR';
+}
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
 const MAX_HISTORY_THOUGHT_CHARS = 200; // cap per-step thought when building follow-up context
 
@@ -427,6 +449,63 @@ export class AndroidPlannerService {
         this.runTask(prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId),
       (deviceDbId) => this.isDeviceBusy(deviceDbId),
     );
+
+    // Close out runs whose lease expired — typically because a deploy or crash
+    // killed the process running them. Runs once shortly after boot, then on a
+    // timer. unref() so the timer never keeps a shutting-down process alive.
+    setTimeout(() => void this.sweepExpiredLeases(), 5_000).unref();
+    setInterval(() => void this.sweepExpiredLeases(), LEASE_SWEEP_MS).unref();
+  }
+
+  /**
+   * Marks RUNNING tasks with an expired lease as INTERRUPTED and tells the
+   * owner's open dashboards, so a run killed by a restart shows up as stopped
+   * with a reason instead of vanishing or staying "running" forever.
+   *
+   * Decided on the lease alone, never on "not in this process's memory": during
+   * a deploy the old and new containers overlap, and the old one may still be
+   * running — and renewing — tasks the new one has never heard of.
+   */
+  private async sweepExpiredLeases(): Promise<void> {
+    if (!AppDataSource.isInitialized) return;
+    try {
+      const expired = await this.agentTaskRepo
+        .createQueryBuilder('task')
+        .select(['task.id', 'task.user_id', 'task.device_id'])
+        .where('task.status = :status', { status: 'RUNNING' })
+        .andWhere('task.lease_until < :now', { now: new Date() })
+        .getMany();
+
+      for (const task of expired) {
+        // Our own live run with a missed renewal is not dead — just renew it.
+        if (this.activeTasks.has(task.id)) {
+          await this.agentTaskRepo.update({ id: task.id, status: 'RUNNING' }, { lease_until: leaseFromNow() });
+          continue;
+        }
+        const message = 'Task stopped: the server restarted or lost track of this run. Run it again to continue.';
+        const result = await this.agentTaskRepo.update(
+          { id: task.id, status: 'RUNNING' },
+          {
+            status: 'INTERRUPTED',
+            reason_code: 'SERVER_RESTART',
+            success: false,
+            message,
+            finished_at: new Date(),
+            lease_until: null,
+          },
+        );
+        if (result.affected) {
+          Logger.warn(`[AndroidPlanner] Task ${task.id} lease expired — marked INTERRUPTED.`);
+          this.gatewayService.broadcastToUser(task.user_id, 'task:error', {
+            taskId: task.id,
+            deviceId: task.device_id,
+            error: message,
+          });
+        }
+      }
+    } catch (error) {
+      Logger.warn('[AndroidPlanner] Lease sweep failed:', error);
+    }
   }
 
   /** True while a run is in progress on this device, or about to be. */
@@ -547,6 +626,11 @@ export class AndroidPlannerService {
           agentTask.provider = aiConfig.provider;
           agentTask.model = aiConfig.model;
           agentTask.logs = (agentTask.logs || '') + `\n--- Follow-up: "${prompt}" ---\n`;
+          agentTask.status = 'RUNNING';
+          agentTask.reason_code = null;
+          agentTask.started_at = new Date();
+          agentTask.finished_at = null;
+          agentTask.lease_until = leaseFromNow();
           await this.agentTaskRepo.save(agentTask);
 
           // DESC then reversed: take() applies after the sort, so ASC handed back
@@ -588,6 +672,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
             provider: aiConfig.provider,
             model: aiConfig.model,
             success: false,
+            status: 'RUNNING',
+            reason_code: null,
+            started_at: new Date(),
+            finished_at: null,
+            lease_until: leaseFromNow(),
             total_steps: 0,
             total_duration_seconds: 0,
             logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
@@ -602,6 +691,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
           provider: aiConfig.provider,
           model: aiConfig.model,
           success: false,
+          status: 'RUNNING',
+          reason_code: null,
+          started_at: new Date(),
+          finished_at: null,
+          lease_until: leaseFromNow(),
           total_steps: 0,
           total_duration_seconds: 0,
           logs: `Starting Android automation task with ${aiConfig.provider} (${aiConfig.model}) via Eko...\n`,
@@ -684,6 +778,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
     task.message = 'Task cancelled by user';
     task.success = false;
+    task.status = 'CANCELLED';
+    task.reason_code = 'USER_CANCELLED';
+    task.finished_at = new Date();
+    task.lease_until = null;
     await this.agentTaskRepo.save(task);
 
     this.gatewayService.broadcastToUser(userId, 'task:cancelled', {
@@ -785,6 +883,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let lastForegroundApp: string | undefined;
     let finalMessage = '';
     let guardStopReason: string | undefined;
+    let guardStopCode: string | undefined;
     let consecutiveFailures = 0;
     let lastToolStateSignature: string | undefined;
     let identicalToolStateCount = 0;
@@ -796,9 +895,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
     const ekoTaskId = `android-task-${agentTask.id}`;
 
     let eko: Eko | undefined;
-    const stopForSafety = (reason: string) => {
+    const stopForSafety = (reason: string, code = 'GUARD_STOP') => {
       if (guardStopReason) return;
       guardStopReason = reason;
+      guardStopCode = code;
       if (eko) {
         try {
           eko.abortTask(ekoTaskId, reason);
@@ -825,7 +925,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         const reason =
           `Task stopped: the AI model did not take any action on the phone for ${minutes} minutes. ` +
           `It kept thinking without choosing a step — try again or switch to a different model.`;
-        stopForSafety(reason);
+        stopForSafety(reason, 'NO_ACTION');
         rejectTaskTimeout?.(new Error(reason));
       }, NO_ACTION_TIMEOUT_MS);
     };
@@ -837,7 +937,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         const reason =
           `Task stopped because nothing happened for ${minutes} minutes. ` +
           `The phone or the AI provider stopped responding — this is not a step-limit or time-limit problem.`;
-        stopForSafety(reason);
+        stopForSafety(reason, 'STALLED');
         rejectTaskTimeout?.(new Error(reason));
       }, STALL_TIMEOUT_MS);
     };
@@ -875,7 +975,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           }
           lastObservationFingerprint = observationFingerprint;
           if (unchangedObservationCount >= MAX_UNCHANGED_OBSERVATIONS) {
-            stopForSafety('The visible device state did not change after repeated agent actions.');
+            stopForSafety('The visible device state did not change after repeated agent actions.', 'SCREEN_UNCHANGED');
           }
         }
       },
@@ -959,7 +1059,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
                 `Task stopped after reaching the ${maxSteps}-step limit. ` +
                 `The task was still in progress — raise the Steps value in the header (up to 500) and run it again, ` +
                 `or use Continue task below to carry on from the current screen.`;
-              stopForSafety(reason);
+              stopForSafety(reason, 'STEP_LIMIT');
               throw new Error(reason);
             }
 
@@ -984,7 +1084,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
             lastToolStateSignature = toolStateSignature;
             if (identicalToolStateCount >= MAX_IDENTICAL_TOOL_STATES) {
               const reason = `Task stopped because ${toolName} was repeated on the same unchanged screen.`;
-              stopForSafety(reason);
+              stopForSafety(reason, 'LOOP_DETECTED');
               throw new Error(reason);
             }
 
@@ -1020,7 +1120,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
             consecutiveFailures = isError ? consecutiveFailures + 1 : 0;
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-              stopForSafety(`Task stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive device action failures.`);
+              stopForSafety(`Task stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive device action failures.`, 'DEVICE_ACTION_FAILURES');
             }
 
             if (currentTaskLog) {
@@ -1073,6 +1173,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
     noteActivity();
     noteDeviceAction();
 
+    const leaseTimer = setInterval(() => {
+      this.agentTaskRepo
+        .update({ id: agentTask.id, status: 'RUNNING' }, { lease_until: leaseFromNow() })
+        .catch((error) => Logger.warn(`[AndroidPlanner] Lease renewal failed for task ${agentTask.id}:`, error));
+    }, LEASE_RENEW_MS);
+
     try {
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         rejectTaskTimeout = reject;
@@ -1109,6 +1215,19 @@ Use the current visible Android screen and UI state as context. Continue from wh
         (isSuccess ? 'Goal accomplished successfully' : 'Task completed with errors');
       agentTask.total_steps = stepCount;
       agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
+      const terminal: { status: AgentTaskStatus; reason: string | null } = isSuccess
+        ? { status: 'SUCCEEDED', reason: null }
+        : wasCancelled
+          ? { status: 'CANCELLED', reason: 'USER_CANCELLED' }
+          : guardStopReason
+            ? { status: 'FAILED', reason: guardStopCode ?? 'GUARD_STOP' }
+            : !agentFinished
+              ? { status: 'FAILED', reason: 'UNFINISHED' }
+              : { status: 'FAILED', reason: 'AGENT_REPORTED_FAILURE' };
+      agentTask.status = terminal.status;
+      agentTask.reason_code = terminal.reason;
+      agentTask.finished_at = new Date();
+      agentTask.lease_until = null;
       await this.agentTaskRepo.save(agentTask);
 
       if (!wasCancelled) {
@@ -1129,6 +1248,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         agentTask.message = guardStopReason || err.message || 'Task failed with internal error';
         agentTask.total_steps = stepCount;
         agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
+        agentTask.status = 'FAILED';
+        agentTask.reason_code = guardStopReason ? (guardStopCode ?? 'GUARD_STOP') : classifyFailure(err?.message);
+        agentTask.finished_at = new Date();
+        agentTask.lease_until = null;
         await this.agentTaskRepo.save(agentTask);
         this.gatewayService.broadcastToUser(userId, 'task:error', {
           taskId: agentTask.id,
@@ -1138,6 +1261,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       }
     } finally {
       clearInterval(keepAwakeTimer);
+      clearInterval(leaseTimer);
       watchdogArmed = false;
       if (stallTimer) clearTimeout(stallTimer);
       if (noActionTimer) clearTimeout(noActionTimer);

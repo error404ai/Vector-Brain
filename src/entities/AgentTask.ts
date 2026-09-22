@@ -1,6 +1,8 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
 import { User } from './User';
 
+export type AgentTaskStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
+
 @Entity('agent_tasks')
 export class AgentTask {
   @PrimaryGeneratedColumn()
@@ -29,6 +31,32 @@ export class AgentTask {
 
   @Column({ type: 'boolean', default: false })
   success: boolean;
+
+  /**
+   * Lifecycle state, stored so it survives a restart. `success` is kept for old
+   * readers, but it defaults to false, which made running, stuck and killed runs
+   * all look like failures. `status` says what actually happened.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'FAILED' })
+  status: AgentTaskStatus;
+
+  /** Machine-readable cause for a non-successful end, e.g. NO_ACTION, SERVER_RESTART. */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  reason_code: string | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  started_at: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  finished_at: Date | null;
+
+  /**
+   * A running task renews this every few seconds. If the process running it
+   * dies (deploy, crash), renewals stop, the lease expires, and the sweeper marks
+   * the task INTERRUPTED instead of it staying "running" forever.
+   */
+  @Column({ type: 'datetime', nullable: true })
+  lease_until: Date | null;
 
   @Column({ type: 'text', nullable: true })
   message: string;

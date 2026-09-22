@@ -11,6 +11,9 @@ import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AutomationAction } from './AndroidProtocol';
 
+/** Lease for a replay run; renewed on every step (see AndroidPlannerService). */
+const REPLAY_LEASE_MS = 45_000;
+
 /** Actions that can be replayed verbatim. Anything else is framework bookkeeping. */
 const REPLAYABLE = new Set([
   'open_app',
@@ -150,6 +153,9 @@ export class FlowReplayService {
       provider: 'replay',
       model: 'replay (no AI)',
       success: false,
+      status: 'RUNNING',
+      started_at: new Date(),
+      lease_until: new Date(Date.now() + REPLAY_LEASE_MS),
       total_steps: 0,
       total_duration_seconds: 0,
     });
@@ -248,6 +254,11 @@ export class FlowReplayService {
       }
 
       executed += 1;
+      // Keep the lease alive so the planner's sweeper doesn't close a long
+      // replay as interrupted. Best effort: a missed write only shortens it.
+      void this.taskRepo
+        .update({ id: task.id, status: 'RUNNING' }, { lease_until: new Date(Date.now() + REPLAY_LEASE_MS) })
+        .catch(() => undefined);
       // Push a fresh frame so the dashboard keeps up with the replay.
       void this.pushFrame(device.device_id, userId);
       await new Promise((resolve) => setTimeout(resolve, STEP_GAP_MS));
@@ -257,6 +268,10 @@ export class FlowReplayService {
     const success = !failure;
 
     task.success = success;
+    task.status = success ? 'SUCCEEDED' : 'FAILED';
+    task.reason_code = success ? null : 'REPLAY_STEP_FAILED';
+    task.finished_at = new Date();
+    task.lease_until = null;
     task.total_steps = executed;
     task.total_duration_seconds = durationSeconds;
     task.message = success
