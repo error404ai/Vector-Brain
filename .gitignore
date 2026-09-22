@@ -40,3 +40,8 @@ coverage/
 
 public/assets
 public/index.html
+
+# Vite copies frontend/public here on every build
+public/favicon.svg
+public/vite.svg
+public/fleet/
