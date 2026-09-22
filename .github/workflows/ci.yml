@@ -95,7 +95,15 @@ jobs:
       # Fast-forward only. If someone pushed straight to production and it is no
       # longer an ancestor of develop, this fails loudly instead of overwriting.
       - name: Promote to production
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -x
           git config user.name  "build-gate"
           git config user.email "build-gate@users.noreply.github.com"
-          git push origin HEAD:production
+          git fetch origin production || true
+          echo "develop:    $(git rev-parse HEAD)"
+          echo "production: $(git rev-parse origin/production || echo none)"
+          # Explicit credentials rather than whatever the checkout left behind,
+          # and the exact git error printed if the push is refused.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:production
