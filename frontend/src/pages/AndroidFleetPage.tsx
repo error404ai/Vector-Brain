@@ -30,7 +30,6 @@ import HistoryIcon from '@mui/icons-material/History';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import PublicIcon from '@mui/icons-material/Public';
-import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import TuneIcon from '@mui/icons-material/Tune';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -71,6 +70,7 @@ import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
+import DeviceTagChip from '@/components/android/DeviceTagChip';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
@@ -247,16 +247,17 @@ export default function AndroidFleetPage() {
   const proxyIdFor = (device: AndroidDevice): number | null =>
     device.id in proxyOverrides ? proxyOverrides[device.id] : (device.proxy_id ?? null);
   const [groupByProxy, setGroupByProxy] = useState(true);
-  const [editingTagFor, setEditingTagFor] = useState<number | null>(null);
   const [setDeviceTag] = useSetDeviceTagMutation();
 
-  const saveTag = async (deviceId: number, value: string) => {
-    setEditingTagFor(null);
+  /** Saves a device's colour tag ('' removes it). Returns false on failure. */
+  const saveTag = async (deviceId: number, value: string): Promise<boolean> => {
     try {
       await setDeviceTag({ id: deviceId, tag: value.trim() }).unwrap();
       refetch();
+      return true;
     } catch {
-      toast.error('Could not save the note');
+      toast.error('Could not save the tag');
+      return false;
     }
   };
   const [prompt, setPrompt] = useState('');
@@ -608,10 +609,12 @@ export default function AndroidFleetPage() {
                   <Typography
                     variant="body2"
                     noWrap
-                    sx={{ fontWeight: 800, fontSize: 14.5, flexGrow: 1, minWidth: 0, letterSpacing: '-0.01em' }}
+                    sx={{ fontWeight: 800, fontSize: 14.5, minWidth: 0, flexShrink: 1, letterSpacing: '-0.01em' }}
                   >
                     {device.device_name}
                   </Typography>
+                  <DeviceTagChip tag={device.tag} onSave={(value) => saveTag(device.id, value)} />
+                  <Box sx={{ flexGrow: 1 }} />
                   {(() => {
                     const laneId = proxyIdFor(device);
                     const lane = laneId ? proxyById.get(laneId) : undefined;
@@ -818,42 +821,6 @@ export default function AndroidFleetPage() {
                   </TextField>
                 </Box>
 
-                {/* The user's own note on this phone. */}
-                <Box sx={{ px: 1, pb: 0.5 }}>
-                  {editingTagFor === device.id ? (
-                    <TextField
-                      autoFocus
-                      fullWidth
-                      size="small"
-                      placeholder="Note for this phone…"
-                      defaultValue={device.tag ?? ''}
-                      onBlur={(event) => void saveTag(device.id, event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
-                        if (event.key === 'Escape') setEditingTagFor(null);
-                      }}
-                      inputProps={{ maxLength: 40 }}
-                    />
-                  ) : device.tag ? (
-                    <Chip
-                      size="small"
-                      icon={<LocalOfferIcon fontSize="small" />}
-                      label={device.tag}
-                      onClick={() => setEditingTagFor(device.id)}
-                      sx={{ fontWeight: 700, maxWidth: '100%' }}
-                    />
-                  ) : (
-                    <Button
-                      size="small"
-                      startIcon={<LocalOfferIcon fontSize="small" />}
-                      onClick={() => setEditingTagFor(device.id)}
-                      sx={{ color: 'text.disabled', fontSize: 12, px: 0.5 }}
-                    >
-                      Add a note
-                    </Button>
-                  )}
-                </Box>
-
                 {/* Waiting for its lane. Shown above the proxy picker so the
                     reason a phone is idle is next to what it is waiting on. */}
                 {queuedByDevice.has(device.id) && (
@@ -938,7 +905,6 @@ export default function AndroidFleetPage() {
       laneId ? proxyById.get(laneId) : undefined,
       proxies,
       controlDeviceId,
-      editingTagFor,
       maxSteps,
       deviceConfigIds[device.id],
       broadcastConfigId,
