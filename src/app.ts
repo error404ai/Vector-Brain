@@ -22,6 +22,7 @@ const __dirname = dirname(__filename);
 // Controllers - Add your controllers here
 import { AgentTaskController } from './controllers/AgentTaskController';
 import { AiConfigController } from './controllers/AiConfigController';
+import { MaintenanceController } from './controllers/MaintenanceController';
 import { AiRuleController } from './controllers/AiRuleController';
 import { AndroidAgentController } from './controllers/AndroidAgentController';
 
@@ -91,6 +92,7 @@ useExpressServer(app, {
     BrowserWorkerErrorController,
     DashboardController,
     HealthController,
+    MaintenanceController,
     FlowController,
     PromptController,
     ScheduledTaskController,

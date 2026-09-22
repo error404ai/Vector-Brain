@@ -436,6 +436,15 @@ const scenarios = [
     },
   },
   {
+    name: 'space report names the biggest tables',
+    async run() {
+      const report = (await api('GET', '/maintenance/db-space')).data;
+      if (!Array.isArray(report.tables) || report.tables.length === 0) return 'no tables reported';
+      if (!report.tables.some((t) => t.table_name === 'agent_tasks')) return 'agent_tasks missing from the report';
+      if (typeof report.counts?.task_logs !== 'number') return 'counts are missing';
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();
