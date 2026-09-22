@@ -59,6 +59,8 @@ export interface FleetStateDevice {
   model?: string | null;
   online: boolean;
   accessibility: boolean | null;
+  /** Companion build this phone reported on its last heartbeat. */
+  app_version: string | null;
   tag: string | null;
   proxy_id: number | null;
   last_seen_at?: string | null;
@@ -182,7 +184,10 @@ const androidApi = baseApi.injectEndpoints({
       query: ({ id, tag }) => ({ url: `/android/devices/${id}/tag`, method: 'PATCH', body: { tag } }),
     }),
 
-    sendDirectAction: builder.mutation<{ message: string; data: any }, DirectActionPayload>({
+    sendDirectAction: builder.mutation<
+      { message: string; data: any; timing?: { device_ms: number; frame_bytes: number } },
+      DirectActionPayload
+    >({
       query: (body) => ({
         url: '/android/devices/action/direct',
         method: 'POST',

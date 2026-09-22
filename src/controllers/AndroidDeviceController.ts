@@ -141,10 +141,17 @@ export class AndroidDeviceController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     const device = await this.deviceService.getDeviceById(request.device_id, user.userId);
+    const startedAt = Date.now();
     const result = await this.gatewayService.executeAction(device.device_id, request.action as AutomationAction);
+    // Measured so the live view can show where its delay actually goes: time
+    // spent on the phone (capture, encode, upload) versus everything else.
+    // base64 carries 3 bytes per 4 characters.
+    const frame = 'screenCapture' in result ? result.screenCapture?.base64Data : undefined;
+    const frameBytes = frame ? Math.round((frame.length * 3) / 4) : 0;
     return {
       message: 'Direct action executed',
       data: result,
+      timing: { device_ms: Date.now() - startedAt, frame_bytes: frameBytes },
     };
   }
 }

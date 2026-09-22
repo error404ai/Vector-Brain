@@ -61,6 +61,13 @@ export default function InteractiveDeviceScreen({
    * control is switched on, gives the true width to scale by.
    */
   const deviceWidthRef = useRef<number | null>(null);
+  /**
+   * Where a live frame's time goes, averaged over the last few frames: how long
+   * the phone took (capture, encode, upload) versus everything else (browser to
+   * server and back). Shown so a slow feed can be diagnosed instead of guessed at.
+   */
+  const [frameStats, setFrameStats] = useState<{ kb: number; device: number; rest: number } | null>(null);
+  const samplesRef = useRef<{ kb: number; device: number; rest: number }[]>([]);
 
   // Parents often pass an inline callback. Keeping it in a ref stops the polling
   // effect from tearing down and restarting on every render.
@@ -78,12 +85,26 @@ export default function InteractiveDeviceScreen({
     if (!deviceId || busyRef.current || actionBusyRef.current) return;
     busyRef.current = true;
     try {
+      const startedAt = performance.now();
       const res = await sendDirectAction({
         device_id: deviceId,
         action: { type: 'CaptureScreen', preview: true, awaitStability: false },
       }).unwrap();
+      const total = Math.round(performance.now() - startedAt);
       const base64 = res?.data?.screenCapture?.base64Data;
       if (base64) onScreenshotRef.current?.(base64);
+
+      const deviceMs = res?.timing?.device_ms ?? 0;
+      const sample = {
+        kb: Math.round((res?.timing?.frame_bytes ?? 0) / 1024),
+        device: deviceMs,
+        rest: Math.max(0, total - deviceMs),
+      };
+      const samples = [...samplesRef.current, sample].slice(-5);
+      samplesRef.current = samples;
+      const mean = (pick: (s: typeof sample) => number) =>
+        Math.round(samples.reduce((sum, item) => sum + pick(item), 0) / samples.length);
+      setFrameStats({ kb: mean((x) => x.kb), device: mean((x) => x.device), rest: mean((x) => x.rest) });
     } catch {
       // A dropped frame is not worth surfacing; the next tick retries.
     } finally {
@@ -248,6 +269,13 @@ export default function InteractiveDeviceScreen({
           }}
         >
           Agent is running — your taps go to the same screen and may confuse it. Useful for CAPTCHAs and logins.
+        </Typography>
+      )}
+
+      {/* Where the feed's time goes — only while control is on. */}
+      {interactive && frameStats && (
+        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5, fontVariantNumeric: 'tabular-nums' }}>
+          live frame {frameStats.kb} KB · phone {frameStats.device} ms · link {frameStats.rest} ms
         </Typography>
       )}
 

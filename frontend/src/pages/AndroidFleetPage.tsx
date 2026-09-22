@@ -209,6 +209,17 @@ export default function AndroidFleetPage() {
   // from three separate lists and forgot all of it on reload; this survives a
   // refresh and cannot disagree with the agent page or Telegram.
   const { data: fleetStateData } = useGetFleetStateQuery(undefined, { pollingInterval: 5_000 });
+  /** Compares dotted versions numerically: 0.10.0 is newer than 0.9.0. */
+  const compareVersions = (a: string, b: string): number => {
+    const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    const right = b.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      const diff = (left[index] ?? 0) - (right[index] ?? 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  };
+
   const serverStateByDevice = useMemo(
     () => new Map((fleetStateData?.data?.devices ?? []).map((entry) => [entry.id, entry])),
     [fleetStateData],
@@ -538,6 +549,16 @@ export default function AndroidFleetPage() {
   // Single source of truth for a device's status, mapped only from data that
   // exists — used by both the card badge and the fleet summary so they never
   // disagree.
+  /** Newest companion build anyone in this fleet is running. */
+  const newestAppVersion = useMemo(() => {
+    const versions = (fleetStateData?.data?.devices ?? [])
+      .map((entry) => entry.app_version)
+      .filter((value): value is string => Boolean(value));
+    if (!versions.length) return null;
+    return versions.reduce((newest, value) => (compareVersions(value, newest) > 0 ? value : newest));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fleetStateData]);
+
   const deviceStatusOf = (device: AndroidDevice): FleetStatus => {
     if (device.status !== 'ONLINE') return 'offline';
     const state = runtime[device.id];
@@ -682,6 +703,35 @@ export default function AndroidFleetPage() {
                     {device.device_name}
                   </Typography>
                   <DeviceTagChip tag={device.tag} onSave={(value) => saveTag(device.id, value)} />
+                  {(() => {
+                    // Phones report their companion build on every heartbeat.
+                    // Anything behind the newest build in the fleet is flagged,
+                    // so a rollout can be finished without checking each handset.
+                    const version = serverStateByDevice.get(device.id)?.app_version;
+                    if (!version) return null;
+                    const behind = newestAppVersion !== null && compareVersions(version, newestAppVersion) < 0;
+                    return (
+                      <Tooltip title={behind ? `Companion ${version} — newest in this fleet is ${newestAppVersion}` : `Companion ${version}`}>
+                        <Box
+                          component="span"
+                          sx={{
+                            px: 0.7,
+                            py: '1px',
+                            borderRadius: 1,
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            flexShrink: 0,
+                            color: behind ? 'warning.dark' : 'text.disabled',
+                            bgcolor: behind ? alpha('#ea580c', 0.14) : 'transparent',
+                            border: behind ? 'none' : '1px solid',
+                            borderColor: 'divider',
+                          }}
+                        >
+                          {behind ? `v${version} · update` : `v${version}`}
+                        </Box>
+                      </Tooltip>
+                    );
+                  })()}
                   <Box sx={{ flexGrow: 1 }} />
                   {(() => {
                     const laneId = proxyIdFor(device);
