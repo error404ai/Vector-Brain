@@ -67,7 +67,15 @@ import {
 } from '@mui/material';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import toast from 'react-hot-toast';
-import { useQueueDeviceFileMutation } from '@/RTKService/androidService/deviceFileService';
+import {
+  INLINE_UPLOAD_LIMIT,
+  UPLOAD_CHUNK_SIZE,
+  sha256Hex,
+  uploadChunk,
+  useFinishDeviceUploadMutation,
+  useInitDeviceUploadMutation,
+  useQueueDeviceFileMutation,
+} from '@/RTKService/androidService/deviceFileService';
 import DeviceControls from '@/components/android/DeviceControls';
 import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
@@ -133,6 +141,9 @@ const emptyRuntime: DeviceRuntime = { isRunning: false, stepIndex: 0 };
 
 /** Tag-filter key for phones with no tag. */
 const UNTAGGED = '__untagged__';
+
+/** Matches MAX_FILE_BYTES in DeviceFileService, so the refusal arrives before the upload does. */
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 /**
  * Renders one device card, but only when something that card actually shows
@@ -231,6 +242,8 @@ export default function AndroidFleetPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [queueFile, { isLoading: isSendingFile }] = useQueueDeviceFileMutation();
+  const [initDeviceUpload] = useInitDeviceUploadMutation();
+  const [finishDeviceUpload] = useFinishDeviceUploadMutation();
   const [isRefreshingFrames, setIsRefreshingFrames] = useState(false);
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
   const { data: proxyData, refetch: refetchProxies } = useGetDeviceProxiesQuery();
@@ -1285,27 +1298,60 @@ export default function AndroidFleetPage() {
    */
   const handleSendFile = async (file: File) => {
     if (selectedIds.length === 0) return toast.error('Select at least one device');
+    if (file.size > MAX_FILE_BYTES) {
+      return toast.error(`That file is ${Math.round(file.size / (1024 * 1024))} MB. The limit is 100 MB.`);
+    }
 
+    const mime = file.type || 'application/octet-stream';
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        // readAsDataURL gives "data:<mime>;base64,<payload>" — only the payload
-        // goes to the server.
-        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
-        reader.onerror = () => reject(new Error('Could not read the file'));
-        reader.readAsDataURL(file);
-      });
+      if (file.size <= INLINE_UPLOAD_LIMIT) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          // readAsDataURL gives "data:<mime>;base64,<payload>" — only the payload
+          // goes to the server.
+          reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+          reader.onerror = () => reject(new Error('Could not read the file'));
+          reader.readAsDataURL(file);
+        });
 
-      const response = await queueFile({
-        device_ids: selectedIds,
-        file_name: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        content_base64: base64,
-      }).unwrap();
+        await queueFile({
+          device_ids: selectedIds,
+          file_name: file.name,
+          mime_type: mime,
+          content_base64: base64,
+        }).unwrap();
+      } else {
+        // Anything larger goes up in raw chunks — the same path the send-file
+        // dialog uses. Base64 in one request is what the 12 MB refusal was about,
+        // and an APK for a fleet update is well past it.
+        const sha256 = await sha256Hex(file);
+        const totalChunks = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
+        const init = await initDeviceUpload({
+          device_ids: selectedIds,
+          file_name: file.name,
+          mime_type: mime,
+          size_bytes: file.size,
+          sha256,
+          total_chunks: totalChunks,
+        }).unwrap();
 
-      toast.success(response.message || `Sent ${file.name} to ${selectedIds.length} devices`);
+        const uploadId = init.data.upload_id;
+        const progress = toast.loading(`Uploading ${file.name} — 0%`);
+        try {
+          for (let index = 0; index < totalChunks; index += 1) {
+            const start = index * UPLOAD_CHUNK_SIZE;
+            await uploadChunk(uploadId, index, file.slice(start, Math.min(start + UPLOAD_CHUNK_SIZE, file.size)));
+            toast.loading(`Uploading ${file.name} — ${Math.round(((index + 1) / totalChunks) * 100)}%`, { id: progress });
+          }
+          await finishDeviceUpload({ upload_id: uploadId }).unwrap();
+        } finally {
+          toast.dismiss(progress);
+        }
+      }
+
+      toast.success(`Sent ${file.name} to ${selectedIds.length} device${selectedIds.length === 1 ? '' : 's'}`);
     } catch (err: any) {
-      toast.error(err?.data?.message || 'Could not send the file');
+      toast.error(err?.data?.message || err?.message || 'Could not send the file');
     }
   };
 
