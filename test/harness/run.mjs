@@ -407,6 +407,35 @@ const scenarios = [
     },
   },
   {
+    name: 'a reconnecting phone is waited for, not failed',
+    async run() {
+      const t0 = Date.now();
+      const phone = phones.free1.phone;
+      // The phone's socket is gone for a moment — exactly what every dashboard
+      // request sees during a deploy, while the phones are still attached to the
+      // container that is being replaced.
+      phone.drop();
+      await sleep(500);
+
+      const dispatch = run('free1', 'open chrome [sim steps=2 delay=200]');
+      // It comes back shortly, as a real companion does after a restart.
+      setTimeout(() => void phone.connect().catch(() => undefined), 2_500);
+
+      try {
+        await dispatch;
+      } catch (error) {
+        return `dispatch refused the run: ${String(error.message).slice(0, 120)}`;
+      }
+
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free1']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 40_000);
+      if (!done) return 'task never finished';
+      if (done.status !== 'SUCCEEDED') return `ended as ${done.status}/${done.reason_code}`;
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();

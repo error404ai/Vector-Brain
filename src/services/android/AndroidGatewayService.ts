@@ -343,6 +343,24 @@ export class AndroidGatewayService {
     return !!ws && ws.readyState === WebSocket.OPEN;
   }
 
+  /**
+   * Waits a little for a phone's socket to appear.
+   *
+   * Sockets live in this process, so a phone that is perfectly healthy looks
+   * absent to a container that has just replaced another one — which is why a
+   * deploy used to answer "device is currently offline" for phones that were
+   * plainly online, until they reconnected a few seconds later.
+   */
+  async waitForDevice(deviceId: string, timeoutMs = 12_000): Promise<boolean> {
+    if (this.isDeviceConnected(deviceId)) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      if (this.isDeviceConnected(deviceId)) return true;
+    }
+    return false;
+  }
+
 
   disconnectDevice(deviceId: string, reason = 'Device unpaired') {
     this.deviceSockets.get(deviceId)?.close(1008, reason);

@@ -1,4 +1,5 @@
 import { AgentTask, type AgentTaskStatus } from '@/entities/AgentTask';
+import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { AndroidStepStatus, AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -623,7 +624,21 @@ export class AndroidPlannerService {
     const device = await this.deviceService.getDeviceById(deviceId, userId);
 
     if (!this.gatewayService.isDeviceConnected(device.device_id)) {
-      throw new AppError(`Device "${device.device_name}" is currently offline. Please open the companion app on the device.`, 400);
+      // Phones that were alive moments ago are usually mid-reconnect (a deploy,
+      // a brief network drop), so give them a few seconds before refusing.
+      const seenRecently =
+        device.status === AndroidDeviceStatus.ONLINE &&
+        !!device.last_seen_at &&
+        Date.now() - new Date(device.last_seen_at).getTime() < 2 * 60_000;
+      const connected = seenRecently ? await this.gatewayService.waitForDevice(device.device_id) : false;
+      if (!connected) {
+        throw new AppError(
+          seenRecently
+            ? `Device "${device.device_name}" is reconnecting (the server may have just restarted). Try again in a few seconds.`
+            : `Device "${device.device_name}" is currently offline. Please open the companion app on the device.`,
+          400,
+        );
+      }
     }
     if (this.activeDeviceTasks.has(device.device_id) || this.startingDevices.has(device.device_id)) {
       throw new AppError(`Device "${device.device_name}" is already running another automation task.`, 409);
