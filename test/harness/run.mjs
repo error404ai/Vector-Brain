@@ -265,6 +265,66 @@ const scenarios = [
     },
   },
   {
+    name: 'lane stays closed while the proxy refuses to rotate',
+    async run() {
+      const t0 = Date.now();
+      rotation.mode = '429';
+      try {
+        await run('lane1', 'open chrome [sim steps=2 delay=200]');
+        await run('lane2', 'open chrome [sim steps=2 delay=200]');
+        // First one runs and finishes; its rotation then fails with 429.
+        const first = await waitFor(async () => {
+          const rows = await tasksSince(t0, ['lane1']);
+          return rows.length && TERMINAL.has(rows[0].status) ? rows[0] : null;
+        }, 30_000);
+        if (!first) return 'first task never finished';
+        const callsAfterFirst = rotation.calls.length;
+
+        // The second phone shares that IP, so it must not start on the old one.
+        await sleep(10_000);
+        const started = await tasksSince(t0, ['lane2']);
+        if (started.length > 0) return 'second phone started on an un-rotated IP';
+        if (rotation.calls.length <= callsAfterFirst) return 'rotation was never retried';
+
+        // Provider recovers — the lane should open again on its own.
+        rotation.mode = 'ok';
+        const second = await waitFor(async () => {
+          const rows = await tasksSince(t0, ['lane2']);
+          return rows.length && TERMINAL.has(rows[0].status) ? rows[0] : null;
+        }, 90_000, 500);
+        if (!second) return 'lane never recovered after the provider came back';
+        if (second.status !== 'SUCCEEDED') return `recovered run ended as ${second.status}/${second.reason_code}`;
+      } finally {
+        rotation.mode = 'ok';
+      }
+    },
+  },
+  {
+    name: 'a run recorded in the database holds the lane (survives a restart)',
+    async run() {
+      const t0 = Date.now();
+      // Stands in for a run owned by another process — exactly what exists
+      // during a deploy, when old and new containers overlap.
+      const [ghost] = await db.query(
+        `INSERT INTO agent_tasks (user_id, device_id, prompt, success, status, started_at, lease_until, total_steps, total_duration_seconds)
+         VALUES (?, ?, 'ghost run from another process', 0, 'RUNNING', NOW(), DATE_ADD(NOW(), INTERVAL 60 SECOND), 0, 0)`,
+        [userId, phones.lane3.dbId],
+      );
+      try {
+        const response = await run('lane4', 'open chrome [sim steps=2 delay=200]');
+        if (!response?.data?.queued) return 'started while another run held the lane';
+        const started = await waitFor(async () => {
+          const rows = await tasksSince(t0, ['lane4']);
+          return rows.length ? rows[0] : null;
+        }, 8_000);
+        if (started) return 'queued task started anyway while the lane was held';
+      } finally {
+        await db.query("UPDATE agent_tasks SET status = 'CANCELLED', lease_until = NULL WHERE id = ?", [ghost.insertId]);
+        await db.query('DELETE FROM queued_tasks WHERE user_id = ?', [userId]);
+      }
+    },
+  },
+  {
     name: 'graceful shutdown marks the run INTERRUPTED within seconds',
     async run() {
       const t0 = Date.now();

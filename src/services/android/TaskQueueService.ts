@@ -1,3 +1,4 @@
+import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import { QueuedTask } from '@/entities/QueuedTask';
@@ -7,6 +8,7 @@ import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
+import { ProxyRotationService } from './ProxyRotationService';
 
 /** Signature of the planner call the queue uses to launch a waiting task. */
 type TaskRunner = (
@@ -42,11 +44,36 @@ const MAX_QUEUE_AGE_MS = 6 * 60 * 60 * 1000;
  */
 @Service()
 export class TaskQueueService {
-  constructor(private gatewayService: AndroidGatewayService) {}
+  constructor(
+    private gatewayService: AndroidGatewayService,
+    private rotationService: ProxyRotationService,
+  ) {}
 
   private queueRepo = AppDataSource.getRepository(QueuedTask);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
+  private taskRepo = AppDataSource.getRepository(AgentTask);
+
+  /**
+   * Devices on this lane with a live run recorded in the database.
+   *
+   * Memory alone was not enough: during a deploy the old and new containers
+   * overlap, and the new one has never heard of the runs the old one is still
+   * driving — so it would hand the lane to a second phone and put two of them
+   * on the same exit IP. The stored status is the shared truth; the lease keeps
+   * a crashed run from holding a lane forever.
+   */
+  private async laneBusyFromDatabase(proxyId: number): Promise<Set<number>> {
+    const rows = await this.taskRepo
+      .createQueryBuilder('task')
+      .select('task.device_id', 'device_id')
+      .innerJoin(AndroidDevice, 'device', 'device.id = task.device_id')
+      .where('device.proxy_id = :proxyId', { proxyId })
+      .andWhere('task.status = :status', { status: 'RUNNING' })
+      .andWhere('task.lease_until > :now', { now: new Date() })
+      .getRawMany<{ device_id: number }>();
+    return new Set(rows.map((row) => Number(row.device_id)));
+  }
 
   private runTask: TaskRunner | null = null;
   private isDeviceBusy: BusyCheck | null = null;
@@ -104,12 +131,13 @@ export class TaskQueueService {
     if (!proxy) return true;
     const capacity = Math.max(1, proxy.concurrency);
 
-    // Cache lane membership so the count below needs no await.
+    // Cache lane membership and stored runs so the count below needs no await.
     const laneDeviceIds = (await this.deviceRepo.find({ where: { proxy_id: proxyId } })).map((d) => d.id);
+    const busyInDatabase = await this.laneBusyFromDatabase(proxyId);
 
     // ---- synchronous critical section: no await from here to the return ----
     const taken = laneDeviceIds.filter(
-      (id) => id !== deviceDbId && (this.reserved.has(id) || this.isBusy(id)),
+      (id) => id !== deviceDbId && (this.reserved.has(id) || this.isBusy(id) || busyInDatabase.has(id)),
     ).length;
     if (taken >= capacity) return false;
     this.reserved.set(deviceDbId, Date.now());
@@ -207,6 +235,20 @@ export class TaskQueueService {
     for (;;) {
       const running = await this.countRunningOnLane(proxy.id);
       if (running >= capacity) return;
+
+      // The lane's IP has to be good before the next phone touches it. While a
+      // rotation is failing the lane stays shut and the tasks keep waiting —
+      // the rotation service retries on a backoff and reopens it.
+      if (!(await this.rotationService.ensureRotated(proxy.id))) {
+        Logger.info(`[Queue] Lane ${proxy.id} held: ${this.rotationService.laneBlockStatus(proxy.id) ?? 'waiting for rotation'}`);
+        // Come back when the backoff is up instead of leaving the lane to the
+        // 30s sweep — a lane that can reopen in 15s should not wait twice that.
+        const waitMs = this.rotationService.retryAfterMs(proxy.id);
+        if (waitMs !== null) {
+          setTimeout(() => void this.onLaneFreed(proxy.id), Math.min(waitMs + 500, 60_000)).unref();
+        }
+        return;
+      }
 
       const next = await this.queueRepo.findOne({
         where: { proxy_id: proxy.id, status: 'QUEUED' },
@@ -338,11 +380,12 @@ export class TaskQueueService {
 
   /** Devices on this lane with a run in progress right now. */
   private async countRunningOnLane(proxyId: number, ignoreDeviceId?: number): Promise<number> {
-    if (!this.isDeviceBusy) return 0;
-
     const devices = await this.deviceRepo.find({ where: { proxy_id: proxyId } });
+    const busyInDatabase = await this.laneBusyFromDatabase(proxyId);
     return devices.filter(
-      (device) => device.id !== ignoreDeviceId && (this.reserved.has(device.id) || this.isDeviceBusy!(device.id)),
+      (device) =>
+        device.id !== ignoreDeviceId &&
+        (this.reserved.has(device.id) || this.isBusy(device.id) || busyInDatabase.has(device.id)),
     ).length;
   }
 

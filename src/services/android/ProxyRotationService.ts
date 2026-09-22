@@ -18,9 +18,73 @@ const MAX_BODY_CHARS = 2000;
 /** Plain IPv4, which is what these providers hand back. */
 const IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
 
+/** Backoff between rotation retries after a provider refuses (429, timeout). */
+const ROTATION_RETRY_BASE_MS = 5_000;
+const ROTATION_RETRY_MAX_MS = 5 * 60_000;
+
 @Service()
 export class ProxyRotationService {
   constructor(private gatewayService: AndroidGatewayService) {}
+
+  /**
+   * Lanes whose last rotation failed.
+   *
+   * The phones on a lane share one exit IP, so until the IP actually changes the
+   * next phone must not start — it would run on the address the previous task
+   * just used. The lane stays closed and the rotation is retried with a growing
+   * backoff instead of failing anybody's task.
+   */
+  private laneBlocks = new Map<number, { until: number; failures: number; status: string }>();
+
+  private blockLane(proxyId: number, status: string): void {
+    const failures = (this.laneBlocks.get(proxyId)?.failures ?? 0) + 1;
+    const delay = Math.min(ROTATION_RETRY_BASE_MS * 2 ** (failures - 1), ROTATION_RETRY_MAX_MS);
+    this.laneBlocks.set(proxyId, { until: Date.now() + delay, failures, status });
+    Logger.warn(`[Proxy] Lane ${proxyId} closed after a failed rotation (${status}); retrying in ${Math.round(delay / 1000)}s`);
+  }
+
+  /** How long until this lane's rotation may be retried, or null if it is open. */
+  retryAfterMs(proxyId: number): number | null {
+    const block = this.laneBlocks.get(proxyId);
+    if (!block) return null;
+    return Math.max(0, block.until - Date.now());
+  }
+
+  /** Why a lane is currently closed, for the dashboard and for logs. */
+  laneBlockStatus(proxyId: number): string | null {
+    return this.laneBlocks.get(proxyId)?.status ?? null;
+  }
+
+  /**
+   * True when this lane's IP is known-good and the next phone may start.
+   *
+   * Returns false while a failed rotation is waiting on its backoff, and retries
+   * the rotation once that window (and the provider's own minimum gap) passes.
+   */
+  async ensureRotated(proxyId: number): Promise<boolean> {
+    const block = this.laneBlocks.get(proxyId);
+    if (!block) return true;
+    if (Date.now() < block.until) return false;
+
+    const proxy = await this.loadWithUrl(proxyId);
+    if (!proxy?.rotation_url) {
+      this.laneBlocks.delete(proxyId);
+      return true;
+    }
+
+    // Retrying inside the provider's own cooldown just earns another 429.
+    const gapMs = Math.max(0, (proxy.min_rotation_gap_seconds ?? 60) * 1000);
+    if (proxy.last_rotated_at && Date.now() - new Date(proxy.last_rotated_at).getTime() < gapMs) return false;
+
+    const result = await this.callRotationUrl(proxy);
+    if (result.ok) {
+      this.laneBlocks.delete(proxyId);
+      Logger.info(`[Proxy] Lane ${proxyId} reopened — rotation succeeded.`);
+      return true;
+    }
+    this.blockLane(proxyId, result.status);
+    return false;
+  }
 
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
@@ -155,7 +219,9 @@ export class ProxyRotationService {
         return;
       }
 
-      await this.callRotationUrl(proxy, { deviceId: device.id, deviceName: device.device_name });
+      const result = await this.callRotationUrl(proxy, { deviceId: device.id, deviceName: device.device_name });
+      if (result.ok) this.laneBlocks.delete(proxy.id);
+      else this.blockLane(proxy.id, result.status);
     } catch (error) {
       Logger.warn('[Proxy] Rotation after task failed', error);
     }
