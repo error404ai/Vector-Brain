@@ -128,5 +128,47 @@
     "forbid_calls": [
       "run_mission"
     ]
+  },
+  {
+    "message": "last task mein kaunse gmail ids mile?",
+    "expect_calls": [
+      {
+        "name": "mission_results"
+      }
+    ],
+    "forbid_calls": [
+      "run_mission"
+    ]
+  },
+  {
+    "message": "vivo V2204 pe humne kya kya kiya tha?",
+    "expect_calls": [
+      {
+        "name": "phone_history"
+      }
+    ],
+    "forbid_calls": [
+      "run_mission"
+    ]
+  },
+  {
+    "message": "haan",
+    "pending": [
+      "Run \"Open the Gmail app\" on 22 phones — about 660 AI steps, roughly $0.33"
+    ],
+    "expect_calls": [
+      {
+        "name": "confirm_pending"
+      }
+    ]
+  },
+  {
+    "message": "haan par sirf 2 phones pe",
+    "pending": [
+      "Run \"Open the Gmail app\" on 22 phones — about 660 AI steps, roughly $0.33"
+    ],
+    "forbid_calls": [
+      "confirm_pending"
+    ]
   }
 ]

@@ -1,3 +1,4 @@
+import { AgentTask } from '@/entities/AgentTask';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import { Mission } from '@/entities/Mission';
 import AppError from '@/helpers/AppError';
@@ -53,7 +54,7 @@ export interface AgentContext {
   userId: number;
   history: { role: 'user' | 'assistant'; text: string }[];
   lastMissionDevices: number[];
-  pending: { summary: string }[];
+  pending: { summary: string; token?: string }[];
   dryRun?: boolean;
 }
 
@@ -63,6 +64,8 @@ export interface AgentResult {
   proposal?: { action: ProposedAction; summary: string };
   ask?: { question: string; options: string[] };
   cancelledPending?: boolean;
+  /** Set when the user's plain "yes" confirmed a pending proposal. */
+  confirmToken?: string;
   calls: { name: string; args: Record<string, unknown>; result: string }[];
 }
 
@@ -144,6 +147,31 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'mission_results',
+      description:
+        'Read what each phone reported when a mission finished (e.g. which Gmail account is logged in). Without mission_id, the most recent mission. Use this whenever the user asks about results of a task.',
+      parameters: { type: 'object', properties: { mission_id: { type: 'number' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'phone_history',
+      description: 'Recent tasks run on one phone — what was asked and what the phone reported. Use it for "what did we do on X", "which email is on X", settings changed on X.',
+      parameters: { type: 'object', properties: { phone: { type: 'string' }, limit: { type: 'number' } }, required: ['phone'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'confirm_pending',
+      description: 'Apply what is waiting for Confirm — ONLY when the user plainly says yes (yes, haan, confirm, ok, kar do) with nothing else added.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_user',
       description: 'Ask one short question when you genuinely cannot tell what the user wants. Offer 2-5 short options the user can tap.',
       parameters: {
@@ -156,11 +184,14 @@ const TOOLS = [
 ] as const;
 
 const READY_STATES = new Set(['idle', 'completed', 'failed', 'cancelled', 'interrupted']);
+/** A message that is nothing but a yes — the only thing that confirms by typing. */
+const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
 
 @Service()
 export class VectorAgentService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private missionRepo = AppDataSource.getRepository(Mission);
+  private taskRepo = AppDataSource.getRepository(AgentTask);
 
   constructor(
     private aiConfigService: AiConfigService,
@@ -204,6 +235,7 @@ export class VectorAgentService {
     }
     messages.push(new HumanMessage(message));
 
+    let corrected = false;
     for (let i = 0; i < MAX_MODEL_TURNS; i += 1) {
       let turn: BrainTurn;
       try {
@@ -213,12 +245,25 @@ export class VectorAgentService {
         throw new AppError(`The AI model did not answer (${(error as Error)?.message ?? 'error'}). Try again in a moment.`, 502);
       }
       if (!turn.calls.length) {
+        // Guard: the model must not tell the user to press Confirm unless a
+        // tool actually created something to confirm. One correction, then
+        // take its answer.
+        if (!corrected && !result.proposal && /\bconfirm\b/i.test(turn.text)) {
+          corrected = true;
+          messages.push(new AIMessage(turn.text));
+          messages.push(
+            new HumanMessage(
+              `(system note, not from the user) Your reply mentions Confirm, but no tool created a proposal in this turn${ctx.pending.length ? ` (still waiting from before: ${ctx.pending.map((p) => p.summary).join(' | ')})` : ''}. If the user wants a new task or change, call the tool now; if you mean the earlier item, say which one; otherwise answer without mentioning Confirm.`,
+            ),
+          );
+          continue;
+        }
         result.text = turn.text;
         break;
       }
       messages.push(new AIMessage({ content: turn.text, tool_calls: turn.calls.map((c) => ({ id: c.id, name: c.name, args: c.args, type: 'tool_call' as const })) }));
       for (const call of turn.calls) {
-        const output = await this.execute(call, ctx, result);
+        const output = await this.execute(call, ctx, result, message);
         result.calls.push({ name: call.name, args: call.args, result: output });
         messages.push(new ToolMessage({ content: output, tool_call_id: call.id }));
       }
@@ -244,7 +289,7 @@ export class VectorAgentService {
   // Tools
   // ---------------------------------------------------------------------------
 
-  private async execute(call: ToolCall, ctx: AgentContext, result: AgentResult): Promise<string> {
+  private async execute(call: ToolCall, ctx: AgentContext, result: AgentResult, userMessage = ''): Promise<string> {
     const args = call.args ?? {};
     try {
       switch (call.name) {
@@ -316,6 +361,62 @@ export class VectorAgentService {
         case 'cancel_pending_confirmation':
           result.cancelledPending = true;
           return JSON.stringify({ status: ctx.pending.length ? 'cancelled' : 'nothing was pending' });
+
+        case 'mission_results': {
+          const mission = args.mission_id
+            ? await this.missionRepo.findOne({ where: { id: Number(args.mission_id), user_id: ctx.userId } })
+            : await this.missionRepo.findOne({ where: { user_id: ctx.userId }, order: { id: 'DESC' } });
+          if (!mission) return JSON.stringify({ error: 'No mission found' });
+          const view = (await this.missionService.get(mission.id, ctx.userId)).data as {
+            id: number;
+            prompt: string;
+            status: string;
+            created_at: Date;
+            items: { device_name: string; status: string; last_message: string | null; reason_text: string | null }[];
+          };
+          return JSON.stringify({
+            mission_id: view.id,
+            instruction: view.prompt,
+            status: view.status,
+            started: view.created_at,
+            phones: view.items.map((i) => ({
+              phone: i.device_name,
+              status: i.status,
+              reported: i.last_message ? i.last_message.slice(0, 300) : null,
+              problem: i.status === 'FAILED' ? i.reason_text : undefined,
+            })),
+          });
+        }
+
+        case 'phone_history': {
+          const state = (await this.fleetStateService.getState(ctx.userId)) as { devices: { id: number; name: string }[] };
+          const [device] = matchNamedDevices(String(args.phone ?? ''), state.devices);
+          if (!device) return JSON.stringify({ error: `No phone called "${String(args.phone ?? '')}"` });
+          const limit = Math.max(1, Math.min(15, Number(args.limit) || 8));
+          const tasks = await this.taskRepo.find({ where: { device_id: device.id, user_id: ctx.userId }, order: { id: 'DESC' }, take: limit });
+          return JSON.stringify({
+            phone: device.name,
+            recent_tasks: tasks.map((t) => ({
+              when: t.created_at,
+              asked: (t.prompt ?? '').slice(0, 200),
+              status: t.status,
+              reported: t.message ? t.message.slice(0, 300) : null,
+            })),
+          });
+        }
+
+        case 'confirm_pending': {
+          if (!ctx.pending.length) return JSON.stringify({ error: 'Nothing is waiting for Confirm' });
+          // A plain yes only. "yes but only 2 phones" changes the request, so
+          // the model has to make a new proposal instead.
+          if (!PLAIN_YES.test(userMessage.trim())) {
+            return JSON.stringify({ error: 'The user did not simply say yes. Do not confirm; handle what they asked, or make a new proposal.' });
+          }
+          const latest = ctx.pending[ctx.pending.length - 1];
+          if (!latest.token) return JSON.stringify({ error: 'Cannot confirm here' });
+          result.confirmToken = latest.token;
+          return JSON.stringify({ status: 'confirmed', what: latest.summary });
+        }
 
         case 'ask_user': {
           const question = String(args.question ?? '').trim() || 'What would you like me to do?';
@@ -394,6 +495,8 @@ export class VectorAgentService {
       '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission.',
       '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
       '- Ask only when you genuinely cannot tell; otherwise act.',
+      '- For results of a task (emails found, what a phone reported) use mission_results; for what was done on one phone use phone_history. Answer from what they return, as a short list or table.',
+      '- If the user plainly says yes while something waits for Confirm, call confirm_pending.',
       `Last task's phones: ${lastPhones.length ? lastPhones.join(', ') : 'none yet'}.`,
       `Waiting for Confirm: ${ctx.pending.length ? ctx.pending.map((p) => p.summary).join(' | ') : 'nothing'}.`,
       `Fleet now: ${JSON.stringify(snapshot)}`,

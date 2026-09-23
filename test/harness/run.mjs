@@ -1297,6 +1297,59 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: reads what each phone reported in a finished mission',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'check gmail [sim steps=1 delay=50]', device_ids: [phones.free1.dbId, phones.free2.dbId] });
+      await waitForMission(created.data.id, 30_000);
+      const script = { turns: [{ calls: [{ name: 'mission_results', args: {} }] }, { text: 'Yeh rahe results.' }] };
+      const res = await api('POST', '/android/chat/dry-run', { message: `last task ke results batao [agent:${JSON.stringify(script)}]` });
+      const out = res?.data?.calls?.[0]?.result ?? '';
+      if (!/free1/.test(out) || !/free2/.test(out)) return `phones missing from results: ${out.slice(0, 200)}`;
+      if (!/Simulated run finished/.test(out)) return `what the phones reported is missing: ${out.slice(0, 200)}`;
+    },
+  },
+  {
+    name: 'agent: a phone history shows what was done on it',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'phone_history', args: { phone: 'free1' } }] }, { text: 'ok' }] };
+      const res = await api('POST', '/android/chat/dry-run', { message: `free1 pe kya kiya tha [agent:${JSON.stringify(script)}]` });
+      const out = res?.data?.calls?.[0]?.result ?? '';
+      if (!/check gmail/i.test(out)) return `recent task not listed: ${out.slice(0, 200)}`;
+    },
+  },
+  {
+    name: 'agent: typing "haan" confirms a pending proposal, anything more does not',
+    async run() {
+      const propose = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'all' } }] }, { text: 'Confirm?' }] };
+      const p1 = (await api('POST', '/android/chat', { message: `sab pe settings [agent:${JSON.stringify(propose)}]` })).data;
+      if (p1?.kind !== 'confirm') return `no proposal: ${p1?.kind}`;
+      const hedge = { turns: [{ calls: [{ name: 'confirm_pending', args: {} }] }, { text: 'ok' }] };
+      const h = (await api('POST', '/android/chat', { message: `haan par sirf 2 phones pe [agent:${JSON.stringify(hedge)}]` })).data;
+      if (h?.kind === 'mission') return 'a qualified "haan" confirmed the whole proposal';
+      const p2 = (await api('POST', '/android/chat', { message: `sab pe settings [agent:${JSON.stringify(propose)}]` })).data;
+      const yes = { turns: [{ calls: [{ name: 'confirm_pending', args: {} }] }, { text: 'Chalu.' }] };
+      const y = (await api('POST', '/android/chat', { message: `haan [agent:${JSON.stringify(yes)}]` })).data;
+      if (y?.kind !== 'mission') return `"haan" did not confirm: ${y?.kind} ${y?.text}`;
+      await waitForMission(y.mission.id, 60_000);
+      if (p2?.kind !== 'confirm') return 'second proposal missing';
+    },
+  },
+  {
+    name: 'agent: talk of Confirm without a real proposal is corrected, and the summary is not doubled',
+    async run() {
+      const fake = { turns: [{ text: 'Task ready hai — Confirm dabao.' }, { text: 'Kaunse phones pe chalana hai?' }] };
+      const r = (await api('POST', '/android/chat', { message: `gmail check karo [agent:${JSON.stringify(fake)}]` })).data;
+      if (/confirm dabao/i.test(r?.text ?? '')) return `claimed a Confirm that does not exist: ${r?.text}`;
+      const dup = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'all' } }] }, { text: 'PLACEHOLDER' }] };
+      const first = (await api('POST', '/android/chat/dry-run', { message: `sab pe settings [agent:${JSON.stringify(dup)}]` })).data;
+      const summary = first?.proposal;
+      const echo = { turns: [dup.turns[0], { text: `Confirm karo: ${summary}` }] };
+      const c = (await api('POST', '/android/chat', { message: `sab pe settings [agent:${JSON.stringify(echo)}]` })).data;
+      const count = (c?.text ?? '').split(summary).length - 1;
+      if (count !== 1) return `summary appears ${count} times`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

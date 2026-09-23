@@ -293,9 +293,10 @@ function ItemRow({ item, steps, round }: { item: MissionItem; steps: LiveStep[];
         </Box>
       )}
 
-      {item.status === 'SUCCEEDED' && item.last_message && /^Worked for /.test(item.last_message) && (
-        <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.25 }}>
-          {item.last_message}
+      {/* What the phone reported — e.g. which account is logged in. */}
+      {item.status === 'SUCCEEDED' && item.last_message && (
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.25, pl: 1.5, borderLeft: '2px solid', borderColor: 'success.light', wordBreak: 'break-word' }}>
+          {item.last_message.length > 240 ? `${item.last_message.slice(0, 240)}…` : item.last_message}
         </Typography>
       )}
 

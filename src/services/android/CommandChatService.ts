@@ -166,6 +166,7 @@ export class CommandChatService {
     const pending = this.pendingFor(userId);
     const result = await this.agent.run(brain, text, { userId, ...base, pending });
 
+    if (result.confirmToken) return this.applyToken(userId, result.confirmToken);
     if (result.cancelledPending) for (const p of pending) this.pending.delete(p.token);
     if (result.ask) {
       return { kind: 'clarify', text: result.ask.question, quick_replies: result.ask.options.length ? result.ask.options : undefined };
@@ -173,7 +174,8 @@ export class CommandChatService {
     if (result.proposal) {
       const token = crypto.randomBytes(12).toString('hex');
       this.pending.set(token, { userId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
-      return { kind: 'confirm', text: `${result.text}\n\n${result.proposal.summary}.`, confirm_token: token };
+      const text = result.text.includes(result.proposal.summary) ? result.text : `${result.text}\n\n${result.proposal.summary}.`;
+      return { kind: 'confirm', text, confirm_token: token };
     }
     if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission };
     return { kind: 'answer', text: result.text };
@@ -323,6 +325,13 @@ export class CommandChatService {
   }
 
   async confirm(userId: number, token: string): Promise<ApiResponse> {
+    const reply = await this.applyToken(userId, token);
+    await this.record(userId, 'assistant', reply.text, reply);
+    return { message: 'Applied', data: reply };
+  }
+
+  /** Applies a pending proposal; the caller records the reply. */
+  private async applyToken(userId: number, token: string): Promise<ChatReply> {
     const pending = this.pending.get(token);
     if (!pending || pending.userId !== userId) throw new AppError('Nothing to confirm (it may have expired)', 404);
     this.pending.delete(token);
@@ -336,8 +345,7 @@ export class CommandChatService {
       } catch (error) {
         reply = { kind: 'error', text: (error as AppError)?.message ?? 'Could not apply it' };
       }
-      await this.record(userId, 'assistant', reply.text, reply);
-      return { message: 'Applied', data: reply };
+      return reply;
     }
     await this.apply(userId, pending.action);
     if (pending.thenMission) {
@@ -348,8 +356,7 @@ export class CommandChatService {
         reply = { kind: 'error', text: `${pending.summary} is done, but the task could not start: ${(error as AppError)?.message ?? 'unknown error'}` };
       }
     }
-    await this.record(userId, 'assistant', reply.text, reply);
-    return { message: 'Applied', data: reply };
+    return reply;
   }
 
   // ---------------------------------------------------------------------------
