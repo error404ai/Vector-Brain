@@ -9,3 +9,8 @@ export const CreateMissionValidation = z.object({
   no_internet: z.boolean().optional(),
   duration_seconds: z.number().int().min(1).max(12 * 3600).optional(),
 });
+
+export const RerunMissionValidation = z.object({
+  scope: z.enum(['failed', 'all']).optional(),
+  continue: z.boolean().optional(),
+});

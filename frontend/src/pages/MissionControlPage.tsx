@@ -2,6 +2,7 @@ import authManager from '@/_helpers/authManager';
 import {
   useConfirmCommandMutation,
   useGetChatHistoryQuery,
+  useRerunFromChatMutation,
   useSendCommandMutation,
   type ChatReply,
 } from '@/RTKService/commandChatService/commandChatService';
@@ -32,7 +33,11 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
-import { Box, Button, Chip, CircularProgress, IconButton, LinearProgress, Paper, TextField, Tooltip, Typography } from '@mui/material';
+import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
+import ReplayIcon from '@mui/icons-material/Replay';
+import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import { Box, Button, Chip, CircularProgress, IconButton, LinearProgress, MenuItem, MenuList, Paper, TextField, Tooltip, Typography } from '@mui/material';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import toast from 'react-hot-toast';
 
@@ -219,7 +224,10 @@ function ItemRow({ item, steps, round }: { item: MissionItem; steps: LiveStep[];
   const latest = steps[steps.length - 1];
   const live = item.status === 'RUNNING';
   // The exact error the phone or agent gave, checkable on the spot.
-  const detail = item.status === 'FAILED' && item.last_message ? item.last_message : null;
+  // Step-limit text was written for the fleet page ("raise the Steps value in
+  // the header"); in the chat the card's Continue button says it better.
+  const detail =
+    item.status === 'FAILED' && item.last_message && item.last_reason !== 'STEP_LIMIT' && item.last_reason !== 'UNFINISHED' ? item.last_message : null;
   return (
     <Box sx={{ py: 0.75, minWidth: 0, borderBottom: '1px solid', borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -399,7 +407,9 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
   );
 }
 
-function MissionCard({ mission, feed }: { mission: Mission; feed: LiveFeed }) {
+type RerunHandler = (missionId: number, options: { scope: 'failed' | 'all'; continue?: boolean }) => void;
+
+function MissionCard({ mission, feed, onRerun }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const { progress } = mission;
   const running = mission.status === 'RUNNING';
@@ -493,6 +503,24 @@ function MissionCard({ mission, feed }: { mission: Mission; feed: LiveFeed }) {
         ))}
       </Box>
 
+      {!running && onRerun && (
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
+          {mission.items.some((i) => i.status === 'FAILED' && (i.last_reason === 'STEP_LIMIT' || i.last_reason === 'UNFINISHED')) && (
+            <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} onClick={() => onRerun(mission.id, { scope: 'failed', continue: true })}>
+              Continue
+            </Button>
+          )}
+          {progress.failed > 0 && (
+            <Button size="small" variant="outlined" startIcon={<ReplayIcon />} onClick={() => onRerun(mission.id, { scope: 'failed' })}>
+              Retry failed
+            </Button>
+          )}
+          <Button size="small" variant="text" startIcon={<RestartAltIcon />} onClick={() => onRerun(mission.id, { scope: 'all' })}>
+            Run again
+          </Button>
+        </Box>
+      )}
+
       {mission.summary && !running && (
         <Typography variant="body2" sx={{ mt: 1.5, whiteSpace: 'pre-wrap', animation: `${riseIn} 360ms ${ease}`, ...reducedMotion }}>
           {mission.summary}
@@ -511,7 +539,7 @@ function MissionCard({ mission, feed }: { mission: Mission; feed: LiveFeed }) {
  * A mission started from the chat, kept current on its own: it polls just this
  * mission while it runs and refetches the moment the server pushes an update.
  */
-function LiveMissionCard({ initial, feed }: { initial: Mission; feed: LiveFeed }) {
+function LiveMissionCard({ initial, feed, onRerun }: { initial: Mission; feed: LiveFeed; onRerun?: RerunHandler }) {
   const [status, setStatus] = useState(initial.status);
   const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 2000 : 0 });
   const mission = data?.data ?? initial;
@@ -523,7 +551,7 @@ function LiveMissionCard({ initial, feed }: { initial: Mission; feed: LiveFeed }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-      <MissionCard mission={mission} feed={feed} />
+      <MissionCard mission={mission} feed={feed} onRerun={onRerun} />
       {isError && (
         <Typography variant="caption" color="warning.main">
           Couldn't refresh this mission — retrying.
@@ -575,7 +603,21 @@ function AssistantRow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AssistantBubble({ turn, feed, onConfirm }: { turn: Extract<ChatTurn, { role: 'assistant' }>; feed: LiveFeed; onConfirm: (token: string) => void }) {
+function AssistantBubble({
+  turn,
+  feed,
+  onConfirm,
+  onRerun,
+  onQuickReply,
+  isLatest,
+}: {
+  turn: Extract<ChatTurn, { role: 'assistant' }>;
+  feed: LiveFeed;
+  onConfirm: (token: string) => void;
+  onRerun: RerunHandler;
+  onQuickReply: (text: string) => void;
+  isLatest: boolean;
+}) {
   const { reply } = turn;
   if (reply.kind === 'mission' && reply.mission) {
     return (
@@ -585,7 +627,7 @@ function AssistantBubble({ turn, feed, onConfirm }: { turn: Extract<ChatTurn, { 
             {reply.text}
           </Typography>
         )}
-        <LiveMissionCard initial={reply.mission} feed={feed} />
+        <LiveMissionCard initial={reply.mission} feed={feed} onRerun={onRerun} />
       </AssistantRow>
     );
   }
@@ -609,6 +651,21 @@ function AssistantBubble({ turn, feed, onConfirm }: { turn: Extract<ChatTurn, { 
         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: error ? 'error.main' : 'text.primary' }}>
           {reply.text}
         </Typography>
+        {isLatest && reply.quick_replies && reply.quick_replies.length > 0 && (
+          <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1 }}>
+            {reply.quick_replies.map((option, index) => (
+              <Chip
+                key={option}
+                label={option}
+                size="small"
+                color="primary"
+                variant="outlined"
+                onClick={() => onQuickReply(option)}
+                sx={{ animation: `${riseIn} 260ms ${ease} ${index * 45}ms both`, ...reducedMotion }}
+              />
+            ))}
+          </Box>
+        )}
         {reply.kind === 'confirm' && reply.confirm_token && (
           <Box sx={{ mt: 1 }}>
             <Button size="small" variant="contained" disabled={turn.confirming} onClick={() => onConfirm(reply.confirm_token as string)}>
@@ -641,6 +698,12 @@ export default function MissionControlPage() {
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
   const [confirmCommand] = useConfirmCommandMutation();
+  const [rerunFromChat, { isLoading: rerunning }] = useRerunFromChatMutation();
+
+  // Names and tags for @ / # suggestions in the input.
+  const { data: fleetData } = useGetFleetStateQuery();
+  const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
+  const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
   // The conversation is stored on the server; a reload picks it back up.
   const { data: historyData, isLoading: loadingHistory } = useGetChatHistoryQuery();
@@ -687,7 +750,45 @@ export default function MissionControlPage() {
     }
   };
 
+  const onRerun: RerunHandler = async (missionId, options) => {
+    pushTurn({ id: nextId('u'), role: 'user', text: options.continue ? 'Continue' : options.scope === 'all' ? 'Run again' : 'Retry failed phones' });
+    try {
+      const res = await rerunFromChat({ mission_id: missionId, ...options }).unwrap();
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: res.data });
+    } catch (error) {
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
+    }
+  };
+
+  // @phone / #tag suggestions for the word being typed.
+  const mention = /(^|\s)([@#])([^\s@#]*)$/.exec(input);
+  const suggestions = mention
+    ? (mention[2] === '@' ? phoneNames : tagNames)
+        .filter((name) => name.toLowerCase().includes(mention[3].toLowerCase()))
+        .slice(0, 6)
+    : [];
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const applySuggestion = (name: string) => {
+    if (!mention) return;
+    const start = input.length - mention[3].length - 1;
+    setInput(`${input.slice(0, start)}${mention[2]}${name} `);
+    setActiveSuggestion(0);
+  };
+
   const onKeyDown = (event: KeyboardEvent) => {
+    if (suggestions.length > 0) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        setActiveSuggestion((i) => (i + step + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        applySuggestion(suggestions[Math.min(activeSuggestion, suggestions.length - 1)]);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void send();
@@ -728,7 +829,7 @@ export default function MissionControlPage() {
             </Box>
           </Box>
         )}
-        {turns.map((turn) =>
+        {turns.map((turn, index) =>
           turn.role === 'user' ? (
             <Box
               key={turn.id}
@@ -739,12 +840,36 @@ export default function MissionControlPage() {
               </Typography>
             </Box>
           ) : (
-            <AssistantBubble key={turn.id} turn={turn} feed={feed} onConfirm={onConfirm} />
+            <AssistantBubble
+              key={turn.id}
+              turn={turn}
+              feed={feed}
+              onConfirm={onConfirm}
+              onRerun={onRerun}
+              onQuickReply={(text) => void send(text)}
+              isLatest={index === turns.length - 1 && !sending}
+            />
           ),
         )}
-        {sending && <TypingIndicator />}
+        {(sending || rerunning) && <TypingIndicator />}
         <div ref={bottomRef} />
       </Box>
+
+      {suggestions.length > 0 && (
+        <Paper elevation={6} sx={{ mb: 0.75, borderRadius: 2, overflow: 'hidden', alignSelf: 'flex-start', minWidth: 260, animation: `${riseIn} 180ms ${ease}`, ...reducedMotion }}>
+          <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 0.75, display: 'block' }}>
+            {mention?.[2] === '@' ? 'Phones' : 'Tags'} · ↑↓ to pick, Enter to insert
+          </Typography>
+          <MenuList dense>
+            {suggestions.map((name, i) => (
+              <MenuItem key={name} selected={i === Math.min(activeSuggestion, suggestions.length - 1)} onMouseDown={(e) => { e.preventDefault(); applySuggestion(name); }}>
+                {mention?.[2]}
+                {name}
+              </MenuItem>
+            ))}
+          </MenuList>
+        </Paper>
+      )}
 
       <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 3, transition: 'box-shadow 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.15)' } }}>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
@@ -752,7 +877,7 @@ export default function MissionControlPage() {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Message Vector — e.g. browse random websites for 30 minutes on 3 phones"
+            placeholder="Message Vector — type @ for a phone, # for a tag"
             multiline
             maxRows={6}
             fullWidth

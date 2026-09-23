@@ -1022,6 +1022,95 @@ const scenarios = [
     },
   },
   {
+    name: 'chat uses the phones from the last task when none are named',
+    async run() {
+      const first = await api('POST', '/android/chat', { message: 'open settings on free2 [sim steps=1 delay=50]' });
+      const m1 = first?.data?.mission;
+      if (!m1) return `first message did not start a mission: ${first?.data?.kind} ${first?.data?.text}`;
+      await waitForMission(m1.id, 30_000);
+      const res = await api('POST', '/android/chat', { message: 'stop youtube video [sim steps=1 delay=50]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `follow-up became ${reply?.kind}: ${reply?.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free2.dbId) return `follow-up targeted ${JSON.stringify(ids)}, expected free2 only`;
+      if (!/last task|same phone/i.test(reply.text ?? '')) return `did not say it reused the phones: ${reply.text}`;
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'chat remembers the question it asked and finishes the job with the answer',
+    async run() {
+      await db.query('DELETE FROM chat_messages WHERE user_id = ?', [userId]);
+      const ask = await api('POST', '/android/chat', { message: 'stop youtube video [sim steps=1 delay=50]' });
+      const q = ask?.data;
+      if (q?.kind !== 'clarify') return `expected a question, got ${q?.kind}: ${q?.text}`;
+      if (!Array.isArray(q.quick_replies) || !q.quick_replies.some((r) => /free1/.test(r))) return `no phone quick replies: ${JSON.stringify(q.quick_replies)}`;
+      const answer = await api('POST', '/android/chat', { message: 'free1' });
+      const reply = answer?.data;
+      if (reply?.kind !== 'mission') return `the answer was not joined to the question: ${reply?.kind} — ${reply?.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free1.dbId) return `targeted ${JSON.stringify(ids)}, expected free1`;
+      if (!/youtube/i.test(reply.mission.prompt ?? '')) return `lost the action: ${reply.mission.prompt}`;
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'chat takes a phone first and the action after',
+    async run() {
+      await db.query('DELETE FROM chat_messages WHERE user_id = ?', [userId]);
+      const first = await api('POST', '/android/chat', { message: 'free2' });
+      if (first?.data?.kind !== 'clarify') return `a bare phone name became ${first?.data?.kind}: ${first?.data?.text}`;
+      const res = await api('POST', '/android/chat', { message: 'open settings [sim steps=1 delay=50]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `the action was not joined to the phone: ${reply?.kind} — ${reply?.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free2.dbId) return `targeted ${JSON.stringify(ids)}, expected free2`;
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'chat understands @phone mentions',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'open settings on @free1 [sim steps=1 delay=50]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `kind ${reply?.kind}: ${reply?.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free1.dbId) return `targeted ${JSON.stringify(ids)}, expected free1`;
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'a finished mission can be retried on its failed phones, or continued',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'open settings [sim steps=1 delay=50 fail]', device_ids: [phones.free1.dbId, phones.free2.dbId] });
+      const done = await waitForMission(created.data.id, 30_000);
+      if (!done) return 'first mission never finished';
+      const failed = done.items.filter((i) => i.status === 'FAILED');
+      if (failed.length !== 2) return `expected both to fail, got ${failed.length}`;
+      // Retry: a new mission on just the failed phones, same instruction.
+      const retry = await api('POST', `/android/missions/${done.id}/rerun`, { scope: 'failed' });
+      const r = retry?.data;
+      if (!r?.id || r.id === done.id) return `retry did not start a new mission: ${JSON.stringify(retry).slice(0, 160)}`;
+      if (r.items.length !== 2 || r.prompt !== done.prompt) return 'retry changed the phones or the instruction';
+      await waitForMission(r.id, 30_000);
+      // Continue: picks the same run back up instead of starting a new one.
+      const cont = await api('POST', `/android/missions/${done.id}/rerun`, { scope: 'failed', continue: true });
+      const c = await waitForMission(cont.data.id, 30_000);
+      const before = new Set(done.items.map((i) => i.agent_task_id));
+      if (!c.items.every((i) => before.has(i.agent_task_id))) return 'continue started fresh runs instead of continuing the old ones';
+    },
+  },
+  {
+    name: 'mission rows use plain words, not reason codes',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'open settings [sim steps=1 delay=50 fail]', device_ids: [phones.free2.dbId] });
+      const done = await waitForMission(created.data.id, 30_000);
+      const item = done.items[0];
+      if (/^[A-Z_]+$/.test(item.reason_text ?? '')) return `raw code shown: ${item.reason_text}`;
+      if (/\b[A-Z]{3,}_[A-Z_]+\b/.test(done.summary ?? '')) return `raw code in summary: ${done.summary}`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

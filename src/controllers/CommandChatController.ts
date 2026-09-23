@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { CommandChatService } from '@/services/android/CommandChatService';
-import { CommandChatConfirmValidation, CommandChatValidation } from '@/validations/CommandChatValidation';
+import { CommandChatConfirmValidation, CommandChatRerunValidation, CommandChatValidation } from '@/validations/CommandChatValidation';
 import { Authorized, Body, CurrentUser, Get, JsonController, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -21,6 +21,14 @@ export class CommandChatController {
   @Get('/history')
   async history(@QueryParam('limit') limit: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.commandChatService.history(user.userId, Number(limit) || 60);
+  }
+
+  @Authorized()
+  @Post('/rerun')
+  @UseBefore(zodValidationMiddleware(CommandChatRerunValidation))
+  async rerun(@Body() request: z.infer<typeof CommandChatRerunValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    const body = request as { mission_id: number; scope?: 'failed' | 'all'; continue?: boolean };
+    return this.commandChatService.rerun(user.userId, body.mission_id, { scope: body.scope, continue: body.continue });
   }
 
   @Authorized()

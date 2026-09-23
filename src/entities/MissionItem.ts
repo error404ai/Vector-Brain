@@ -28,6 +28,10 @@ export class MissionItem {
   @Column({ type: 'int', default: 0 })
   attempts: number;
 
+  /** When set, this item continues that earlier run from its current screen. */
+  @Column({ type: 'int', nullable: true })
+  continue_from_task_id: number | null;
+
   @Column({ type: 'int', nullable: true })
   agent_task_id: number | null;
 

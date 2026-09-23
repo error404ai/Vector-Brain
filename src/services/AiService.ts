@@ -50,6 +50,7 @@ export type ChatIntent =
   | { kind: 'setting'; setting: 'concurrency'; proxy?: string; concurrency?: number }
   | { kind: 'refuse' }
   | { kind: 'identity' }
+  | { kind: 'target'; target: string }
   | { kind: 'clarify'; question?: string };
 
 const ChatIntentSchema = z
@@ -66,7 +67,7 @@ const ChatIntentSchema = z
   .passthrough();
 
 const MissionPlanSchema = z.object({
-  mode: z.enum(['ids', 'tag', 'count', 'all']),
+  mode: z.enum(['ids', 'tag', 'count', 'all', 'none']),
   ids: z.array(z.number().int()).optional().default([]),
   tag: z.string().optional().default(''),
   count: z.number().int().min(0).max(500).optional().default(0),
@@ -75,7 +76,7 @@ const MissionPlanSchema = z.object({
 });
 
 export interface MissionPlan {
-  mode: 'ids' | 'tag' | 'count' | 'all';
+  mode: 'ids' | 'tag' | 'count' | 'all' | 'none';
   ids: number[];
   tag: string;
   count: number;
@@ -163,7 +164,7 @@ export class AiService {
       'You split a request for a fleet of Android phones into a plan. You never carry it out.',
       'Each phone is driven by its own agent that receives ONE instruction and executes it on that phone only.',
       'Decide which phones, and write the instruction for a single phone.',
-      'mode: "ids" when the request names phones, "tag" when it names a group/tag, "count" when it gives a number of phones, "all" when it says all/every phone.',
+      'mode: "ids" when the request names phones, "tag" when it names a group/tag, "count" when it gives a number of phones, "all" only when it explicitly says all/every phone, and "none" when it does not say which phones at all (never guess "all").',
       'prompt: the task for ONE phone, in the language of the request, with every name, address, URL and number preserved exactly. Remove any mention of how many phones.',
       'no_internet: true only when the task needs no website or online service (e.g. changing a setting). Email, browsing, apps that load content = false.',
       'Reply with ONLY minified JSON, no prose, no code fences:',
@@ -198,6 +199,7 @@ export class AiService {
   async classifyChatCommand(
     text: string,
     config: { provider: AiProvider; model: string; api_key: string; base_url?: string | null },
+    history: string[] = [],
   ): Promise<ChatIntent | null> {
     const chatModel = this.aiConfigService.createChatModel({
       provider: config.provider,
@@ -215,6 +217,12 @@ export class AiService {
       '- "refuse": anything that deletes or removes devices/proxies/tasks, changes accounts or billing, or is outside running tasks / status / proxy settings.',
       '- "clarify": too vague to act on; put one short question in "question".',
       'Never invent a mission from a vague message — prefer clarify. Reply with ONLY minified JSON, no prose, no code fences.',
+      ...(history.length
+        ? [
+            'Recent conversation (oldest first) — use it to understand follow-ups such as a short answer to your own question or "do the same on another phone":',
+            ...history,
+          ]
+        : []),
     ].join('\n');
     try {
       const response = await chatModel.invoke([

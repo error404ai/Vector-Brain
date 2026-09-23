@@ -7,3 +7,9 @@ export const CommandChatValidation = z.object({
 export const CommandChatConfirmValidation = z.object({
   confirm_token: z.string().trim().min(8).max(64),
 });
+
+export const CommandChatRerunValidation = z.object({
+  mission_id: z.number().int().positive(),
+  scope: z.enum(['failed', 'all']).optional(),
+  continue: z.boolean().optional(),
+});

@@ -9,7 +9,7 @@ import { ApiResponse } from '@/types/ApiResponse';
 import crypto from 'node:crypto';
 import { Service } from 'typedi';
 import { FleetStateService } from './FleetStateService';
-import { MissionService } from './MissionService';
+import { MissionService, MissionTargetMissing, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
@@ -44,6 +44,14 @@ export interface ChatReply {
   confirm_token?: string;
   /** Echoes the action a confirm will apply, for the UI to describe. */
   action?: PendingAction;
+  /** Tap-to-send answers shown under a question. */
+  quick_replies?: string[];
+  /**
+   * What a question is waiting for, so the next message can finish the job:
+   * the phones for a request already given, or the action for phones already
+   * named. Stored with the reply, which is how the chat "remembers" it.
+   */
+  pending?: { awaiting: 'phones'; request: string } | { awaiting: 'action'; target: string };
 }
 
 /**
@@ -74,8 +82,34 @@ export class CommandChatService {
     if (!text) throw new AppError('Type something for the chat to do', 400);
 
     await this.record(userId, 'user', text);
-    const intent = await this.classify(userId, text);
-    const reply = await this.act(userId, text, intent);
+    const context = await this.recentContext(userId);
+    // Finish a question the chat just asked: "stop youtube" -> "which phone?" ->
+    // "Nokia" is one request, not two unrelated messages.
+    const effective = await this.joinWithPending(userId, text, context.pending);
+    const intent = await this.classify(userId, effective, context.lines);
+    const reply = await this.act(userId, effective, intent, context.lastMissionDevices);
+    await this.record(userId, 'assistant', reply.text, reply);
+    return { message: 'Chat reply', data: reply };
+  }
+
+  /**
+   * Retry / Continue / Run again from a mission card. Goes through the chat so
+   * the new mission lands in the transcript like any other reply.
+   */
+  async rerun(userId: number, missionId: number, options: { scope?: 'failed' | 'all'; continue?: boolean }): Promise<ApiResponse> {
+    const label = options.continue ? 'Continue' : options.scope === 'all' ? 'Run again' : 'Retry failed phones';
+    await this.record(userId, 'user', label);
+    let reply: ChatReply;
+    try {
+      const result = await this.missionService.rerun(missionId, userId, options);
+      reply = {
+        kind: 'mission',
+        text: options.continue ? 'Picking each phone back up where it stopped.' : 'Started again — watch it below.',
+        mission: result.data,
+      };
+    } catch (error) {
+      reply = { kind: 'error', text: (error as AppError)?.message ?? 'Could not run it again' };
+    }
     await this.record(userId, 'assistant', reply.text, reply);
     return { message: 'Chat reply', data: reply };
   }
@@ -100,6 +134,60 @@ export class CommandChatService {
       return { id: row.id, role: 'assistant' as const, reply };
     });
     return { message: 'Chat history', data: turns };
+  }
+
+  /** What the chat needs from the conversation so far. */
+  private async recentContext(userId: number): Promise<{
+    lines: string[];
+    pending: ChatReply['pending'] | null;
+    lastMissionDevices: number[];
+  }> {
+    const rows = await this.messageRepo.find({ where: { user_id: userId }, order: { id: 'DESC' }, take: 20 });
+    // rows[0] is the message just recorded; the reply before it is the last assistant turn.
+    const lastAssistant = rows.find((r, i) => i > 0 && r.role === 'assistant');
+    let pending: ChatReply['pending'] | null = null;
+    if (lastAssistant?.reply) {
+      try {
+        pending = (JSON.parse(lastAssistant.reply) as ChatReply).pending ?? null;
+      } catch {
+        pending = null;
+      }
+    }
+    // Only a question asked moments ago is still "open".
+    if (lastAssistant && Date.now() - new Date(lastAssistant.created_at).getTime() > 30 * 60_000) pending = null;
+
+    let lastMissionDevices: number[] = [];
+    const lastMission = rows.find((r) => r.mission_id);
+    if (lastMission?.reply) {
+      try {
+        const mission = (JSON.parse(lastMission.reply) as ChatReply).mission as { items?: { device_id: number }[] } | undefined;
+        lastMissionDevices = (mission?.items ?? []).map((i) => i.device_id);
+      } catch {
+        lastMissionDevices = [];
+      }
+    }
+    const lines = rows
+      .slice(1, 9)
+      .reverse()
+      .map((r) => `${r.role === 'user' ? 'User' : 'Vector'}: ${r.text.slice(0, 300)}`);
+    return { lines, pending, lastMissionDevices };
+  }
+
+  private async joinWithPending(userId: number, text: string, pending: ChatReply['pending'] | null): Promise<string> {
+    if (!pending) return text;
+    // A complete new instruction wins over an old question.
+    const own = classifyLocally(text);
+    if (pending.awaiting === 'phones') {
+      if ((own.kind === 'mission' || own.kind === 'status' || own.kind === 'setting' || own.kind === 'refuse') && !(await this.isTargetOnly(userId, text))) {
+        return text;
+      }
+      return `${pending.request} on ${text.replace(/^(on|in|par|pe)\s+/i, '')}`;
+    }
+    if (pending.awaiting === 'action') {
+      if (await this.isTargetOnly(userId, text)) return text;
+      return `${text} on ${pending.target}`;
+    }
+    return text;
   }
 
   private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply): Promise<void> {
@@ -130,11 +218,13 @@ export class CommandChatService {
   // Classify
   // ---------------------------------------------------------------------------
 
-  private async classify(userId: number, text: string): Promise<ChatIntent> {
+  private async classify(userId: number, text: string, history: string[] = []): Promise<ChatIntent> {
+    // A message that only names phones is half an instruction: ask for the rest.
+    if (await this.isTargetOnly(userId, text)) return { kind: 'target', target: text } as ChatIntent;
     if (!SIMULATION) {
       const config = await this.aiConfigService.resolveChatConfig(userId);
       if (config) {
-        const intent = await this.aiService.classifyChatCommand(text, config);
+        const intent = await this.aiService.classifyChatCommand(text, config, history);
         if (intent) return intent;
       }
     }
@@ -145,8 +235,18 @@ export class CommandChatService {
   // Act
   // ---------------------------------------------------------------------------
 
-  private async act(userId: number, text: string, intent: ChatIntent): Promise<ChatReply> {
+  private async act(userId: number, text: string, intent: ChatIntent, lastMissionDevices: number[] = []): Promise<ChatReply> {
     switch (intent.kind) {
+      case 'target': {
+        const target = (intent as { target: string }).target;
+        return {
+          kind: 'clarify',
+          text: `What should ${target.replace(/^@/, '')} do?`,
+          quick_replies: ['Open YouTube', 'Open Chrome', 'Open Settings', 'Close all apps'],
+          pending: { awaiting: 'action', target },
+        };
+      }
+
       case 'status':
         return { kind: 'answer', text: await this.describeFleet(userId) };
 
@@ -156,6 +256,7 @@ export class CommandChatService {
           const result = await this.missionService.create(userId, {
             request: intent.prompt || text,
             duration_seconds: minutes && minutes > 0 ? Math.round(minutes * 60) : undefined,
+            fallback_device_ids: lastMissionDevices,
           });
           const mission = result.data as { note?: string | null };
           const timed = minutes && minutes > 0 ? ` Each phone keeps going for ${formatMinutes(minutes)}.` : '';
@@ -165,6 +266,15 @@ export class CommandChatService {
             mission: result.data,
           };
         } catch (error) {
+          if (error instanceof MissionTargetMissing) {
+            // Ask once, remember the request, and offer the likely answers.
+            return {
+              kind: 'clarify',
+              text: 'Which phones should do this?',
+              quick_replies: await this.phoneQuickReplies(userId),
+              pending: { awaiting: 'phones', request: intent.prompt || text },
+            };
+          }
           return { kind: 'error', text: (error as AppError)?.message ?? 'Could not start that mission' };
         }
       }
@@ -192,9 +302,31 @@ export class CommandChatService {
       default:
         return {
           kind: 'clarify',
-          text: intent.question || 'What would you like to do — run a task on some phones, check status, or change proxy rotation?',
+          text: (intent as { question?: string }).question || 'What would you like to do — run a task on some phones, check status, or change proxy rotation?',
+          quick_replies: ['How many phones are online?', 'Open YouTube on all phones', 'Stop proxy rotation on all lanes'],
         };
     }
+  }
+
+  /** True when the message names phones (or all / a tag) and nothing else. */
+  private async isTargetOnly(userId: number, text: string): Promise<boolean> {
+    const t = text.trim();
+    if (!t || t.length > 160) return false;
+    if (isGenericTarget(t)) return true;
+    const state = (await this.fleetStateService.getState(userId)) as { devices: { id: number; name: string }[] };
+    const named = matchNamedDevices(t, state.devices);
+    if (!named.length) return false;
+    let rest = ` ${t.toLowerCase()} `;
+    for (const device of named) rest = rest.split(device.name.toLowerCase()).join(' ');
+    return rest.replace(/[@,&]|\b(and|or|on|in|par|pe|phones?|devices?)\b/g, ' ').trim() === '';
+  }
+
+  /** Likely answers to "which phones?": a few ready phones, all, and tags. */
+  private async phoneQuickReplies(userId: number): Promise<string[]> {
+    const state = (await this.fleetStateService.getState(userId)) as { devices: { name: string; tag: string | null; state: string }[] };
+    const ready = state.devices.filter((d) => ['idle', 'completed', 'failed', 'cancelled', 'interrupted'].includes(d.state));
+    const tags = [...new Set(state.devices.map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
+    return [...ready.slice(0, 4).map((d) => d.name), 'All phones', ...tags.slice(0, 2).map((t) => `#${t}`)];
   }
 
   private async buildSettingAction(
@@ -286,7 +418,17 @@ const DELETE_WORDS = /\b(delete|remove|unpair|wipe|erase|drop|hata\s*do|delete\s
 const STATUS_WORDS = /\b(status|online|offline|how many|kitne|kaun|which phones|running|idle|fleet)\b/i;
 const ROTATE_WORDS = /\brotat/i;
 const CONCURRENCY_WORDS = /\bconcurren|at once|parallel|ek saath\b/i;
-const MISSION_WORDS = /\b(open|play|send|search|scroll|close|tap|type|go to|browse|visit|watch|khol|chalao|bhejo|dekho)\b/i;
+const MISSION_WORDS = /\b(open|play|send|search|scroll|close|stop|pause|kill|exit|quit|tap|type|go to|browse|visit|watch|khol|kholo|chalao|bhejo|dekho|band|bnd)\b/i;
+
+/**
+ * The parts of a "phones only" message that need no fleet lookup: "all phones",
+ * "#PhoneBox", "@free1". Named phones are checked against the fleet separately.
+ */
+function isGenericTarget(text: string): boolean {
+  const t = text.trim();
+  if (/^(all|every|saare|sabhi|sab)\s*(the\s+)?(phones?|devices?|mobiles?)$/i.test(t)) return true;
+  return /^[#@][\w.-]+(\s*(,|and|&)\s*[#@][\w.-]+)*$/i.test(t);
+}
 
 /** "for 1 hour", "30 min", "2 ghante", "1.5 hrs" -> minutes. */
 export function parseDurationMinutes(text: string): number | undefined {

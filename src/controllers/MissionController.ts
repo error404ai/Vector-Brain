@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { MissionService } from '@/services/android/MissionService';
-import { CreateMissionValidation } from '@/validations/MissionValidation';
+import { CreateMissionValidation, RerunMissionValidation } from '@/validations/MissionValidation';
 import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -31,6 +31,17 @@ export class MissionController {
   @Get('/:id')
   async get(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.missionService.get(id, user.userId);
+  }
+
+  @Authorized()
+  @Post('/:id/rerun')
+  @UseBefore(zodValidationMiddleware(RerunMissionValidation))
+  async rerun(
+    @Param('id') id: number,
+    @Body() request: z.infer<typeof RerunMissionValidation>,
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.missionService.rerun(id, user.userId, request as any);
   }
 
   @Authorized()

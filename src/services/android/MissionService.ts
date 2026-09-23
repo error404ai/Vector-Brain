@@ -15,6 +15,13 @@ import { AndroidPlannerService } from './AndroidPlannerService';
 import { FleetStateService } from './FleetStateService';
 import { TaskQueueService } from './TaskQueueService';
 
+/** The request did not say which phones, and there was nothing to fall back on. */
+export class MissionTargetMissing extends AppError {
+  constructor() {
+    super('Which phones? Name them (@phone), say "all phones", give a number ("on 5 phones") or a tag (#PhoneBox).', 400);
+  }
+}
+
 /** Total tries per phone: the first run plus two retries. */
 const MAX_ATTEMPTS = 3;
 /** Most phones one mission may drive, whatever the request says. */
@@ -60,6 +67,11 @@ const PLAIN_REASON: Record<string, string> = {
   TASK_MISSING: 'run record disappeared',
   DISPATCH_ERROR: 'could not be started',
   PLAN_FAILED: 'AI returned an empty plan (model hiccup)',
+  STEP_LIMIT: 'reached its step limit before finishing',
+  ERROR: 'ran into an error',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+  TIME_UP: 'time was up',
   CAPTURE_PERMISSION: 'screen capture permission not approved on the phone',
 };
 
@@ -75,6 +87,8 @@ export interface CreateMissionInput {
   no_internet?: boolean;
   /** Keep each phone working this long ("for 1 hour"); server-enforced. */
   duration_seconds?: number;
+  /** Phones to use when the request names none (the chat passes its last task's). */
+  fallback_device_ids?: number[];
 }
 
 interface FleetDevice {
@@ -160,10 +174,20 @@ export class MissionService {
       if (notReady.length) notes.push(`${notReady.length} of the chosen phones were not ready and will be retried.`);
     } else {
       const plan = await this.plan(request, fleet, userId);
-      mode = plan.mode;
       prompt = plan.prompt;
       noInternet = noInternet || plan.no_internet;
-      chosen = this.selectDevices(plan, fleet, ready);
+      if (plan.mode === 'none') {
+        // No phones named: reuse the caller's last ones rather than guessing.
+        const fallback = new Set(input.fallback_device_ids ?? []);
+        const reuse = fleet.filter((d) => fallback.has(d.id));
+        if (reuse.length === 0) throw new MissionTargetMissing();
+        mode = 'ids';
+        chosen = reuse;
+        notes.push(`Using the same phone${reuse.length === 1 ? '' : 's'} as your last task: ${reuse.map((d) => d.name).join(', ')}.`);
+      } else {
+        mode = plan.mode;
+        chosen = this.selectDevices(plan, fleet, ready);
+      }
       if (plan.mode === 'count') {
         requestedCount = plan.count;
         if (chosen.length < plan.count) {
@@ -249,6 +273,49 @@ export class MissionService {
     return { message: 'Mission cancelled', data: await this.describe(id, userId) };
   }
 
+  /**
+   * Run a finished mission again: on its failed phones or all of them, as new
+   * runs ("Retry" / "Run again"), or picking the old runs back up from where
+   * they stopped ("Continue" — for runs cut off by the step limit).
+   */
+  async rerun(id: number, userId: number, options: { scope?: 'failed' | 'all'; continue?: boolean }): Promise<ApiResponse> {
+    const source = await this.missionRepo.findOne({ where: { id, user_id: userId } });
+    if (!source) throw new AppError('Mission not found', 404);
+    const items = await this.itemRepo.find({ where: { mission_id: id }, order: { id: 'ASC' } });
+    // A phone whose share went to a spare is represented by the spare.
+    const replaced = new Set(items.filter((i) => i.replaces_item_id).map((i) => i.replaces_item_id));
+    const pool = items.filter((i) => !replaced.has(i.id));
+    const picked = options.scope === 'all' ? pool : pool.filter((i) => i.status === 'FAILED' || i.status === 'CANCELLED');
+    if (picked.length === 0) throw new AppError('Nothing to run again — no phones failed', 400);
+
+    const mission = await this.missionRepo.save(
+      this.missionRepo.create({
+        user_id: userId,
+        request: source.request,
+        prompt: source.prompt,
+        target_mode: 'ids',
+        no_internet: source.no_internet,
+        max_steps: source.max_steps,
+        ai_config_id: source.ai_config_id,
+        duration_seconds: source.duration_seconds,
+        status: 'RUNNING',
+        note: options.continue ? 'Continuing from where each phone stopped.' : null,
+      }),
+    );
+    await this.itemRepo.save(
+      picked.map((item) =>
+        this.itemRepo.create({
+          mission_id: mission.id,
+          device_id: item.device_id,
+          status: 'PENDING',
+          continue_from_task_id: options.continue && item.agent_task_id ? item.agent_task_id : null,
+        }),
+      ),
+    );
+    void this.advanceById(mission.id);
+    return { message: 'Mission started', data: await this.describe(mission.id, userId) };
+  }
+
   // ---------------------------------------------------------------------------
   // Planning
   // ---------------------------------------------------------------------------
@@ -262,11 +329,11 @@ export class MissionService {
       );
       if (planned) return planned;
     }
-    const local = parseRequestLocally(request);
-    if (!local) {
-      throw new AppError('Say which phones: a number ("on 5 phones"), "all phones", or a tag ("#PhoneBox")', 400);
+    const named = matchNamedDevices(request, fleet);
+    if (named.length) {
+      return { mode: 'ids', ids: named.map((d) => d.id), tag: '', count: 0, no_internet: false, prompt: stripNames(request, named) };
     }
-    return local;
+    return parseRequestLocally(request) ?? { mode: 'none', ids: [], tag: '', count: 0, no_internet: false, prompt: request };
   }
 
   private selectDevices(plan: MissionPlan, fleet: FleetDevice[], ready: FleetDevice[]): FleetDevice[] {
@@ -282,6 +349,8 @@ export class MissionService {
       }
       case 'all':
         return ready;
+      case 'none':
+        return [];
       case 'count':
       default:
         return spreadAcrossLanes(ready).slice(0, Math.max(0, plan.count));
@@ -362,11 +431,11 @@ export class MissionService {
     item.queue_id = null;
     try {
       const result = await this.plannerService.runTask(
-        mission.prompt ?? mission.request,
+        item.continue_from_task_id ? 'Continue the task from where you stopped.' : mission.prompt ?? mission.request,
         item.device_id,
         mission.user_id,
         mission.max_steps,
-        undefined,
+        item.continue_from_task_id ?? undefined,
         mission.ai_config_id ?? undefined,
         false,
         mission.no_internet,
@@ -554,7 +623,7 @@ export class MissionService {
         agent_task_id: item.agent_task_id,
         replaces_item_id: item.replaces_item_id,
         last_reason: item.last_reason,
-        reason_text: item.last_reason ? PLAIN_REASON[item.last_reason] ?? item.last_reason : null,
+        reason_text: item.last_reason ? PLAIN_REASON[item.last_reason] ?? 'failed' : null,
         last_message: item.last_message,
         next_attempt_at: item.next_attempt_at,
       })),
@@ -620,6 +689,38 @@ function spreadAcrossLanes(devices: FleetDevice[]): FleetDevice[] {
   return ordered;
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Phones named in the request — by full name, optionally as an @mention —
+ * longest names first so "Redmi Note 8 Pro" is not taken for "Redmi Note 8".
+ */
+export function matchNamedDevices<T extends { id: number; name: string }>(request: string, fleet: T[]): T[] {
+  const found: T[] = [];
+  let rest = ` ${request.toLowerCase()} `;
+  for (const device of [...fleet].sort((a, b) => b.name.length - a.name.length)) {
+    const name = device.name.trim().toLowerCase();
+    if (!name) continue;
+    const pattern = new RegExp(`(^|[\\s,@(])${escapeRegex(name)}(?=$|[\\s,.!?)])`);
+    if (pattern.test(rest)) {
+      found.push(device);
+      rest = rest.replace(pattern, '$1 ');
+    }
+  }
+  return found;
+}
+
+/** The request with the phone names (and "on"/"in" before them) taken out. */
+function stripNames(request: string, named: { name: string }[]): string {
+  let text = request;
+  for (const device of named) {
+    text = text.replace(new RegExp(`\\b(?:on|in|par|pe|from)?\\s*@?${escapeRegex(device.name)}`, 'i'), ' ');
+  }
+  return tidy(text.replace(/\s+(and|,)\s*$/i, ''));
+}
+
 const COUNT_PHRASE = /\b(?:on|in|from|with|using|par|pe|se|mein)?\s*(\d{1,3})\s*(?:phones?|devices?|mobiles?)\b/i;
 const ALL_PHRASE = /\b(?:on|in|from|with|using)?\s*(?:all|every|saare|sabhi|sab)\s*(?:the\s+)?(?:phones?|devices?|mobiles?)\b/i;
 const TAG_PHRASE = /(?:^|\s)#([\w-]+)/;
@@ -666,10 +767,10 @@ function summarize(mission: Mission, items: MissionItem[], names: Map<number, st
   if (retries) lines.push(`${retries} ${retries === 1 ? 'retry' : 'retries'} along the way.`);
   for (const item of items.filter((i) => replaced.has(i.id))) {
     const by = items.find((i) => i.replaces_item_id === item.id);
-    lines.push(`${names.get(item.device_id) ?? item.device_id} kept failing (${PLAIN_REASON[item.last_reason ?? ''] ?? item.last_reason}); handed to ${names.get(by?.device_id ?? -1) ?? 'a spare phone'}.`);
+    lines.push(`${names.get(item.device_id) ?? item.device_id} kept failing (${PLAIN_REASON[item.last_reason ?? ''] ?? 'failed'}); handed to ${names.get(by?.device_id ?? -1) ?? 'a spare phone'}.`);
   }
   for (const item of failed) {
-    const why = PLAIN_REASON[item.last_reason ?? ''] ?? item.last_reason ?? 'failed';
+    const why = PLAIN_REASON[item.last_reason ?? ''] ?? 'failed';
     const detail = item.last_message && item.last_reason === 'AGENT_REPORTED_FAILURE' ? ` — ${item.last_message.slice(0, 160)}` : '';
     lines.push(`✗ ${names.get(item.device_id) ?? item.device_id}: ${why}${item.attempts > 1 ? ` after ${item.attempts} tries` : ''}${detail}`);
   }

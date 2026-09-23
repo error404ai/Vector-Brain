@@ -9,6 +9,8 @@ export interface ChatReply {
   mission?: Mission;
   confirm_token?: string;
   action?: unknown;
+  /** Tap-to-send answers under a question. */
+  quick_replies?: string[];
 }
 
 export type ChatHistoryTurn =
@@ -24,10 +26,13 @@ export const commandChatService = baseApi.injectEndpoints({
       query: () => ({ url: '/android/chat/history?limit=60', method: 'GET' }),
       keepUnusedDataFor: 0,
     }),
+    rerunFromChat: builder.mutation<{ message: string; data: ChatReply }, { mission_id: number; scope?: 'failed' | 'all'; continue?: boolean }>({
+      query: (body) => ({ url: '/android/chat/rerun', method: 'POST', body }),
+    }),
     confirmCommand: builder.mutation<{ message: string; data: ChatReply }, string>({
       query: (confirm_token) => ({ url: '/android/chat/confirm', method: 'POST', body: { confirm_token } }),
     }),
   }),
 });
 
-export const { useSendCommandMutation, useConfirmCommandMutation, useGetChatHistoryQuery } = commandChatService;
+export const { useSendCommandMutation, useConfirmCommandMutation, useGetChatHistoryQuery, useRerunFromChatMutation } = commandChatService;
