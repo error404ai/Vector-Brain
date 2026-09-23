@@ -1183,6 +1183,99 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: runs a task on the phone it names and replies in its own words',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'Chalu kar diya free1 pe.' }] };
+      const res = await api('POST', '/android/chat', { message: `settings khol do free1 pe [agent:${JSON.stringify(script)}]` });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `kind ${reply?.kind}: ${reply?.text}`;
+      if (reply.text !== 'Chalu kar diya free1 pe.') return `reply was not the model's words: ${reply.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free1.dbId) return `targeted ${JSON.stringify(ids)}`;
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'agent: a task on many phones waits for Confirm, with an estimate',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
+      const script = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'all' } }] }, { text: 'Sab phones pe chalane se pehle confirm kar do.' }] };
+      const res = await api('POST', '/android/chat', { message: `sab phones pe settings kholo [agent:${JSON.stringify(script)}]` });
+      const reply = res?.data;
+      if (reply?.kind !== 'confirm') return `a fleet-wide task started without asking: ${reply?.kind}`;
+      if (!/\$|calls|steps/i.test(reply.text)) return `no cost estimate: ${reply.text}`;
+      const [[mid]] = await db.query('SELECT COUNT(*) n FROM missions');
+      if (mid.n !== before.n) return 'a mission was created before Confirm';
+      const applied = await api('POST', '/android/chat/confirm', { confirm_token: reply.confirm_token });
+      if (applied?.data?.kind !== 'mission') return `Confirm did not start it: ${applied?.data?.kind}`;
+      await waitForMission(applied.data.mission.id, 60_000);
+    },
+  },
+  {
+    name: 'agent: stops the mission that is running',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'scroll [sim steps=200 delay=200]', device_ids: [phones.free2.dbId] });
+      await waitFor(async () => ((await getMission(created.data.id))?.items?.[0]?.status === 'RUNNING' ? true : null), 20_000, 300);
+      const script = { turns: [{ calls: [{ name: 'stop_mission', args: {} }] }, { text: 'Rok diya.' }] };
+      await api('POST', '/android/chat', { message: `ruk ja bhai [agent:${JSON.stringify(script)}]` });
+      const done = await waitForMission(created.data.id, 20_000);
+      if (done?.status !== 'CANCELLED') return `mission is ${done?.status}`;
+    },
+  },
+  {
+    name: 'agent: a rotation change is only proposed, applied on Confirm',
+    async run() {
+      const lanes = (await api('GET', '/device-proxy')).data;
+      const script = { turns: [{ calls: [{ name: 'propose_rotation', args: { lanes: 'all', rotate_every_tasks: 0 } }] }, { text: 'Rotation band karne ke liye Confirm dabao.' }] };
+      const res = await api('POST', '/android/chat', { message: `ip mat badlo [agent:${JSON.stringify(script)}]` });
+      const reply = res?.data;
+      if (reply?.kind !== 'confirm' || !/off/i.test(reply.text)) return `kind ${reply?.kind}: ${reply?.text}`;
+      const mid = (await api('GET', '/device-proxy')).data;
+      if (mid.some((p, i) => p.rotate_every_tasks !== lanes[i].rotate_every_tasks)) return 'changed before Confirm';
+      await api('POST', '/android/chat/confirm', { confirm_token: reply.confirm_token });
+      const after = (await api('GET', '/device-proxy')).data;
+      for (const p of after) await api('PATCH', `/device-proxy/${p.id}`, { rotate_every_tasks: 1 });
+      if (after.some((p) => p.rotate_every_tasks !== 0)) return 'not applied after Confirm';
+    },
+  },
+  {
+    name: 'agent: a tool that does not exist (delete) does nothing',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM android_devices');
+      const script = { turns: [{ calls: [{ name: 'delete_device', args: { name: 'free1' } }] }, { text: 'Main delete nahi kar sakta.' }] };
+      const res = await api('POST', '/android/chat', { message: `free1 delete kar do [agent:${JSON.stringify(script)}]` });
+      const [[after]] = await db.query('SELECT COUNT(*) n FROM android_devices');
+      if (after.n !== before.n) return 'a device was deleted';
+      if (res?.data?.kind === 'confirm' || res?.data?.kind === 'mission') return `acted on it: ${res.data.kind}`;
+    },
+  },
+  {
+    name: 'agent: asks with buttons, and "no" drops a pending confirm',
+    async run() {
+      const ask = { turns: [{ calls: [{ name: 'ask_user', args: { question: 'Kaunse phones?', options: ['free1', 'All phones'] } }] }] };
+      const q = (await api('POST', '/android/chat', { message: `youtube [agent:${JSON.stringify(ask)}]` }))?.data;
+      if (q?.kind !== 'clarify' || q.text !== 'Kaunse phones?' || q.quick_replies?.length !== 2) return `ask_user not shown: ${JSON.stringify(q).slice(0, 160)}`;
+      const propose = { turns: [{ calls: [{ name: 'propose_rotation', args: { lanes: 'all', rotate_every_tasks: 0 } }] }, { text: 'Confirm karo.' }] };
+      const c = (await api('POST', '/android/chat', { message: `rotation band [agent:${JSON.stringify(propose)}]` }))?.data;
+      const cancel = { turns: [{ calls: [{ name: 'cancel_pending_confirmation', args: {} }] }, { text: 'Theek hai, kuch nahi badla.' }] };
+      await api('POST', '/android/chat', { message: `no stop it [agent:${JSON.stringify(cancel)}]` });
+      const late = await api('POST', '/android/chat/confirm', { confirm_token: c.confirm_token }).catch((e) => ({ error: String(e) }));
+      if (!late?.error) return 'the cancelled confirm could still be applied';
+    },
+  },
+  {
+    name: 'agent dry-run shows what it would do without doing it',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
+      const script = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open youtube', phones: 'free1' } }] }, { text: 'ok' }] };
+      const res = await api('POST', '/android/chat/dry-run', { message: `open youtube on free1 [agent:${JSON.stringify(script)}]` });
+      const calls = res?.data?.calls ?? [];
+      if (calls[0]?.name !== 'run_mission') return `no tool calls reported: ${JSON.stringify(res).slice(0, 160)}`;
+      const [[after]] = await db.query('SELECT COUNT(*) n FROM missions');
+      if (after.n !== before.n) return 'dry run started a mission';
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

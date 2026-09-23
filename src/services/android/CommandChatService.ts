@@ -11,6 +11,7 @@ import { Service } from 'typedi';
 import { FleetStateService } from './FleetStateService';
 import { MissionService, MissionTargetMissing, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
+import { VectorAgentService, type Brain, type ProposedAction } from './VectorAgentService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
@@ -31,7 +32,8 @@ type PendingAction =
 
 interface Pending {
   userId: number;
-  action: PendingAction;
+  /** Old classifier path action, or a proposal from Vector's agent. */
+  action: PendingAction | { type: 'agent'; proposal: ProposedAction };
   summary: string;
   at: number;
   /** A task asked for in the same message, started once the setting is applied. */
@@ -77,11 +79,45 @@ export class CommandChatService {
     private fleetStateService: FleetStateService,
     private missionService: MissionService,
     private proxyService: ProxyRotationService,
+    private agent: VectorAgentService,
   ) {}
 
   async handle(userId: number, message: string): Promise<ApiResponse> {
     let text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
+
+    // Harness only: "[agent:{turns:[...]}]" scripts Vector's agent model.
+    let scripted: Brain | null = null;
+    if (SIMULATION) {
+      const marker = /\s*\[agent:(\{.*\})\]\s*$/.exec(text);
+      if (marker) {
+        try {
+          scripted = VectorAgentService.scriptedBrain(JSON.parse(marker[1]));
+        } catch {
+          scripted = null;
+        }
+        text = text.slice(0, marker.index).trim();
+      }
+    }
+    const brain = scripted ?? (SIMULATION ? null : await this.agent.realBrain(userId));
+    if (brain) {
+      await this.record(userId, 'user', text);
+      try {
+        const reply = await this.runAgent(userId, brain, text);
+        await this.record(userId, 'assistant', reply.text, reply);
+        return { message: 'Chat reply', data: reply };
+      } catch (error) {
+        // The model could not be reached (credits, outage): fall back to the
+        // simple built-in understanding rather than leaving the chat dead.
+        Logger.warn('[CommandChat] agent failed, using the built-in fallback:', error);
+        const context = await this.recentContext(userId);
+        const intent = classifyLocally(await this.joinWithPending(userId, text, context.pending));
+        const reply = await this.act(userId, text, intent, context.lastMissionDevices);
+        reply.text = `(AI model unavailable — ${(error as Error)?.message ?? 'error'}. Used the basic mode.) ${reply.text}`;
+        await this.record(userId, 'assistant', reply.text, reply);
+        return { message: 'Chat reply', data: reply };
+      }
+    }
 
     // Harness only: "[ai:{...}]" stands in for the real model's classification,
     // so the model-driven paths can be tested without a model.
@@ -106,6 +142,74 @@ export class CommandChatService {
     const reply = await this.act(userId, effective, intent, context.lastMissionDevices);
     await this.record(userId, 'assistant', reply.text, reply);
     return { message: 'Chat reply', data: reply };
+  }
+
+  private pendingFor(userId: number): { token: string; summary: string }[] {
+    const now = Date.now();
+    return [...this.pending.entries()]
+      .filter(([, p]) => p.userId === userId && now - p.at <= CONFIRM_TTL_MS)
+      .map(([token, p]) => ({ token, summary: p.summary }));
+  }
+
+  private async agentContext(userId: number) {
+    const rows = await this.messageRepo.find({ where: { user_id: userId }, order: { id: 'DESC' }, take: 24 });
+    const context = await this.recentContext(userId);
+    const history = rows
+      .slice(1)
+      .reverse()
+      .map((r) => ({ role: r.role as 'user' | 'assistant', text: r.text.slice(0, 600) }));
+    return { history, lastMissionDevices: context.lastMissionDevices };
+  }
+
+  private async runAgent(userId: number, brain: Brain, text: string): Promise<ChatReply> {
+    const base = await this.agentContext(userId);
+    const pending = this.pendingFor(userId);
+    const result = await this.agent.run(brain, text, { userId, ...base, pending });
+
+    if (result.cancelledPending) for (const p of pending) this.pending.delete(p.token);
+    if (result.ask) {
+      return { kind: 'clarify', text: result.ask.question, quick_replies: result.ask.options.length ? result.ask.options : undefined };
+    }
+    if (result.proposal) {
+      const token = crypto.randomBytes(12).toString('hex');
+      this.pending.set(token, { userId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
+      return { kind: 'confirm', text: `${result.text}\n\n${result.proposal.summary}.`, confirm_token: token };
+    }
+    if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission };
+    return { kind: 'answer', text: result.text };
+  }
+
+  /** What Vector would do with a message, without doing it — for the eval script. */
+  async dryRun(
+    userId: number,
+    message: string,
+    history?: { role: 'user' | 'assistant'; text: string }[],
+    pendingOverride?: string[],
+  ): Promise<ApiResponse> {
+    let text = String(message ?? '').trim();
+    let brain: Brain | null = null;
+    if (SIMULATION) {
+      const marker = /\s*\[agent:(\{.*\})\]\s*$/.exec(text);
+      if (marker) {
+        brain = VectorAgentService.scriptedBrain(JSON.parse(marker[1]));
+        text = text.slice(0, marker.index).trim();
+      }
+    } else {
+      brain = await this.agent.realBrain(userId);
+    }
+    if (!brain) throw new AppError('No AI model is configured for the chat', 400);
+    const base = await this.agentContext(userId);
+    const result = await this.agent.run(brain, text, {
+      userId,
+      history: history ?? base.history,
+      lastMissionDevices: base.lastMissionDevices,
+      pending: pendingOverride ? pendingOverride.map((summary) => ({ summary })) : this.pendingFor(userId),
+      dryRun: true,
+    });
+    return {
+      message: 'Dry run',
+      data: { text: result.text, calls: result.calls, proposal: result.proposal?.summary ?? null, ask: result.ask ?? null },
+    };
   }
 
   /**
@@ -224,8 +328,18 @@ export class CommandChatService {
     this.pending.delete(token);
     if (Date.now() - pending.at > CONFIRM_TTL_MS) throw new AppError('That confirmation expired — ask again', 410);
 
-    await this.apply(userId, pending.action);
     let reply: ChatReply = { kind: 'answer', text: `Done — ${pending.summary}.` };
+    if (pending.action.type === 'agent') {
+      try {
+        const mission = await this.agent.apply(userId, pending.action.proposal);
+        if (mission) reply = { kind: 'mission', text: 'Confirmed — running it now.', mission };
+      } catch (error) {
+        reply = { kind: 'error', text: (error as AppError)?.message ?? 'Could not apply it' };
+      }
+      await this.record(userId, 'assistant', reply.text, reply);
+      return { message: 'Applied', data: reply };
+    }
+    await this.apply(userId, pending.action);
     if (pending.thenMission) {
       try {
         const result = await this.missionService.create(userId, { request: pending.thenMission });
@@ -416,7 +530,8 @@ export class CommandChatService {
     return { error: 'I can change proxy rotation or lane concurrency. Which did you mean?' };
   }
 
-  private async apply(userId: number, action: PendingAction): Promise<void> {
+  private async apply(userId: number, action: PendingAction | { type: 'agent'; proposal: ProposedAction }): Promise<void> {
+    if (action.type === 'agent') return;
     if (action.type === 'set_rotation') {
       const proxies =
         action.proxy_id === 'all'

@@ -13,3 +13,11 @@ export const CommandChatRerunValidation = z.object({
   scope: z.enum(['failed', 'all']).optional(),
   continue: z.boolean().optional(),
 });
+
+export const CommandChatDryRunValidation = z.object({
+  message: z.string().trim().min(1).max(4000),
+  /** Pretend conversation for evals; the real one is used when omitted. */
+  history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(30).optional(),
+  /** Pretend "waiting for Confirm" items for evals. */
+  pending: z.array(z.string().max(300)).max(5).optional(),
+});

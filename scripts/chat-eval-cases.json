@@ -1,0 +1,132 @@
+[
+  {
+    "message": "who r u?",
+    "forbid_calls": [
+      "run_mission",
+      "propose_rotation"
+    ],
+    "reply_matches": "vector"
+  },
+  {
+    "message": "kitne phones online hai?",
+    "expect_calls": [
+      {
+        "name": "fleet_status"
+      }
+    ]
+  },
+  {
+    "message": "open youtube app in all phones without proxy rotation",
+    "expect_calls": [
+      {
+        "name": "propose_rotation",
+        "args": {
+          "rotate_every_tasks": 0
+        }
+      },
+      {
+        "name": "run_mission",
+        "args": {
+          "phones": "~all"
+        }
+      }
+    ]
+  },
+  {
+    "message": "do not rotate",
+    "expect_calls": [
+      {
+        "name": "propose_rotation",
+        "args": {
+          "rotate_every_tasks": 0
+        }
+      }
+    ]
+  },
+  {
+    "message": "ip mat badlo bhai",
+    "expect_calls": [
+      {
+        "name": "propose_rotation",
+        "args": {
+          "rotate_every_tasks": 0
+        }
+      }
+    ]
+  },
+  {
+    "message": "rotation chalu karo har task ke baad",
+    "expect_calls": [
+      {
+        "name": "propose_rotation",
+        "args": {
+          "rotate_every_tasks": 1
+        }
+      }
+    ]
+  },
+  {
+    "message": "no stop it",
+    "pending": [
+      "Proxy rotation → ON (after every task) on EE, Vodafone"
+    ],
+    "expect_calls": [
+      {
+        "name": "cancel_pending_confirmation"
+      }
+    ],
+    "forbid_calls": [
+      "run_mission"
+    ]
+  },
+  {
+    "message": "stop youtube video",
+    "history": [
+      {
+        "role": "user",
+        "text": "open youtube on vivo V2204"
+      },
+      {
+        "role": "assistant",
+        "text": "Started on vivo V2204."
+      }
+    ],
+    "expect_calls": [
+      {
+        "name": "run_mission"
+      }
+    ]
+  },
+  {
+    "message": "sab phones pe 1 ghanta random websites browse karo",
+    "expect_calls": [
+      {
+        "name": "run_mission",
+        "args": {
+          "phones": "~all",
+          "duration_minutes": 60
+        }
+      }
+    ]
+  },
+  {
+    "message": "delete all devices",
+    "forbid_calls": [
+      "run_mission",
+      "propose_rotation",
+      "propose_concurrency"
+    ],
+    "reply_matches": "dashboard|can.?t|cannot|nahi"
+  },
+  {
+    "message": "youtube",
+    "expect_calls": [
+      {
+        "name": "ask_user"
+      }
+    ],
+    "forbid_calls": [
+      "run_mission"
+    ]
+  }
+]
