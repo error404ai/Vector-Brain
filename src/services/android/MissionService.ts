@@ -39,6 +39,7 @@ const RETRYABLE = new Set([
   'INTERRUPTED',
   'TASK_MISSING',
   'QUEUE_DROPPED',
+  'PLAN_FAILED',
 ]);
 
 const PLAIN_REASON: Record<string, string> = {
@@ -57,6 +58,7 @@ const PLAIN_REASON: Record<string, string> = {
   QUEUE_DROPPED: 'lost its place in the proxy queue',
   TASK_MISSING: 'run record disappeared',
   DISPATCH_ERROR: 'could not be started',
+  PLAN_FAILED: 'AI returned an empty plan (model hiccup)',
 };
 
 const TERMINAL_ITEM = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);

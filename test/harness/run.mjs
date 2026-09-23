@@ -677,6 +677,22 @@ const scenarios = [
     },
   },
   {
+    name: 'a mission retries when the model returns an empty plan (Eko "Workflow error")',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'close youtube [sim steps=1 delay=50 planfail]',
+        device_ids: [phones.free2.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      const done = await waitForMission(id, 60_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.attempts < 2) return `not retried (${item.last_reason}, ${item.attempts} attempt)`;
+      if (item.last_reason !== 'PLAN_FAILED') return `filed as ${item.last_reason}`;
+    },
+  },
+  {
     name: 'a mission asked for more phones than are ready says so and uses what it has',
     async run() {
       const created = await api('POST', '/android/missions', {

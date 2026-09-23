@@ -105,14 +105,14 @@ const leaseFromNow = () => new Date(Date.now() + LEASE_MS);
  */
 const AGENT_SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 
-function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean } {
+function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean; planFail: boolean } {
   const match = /\[sim([^\]]*)\]/i.exec(prompt);
   const text = match?.[1] ?? '';
   const number = (key: string, fallback: number) => {
     const found = new RegExp(`${key}=(\\d+)`).exec(text);
     return found ? Number(found[1]) : fallback;
   };
-  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text) };
+  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text), planFail: /\bplanfail\b/.test(text) };
 }
 
 /** Best-effort mapping of a thrown error to a stable reason code. */
@@ -1291,6 +1291,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
       });
       const simulate = async () => {
         const options = simulationOptions(prompt);
+        // What Eko returns when the model's plan comes back with no agent in it.
+        if (options.planFail) return { success: false, stopReason: 'error', result: 'Error: Workflow error' };
         for (let index = 0; index < options.steps; index += 1) {
           if (this.activeTasks.get(agentTask.id)?.cancelled) {
             wasCancelled = true;
@@ -1350,9 +1352,13 @@ Use the current visible Android screen and UI state as context. Continue from wh
           ? { status: 'CANCELLED', reason: 'USER_CANCELLED' }
           : guardStopReason
             ? { status: 'FAILED', reason: guardStopCode ?? 'GUARD_STOP' }
-            : !agentFinished
-              ? { status: 'FAILED', reason: 'UNFINISHED' }
-              : { status: 'FAILED', reason: 'AGENT_REPORTED_FAILURE' };
+            : /workflow error/i.test(String(terminalAgentResult ?? ''))
+              ? // Eko's planning call returned a plan with no agent in it — a
+                // model hiccup before any step ran, not the task being impossible.
+                { status: 'FAILED', reason: 'PLAN_FAILED' }
+              : !agentFinished
+                ? { status: 'FAILED', reason: 'UNFINISHED' }
+                : { status: 'FAILED', reason: 'AGENT_REPORTED_FAILURE' };
       agentTask.status = terminal.status;
       agentTask.reason_code = terminal.reason;
       agentTask.finished_at = new Date();

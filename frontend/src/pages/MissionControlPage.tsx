@@ -53,8 +53,12 @@ function errorMessage(error: unknown): string {
 function ItemRow({ item }: { item: MissionItem }) {
   const tone = ITEM_TONE[item.status];
   const retrying = item.status === 'PENDING' && item.attempts > 0;
+  // The exact error the phone or agent gave, so a wrong-looking reason can be
+  // checked on the spot instead of from the database.
+  const detail = item.status === 'FAILED' && item.last_message ? item.last_message : null;
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.5, minWidth: 0 }}>
+    <Box sx={{ py: 0.5, minWidth: 0 }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
       <Typography variant="body2" sx={{ fontWeight: 600, flexShrink: 0, maxWidth: 200 }} noWrap>
         {item.device_name}
       </Typography>
@@ -71,6 +75,12 @@ function ItemRow({ item }: { item: MissionItem }) {
           </Typography>
         </Tooltip>
       )}
+    </Box>
+    {detail && (
+      <Typography variant="caption" color="text.secondary" component="p" sx={{ pl: 1.5, mt: 0.25, borderLeft: '2px solid', borderColor: 'divider', wordBreak: 'break-word' }}>
+        {detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}
+      </Typography>
+    )}
     </Box>
   );
 }
