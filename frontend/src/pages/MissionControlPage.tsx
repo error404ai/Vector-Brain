@@ -34,10 +34,11 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
+import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKService/androidService/proxyService';
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, IconButton, LinearProgress, MenuItem, MenuList, Paper, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import toast from 'react-hot-toast';
 
@@ -690,6 +691,56 @@ function TypingIndicator() {
   );
 }
 
+/**
+ * One switch for proxy rotation on every lane, always showing the real state.
+ * Off = 0 (never rotate); on = after every task.
+ */
+function RotationSwitch() {
+  const { data, refetch, isLoading } = useGetDeviceProxiesQuery();
+  const [updateProxy] = useUpdateDeviceProxyMutation();
+  const [saving, setSaving] = useState(false);
+  const lanes = data?.data ?? [];
+  if (isLoading || lanes.length === 0) return null;
+  const rotating = lanes.filter((p) => p.rotate_every_tasks > 0);
+  const on = rotating.length > 0;
+  const mixed = on && rotating.length < lanes.length;
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(lanes.map((p) => updateProxy({ id: p.id, rotate_every_tasks: on ? 0 : 1 }).unwrap()));
+      await refetch();
+      toast.success(on ? 'Proxy rotation OFF on all lanes' : 'Proxy rotation ON (after every task) on all lanes');
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Tooltip
+      title={
+        mixed
+          ? `On for ${rotating.map((p) => p.name).join(', ')} only — switching turns it off everywhere`
+          : on
+            ? 'IP changes after every task on all lanes'
+            : 'IP never changes on its own'
+      }
+    >
+      <FormControlLabel
+        sx={{ m: 0, mt: 0.5, ml: 0.5 }}
+        control={<Switch size="small" checked={on} onChange={toggle} disabled={saving} />}
+        label={
+          <Typography variant="caption" color="text.secondary">
+            Proxy rotation: <b>{on ? (mixed ? 'ON (some lanes)' : 'ON') : 'OFF'}</b>
+          </Typography>
+        }
+      />
+    </Tooltip>
+  );
+}
+
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -890,6 +941,7 @@ export default function MissionControlPage() {
             {sending ? <CircularProgress size={20} /> : <SendIcon />}
           </IconButton>
         </Box>
+        <RotationSwitch />
       </Paper>
     </Box>
   );

@@ -34,6 +34,8 @@ interface Pending {
   action: PendingAction;
   summary: string;
   at: number;
+  /** A task asked for in the same message, started once the setting is applied. */
+  thenMission?: string;
 }
 
 export interface ChatReply {
@@ -223,7 +225,15 @@ export class CommandChatService {
     if (Date.now() - pending.at > CONFIRM_TTL_MS) throw new AppError('That confirmation expired — ask again', 410);
 
     await this.apply(userId, pending.action);
-    const reply: ChatReply = { kind: 'answer', text: `Done — ${pending.summary}.` };
+    let reply: ChatReply = { kind: 'answer', text: `Done — ${pending.summary}.` };
+    if (pending.thenMission) {
+      try {
+        const result = await this.missionService.create(userId, { request: pending.thenMission });
+        reply = { kind: 'mission', text: `Done — ${pending.summary}. Now running the task — watch it below.`, mission: result.data };
+      } catch (error) {
+        reply = { kind: 'error', text: `${pending.summary} is done, but the task could not start: ${(error as AppError)?.message ?? 'unknown error'}` };
+      }
+    }
     await this.record(userId, 'assistant', reply.text, reply);
     return { message: 'Applied', data: reply };
   }
@@ -293,11 +303,16 @@ export class CommandChatService {
       }
 
       case 'setting': {
-        const built = await this.buildSettingAction(userId, intent);
-        if ('error' in built) return { kind: 'clarify', text: built.error };
+        const built = await this.buildSettingAction(userId, intent, text);
+        if ('error' in built) return { kind: 'clarify', text: built.error, quick_replies: built.quick_replies };
+        // "open youtube on all phones without proxy rotation" is two jobs: the
+        // setting, then the task. One confirm covers both.
+        const rest = stripRotationPhrase(text);
+        const thenMission = rest && classifyLocally(rest).kind === 'mission' ? rest : undefined;
+        const summary = thenMission ? `${built.summary}, then run: "${rest}"` : built.summary;
         const token = crypto.randomBytes(12).toString('hex');
-        this.pending.set(token, { userId, action: built.action, summary: built.summary, at: Date.now() });
-        return { kind: 'confirm', text: `${built.summary}. Confirm?`, confirm_token: token, action: built.action };
+        this.pending.set(token, { userId, action: built.action, summary: built.summary, at: Date.now(), thenMission });
+        return { kind: 'confirm', text: `${summary}. Confirm?`, confirm_token: token, action: built.action };
       }
 
       case 'identity':
@@ -353,7 +368,8 @@ export class CommandChatService {
   private async buildSettingAction(
     userId: number,
     intent: Extract<ChatIntent, { kind: 'setting' }>,
-  ): Promise<{ action: PendingAction; summary: string } | { error: string }> {
+    text = '',
+  ): Promise<{ action: PendingAction; summary: string } | { error: string; quick_replies?: string[] }> {
     const proxies = await this.proxyRepo.find({ where: { user_id: userId }, order: { id: 'ASC' } });
     if (proxies.length === 0) return { error: 'There are no proxy lanes to change yet.' };
 
@@ -366,13 +382,27 @@ export class CommandChatService {
     if (intent.setting === 'rotation') {
       const lane = resolveLane(intent.proxy);
       if (lane === null) return { error: `I couldn't find a lane called "${intent.proxy}". Which lane — ${proxies.map((p) => p.name).join(', ')}?` };
-      // 0 is an explicit "stop rotating"; no number at all means every task.
-      const every = intent.every === 0 ? 0 : intent.every && intent.every > 0 ? Math.floor(intent.every) : 1;
-      const where = lane === 'all' ? 'every lane' : `lane "${lane.name}"`;
+      // Never turn rotation on by assumption. The words decide: "without",
+      // "off", "band"... mean off, whatever number the model sent; turning it
+      // on needs an explicit on/every-N; anything else is asked, not guessed.
+      let every: number | null;
+      if (ROTATION_OFF.test(text)) every = 0;
+      else if (intent.every === 0) every = 0;
+      else if (intent.every && intent.every > 0 && ROTATION_ON.test(text)) every = Math.floor(intent.every);
+      else if (ROTATION_ON.test(text)) every = Number(/every\s+(\d+)/i.exec(text)?.[1]) || 1;
+      else every = null;
+      if (every === null) {
+        return {
+          error: 'Turn proxy rotation on or off?',
+          quick_replies: ['Turn proxy rotation off on all lanes', 'Turn proxy rotation on after every task'],
+        };
+      }
+      const lanes = lane === 'all' ? proxies : [lane];
+      const names = lanes.map((p) => p.name).join(', ');
       const action: PendingAction = { type: 'set_rotation', proxy_id: lane === 'all' ? 'all' : lane.id, every };
-      if (every === 0) return { action, summary: `Stop rotating ${where}` };
-      const phrase = every === 1 ? 'after every task' : `after every ${every} tasks`;
-      return { action, summary: `Rotate ${where} ${phrase}` };
+      if (every === 0) return { action, summary: `Proxy rotation → OFF on ${names}` };
+      const phrase = every === 1 ? 'after every task' : `every ${every} tasks`;
+      return { action, summary: `Proxy rotation → ON (${phrase}) on ${names}` };
     }
 
     if (intent.setting === 'concurrency') {
@@ -465,6 +495,20 @@ export function reconcileModelIntent(text: string, intent: ChatIntent): ChatInte
     return { kind: 'clarify', question, about: 'phones' } as ChatIntent;
   }
   return intent;
+}
+
+/** A negation around "rotation": without / no / off / stop / band / mat / bina. */
+const ROTATION_OFF =
+  /\b(without|no|stop|disable|off|band|bnd|mat|bina|don.?t|never|nahi)\b[^.]{0,25}\brotat|\brotat\w*\b[^.]{0,25}\b(off|band|bnd|stop|disable|mat|nahi|bina|no)\b/i;
+/** An explicit "turn it on": on / enable / start / chalu / every task / every N. */
+const ROTATION_ON = /\b(on|enable|start|chalu|chalao|resume)\b|\bevery\s+(task|\d+)|\bhar\s+task\b|\bafter each\b/i;
+
+/** The message without its proxy-rotation clause, for the task part of it. */
+export function stripRotationPhrase(text: string): string {
+  return text
+    .replace(/\s*(,|and|aur)?\s*\b(without|with|no|stop|disable|turn\s+(on|off))?\s*(the\s+)?(proxy\s+|ip\s+)*rotat\w*(\s+(on|off|band|mat|stop|after every task|on all lanes))*\b/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /** "for 1 hour", "30 min", "2 ghante", "1.5 hrs" -> minutes. */

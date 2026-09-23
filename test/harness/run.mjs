@@ -1151,6 +1151,38 @@ const scenarios = [
     },
   },
   {
+    name: '"without proxy rotation" turns rotation OFF (never on) and still runs the task',
+    async run() {
+      for (const message of [
+        'open settings on all phones without proxy rotation [sim steps=1 delay=50] [ai:{"kind":"setting","setting":"rotation"}]',
+        'open settings on all phones without proxy rotation [sim steps=1 delay=50]',
+      ]) {
+        const res = await api('POST', '/android/chat', { message });
+        const reply = res?.data;
+        if (reply?.kind !== 'confirm') return `expected a confirm, got ${reply?.kind}: ${reply?.text}`;
+        if (/after every|rotate every/i.test(reply.text) || !/off/i.test(reply.text)) return `offered to turn rotation ON: ${reply.text}`;
+        const applied = await api('POST', '/android/chat/confirm', { confirm_token: reply.confirm_token });
+        const lanes = (await api('GET', '/device-proxy')).data ?? [];
+        const rotating = lanes.filter((p) => p.rotate_every_tasks !== 0).length;
+        for (const p of lanes) await api('PATCH', `/device-proxy/${p.id}`, { rotate_every_tasks: 1 });
+        if (rotating) return `${rotating} lane(s) still rotating`;
+        const mission = applied?.data?.mission;
+        if (applied?.data?.kind !== 'mission' || !mission) return `the task itself was dropped: ${applied?.data?.kind} ${applied?.data?.text}`;
+        await waitForMission(mission.id, 60_000);
+      }
+    },
+  },
+  {
+    name: 'an unclear rotation request asks ON or OFF instead of guessing',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'proxy rotation [ai:{"kind":"setting","setting":"rotation"}]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'clarify') return `kind ${reply?.kind}: ${reply?.text}`;
+      const q = (reply.quick_replies ?? []).join(' | ');
+      if (!/\bon\b/i.test(q) || !/\boff\b/i.test(q)) return `no ON/OFF buttons: ${q}`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();
