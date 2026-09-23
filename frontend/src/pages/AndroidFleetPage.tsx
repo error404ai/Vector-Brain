@@ -399,6 +399,15 @@ export default function AndroidFleetPage() {
 
 
   // ---- Live stream -------------------------------------------------------
+  // The socket reads the device list through a ref. It used to depend on
+  // `devices` directly, and every device refetch (~20s) produced a new array,
+  // closed the socket and opened a fresh one — dropping frames and flooding
+  // the server log with "Web UI client connected".
+  const devicesRef = useRef(devices);
+  useEffect(() => {
+    devicesRef.current = devices;
+  }, [devices]);
+
   useEffect(() => {
     let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -413,7 +422,7 @@ export default function AndroidFleetPage() {
           case 'device:screen_capture': {
             const capture = payload?.result?.screenCapture?.base64Data;
             const hardwareId = payload?.deviceId;
-            const match = devices.find((device) => device.device_id === hardwareId || device.id === hardwareId);
+            const match = devicesRef.current.find((device) => device.device_id === hardwareId || device.id === hardwareId);
             if (capture && match) patchRuntime(match.id, { screenshot: capture });
             break;
           }
@@ -552,7 +561,9 @@ export default function AndroidFleetPage() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [devices]);
+    // One socket for the page's lifetime; handlers read live data through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Derived -----------------------------------------------------------
   const onlineDevices = devices.filter((device) => device.status === 'ONLINE');

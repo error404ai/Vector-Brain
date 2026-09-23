@@ -7,6 +7,7 @@ export interface MissionItem {
   id: number;
   device_id: number;
   device_name: string;
+  device_hw_id: string | null;
   status: MissionItemStatus;
   attempts: number;
   agent_task_id: number | null;

@@ -1500,6 +1500,19 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
     if (treeResult.status !== 'SUCCESS') {
       const detail = treeResult.status === 'FAILURE' ? treeResult.message : 'UI inspection was cancelled';
+      // Only blame accessibility when the phone said so. A socket that is
+      // gone or a phone that never answered used to land here too, and the
+      // message sent people to re-enable a service that was already on.
+      const failure = treeResult.status === 'FAILURE' ? treeResult : null;
+      if (failure && /not currently connected/i.test(failure.message ?? '')) {
+        throw new AppError('The phone is offline right now (it may be reconnecting). Try again in a moment.', 409);
+      }
+      if (failure?.code === 'TIMEOUT') {
+        throw new AppError(
+          `The phone did not answer the first screen check in time — it may be asleep, busy or on a slow connection. ${detail}`,
+          504,
+        );
+      }
       throw new AppError(
         `Accessibility is not ready on the Android device. Open Android Automation, enable its accessibility service, then try again. ${detail}`,
         400,

@@ -1,3 +1,4 @@
+import authManager from '@/_helpers/authManager';
 import {
   useCancelMissionMutation,
   useCreateMissionMutation,
@@ -24,6 +25,9 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+
+/** Latest screen per phone, keyed by hardware id, as the server pushes them. */
+type FrameMap = Record<string, { data: string; at: number }>;
 import toast from 'react-hot-toast';
 
 const EXAMPLES = [
@@ -71,7 +75,123 @@ function ItemRow({ item }: { item: MissionItem }) {
   );
 }
 
-function MissionCard({ mission }: { mission: Mission }) {
+/** How long each running phone stays on the big screen before the next one. */
+const ROTATE_MS = 4000;
+
+/**
+ * One socket for the page: keeps the newest frame each phone sends while it
+ * runs. Frames are only kept, never rendered here, so a busy fleet does not
+ * re-render the chat on every screenshot beyond the cards that show them.
+ */
+function useLiveFrames(): FrameMap {
+  const [frames, setFrames] = useState<FrameMap>({});
+  useEffect(() => {
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const connect = () => {
+      const token = authManager.getAccessToken();
+      if (!token) {
+        retry = setTimeout(connect, 2000);
+        return;
+      }
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`);
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.event !== 'device:screen_capture') return;
+          const hw = msg.payload?.deviceId;
+          const data = msg.payload?.result?.screenCapture?.base64Data;
+          if (typeof hw === 'string' && typeof data === 'string') {
+            setFrames((prev) => ({ ...prev, [hw]: { data, at: Date.now() } }));
+          }
+        } catch {
+          /* not ours */
+        }
+      };
+      socket.onclose = () => {
+        if (!disposed) retry = setTimeout(connect, 2000);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (retry) clearTimeout(retry);
+      socket?.close();
+    };
+  }, []);
+  return frames;
+}
+
+function frameSrc(data: string): string {
+  return data.startsWith('data:') ? data : `data:image/jpeg;base64,${data}`;
+}
+
+/**
+ * The running phones' screens, one at a time on a large frame that moves to
+ * the next phone every few seconds; the strip underneath shows all of them and
+ * a click pins one.
+ */
+function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap }) {
+  const live = items.filter((item) => item.status === 'RUNNING' && item.device_hw_id);
+  const [tick, setTick] = useState(0);
+  const [pinned, setPinned] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (pinned !== null || live.length < 2) return;
+    const timer = setInterval(() => setTick((t) => t + 1), ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [pinned, live.length]);
+
+  if (live.length === 0) return null;
+  const pinnedItem = pinned !== null ? live.find((item) => item.id === pinned) : undefined;
+  const current = pinnedItem ?? live[tick % live.length];
+  const frame = current.device_hw_id ? frames[current.device_hw_id] : undefined;
+
+  return (
+    <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mt: 1.5, mb: 1, flexWrap: { xs: 'wrap', sm: 'nowrap' } }}>
+      <Box sx={{ width: 170, flexShrink: 0, mx: { xs: 'auto', sm: 0 } }}>
+        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 3, border: '6px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {frame ? (
+            <Box component="img" src={frameSrc(frame.data)} alt={`${current.device_name} screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          ) : (
+            <Typography variant="caption" sx={{ color: 'grey.500', px: 2, textAlign: 'center' }}>
+              Waiting for the first screen…
+            </Typography>
+          )}
+        </Box>
+        <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, fontWeight: 600 }} noWrap>
+          {current.device_name}
+          {pinnedItem ? ' · pinned' : live.length > 1 ? ` · ${live.indexOf(current) + 1}/${live.length}` : ''}
+        </Typography>
+      </Box>
+      {live.length > 1 && (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignContent: 'flex-start' }}>
+          {live.map((item) => {
+            const thumb = item.device_hw_id ? frames[item.device_hw_id] : undefined;
+            const active = item.id === current.id;
+            return (
+              <Tooltip key={item.id} title={pinned === item.id ? `Unpin ${item.device_name}` : `Pin ${item.device_name}`}>
+                <Box
+                  component="button"
+                  type="button"
+                  onClick={() => setPinned((p) => (p === item.id ? null : item.id))}
+                  sx={{ p: 0, width: 54, aspectRatio: '9 / 19.5', borderRadius: 1.5, overflow: 'hidden', cursor: 'pointer', bgcolor: 'grey.900', border: '2px solid', borderColor: active ? 'primary.main' : 'transparent', outlineOffset: 2 }}
+                  aria-label={`Show ${item.device_name}`}
+                >
+                  {thumb && <Box component="img" src={frameSrc(thumb.data)} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
+                </Box>
+              </Tooltip>
+            );
+          })}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function MissionCard({ mission, frames }: { mission: Mission; frames: FrameMap }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const { progress } = mission;
   const running = mission.status === 'RUNNING';
@@ -121,6 +241,8 @@ function MissionCard({ mission }: { mission: Mission }) {
 
         {running && <LinearProgress variant="determinate" value={percent} sx={{ mb: 1, borderRadius: 1 }} />}
 
+        {running && <LiveScreens items={mission.items} frames={frames} />}
+
         <Box sx={{ display: 'flex', flexDirection: 'column' }}>
           {mission.items.map((item) => (
             <ItemRow key={item.id} item={item} />
@@ -147,6 +269,7 @@ export default function MissionControlPage() {
   const [maxSteps, setMaxSteps] = useState(20);
   const [noInternet, setNoInternet] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const frames = useLiveFrames();
 
   // A short list, polled while the page is open and the tab is in view.
   const { data, isLoading } = useGetMissionsQuery(20, { pollingInterval: 2500, skipPollingIfUnfocused: true });
@@ -205,7 +328,7 @@ export default function MissionControlPage() {
           </Box>
         )}
         {missions.map((mission) => (
-          <MissionCard key={mission.id} mission={mission} />
+          <MissionCard key={mission.id} mission={mission} frames={frames} />
         ))}
         <div ref={bottomRef} />
       </Box>

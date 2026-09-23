@@ -652,6 +652,31 @@ const scenarios = [
     },
   },
   {
+    name: 'a phone that does not answer the first screen check is retried, not reported as accessibility off',
+    async run() {
+      phones.free1.phone.silent = true;
+      const created = await api('POST', '/android/missions', {
+        request: 'open settings [sim steps=2 delay=100]',
+        device_ids: [phones.free1.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) { phones.free1.phone.silent = false; return 'mission not created'; }
+      // Let the first attempt time out on the silent phone, then let it answer.
+      const firstSettled = await waitFor(async () => {
+        const m = await getMission(id);
+        const item = m?.items?.[0];
+        return item && item.attempts >= 1 && item.status !== 'RUNNING' && item.last_reason ? item : null;
+      }, 90_000, 500);
+      phones.free1.phone.silent = false;
+      if (!firstSettled) return 'first attempt never settled';
+      if (firstSettled.last_reason === 'NEEDS_SETUP') return `blamed accessibility for a silent phone: ${firstSettled.last_message}`;
+      const done = await waitForMission(id, 120_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `item ended ${item.status} (${item.last_reason}: ${item.last_message})`;
+    },
+  },
+  {
     name: 'a mission asked for more phones than are ready says so and uses what it has',
     async run() {
       const created = await api('POST', '/android/missions', {

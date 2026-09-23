@@ -44,7 +44,7 @@ const RETRYABLE = new Set([
 const PLAIN_REASON: Record<string, string> = {
   DEVICE_OFFLINE: 'phone was offline',
   DEVICE_BUSY: 'phone was busy with another task',
-  TIMEOUT: 'phone stopped answering',
+  TIMEOUT: 'phone did not answer in time',
   LLM_RATE_LIMIT: 'AI provider rate limit',
   LLM_AUTH_OR_CREDIT: 'AI key or credit problem',
   SERVER_RESTART: 'server restarted mid-run',
@@ -488,6 +488,7 @@ export class MissionService {
     if (!mission) return null;
     const items = await this.itemRepo.find({ where: { mission_id: id }, order: { id: 'ASC' } });
     const names = await this.deviceNames(items.map((i) => i.device_id));
+    const hardwareIds = await this.hardwareIds(items.map((i) => i.device_id));
     const count = (status: string) => items.filter((i) => i.status === status).length;
     return {
       id: mission.id,
@@ -514,6 +515,8 @@ export class MissionService {
         id: item.id,
         device_id: item.device_id,
         device_name: names.get(item.device_id) ?? `Phone ${item.device_id}`,
+        /** Live frames arrive keyed by the phone's hardware id. */
+        device_hw_id: hardwareIds.get(item.device_id) ?? null,
         status: item.status,
         attempts: item.attempts,
         agent_task_id: item.agent_task_id,
@@ -524,6 +527,12 @@ export class MissionService {
         next_attempt_at: item.next_attempt_at,
       })),
     };
+  }
+
+  private async hardwareIds(ids: number[]): Promise<Map<number, string>> {
+    if (!ids.length) return new Map();
+    const devices = await this.deviceRepo.find({ where: { id: In([...new Set(ids)]) }, select: ['id', 'device_id'] });
+    return new Map(devices.map((d) => [d.id, d.device_id]));
   }
 
   private async deviceNames(ids: number[]): Promise<Map<number, string>> {
@@ -545,8 +554,9 @@ function truncate(text?: string | null): string | null {
 function classifyDispatchError(message: string): string {
   const text = message.toLowerCase();
   if (/offline|reconnect|not connected/.test(text)) return 'DEVICE_OFFLINE';
+  if (/did not answer|timed out|timeout/.test(text)) return 'TIMEOUT';
   if (/already running|waiting in the queue/.test(text)) return 'DEVICE_BUSY';
-  if (/accessibility/.test(text)) return 'NEEDS_SETUP';
+  if (/accessibility is not ready|enable its accessibility/.test(text)) return 'NEEDS_SETUP';
   if (/\b429\b|rate limit/.test(text)) return 'LLM_RATE_LIMIT';
   if (/api key|credit|\b401\b|\b402\b/.test(text)) return 'LLM_AUTH_OR_CREDIT';
   return 'DISPATCH_ERROR';
