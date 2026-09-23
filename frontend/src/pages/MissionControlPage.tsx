@@ -1,7 +1,7 @@
 import authManager from '@/_helpers/authManager';
 import {
   useCancelMissionMutation,
-  useGetMissionsQuery,
+  useGetMissionQuery,
   type Mission,
   type MissionItem,
   type MissionItemStatus,
@@ -22,7 +22,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 /** Latest screen per phone, keyed by hardware id, as the server pushes them. */
 type FrameMap = Record<string, { data: string; at: number }>;
@@ -91,8 +91,11 @@ const ROTATE_MS = 4000;
  * runs. Frames are only kept, never rendered here, so a busy fleet does not
  * re-render the chat on every screenshot beyond the cards that show them.
  */
-function useLiveFrames(): FrameMap {
+function useLiveFrames(): { frames: FrameMap; missionPush: Record<number, number> } {
   const [frames, setFrames] = useState<FrameMap>({});
+  // Bumped whenever the server says a mission changed, so its card refetches
+  // at once instead of waiting for the next poll.
+  const [missionPush, setMissionPush] = useState<Record<number, number>>({});
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -108,6 +111,11 @@ function useLiveFrames(): FrameMap {
       socket.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          if (msg.event === 'mission:update' && typeof msg.payload?.id === 'number') {
+            const id = msg.payload.id as number;
+            setMissionPush((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+            return;
+          }
           if (msg.event !== 'device:screen_capture') return;
           const hw = msg.payload?.deviceId;
           const data = msg.payload?.result?.screenCapture?.base64Data;
@@ -129,7 +137,7 @@ function useLiveFrames(): FrameMap {
       socket?.close();
     };
   }, []);
-  return frames;
+  return { frames, missionPush };
 }
 
 function frameSrc(data: string): string {
@@ -199,7 +207,7 @@ function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap
   );
 }
 
-function MissionCard({ mission, frames }: { mission: Mission; frames: FrameMap }) {
+function MissionCard({ mission, frames, showRequest = true }: { mission: Mission; frames: FrameMap; showRequest?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const { progress } = mission;
   const running = mission.status === 'RUNNING';
@@ -217,12 +225,14 @@ function MissionCard({ mission, frames }: { mission: Mission; frames: FrameMap }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      {/* What the user asked, on the right like a chat. */}
-      <Box sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 2, borderBottomRightRadius: 4 }}>
-        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {mission.request}
-        </Typography>
-      </Box>
+      {/* What the user asked, on the right like a chat (the chat shows its own). */}
+      {showRequest && (
+        <Box sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 2, borderBottomRightRadius: 4 }}>
+          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {mission.request}
+          </Typography>
+        </Box>
+      )}
 
       <Paper variant="outlined" sx={{ alignSelf: 'flex-start', width: '100%', maxWidth: 720, p: 2, borderRadius: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -277,21 +287,48 @@ type ChatTurn =
   | { id: string; role: 'user'; text: string }
   | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean };
 
+/**
+ * A mission started from the chat, kept current on its own: it polls just this
+ * mission while it runs and refetches the moment the server pushes an update.
+ * (It used to read a shared 20-mission list, and a card could sit on its first
+ * snapshot — "Waiting" — while the phones had already finished.)
+ */
+function LiveMissionCard({ initial, frames, push }: { initial: Mission; frames: FrameMap; push: number }) {
+  // The last response decides whether to keep polling; a finished mission stops.
+  const [status, setStatus] = useState(initial.status);
+  const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 2000 : 0 });
+  const mission = data?.data ?? initial;
+  if (mission.status !== status) setStatus(mission.status);
+  useEffect(() => {
+    if (push > 0) void refetch();
+  }, [push, refetch]);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      <MissionCard mission={mission} frames={frames} showRequest={false} />
+      {isError && (
+        <Typography variant="caption" color="warning.main">
+          Couldn't refresh this mission — retrying.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
 function AssistantBubble({
   turn,
   frames,
   onConfirm,
-  liveMission,
+  push,
 }: {
   turn: Extract<ChatTurn, { role: 'assistant' }>;
   frames: FrameMap;
   onConfirm: (token: string) => void;
-  liveMission?: Mission;
+  push: number;
 }) {
   const { reply } = turn;
-  // A mission reply shows the live card, which polling keeps fresh.
-  if (reply.kind === 'mission' && (liveMission || reply.mission)) {
-    return <MissionCard mission={(liveMission ?? reply.mission) as Mission} frames={frames} />;
+  if (reply.kind === 'mission' && reply.mission) {
+    return <LiveMissionCard initial={reply.mission} frames={frames} push={push} />;
   }
   const tone =
     reply.kind === 'error' ? 'error.main' : reply.kind === 'confirm' ? 'warning.main' : reply.kind === 'clarify' ? 'text.primary' : 'text.primary';
@@ -315,33 +352,14 @@ export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const frames = useLiveFrames();
+  const { frames, missionPush } = useLiveFrames();
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
   const [confirmCommand] = useConfirmCommandMutation();
 
-  // Missions the chat has started, kept fresh while any is still running.
-  const startedMissionIds = useMemo(
-    () => turns.flatMap((t) => (t.role === 'assistant' && t.reply.mission ? [t.reply.mission.id] : [])),
-    [turns],
-  );
-  const anyRunning = turns.some(
-    (t) => t.role === 'assistant' && t.reply.kind === 'mission' && t.reply.mission?.status === 'RUNNING',
-  );
-  const { data: missionsData } = useGetMissionsQuery(20, {
-    pollingInterval: anyRunning ? 2500 : 0,
-    skipPollingIfUnfocused: true,
-    skip: startedMissionIds.length === 0,
-  });
-  const missionById = useMemo(() => {
-    const map = new Map<number, Mission>();
-    for (const mission of missionsData?.data ?? []) map.set(mission.id, mission);
-    return map;
-  }, [missionsData]);
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns.length, missionById]);
+  }, [turns.length]);
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
 
@@ -412,7 +430,7 @@ export default function MissionControlPage() {
               turn={turn}
               frames={frames}
               onConfirm={onConfirm}
-              liveMission={turn.reply.mission ? missionById.get(turn.reply.mission.id) : undefined}
+              push={turn.reply.mission ? missionPush[turn.reply.mission.id] ?? 0 : 0}
             />
           ),
         )}

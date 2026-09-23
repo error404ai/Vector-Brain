@@ -56,6 +56,10 @@ export const missionService = baseApi.injectEndpoints({
       query: (limit) => ({ url: `/android/missions?limit=${limit ?? 20}`, method: 'GET' }),
       providesTags: [TAGS.MISSIONS],
     }),
+    getMission: builder.query<{ message: string; data: Mission }, number>({
+      query: (id) => ({ url: `/android/missions/${id}`, method: 'GET' }),
+      providesTags: (_r, _e, id) => [{ type: TAGS.MISSIONS, id }],
+    }),
     createMission: builder.mutation<{ message: string; data: Mission }, MissionInput>({
       query: (body) => ({ url: '/android/missions', method: 'POST', body }),
       invalidatesTags: [TAGS.MISSIONS],
@@ -67,4 +71,4 @@ export const missionService = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetMissionsQuery, useCreateMissionMutation, useCancelMissionMutation } = missionService;
+export const { useGetMissionsQuery, useGetMissionQuery, useCreateMissionMutation, useCancelMissionMutation } = missionService;
