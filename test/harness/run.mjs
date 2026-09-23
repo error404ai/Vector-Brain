@@ -1111,6 +1111,46 @@ const scenarios = [
     },
   },
   {
+    name: 'when the AI asks "which phone?" for a clear action, the last phones are used',
+    async run() {
+      const first = await api('POST', '/android/chat', { message: 'open settings on free2 [sim steps=1 delay=50]' });
+      await waitForMission(first.data.mission.id, 30_000);
+      // [ai:...] stands in for the real model's reply: here it asks instead of acting.
+      const res = await api('POST', '/android/chat', {
+        message: 'open youtube app [sim steps=1 delay=50] [ai:{"kind":"clarify","question":"On which phone?"}]',
+      });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `a clear action became ${reply?.kind}: ${reply?.text}`;
+      const ids = reply.mission.items.map((i) => i.device_id);
+      if (ids.length !== 1 || ids[0] !== phones.free2.dbId) return `targeted ${JSON.stringify(ids)}, expected free2`;
+      if (/\[ai:/.test(reply.mission.prompt ?? '')) return 'the test marker leaked into the instruction';
+      await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'an AI question about phones offers phone buttons and remembers the request',
+    async run() {
+      await db.query('DELETE FROM chat_messages WHERE user_id = ?', [userId]);
+      const res = await api('POST', '/android/chat', {
+        message: 'the video thing [ai:{"kind":"clarify","question":"Which phone should do it?"}]',
+      });
+      const reply = res?.data;
+      if (reply?.kind !== 'clarify') return `kind ${reply?.kind}`;
+      if (!(reply.quick_replies ?? []).some((r) => /free1|free2/.test(r))) return `no phone buttons: ${JSON.stringify(reply.quick_replies)}`;
+      if (reply.quick_replies.some((r) => /online|rotation/i.test(r))) return `unrelated buttons: ${JSON.stringify(reply.quick_replies)}`;
+      if (reply.pending?.awaiting !== 'phones') return 'the question does not remember what it is waiting for';
+    },
+  },
+  {
+    name: 'a general question comes without unrelated buttons',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'hmm [ai:{"kind":"clarify","question":"What would you like to do?"}]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'clarify') return `kind ${reply?.kind}`;
+      if ((reply.quick_replies ?? []).length) return `buttons that do not answer the question: ${JSON.stringify(reply.quick_replies)}`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

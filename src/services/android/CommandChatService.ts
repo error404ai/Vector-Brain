@@ -78,15 +78,29 @@ export class CommandChatService {
   ) {}
 
   async handle(userId: number, message: string): Promise<ApiResponse> {
-    const text = String(message ?? '').trim();
+    let text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
 
+    // Harness only: "[ai:{...}]" stands in for the real model's classification,
+    // so the model-driven paths can be tested without a model.
+    let stub: ChatIntent | null = null;
+    if (SIMULATION) {
+      const marker = /\s*\[ai:(\{.*\})\]\s*$/.exec(text);
+      if (marker) {
+        try {
+          stub = JSON.parse(marker[1]) as ChatIntent;
+        } catch {
+          stub = null;
+        }
+        text = text.slice(0, marker.index).trim();
+      }
+    }
     await this.record(userId, 'user', text);
     const context = await this.recentContext(userId);
     // Finish a question the chat just asked: "stop youtube" -> "which phone?" ->
     // "Nokia" is one request, not two unrelated messages.
     const effective = await this.joinWithPending(userId, text, context.pending);
-    const intent = await this.classify(userId, effective, context.lines);
+    const intent = await this.classify(userId, effective, context.lines, stub);
     const reply = await this.act(userId, effective, intent, context.lastMissionDevices);
     await this.record(userId, 'assistant', reply.text, reply);
     return { message: 'Chat reply', data: reply };
@@ -218,17 +232,16 @@ export class CommandChatService {
   // Classify
   // ---------------------------------------------------------------------------
 
-  private async classify(userId: number, text: string, history: string[] = []): Promise<ChatIntent> {
+  private async classify(userId: number, text: string, history: string[] = [], stub: ChatIntent | null = null): Promise<ChatIntent> {
     // A message that only names phones is half an instruction: ask for the rest.
     if (await this.isTargetOnly(userId, text)) return { kind: 'target', target: text } as ChatIntent;
-    if (!SIMULATION) {
+    let modelIntent: ChatIntent | null = stub;
+    if (!modelIntent && !SIMULATION) {
       const config = await this.aiConfigService.resolveChatConfig(userId);
-      if (config) {
-        const intent = await this.aiService.classifyChatCommand(text, config, history);
-        if (intent) return intent;
-      }
+      if (config) modelIntent = await this.aiService.classifyChatCommand(text, config, history);
     }
-    return classifyLocally(text);
+    if (!modelIntent) return classifyLocally(text);
+    return reconcileModelIntent(text, modelIntent);
   }
 
   // ---------------------------------------------------------------------------
@@ -299,12 +312,20 @@ export class CommandChatService {
         };
 
       case 'clarify':
-      default:
-        return {
-          kind: 'clarify',
-          text: (intent as { question?: string }).question || 'What would you like to do — run a task on some phones, check status, or change proxy rotation?',
-          quick_replies: ['How many phones are online?', 'Open YouTube on all phones', 'Stop proxy rotation on all lanes'],
-        };
+      default: {
+        const question = (intent as { question?: string }).question || 'What would you like to do — run a task on some phones, check status, or change proxy rotation?';
+        // A question about phones gets phone buttons and remembers the request;
+        // any other question gets no buttons rather than ones that don't answer it.
+        if ((intent as { about?: string }).about === 'phones') {
+          return {
+            kind: 'clarify',
+            text: question,
+            quick_replies: await this.phoneQuickReplies(userId),
+            pending: { awaiting: 'phones', request: text },
+          };
+        }
+        return { kind: 'clarify', text: question };
+      }
     }
   }
 
@@ -428,6 +449,22 @@ function isGenericTarget(text: string): boolean {
   const t = text.trim();
   if (/^(all|every|saare|sabhi|sab)\s*(the\s+)?(phones?|devices?|mobiles?)$/i.test(t)) return true;
   return /^[#@][\w.-]+(\s*(,|and|&)\s*[#@][\w.-]+)*$/i.test(t);
+}
+
+/**
+ * Guard rails on the model's label. Models ask "which phone?" for clear
+ * actions that simply name no phone — that is the server's call (last phones,
+ * or a proper question with phone buttons), so a clear action stays a mission.
+ * A genuine question about phones is marked so it gets phone buttons.
+ */
+export function reconcileModelIntent(text: string, intent: ChatIntent): ChatIntent {
+  if (intent.kind !== 'clarify') return intent;
+  const question = (intent as { question?: string }).question ?? '';
+  if (classifyLocally(text).kind === 'mission') return { kind: 'mission', prompt: text };
+  if (/\b(phone|phones|device|devices|mobile)\b/i.test(question)) {
+    return { kind: 'clarify', question, about: 'phones' } as ChatIntent;
+  }
+  return intent;
 }
 
 /** "for 1 hour", "30 min", "2 ghante", "1.5 hrs" -> minutes. */

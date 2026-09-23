@@ -51,7 +51,7 @@ export type ChatIntent =
   | { kind: 'refuse' }
   | { kind: 'identity' }
   | { kind: 'target'; target: string }
-  | { kind: 'clarify'; question?: string };
+  | { kind: 'clarify'; question?: string; about?: 'phones' };
 
 const ChatIntentSchema = z
   .object({
@@ -215,7 +215,7 @@ export class AiService {
       '- "setting": change proxy rotation ("setting":"rotation", optional "proxy" lane name, "every" number of tasks; "every":0 to stop rotating) or lane concurrency ("setting":"concurrency", "proxy" lane name, "concurrency" number).',
       '- "identity": greetings, "who are you", "what can you do", help.',
       '- "refuse": anything that deletes or removes devices/proxies/tasks, changes accounts or billing, or is outside running tasks / status / proxy settings.',
-      '- "clarify": too vague to act on; put one short question in "question".',
+      '- "clarify": only when the ACTION itself is unclear; put one short question in "question". A clear action that names no phones is still a "mission" (the server picks the phones or asks) — never ask which phone.',
       'Never invent a mission from a vague message — prefer clarify. Reply with ONLY minified JSON, no prose, no code fences.',
       ...(history.length
         ? [
