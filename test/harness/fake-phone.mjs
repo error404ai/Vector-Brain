@@ -99,6 +99,7 @@ export class FakePhone {
           capabilities: this.capabilities(),
           automationActive: this.automationActive,
           appVersion: '0.9.0-harness',
+          ...(this.batteryLevel != null ? { batteryLevel: this.batteryLevel } : {}),
         },
       }),
     );

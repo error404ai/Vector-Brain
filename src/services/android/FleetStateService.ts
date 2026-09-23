@@ -120,6 +120,7 @@ export class FleetStateService {
         online,
         accessibility: device.capabilities?.accessibility ?? null,
         app_version: device.capabilities?.appVersion ?? null,
+        battery: typeof device.capabilities?.battery === 'number' ? device.capabilities.battery : null,
         tag: device.tag,
         proxy_id: device.proxy_id ?? null,
         last_seen_at: device.last_seen_at,

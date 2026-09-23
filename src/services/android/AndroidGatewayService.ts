@@ -37,7 +37,7 @@ export class AndroidGatewayService {
 
   // Heartbeats arrive every five seconds. Persist periodically (or whenever
   // capabilities change) instead of writing the same row on every heartbeat.
-  private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string }>();
+  private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string; battery?: number }>();
 
   /**
    * Server-side subscribers to user events (task finished, new frame, ...).
@@ -152,18 +152,29 @@ export class AndroidGatewayService {
           // The phone reports its build alongside its capabilities; keeping it
           // on the device record is what makes "who is still on the old APK?"
           // answerable without walking round the desk.
-          const reported = msg.payload.capabilities
-            ? { ...msg.payload.capabilities, ...(msg.payload.appVersion ? { appVersion: msg.payload.appVersion } : {}) }
-            : msg.payload.capabilities;
-          const capabilities = JSON.stringify(reported || {});
+          // Battery arrives as its own heartbeat field (v10+); it is kept on
+          // the device record so the fleet can see a phone draining before it
+          // dies. It moves every heartbeat, so it rides the 30s cadence and is
+          // left out of the "did anything change" comparison.
+          const battery =
+            typeof msg.payload.batteryLevel === 'number' && Number.isFinite(msg.payload.batteryLevel)
+              ? Math.max(0, Math.min(100, Math.round(msg.payload.batteryLevel)))
+              : undefined;
+          const base =
+            msg.payload.capabilities || msg.payload.appVersion
+              ? { ...(msg.payload.capabilities ?? {}), ...(msg.payload.appVersion ? { appVersion: msg.payload.appVersion } : {}) }
+              : undefined;
+          const reported = base && battery !== undefined ? { ...base, battery } : battery !== undefined ? { battery } : base;
+          const capabilities = JSON.stringify(base || {});
           const lastPersistence = this.lastHeartbeatPersistence.get(devId);
           if (
             !lastPersistence ||
             now - lastPersistence.at >= 30_000 ||
-            capabilities !== lastPersistence.capabilities
+            capabilities !== lastPersistence.capabilities ||
+            (battery !== undefined && lastPersistence.battery === undefined)
           ) {
             await this.deviceService.updateDeviceStatus(devId, AndroidDeviceStatus.ONLINE, reported);
-            this.lastHeartbeatPersistence.set(devId, { at: now, capabilities });
+            this.lastHeartbeatPersistence.set(devId, { at: now, capabilities, battery });
           }
           if (msg.payload.automationActive) await this.reconcileAutomationSession(devId);
           if (ws.readyState === WebSocket.OPEN) {

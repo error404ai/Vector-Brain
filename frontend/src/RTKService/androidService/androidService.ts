@@ -61,6 +61,8 @@ export interface FleetStateDevice {
   accessibility: boolean | null;
   /** Companion build this phone reported on its last heartbeat. */
   app_version: string | null;
+  /** Last battery percentage reported by the phone; null until it reports one. */
+  battery?: number | null;
   tag: string | null;
   proxy_id: number | null;
   last_seen_at?: string | null;

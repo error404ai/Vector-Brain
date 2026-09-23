@@ -68,6 +68,8 @@ export class AndroidDevice {
     screenWidth?: number;
     screenHeight?: number;
     appVersion?: string;
+    /** Last battery percentage the phone reported (0–100). */
+    battery?: number;
   } | null;
 
   @CreateDateColumn({ type: 'datetime' })

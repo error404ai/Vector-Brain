@@ -755,6 +755,22 @@ export default function AndroidFleetPage() {
                       </Tooltip>
                     );
                   })()}
+                  {(() => {
+                    // Only worth space when it needs attention: a phone off the
+                    // charger dies mid-run, and its runs fail as "offline".
+                    const battery = serverStateByDevice.get(device.id)?.battery;
+                    if (battery == null || battery > 20) return null;
+                    return (
+                      <Tooltip title={`Battery ${battery}% — put this phone on charge`}>
+                        <Box
+                          component="span"
+                          sx={{ px: 0.7, py: '1px', borderRadius: 1, fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: 'error.dark', bgcolor: alpha('#dc2626', 0.12) }}
+                        >
+                          {battery}%
+                        </Box>
+                      </Tooltip>
+                    );
+                  })()}
                   <Box sx={{ flexGrow: 1 }} />
                   {(() => {
                     const laneId = proxyIdFor(device);

@@ -579,6 +579,20 @@ const scenarios = [
     },
   },
   {
+    name: 'fleet state shows the battery level the phone reports',
+    async run() {
+      phones.free2.phone.batteryLevel = 37;
+      phones.free2.phone.sendHeartbeat();
+      const seen = await waitFor(async () => {
+        const res = await api('GET', '/android/devices/fleet-state');
+        const device = (res?.data?.devices ?? []).find((d) => d.id === phones.free2.dbId);
+        return device?.battery === 37 ? device : null;
+      }, 45_000, 1000);
+      phones.free2.phone.batteryLevel = null;
+      if (!seen) return 'battery never reached fleet state';
+    },
+  },
+  {
     name: 'a mission runs one instruction on several phones and reports each result',
     async run() {
       const created = await api('POST', '/android/missions', {
