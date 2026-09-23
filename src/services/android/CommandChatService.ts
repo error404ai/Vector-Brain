@@ -152,11 +152,16 @@ export class CommandChatService {
 
       case 'mission': {
         try {
-          const result = await this.missionService.create(userId, { request: intent.prompt || text });
+          const minutes = intent.duration_minutes ?? parseDurationMinutes(text);
+          const result = await this.missionService.create(userId, {
+            request: intent.prompt || text,
+            duration_seconds: minutes && minutes > 0 ? Math.round(minutes * 60) : undefined,
+          });
           const mission = result.data as { note?: string | null };
+          const timed = minutes && minutes > 0 ? ` Each phone keeps going for ${formatMinutes(minutes)}.` : '';
           return {
             kind: 'mission',
-            text: mission?.note ? `Started. ${mission.note}` : 'Started — watch it below.',
+            text: `${mission?.note ? `Started. ${mission.note}` : 'Started — watch it below.'}${timed}`,
             mission: result.data,
           };
         } catch (error) {
@@ -281,7 +286,20 @@ const DELETE_WORDS = /\b(delete|remove|unpair|wipe|erase|drop|hata\s*do|delete\s
 const STATUS_WORDS = /\b(status|online|offline|how many|kitne|kaun|which phones|running|idle|fleet)\b/i;
 const ROTATE_WORDS = /\brotat/i;
 const CONCURRENCY_WORDS = /\bconcurren|at once|parallel|ek saath\b/i;
-const MISSION_WORDS = /\b(open|play|send|search|scroll|close|tap|type|go to|khol|chalao|bhejo)\b/i;
+const MISSION_WORDS = /\b(open|play|send|search|scroll|close|tap|type|go to|browse|visit|watch|khol|chalao|bhejo|dekho)\b/i;
+
+/** "for 1 hour", "30 min", "2 ghante", "1.5 hrs" -> minutes. */
+export function parseDurationMinutes(text: string): number | undefined {
+  const m = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h\b|ghante|ghanta|minutes?|mins?|m\b|minat)/i.exec(text);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return /^(h|hour|hours|hr|hrs|ghante|ghanta)$/i.test(m[2]) ? n * 60 : n;
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
+  return `${Math.round(minutes)} min`;
+}
 
 export function classifyLocally(text: string): ChatIntent {
   const t = text.toLowerCase();

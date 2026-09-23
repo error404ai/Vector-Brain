@@ -45,7 +45,7 @@ Open Settings and check battery level -> Open Settings and check the battery lev
 
 export type ChatIntent =
   | { kind: 'status' }
-  | { kind: 'mission'; prompt?: string }
+  | { kind: 'mission'; prompt?: string; duration_minutes?: number }
   | { kind: 'setting'; setting: 'rotation'; proxy?: string; every?: number }
   | { kind: 'setting'; setting: 'concurrency'; proxy?: string; concurrency?: number }
   | { kind: 'refuse' }
@@ -61,6 +61,7 @@ const ChatIntentSchema = z
     every: z.number().optional(),
     concurrency: z.number().optional(),
     question: z.string().optional(),
+    duration_minutes: z.number().optional(),
   })
   .passthrough();
 
@@ -208,7 +209,7 @@ export class AiService {
       'You label a message sent to a tool that controls a fleet of Android phones. You never carry it out.',
       'Choose exactly one kind:',
       '- "status": a read-only question about the fleet (how many online, what is running, which lane).',
-      '- "mission": an instruction to perform on phones (open an app, send, search, play, scroll, close). Put the single-phone instruction, phone selection included, in "prompt", verbatim.',
+      '- "mission": an instruction to perform on phones (open an app, send, search, play, scroll, close, browse). Put the single-phone instruction, phone selection included, in "prompt", verbatim. If the request says how long to keep doing it ("for 1 hour", "30 min", "2 ghante"), also set "duration_minutes".',
       '- "setting": change proxy rotation ("setting":"rotation", optional "proxy" lane name, "every" number of tasks; "every":0 to stop rotating) or lane concurrency ("setting":"concurrency", "proxy" lane name, "concurrency" number).',
       '- "identity": greetings, "who are you", "what can you do", help.',
       '- "refuse": anything that deletes or removes devices/proxies/tasks, changes accounts or billing, or is outside running tasks / status / proxy settings.',

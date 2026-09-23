@@ -18,6 +18,7 @@ type TaskRunner = (
   maxSteps?: number,
   existingTaskId?: number,
   aiConfigId?: number,
+  runSeconds?: number,
 ) => Promise<unknown>;
 
 /** Tells the queue how many of a lane's devices are running right now. */
@@ -182,6 +183,7 @@ export class TaskQueueService {
     prompt: string;
     aiConfigId?: number;
     maxSteps?: number;
+    runSeconds?: number;
   }): Promise<ApiResponse> {
     // One waiting entry per device: queueing the same phone twice would run the
     // second task against whatever the first one left on screen.
@@ -197,6 +199,7 @@ export class TaskQueueService {
       prompt: input.prompt,
       ai_config_id: input.aiConfigId ?? null,
       max_steps: input.maxSteps ?? 500,
+      run_seconds: input.runSeconds ?? null,
       status: 'QUEUED',
     });
     await this.queueRepo.save(entry);
@@ -312,6 +315,7 @@ export class TaskQueueService {
           next.max_steps,
           undefined,
           next.ai_config_id ?? undefined,
+          next.run_seconds ?? undefined,
         );
         await this.queueRepo.delete(next.id);
       } catch (error: any) {

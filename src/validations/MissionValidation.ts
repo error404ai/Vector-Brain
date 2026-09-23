@@ -7,4 +7,5 @@ export const CreateMissionValidation = z.object({
   max_steps: z.number().int().min(1).max(500).optional(),
   ai_config_id: z.number().int().positive().optional(),
   no_internet: z.boolean().optional(),
+  duration_seconds: z.number().int().min(1).max(12 * 3600).optional(),
 });

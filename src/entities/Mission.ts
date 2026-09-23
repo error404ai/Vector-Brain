@@ -33,6 +33,10 @@ export class Mission {
   @Column({ type: 'int', default: 20 })
   max_steps: number;
 
+  /** When set, each phone keeps working this long ("for 1 hour"). */
+  @Column({ type: 'int', nullable: true })
+  duration_seconds: number | null;
+
   @Column({ type: 'int', nullable: true })
   ai_config_id: number | null;
 

@@ -57,7 +57,7 @@ const EMPTY_FORM: ScheduleForm = {
   prompt: '',
   run_at: '09:00',
   days: [],
-  max_steps: 40,
+  max_steps: 500,
   ai_config_id: '',
 };
 

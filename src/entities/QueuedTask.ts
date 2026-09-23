@@ -37,6 +37,10 @@ export class QueuedTask {
   @Column({ type: 'int', default: 500 })
   max_steps: number;
 
+  /** A timed run's length, applied when the lane lets it start. */
+  @Column({ type: 'int', nullable: true })
+  run_seconds: number | null;
+
   /**
    * STARTING marks an entry the runner has picked but not yet launched, so two
    * runners cannot take the same one.

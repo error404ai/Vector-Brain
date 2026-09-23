@@ -467,8 +467,8 @@ export class AndroidPlannerService {
     // The queue launches tasks through the planner, so it is handed the entry
     // point rather than injecting the planner back — that would be a cycle.
     this.taskQueueService.register(
-      (prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId) =>
-        this.runTask(prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId),
+      (prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId, runSeconds) =>
+        this.runTask(prompt, deviceId, userId, maxSteps, existingTaskId, aiConfigId, false, false, runSeconds),
       (deviceDbId) => this.isDeviceBusy(deviceDbId),
     );
 
@@ -614,6 +614,12 @@ export class AndroidPlannerService {
      * it neither waits for the phone's proxy lane nor occupies it.
      */
     skipProxyLane = false,
+    /**
+     * Keep working this long ("browse for 1 hour"). The agent has no clock and
+     * stops when it thinks it is done, so the run starts fresh rounds on the
+     * same task until the time is up; the phone keeps its lane slot throughout.
+     */
+    runForSeconds?: number,
   ): Promise<ApiResponse> {
     // A task can pin a specific provider so different devices can run different
     // models simultaneously; otherwise fall back to the user's active config.
@@ -670,6 +676,7 @@ export class AndroidPlannerService {
           prompt,
           aiConfigId,
           maxSteps,
+          runSeconds: runForSeconds,
         });
       }
     }
@@ -842,6 +849,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       aiConfig,
       initialScreenshot,
       record,
+      runForSeconds && runForSeconds > 0 ? Date.now() + runForSeconds * 1000 : undefined,
     ).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
       this.gatewayService.setAutomationSession(device.device_id, false);
@@ -968,6 +976,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
     aiConfig: DecryptedAiConfig,
     initialScreenshot?: string,
     record = false,
+    /** Epoch ms. When set, the run keeps going in rounds until this moment. */
+    runUntil?: number,
   ) {
     const lastLog = await this.taskLogRepo.findOne({
       where: { agent_task_id: agentTask.id },
@@ -998,7 +1008,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
-    const ekoTaskId = `android-task-${agentTask.id}`;
+    const baseEkoTaskId = `android-task-${agentTask.id}`;
+    // Each round of a timed run is its own Eko task; aborts target the live one.
+    let ekoTaskId = baseEkoTaskId;
+    const ekoTaskIds: string[] = [baseEkoTaskId];
+    let round = 1;
+    let reachedDeadline = false;
 
     let eko: Eko | undefined;
     const stopForSafety = (reason: string, code = 'GUARD_STOP') => {
@@ -1289,8 +1304,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         rejectTaskTimeout = reject;
       });
-      const simulate = async () => {
-        const options = simulationOptions(prompt);
+      const simulate = async (roundPrompt: string) => {
+        const options = simulationOptions(roundPrompt);
         // What Eko returns when the model's plan comes back with no agent in it.
         if (options.planFail) return { success: false, stopReason: 'error', result: 'Error: Workflow error' };
         for (let index = 0; index < options.steps; index += 1) {
@@ -1299,8 +1314,17 @@ Use the current visible Android screen and UI state as context. Continue from wh
             return { success: false, stopReason: 'abort', result: 'Cancelled' };
           }
           if (guardStopReason) throw new Error(guardStopReason);
+          if (reachedDeadline) return { success: true, stopReason: 'done', result: 'Time is up.' };
           const outcome = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
           stepCount += 1;
+          // Same live events a real run sends, so the UI can be exercised.
+          this.gatewayService.broadcastToUser(userId, 'task:step', {
+            taskId: agentTask.id,
+            deviceId: deviceDbId,
+            stepIndex: stepCount,
+            thought: `Simulated step ${stepCount} of round ${round}`,
+            action: { type: 'capture_screen' },
+          });
           noteActivity();
           noteDeviceAction();
           if (outcome.status !== 'SUCCESS') {
@@ -1311,18 +1335,64 @@ Use the current visible Android screen and UI state as context. Continue from wh
         if (options.fail) throw new Error('Simulated failure');
         return { success: true, stopReason: 'done', result: `Simulated run finished after ${options.steps} steps.` };
       };
-      const result = (await Promise.race([
-        AGENT_SIMULATION ? simulate() : ekoInstance.run(prompt, ekoTaskId),
-        timeoutPromise,
-      ])) as Awaited<ReturnType<typeof ekoInstance.run>>;
-      const terminalAgentResult = (finalMessage || result.result || '').trim();
-      const agentFinished = terminalAgentResult.toLowerCase() !== 'unfinished';
-      const isSuccess =
+      const runRound = (roundPrompt: string) =>
+        Promise.race([
+          AGENT_SIMULATION ? simulate(roundPrompt) : ekoInstance.run(roundPrompt, ekoTaskId),
+          timeoutPromise,
+        ]) as Promise<Awaited<ReturnType<typeof ekoInstance.run>>>;
+
+      // A timed run is cut off at its deadline even mid-round; reaching the
+      // deadline is the goal, so it counts as success rather than an abort.
+      const deadlineTimer = runUntil
+        ? setTimeout(() => {
+            reachedDeadline = true;
+            try {
+              eko?.abortTask(ekoTaskId, 'Time is up');
+            } catch {
+              /* already finished */
+            }
+          }, Math.max(0, runUntil - Date.now()))
+        : undefined;
+
+      let result = await runRound(prompt);
+      // Timed runs: the agent said it was done before the time was up — start
+      // another round on the same task (same lane slot, same step budget).
+      while (
+        runUntil &&
+        !reachedDeadline &&
+        Date.now() < runUntil &&
         !wasCancelled &&
         !guardStopReason &&
-        agentFinished &&
-        result.success &&
-        result.stopReason === 'done';
+        !this.activeTasks.get(agentTask.id)?.cancelled &&
+        stepCount < maxSteps
+      ) {
+        round += 1;
+        ekoTaskId = `${baseEkoTaskId}-r${round}`;
+        ekoTaskIds.push(ekoTaskId);
+        const entry = this.activeTasks.get(agentTask.id);
+        if (entry) entry.ekoTaskId = ekoTaskId;
+        finalMessage = '';
+        const minutesLeft = Math.max(1, Math.round((runUntil - Date.now()) / 60_000));
+        this.gatewayService.broadcastToUser(userId, 'task:round', {
+          taskId: agentTask.id,
+          deviceId: deviceDbId,
+          round,
+          endsAt: runUntil,
+        });
+        result = await runRound(
+          `${prompt}\n\nKeep going — this is round ${round}, about ${minutesLeft} min left. Carry on with the same task and do something new rather than repeating what you already did. Do not stop early; the time limit ends the task.`,
+        );
+      }
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+
+      const timedOk = Boolean(runUntil) && reachedDeadline && !wasCancelled && !guardStopReason;
+      const terminalAgentResult = timedOk
+        ? `Worked for ${Math.round(((runUntil as number) - startTime) / 60_000) || '<1'} min over ${round} round${round === 1 ? '' : 's'}.`
+        : (finalMessage || result.result || '').trim();
+      const agentFinished = timedOk || terminalAgentResult.toLowerCase() !== 'unfinished';
+      const isSuccess =
+        timedOk ||
+        (!wasCancelled && !guardStopReason && agentFinished && result.success && result.stopReason === 'done');
 
       // Final live screenshot capture to reflect exact terminal screen state
       try {
@@ -1402,10 +1472,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
       watchdogArmed = false;
       if (stallTimer) clearTimeout(stallTimer);
       if (noActionTimer) clearTimeout(noActionTimer);
-      try {
-        ekoInstance.deleteTask(ekoTaskId);
-      } catch (error) {
-        Logger.warn(`[AndroidPlanner] Failed to release Eko task ${ekoTaskId}:`, error);
+      for (const id of ekoTaskIds) {
+        try {
+          ekoInstance.deleteTask(id);
+        } catch (error) {
+          Logger.warn(`[AndroidPlanner] Failed to release Eko task ${id}:`, error);
+        }
       }
       this.gatewayService.setAutomationSession(hardwareDeviceId, false);
       this.activeTasks.delete(agentTask.id);

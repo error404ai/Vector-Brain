@@ -73,6 +73,8 @@ export interface CreateMissionInput {
   max_steps?: number;
   ai_config_id?: number;
   no_internet?: boolean;
+  /** Keep each phone working this long ("for 1 hour"); server-enforced. */
+  duration_seconds?: number;
 }
 
 interface FleetDevice {
@@ -187,7 +189,9 @@ export class MissionService {
         target_mode: mode,
         requested_count: requestedCount,
         no_internet: noInternet,
-        max_steps: Math.max(1, Math.min(500, Math.floor(Number(input.max_steps) || 20))),
+        max_steps: Math.max(1, Math.min(500, Math.floor(Number(input.max_steps) || 500))),
+        duration_seconds:
+          input.duration_seconds && input.duration_seconds > 0 ? Math.min(12 * 3600, Math.floor(input.duration_seconds)) : null,
         ai_config_id: input.ai_config_id ?? null,
         status: 'RUNNING',
         note: notes.join(' ') || null,
@@ -366,8 +370,21 @@ export class MissionService {
         mission.ai_config_id ?? undefined,
         false,
         mission.no_internet,
+        mission.duration_seconds ?? undefined,
       );
       const data = (result?.data ?? {}) as { taskId?: number; queued?: boolean; queueId?: number };
+      // Stopped while this start was in flight: undo what just began, or a
+      // cancelled mission leaves a run (possibly an hour-long one) going.
+      const after = await this.missionRepo.findOne({ where: { id: mission.id } });
+      if (after?.status !== 'RUNNING') {
+        if (data.taskId) await this.plannerService.cancelTask(data.taskId, mission.user_id).catch(() => undefined);
+        if (data.queueId) await this.queueRepo.delete({ id: data.queueId, status: 'QUEUED' }).catch(() => undefined);
+        item.status = 'CANCELLED';
+        item.last_reason = 'USER_CANCELLED';
+        item.agent_task_id = data.taskId ?? null;
+        await this.itemRepo.save(item);
+        return;
+      }
       if (data.queued) {
         item.status = 'QUEUED';
         item.queue_id = data.queueId ?? null;
@@ -511,6 +528,7 @@ export class MissionService {
       target_mode: mission.target_mode,
       requested_count: mission.requested_count,
       no_internet: mission.no_internet,
+      duration_seconds: mission.duration_seconds,
       status: mission.status,
       note: mission.note,
       summary: mission.summary,

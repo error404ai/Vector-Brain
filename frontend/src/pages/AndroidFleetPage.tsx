@@ -303,7 +303,7 @@ export default function AndroidFleetPage() {
     }
   };
   const [prompt, setPrompt] = useState('');
-  const [maxSteps, setMaxSteps] = useState(200);
+  const [maxSteps, setMaxSteps] = useState(500);
   /**
    * Some work never touches the internet — a settings change, something inside
    * an app — so there is no exit IP to share and no reason to wait for the

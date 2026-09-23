@@ -1,5 +1,11 @@
 import authManager from '@/_helpers/authManager';
 import {
+  useConfirmCommandMutation,
+  useGetChatHistoryQuery,
+  useSendCommandMutation,
+  type ChatReply,
+} from '@/RTKService/commandChatService/commandChatService';
+import {
   useCancelMissionMutation,
   useGetMissionQuery,
   type Mission,
@@ -7,100 +13,61 @@ import {
   type MissionItemStatus,
 } from '@/RTKService/missionService/missionService';
 import {
-  useConfirmCommandMutation,
-  useGetChatHistoryQuery,
-  useSendCommandMutation,
-  type ChatReply,
-} from '@/RTKService/commandChatService/commandChatService';
-import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+  ease,
+  glowError,
+  glowSuccess,
+  popIn,
+  pulseDot,
+  reducedMotion,
+  riseIn,
+  screenFade,
+  shake,
+  shimmer,
+  slideStep,
+  typingDot,
+} from '@/components/mission/motion';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import ErrorRoundedIcon from '@mui/icons-material/ErrorRounded';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
-import {
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  IconButton,
-  LinearProgress,
-  Paper,
-  TextField,
-  Tooltip,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, CircularProgress, IconButton, LinearProgress, Paper, TextField, Tooltip, Typography } from '@mui/material';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-
-/** Latest screen per phone, keyed by hardware id, as the server pushes them. */
-type FrameMap = Record<string, { data: string; at: number }>;
 import toast from 'react-hot-toast';
 
-const EXAMPLES = [
-  'Open Settings and turn on Wi-Fi on all phones',
-  'On 5 phones, open Gmail and send an email to test@gmail.com with subject "Hello"',
-  'On #PhoneBox phones, open YouTube and play the first result for lofi music',
-];
+// -----------------------------------------------------------------------------
+// Live feed: one page socket carrying screens, steps, rounds and mission pushes
+// -----------------------------------------------------------------------------
 
-const ITEM_TONE: Record<MissionItemStatus, { label: string; color: 'default' | 'info' | 'warning' | 'success' | 'error' }> = {
-  PENDING: { label: 'Waiting', color: 'default' },
-  QUEUED: { label: 'In proxy queue', color: 'warning' },
-  RUNNING: { label: 'Running', color: 'info' },
-  SUCCEEDED: { label: 'Done', color: 'success' },
-  FAILED: { label: 'Failed', color: 'error' },
-  CANCELLED: { label: 'Cancelled', color: 'default' },
-};
-
-function errorMessage(error: unknown): string {
-  const data = (error as { data?: { message?: string } })?.data;
-  return data?.message || 'Could not start the mission';
+/** Latest screen per phone, keyed by hardware id. */
+type FrameMap = Record<string, { data: string; at: number }>;
+/** One agent step as the server announces it. */
+interface LiveStep {
+  index: number;
+  thought: string;
+  action: string;
+  at: number;
+}
+interface LiveFeed {
+  frames: FrameMap;
+  /** Recent steps per run, keyed by agent task id (a phone's old missions stay clean). */
+  steps: Record<number, LiveStep[]>;
+  /** Current round of a timed run, keyed by agent task id. */
+  rounds: Record<number, { round: number; endsAt: number }>;
+  /** Bumped when the server says a mission changed, so its card refetches. */
+  missionPush: Record<number, number>;
 }
 
-function ItemRow({ item }: { item: MissionItem }) {
-  const tone = ITEM_TONE[item.status];
-  const retrying = item.status === 'PENDING' && item.attempts > 0;
-  // The exact error the phone or agent gave, so a wrong-looking reason can be
-  // checked on the spot instead of from the database.
-  const detail = item.status === 'FAILED' && item.last_message ? item.last_message : null;
-  return (
-    <Box sx={{ py: 0.5, minWidth: 0 }}>
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-      <Typography variant="body2" sx={{ fontWeight: 600, flexShrink: 0, maxWidth: 200 }} noWrap>
-        {item.device_name}
-      </Typography>
-      <Chip size="small" label={retrying ? `Retrying (${item.attempts + 1})` : tone.label} color={retrying ? 'warning' : tone.color} variant={item.status === 'SUCCEEDED' ? 'filled' : 'outlined'} />
-      {item.attempts > 1 && item.status !== 'PENDING' && (
-        <Typography variant="caption" color="text.secondary">
-          {item.attempts} tries
-        </Typography>
-      )}
-      {item.reason_text && item.status !== 'SUCCEEDED' && (
-        <Tooltip title={item.last_message ?? ''} disableHoverListener={!item.last_message}>
-          <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
-            {item.reason_text}
-          </Typography>
-        </Tooltip>
-      )}
-    </Box>
-    {detail && (
-      <Typography variant="caption" color="text.secondary" component="p" sx={{ pl: 1.5, mt: 0.25, borderLeft: '2px solid', borderColor: 'divider', wordBreak: 'break-word' }}>
-        {detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}
-      </Typography>
-    )}
-    </Box>
-  );
+const MAX_STEPS_KEPT = 40;
+
+function describeAction(action: unknown): string {
+  const type = (action as { type?: string })?.type ?? '';
+  return type.replace(/_/g, ' ');
 }
 
-/** How long each running phone stays on the big screen before the next one. */
-const ROTATE_MS = 4000;
-
-/**
- * One socket for the page: keeps the newest frame each phone sends while it
- * runs. Frames are only kept, never rendered here, so a busy fleet does not
- * re-render the chat on every screenshot beyond the cards that show them.
- */
-function useLiveFrames(): { frames: FrameMap; missionPush: Record<number, number> } {
-  const [frames, setFrames] = useState<FrameMap>({});
-  // Bumped whenever the server says a mission changed, so its card refetches
-  // at once instead of waiting for the next poll.
-  const [missionPush, setMissionPush] = useState<Record<number, number>>({});
+function useLiveFeed(): LiveFeed {
+  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -114,21 +81,56 @@ function useLiveFrames(): { frames: FrameMap; missionPush: Record<number, number
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       socket = new WebSocket(`${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`);
       socket.onmessage = (event) => {
+        let msg: { event?: string; payload?: Record<string, unknown> };
         try {
-          const msg = JSON.parse(event.data);
-          if (msg.event === 'mission:update' && typeof msg.payload?.id === 'number') {
-            const id = msg.payload.id as number;
-            setMissionPush((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
-            return;
-          }
-          if (msg.event !== 'device:screen_capture') return;
-          const hw = msg.payload?.deviceId;
-          const data = msg.payload?.result?.screenCapture?.base64Data;
-          if (typeof hw === 'string' && typeof data === 'string') {
-            setFrames((prev) => ({ ...prev, [hw]: { data, at: Date.now() } }));
-          }
+          msg = JSON.parse(event.data);
         } catch {
-          /* not ours */
+          return;
+        }
+        const p = msg.payload ?? {};
+        switch (msg.event) {
+          case 'device:screen_capture': {
+            const hw = p.deviceId;
+            const data = (p.result as { screenCapture?: { base64Data?: string } })?.screenCapture?.base64Data;
+            if (typeof hw === 'string' && typeof data === 'string') {
+              setFeed((prev) => ({ ...prev, frames: { ...prev.frames, [hw]: { data, at: Date.now() } } }));
+            }
+            break;
+          }
+          case 'task:started': {
+            const id = p.taskId;
+            if (typeof id === 'number') setFeed((prev) => ({ ...prev, steps: { ...prev.steps, [id]: [] } }));
+            break;
+          }
+          case 'task:step': {
+            const id = p.taskId;
+            if (typeof id !== 'number') break;
+            const step: LiveStep = {
+              index: Number(p.stepIndex) || 0,
+              thought: String(p.thought ?? '').slice(0, 220),
+              action: describeAction(p.action),
+              at: Date.now(),
+            };
+            setFeed((prev) => ({
+              ...prev,
+              steps: { ...prev.steps, [id]: [...(prev.steps[id] ?? []), step].slice(-MAX_STEPS_KEPT) },
+            }));
+            break;
+          }
+          case 'task:round': {
+            const id = p.taskId;
+            if (typeof id === 'number') {
+              setFeed((prev) => ({ ...prev, rounds: { ...prev.rounds, [id]: { round: Number(p.round) || 1, endsAt: Number(p.endsAt) } } }));
+            }
+            break;
+          }
+          case 'mission:update': {
+            const id = p.id;
+            if (typeof id === 'number') {
+              setFeed((prev) => ({ ...prev, missionPush: { ...prev.missionPush, [id]: (prev.missionPush[id] ?? 0) + 1 } }));
+            }
+            break;
+          }
         }
       };
       socket.onclose = () => {
@@ -142,19 +144,165 @@ function useLiveFrames(): { frames: FrameMap; missionPush: Record<number, number
       socket?.close();
     };
   }, []);
-  return { frames, missionPush };
+  return feed;
 }
 
 function frameSrc(data: string): string {
   return data.startsWith('data:') ? data : `data:image/jpeg;base64,${data}`;
 }
 
-/**
- * The running phones' screens, one at a time on a large frame that moves to
- * the next phone every few seconds; the strip underneath shows all of them and
- * a click pins one.
- */
-function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap }) {
+function minutesLeft(endsAt: number): string {
+  const ms = endsAt - Date.now();
+  if (ms <= 0) return 'finishing';
+  const min = Math.round(ms / 60_000);
+  return min < 1 ? '<1 min left' : `${min} min left`;
+}
+
+// -----------------------------------------------------------------------------
+// Pieces
+// -----------------------------------------------------------------------------
+
+const EXAMPLES = [
+  'Who are you?',
+  'How many phones are online?',
+  'On 5 phones, open Chrome and browse random websites for 30 minutes',
+  'On #PhoneBox phones, open YouTube and play lofi music',
+];
+
+const ITEM_TONE: Record<MissionItemStatus, { label: string; color: 'default' | 'info' | 'warning' | 'success' | 'error' }> = {
+  PENDING: { label: 'Waiting', color: 'default' },
+  QUEUED: { label: 'In proxy queue', color: 'warning' },
+  RUNNING: { label: 'Running', color: 'info' },
+  SUCCEEDED: { label: 'Done', color: 'success' },
+  FAILED: { label: 'Failed', color: 'error' },
+  CANCELLED: { label: 'Cancelled', color: 'default' },
+};
+
+function errorMessage(error: unknown): string {
+  const data = (error as { data?: { message?: string } })?.data;
+  return data?.message || 'Something went wrong';
+}
+
+function StatusChip({ item }: { item: MissionItem }) {
+  const tone = ITEM_TONE[item.status];
+  const retrying = item.status === 'PENDING' && item.attempts > 0;
+  // Keyed by status so each change replays its own entrance.
+  const motion =
+    item.status === 'SUCCEEDED'
+      ? { animation: `${popIn} 420ms ${ease}` }
+      : item.status === 'FAILED'
+        ? { animation: `${shake} 420ms ease` }
+        : { animation: `${riseIn} 220ms ${ease}` };
+  return (
+    <Chip
+      key={item.status}
+      size="small"
+      icon={
+        item.status === 'RUNNING' ? (
+          <Box component="span" sx={{ width: 8, height: 8, ml: '8px !important', borderRadius: '50%', bgcolor: 'info.main', animation: `${pulseDot} 1.6s infinite`, ...reducedMotion }} />
+        ) : item.status === 'SUCCEEDED' ? (
+          <CheckCircleRoundedIcon />
+        ) : item.status === 'FAILED' ? (
+          <ErrorRoundedIcon />
+        ) : undefined
+      }
+      label={retrying ? `Retrying (${item.attempts + 1})` : tone.label}
+      color={retrying ? 'warning' : tone.color}
+      variant={item.status === 'SUCCEEDED' ? 'filled' : 'outlined'}
+      sx={{ ...motion, ...reducedMotion }}
+    />
+  );
+}
+
+function ItemRow({ item, steps, round }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number } }) {
+  const [open, setOpen] = useState(false);
+  const latest = steps[steps.length - 1];
+  const live = item.status === 'RUNNING';
+  // The exact error the phone or agent gave, checkable on the spot.
+  const detail = item.status === 'FAILED' && item.last_message ? item.last_message : null;
+  return (
+    <Box sx={{ py: 0.75, minWidth: 0, borderBottom: '1px solid', borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, flexShrink: 0, maxWidth: 220 }} noWrap>
+          {item.device_name}
+        </Typography>
+        <StatusChip item={item} />
+        {live && round && (
+          <Typography variant="caption" color="text.secondary" noWrap>
+            Round {round.round} · {minutesLeft(round.endsAt)}
+          </Typography>
+        )}
+        {item.attempts > 1 && item.status !== 'PENDING' && (
+          <Typography variant="caption" color="text.secondary">
+            {item.attempts} tries
+          </Typography>
+        )}
+        {item.reason_text && item.status !== 'SUCCEEDED' && (
+          <Tooltip title={item.last_message ?? ''} disableHoverListener={!item.last_message}>
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+              {item.reason_text}
+            </Typography>
+          </Tooltip>
+        )}
+        <Box sx={{ flex: 1 }} />
+        {steps.length > 0 && (
+          <Tooltip title={open ? 'Hide steps' : 'Show steps'}>
+            <IconButton size="small" onClick={() => setOpen((v) => !v)} aria-label={open ? 'Hide steps' : 'Show steps'}>
+              {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+
+      {live && latest && !open && (
+        <Typography
+          key={latest.index}
+          variant="caption"
+          color="text.secondary"
+          component="p"
+          noWrap
+          sx={{ mt: 0.25, animation: `${slideStep} 260ms ${ease}`, ...reducedMotion }}
+        >
+          Step {latest.index} · {latest.action}
+          {latest.thought ? ` — ${latest.thought}` : ''}
+        </Typography>
+      )}
+
+      {open && (
+        <Box sx={{ mt: 0.75, pl: 1.25, borderLeft: '2px solid', borderColor: 'divider', maxHeight: 220, overflowY: 'auto' }}>
+          {steps.map((step) => (
+            <Typography key={`${step.index}-${step.at}`} variant="caption" component="p" sx={{ py: 0.25, animation: `${slideStep} 220ms ${ease}`, ...reducedMotion }}>
+              <Box component="span" sx={{ color: 'text.disabled', mr: 0.75 }}>
+                {step.index}
+              </Box>
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                {step.action}
+              </Box>
+              {step.thought ? <Box component="span" sx={{ color: 'text.secondary' }}>{` — ${step.thought}`}</Box> : null}
+            </Typography>
+          ))}
+        </Box>
+      )}
+
+      {item.status === 'SUCCEEDED' && item.last_message && /^Worked for /.test(item.last_message) && (
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.25 }}>
+          {item.last_message}
+        </Typography>
+      )}
+
+      {detail && (
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ pl: 1.5, mt: 0.25, borderLeft: '2px solid', borderColor: 'error.light', wordBreak: 'break-word' }}>
+          {detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+/** How long each running phone stays on the big screen before the next one. */
+const ROTATE_MS = 4000;
+
+function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
   const live = items.filter((item) => item.status === 'RUNNING' && item.device_hw_id);
   const [tick, setTick] = useState(0);
   const [pinned, setPinned] = useState<number | null>(null);
@@ -168,14 +316,34 @@ function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap
   if (live.length === 0) return null;
   const pinnedItem = pinned !== null ? live.find((item) => item.id === pinned) : undefined;
   const current = pinnedItem ?? live[tick % live.length];
-  const frame = current.device_hw_id ? frames[current.device_hw_id] : undefined;
+  const frame = current.device_hw_id ? feed.frames[current.device_hw_id] : undefined;
+  const latest = (current.agent_task_id ? feed.steps[current.agent_task_id] ?? [] : []).slice(-1)[0];
 
   return (
-    <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mt: 1.5, mb: 1, flexWrap: { xs: 'wrap', sm: 'nowrap' } }}>
+    <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mt: 1.5, mb: 1.5, flexWrap: { xs: 'wrap', sm: 'nowrap' }, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
       <Box sx={{ width: 170, flexShrink: 0, mx: { xs: 'auto', sm: 0 } }}>
-        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 3, border: '6px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Box
+          sx={{
+            aspectRatio: '9 / 19.5',
+            borderRadius: 3,
+            border: '6px solid',
+            borderColor: 'grey.900',
+            bgcolor: 'grey.900',
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)',
+          }}
+        >
           {frame ? (
-            <Box component="img" src={frameSrc(frame.data)} alt={`${current.device_name} screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            <Box
+              key={`${current.id}-${frame.at}`}
+              component="img"
+              src={frameSrc(frame.data)}
+              alt={`${current.device_name} screen`}
+              sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }}
+            />
           ) : (
             <Typography variant="caption" sx={{ color: 'grey.500', px: 2, textAlign: 'center' }}>
               Waiting for the first screen…
@@ -186,11 +354,16 @@ function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap
           {current.device_name}
           {pinnedItem ? ' · pinned' : live.length > 1 ? ` · ${live.indexOf(current) + 1}/${live.length}` : ''}
         </Typography>
+        {latest && (
+          <Typography key={latest.index} variant="caption" color="text.secondary" component="p" sx={{ textAlign: 'center', lineHeight: 1.35, mt: 0.25, animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}>
+            {latest.thought || latest.action}
+          </Typography>
+        )}
       </Box>
       {live.length > 1 && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignContent: 'flex-start' }}>
           {live.map((item) => {
-            const thumb = item.device_hw_id ? frames[item.device_hw_id] : undefined;
+            const thumb = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
             const active = item.id === current.id;
             return (
               <Tooltip key={item.id} title={pinned === item.id ? `Unpin ${item.device_name}` : `Pin ${item.device_name}`}>
@@ -198,7 +371,21 @@ function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap
                   component="button"
                   type="button"
                   onClick={() => setPinned((p) => (p === item.id ? null : item.id))}
-                  sx={{ p: 0, width: 54, aspectRatio: '9 / 19.5', borderRadius: 1.5, overflow: 'hidden', cursor: 'pointer', bgcolor: 'grey.900', border: '2px solid', borderColor: active ? 'primary.main' : 'transparent', outlineOffset: 2 }}
+                  sx={{
+                    p: 0,
+                    width: 54,
+                    aspectRatio: '9 / 19.5',
+                    borderRadius: 1.5,
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    bgcolor: 'grey.900',
+                    border: '2px solid',
+                    borderColor: active ? 'primary.main' : 'transparent',
+                    transition: `transform 180ms ${ease}, border-color 180ms`,
+                    transform: active ? 'translateY(-2px)' : 'none',
+                    '&:hover': { transform: 'translateY(-2px)' },
+                    ...reducedMotion,
+                  }}
                   aria-label={`Show ${item.device_name}`}
                 >
                   {thumb && <Box component="img" src={frameSrc(thumb.data)} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
@@ -212,105 +399,131 @@ function LiveScreens({ items, frames }: { items: MissionItem[]; frames: FrameMap
   );
 }
 
-function MissionCard({ mission, frames, showRequest = true }: { mission: Mission; frames: FrameMap; showRequest?: boolean }) {
+function MissionCard({ mission, feed }: { mission: Mission; feed: LiveFeed }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const { progress } = mission;
   const running = mission.status === 'RUNNING';
   const settled = progress.succeeded + progress.failed;
   const percent = progress.total ? Math.round((settled / progress.total) * 100) : 0;
+  const finishedClean = mission.status === 'DONE' && progress.failed === 0;
+  const finishedWithFailures = mission.status === 'DONE' && progress.failed > 0;
 
   const onCancel = async () => {
     try {
       await cancelMission(mission.id).unwrap();
-      toast.success('Mission cancelled');
+      toast.success('Mission stopped');
     } catch (error) {
       toast.error(errorMessage(error));
     }
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      {/* What the user asked, on the right like a chat (the chat shows its own). */}
-      {showRequest && (
-        <Box sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 2, borderBottomRightRadius: 4 }}>
-          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {mission.request}
-          </Typography>
+    <Paper
+      // Replays the finish glow once, when the status flips.
+      key={mission.status}
+      variant="outlined"
+      sx={{
+        alignSelf: 'flex-start',
+        width: '100%',
+        maxWidth: 720,
+        p: 2,
+        borderRadius: 3,
+        animation: finishedClean
+          ? `${riseIn} 300ms ${ease}, ${glowSuccess} 1.1s ease-out`
+          : finishedWithFailures
+            ? `${riseIn} 300ms ${ease}, ${glowError} 1.1s ease-out`
+            : `${riseIn} 300ms ${ease}`,
+        ...reducedMotion,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+        {running ? (
+          <CircularProgress size={16} />
+        ) : finishedClean ? (
+          <CheckCircleRoundedIcon fontSize="small" color="success" sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
+        ) : (
+          <ErrorRoundedIcon fontSize="small" color={mission.status === 'CANCELLED' ? 'disabled' : 'warning'} sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
+        )}
+        <Typography variant="subtitle2" sx={{ flex: 1 }}>
+          {running
+            ? `Working on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'} — ${progress.succeeded} done${progress.failed ? `, ${progress.failed} failed` : ''}${progress.queued ? `, ${progress.queued} in proxy queue` : ''}`
+            : mission.status === 'CANCELLED'
+              ? 'Stopped'
+              : `Finished — ${progress.succeeded}/${progress.total} done`}
+        </Typography>
+        {running && (
+          <Button size="small" color="error" startIcon={<StopCircleOutlinedIcon />} onClick={onCancel} disabled={cancelling}>
+            Stop
+          </Button>
+        )}
+      </Box>
+
+      {mission.prompt && (
+        <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1 }}>
+          Each phone runs: {mission.prompt}
+          {mission.duration_seconds ? ` · for ${Math.round(mission.duration_seconds / 60)} min` : ''}
+        </Typography>
+      )}
+
+      {running && (
+        <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1, mb: 1 }}>
+          <LinearProgress variant="determinate" value={percent} sx={{ height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { transition: `transform 600ms ${ease}` } }} />
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)',
+              animation: `${shimmer} 1.8s linear infinite`,
+              ...reducedMotion,
+            }}
+          />
         </Box>
       )}
 
-      <Paper variant="outlined" sx={{ alignSelf: 'flex-start', width: '100%', maxWidth: 720, p: 2, borderRadius: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          {running ? <CircularProgress size={16} /> : <RocketLaunchIcon fontSize="small" color={progress.failed ? 'warning' : 'success'} />}
-          <Typography variant="subtitle2" sx={{ flex: 1 }}>
-            {running
-              ? `Working on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'} — ${progress.succeeded} done${progress.failed ? `, ${progress.failed} failed` : ''}${progress.queued ? `, ${progress.queued} in proxy queue` : ''}`
-              : mission.status === 'CANCELLED'
-                ? 'Cancelled'
-                : `Finished — ${progress.succeeded}/${progress.total} done`}
-          </Typography>
-          {running && (
-            <Button size="small" color="error" startIcon={<StopCircleOutlinedIcon />} onClick={onCancel} disabled={cancelling}>
-              Stop
-            </Button>
-          )}
-        </Box>
+      {running && <LiveScreens items={mission.items} feed={feed} />}
 
-        {mission.prompt && mission.prompt !== mission.request && (
-          <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1 }}>
-            Each phone runs: {mission.prompt}
-          </Typography>
-        )}
+      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+        {mission.items.map((item) => (
+          <ItemRow
+            key={item.id}
+            item={item}
+            steps={item.agent_task_id ? feed.steps[item.agent_task_id] ?? [] : []}
+            round={item.agent_task_id ? feed.rounds[item.agent_task_id] : undefined}
+          />
+        ))}
+      </Box>
 
-        {running && <LinearProgress variant="determinate" value={percent} sx={{ mb: 1, borderRadius: 1 }} />}
-
-        {running && <LiveScreens items={mission.items} frames={frames} />}
-
-        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-          {mission.items.map((item) => (
-            <ItemRow key={item.id} item={item} />
-          ))}
-        </Box>
-
-        {mission.summary && !running && (
-          <Typography variant="body2" sx={{ mt: 1.5, whiteSpace: 'pre-wrap' }}>
-            {mission.summary}
-          </Typography>
-        )}
-        {running && mission.note && (
-          <Typography variant="caption" color="warning.main" component="p" sx={{ mt: 1 }}>
-            {mission.note}
-          </Typography>
-        )}
-      </Paper>
-    </Box>
+      {mission.summary && !running && (
+        <Typography variant="body2" sx={{ mt: 1.5, whiteSpace: 'pre-wrap', animation: `${riseIn} 360ms ${ease}`, ...reducedMotion }}>
+          {mission.summary}
+        </Typography>
+      )}
+      {running && mission.note && (
+        <Typography variant="caption" color="warning.main" component="p" sx={{ mt: 1 }}>
+          {mission.note}
+        </Typography>
+      )}
+    </Paper>
   );
 }
-
-/** A message in the chat transcript: something you said, or the tool's reply. */
-type ChatTurn =
-  | { id: string; role: 'user'; text: string }
-  | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean };
 
 /**
  * A mission started from the chat, kept current on its own: it polls just this
  * mission while it runs and refetches the moment the server pushes an update.
- * (It used to read a shared 20-mission list, and a card could sit on its first
- * snapshot — "Waiting" — while the phones had already finished.)
  */
-function LiveMissionCard({ initial, frames, push }: { initial: Mission; frames: FrameMap; push: number }) {
-  // The last response decides whether to keep polling; a finished mission stops.
+function LiveMissionCard({ initial, feed }: { initial: Mission; feed: LiveFeed }) {
   const [status, setStatus] = useState(initial.status);
   const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 2000 : 0 });
   const mission = data?.data ?? initial;
   if (mission.status !== status) setStatus(mission.status);
+  const push = feed.missionPush[initial.id] ?? 0;
   useEffect(() => {
     if (push > 0) void refetch();
   }, [push, refetch]);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-      <MissionCard mission={mission} frames={frames} showRequest={false} />
+      <MissionCard mission={mission} feed={feed} />
       {isError && (
         <Typography variant="caption" color="warning.main">
           Couldn't refresh this mission — retrying.
@@ -320,36 +533,103 @@ function LiveMissionCard({ initial, frames, push }: { initial: Mission; frames: 
   );
 }
 
-function AssistantBubble({
-  turn,
-  frames,
-  onConfirm,
-  push,
-}: {
-  turn: Extract<ChatTurn, { role: 'assistant' }>;
-  frames: FrameMap;
-  onConfirm: (token: string) => void;
-  push: number;
-}) {
+// -----------------------------------------------------------------------------
+// Chat
+// -----------------------------------------------------------------------------
+
+type ChatTurn =
+  | { id: string; role: 'user'; text: string }
+  | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean };
+
+const bubbleIn = { animation: `${riseIn} 280ms ${ease}`, ...reducedMotion };
+
+function VectorAvatar() {
+  return (
+    <Box
+      sx={{
+        width: 28,
+        height: 28,
+        borderRadius: '50%',
+        flexShrink: 0,
+        display: 'grid',
+        placeItems: 'center',
+        fontSize: 13,
+        fontWeight: 800,
+        color: 'primary.contrastText',
+        bgcolor: 'primary.main',
+        mt: 0.25,
+      }}
+      aria-hidden
+    >
+      V
+    </Box>
+  );
+}
+
+function AssistantRow({ children }: { children: React.ReactNode }) {
+  return (
+    <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', alignSelf: 'stretch', ...bubbleIn }}>
+      <VectorAvatar />
+      <Box sx={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column' }}>{children}</Box>
+    </Box>
+  );
+}
+
+function AssistantBubble({ turn, feed, onConfirm }: { turn: Extract<ChatTurn, { role: 'assistant' }>; feed: LiveFeed; onConfirm: (token: string) => void }) {
   const { reply } = turn;
   if (reply.kind === 'mission' && reply.mission) {
-    return <LiveMissionCard initial={reply.mission} frames={frames} push={push} />;
+    return (
+      <AssistantRow>
+        {reply.text && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
+            {reply.text}
+          </Typography>
+        )}
+        <LiveMissionCard initial={reply.mission} feed={feed} />
+      </AssistantRow>
+    );
   }
-  const tone =
-    reply.kind === 'error' ? 'error.main' : reply.kind === 'confirm' ? 'warning.main' : reply.kind === 'clarify' ? 'text.primary' : 'text.primary';
+  const error = reply.kind === 'error';
   return (
-    <Paper variant="outlined" sx={{ alignSelf: 'flex-start', maxWidth: '80%', px: 2, py: 1.25, borderRadius: 2, borderBottomLeftRadius: 4 }}>
-      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: tone }}>
-        {reply.text}
-      </Typography>
-      {reply.kind === 'confirm' && reply.confirm_token && (
-        <Box sx={{ mt: 1 }}>
-          <Button size="small" variant="contained" disabled={turn.confirming} onClick={() => onConfirm(reply.confirm_token as string)}>
-            Confirm
-          </Button>
-        </Box>
-      )}
-    </Paper>
+    <AssistantRow>
+      <Paper
+        variant="outlined"
+        sx={{
+          alignSelf: 'flex-start',
+          maxWidth: '85%',
+          px: 2,
+          py: 1.25,
+          borderRadius: 3,
+          borderTopLeftRadius: 6,
+          borderColor: error ? 'error.light' : reply.kind === 'confirm' ? 'warning.light' : 'divider',
+          animation: error ? `${shake} 380ms ease` : undefined,
+          ...reducedMotion,
+        }}
+      >
+        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: error ? 'error.main' : 'text.primary' }}>
+          {reply.text}
+        </Typography>
+        {reply.kind === 'confirm' && reply.confirm_token && (
+          <Box sx={{ mt: 1 }}>
+            <Button size="small" variant="contained" disabled={turn.confirming} onClick={() => onConfirm(reply.confirm_token as string)}>
+              Confirm
+            </Button>
+          </Box>
+        )}
+      </Paper>
+    </AssistantRow>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <AssistantRow>
+      <Paper variant="outlined" sx={{ alignSelf: 'flex-start', px: 1.75, py: 1.25, borderRadius: 3, borderTopLeftRadius: 6, display: 'flex', gap: 0.6 }} aria-label="Vector is thinking">
+        {[0, 1, 2].map((i) => (
+          <Box key={i} sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: 'text.secondary', animation: `${typingDot} 1.1s ${i * 0.15}s infinite ease-in-out`, ...reducedMotion }} />
+        ))}
+      </Paper>
+    </AssistantRow>
   );
 }
 
@@ -357,7 +637,7 @@ export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const { frames, missionPush } = useLiveFrames();
+  const feed = useLiveFeed();
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
   const [confirmCommand] = useConfirmCommandMutation();
@@ -373,22 +653,27 @@ export default function MissionControlPage() {
     ]);
   }
 
+  // Block body on purpose: an effect's return value is called as its cleanup,
+  // and recent Chrome returns a Promise from scrollIntoView.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns.length]);
+  }, [turns.length, sending]);
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
+  // Stable per-page ids for new turns (history turns use their database id).
+  const turnSeq = useRef(0);
+  const nextId = (prefix: string) => `${prefix}${(turnSeq.current += 1)}`;
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? input).trim();
     if (!text || sending) return;
     setInput('');
-    pushTurn({ id: `u${Date.now()}`, role: 'user', text });
+    pushTurn({ id: nextId('u'), role: 'user', text });
     try {
       const res = await sendCommand(text).unwrap();
-      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: res.data });
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: res.data });
     } catch (error) {
-      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     }
   };
 
@@ -396,9 +681,9 @@ export default function MissionControlPage() {
     setTurns((prev) => prev.map((t) => (t.role === 'assistant' && t.reply.confirm_token === token ? { ...t, confirming: true } : t)));
     try {
       const res = await confirmCommand(token).unwrap();
-      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: res.data });
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: res.data });
     } catch (error) {
-      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
+      pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     }
   };
 
@@ -410,62 +695,71 @@ export default function MissionControlPage() {
   };
 
   return (
-    <Box sx={{ maxWidth: 820, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="h5" sx={{ fontWeight: 700 }}>
-          Mission Control
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Ask in plain language — run a task across phones, check status, or change proxy rotation. Anything that changes a setting asks you to confirm first.
-        </Typography>
+    <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
+        <VectorAvatar />
+        <Box>
+          <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
+            Vector
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Android mobile automation — run tasks across phones, check status, manage proxy rotation. Setting changes ask you first.
+          </Typography>
+        </Box>
       </Box>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
+      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, pb: 2, pr: 0.5 }}>
         {loadingHistory && turns.length === 0 && <CircularProgress size={22} sx={{ alignSelf: 'center', mt: 4 }} />}
         {!loadingHistory && turns.length === 0 && (
-          <Box sx={{ mt: 4 }}>
+          <Box sx={{ mt: 4, ...bubbleIn }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Try:
+              Try one of these:
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-start' }}>
               {EXAMPLES.map((example) => (
-                <Chip key={example} label={example} onClick={() => setInput(example)} variant="outlined" sx={{ maxWidth: '100%', height: 'auto', '& .MuiChip-label': { whiteSpace: 'normal', py: 0.75 } }} />
+                <Chip
+                  key={example}
+                  label={example}
+                  onClick={() => void send(example)}
+                  variant="outlined"
+                  sx={{ maxWidth: '100%', height: 'auto', transition: `transform 160ms ${ease}`, '&:hover': { transform: 'translateX(3px)' }, '& .MuiChip-label': { whiteSpace: 'normal', py: 0.75 }, ...reducedMotion }}
+                />
               ))}
             </Box>
           </Box>
         )}
         {turns.map((turn) =>
           turn.role === 'user' ? (
-            <Box key={turn.id} sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 2, borderBottomRightRadius: 4 }}>
+            <Box
+              key={turn.id}
+              sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 3, borderBottomRightRadius: 6, ...bubbleIn }}
+            >
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {turn.text}
               </Typography>
             </Box>
           ) : (
-            <AssistantBubble
-              key={turn.id}
-              turn={turn}
-              frames={frames}
-              onConfirm={onConfirm}
-              push={turn.reply.mission ? missionPush[turn.reply.mission.id] ?? 0 : 0}
-            />
+            <AssistantBubble key={turn.id} turn={turn} feed={feed} onConfirm={onConfirm} />
           ),
         )}
+        {sending && <TypingIndicator />}
         <div ref={bottomRef} />
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+      <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 3, transition: 'box-shadow 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.15)' } }}>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
           <TextField
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Message the fleet — e.g. how many phones are online?"
+            placeholder="Message Vector — e.g. browse random websites for 30 minutes on 3 phones"
             multiline
             maxRows={6}
             fullWidth
             size="small"
-            inputProps={{ maxLength: 4000, 'aria-label': 'Command chat message' }}
+            variant="standard"
+            InputProps={{ disableUnderline: true, sx: { px: 1, py: 0.5 } }}
+            inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
           />
           <IconButton color="primary" onClick={() => void send()} disabled={!input.trim() || sending} aria-label="Send">
             {sending ? <CircularProgress size={20} /> : <SendIcon />}

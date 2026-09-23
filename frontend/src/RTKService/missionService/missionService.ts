@@ -25,6 +25,7 @@ export interface Mission {
   target_mode: 'ids' | 'count' | 'all' | 'tag';
   requested_count: number | null;
   no_internet: boolean;
+  duration_seconds: number | null;
   status: MissionStatus;
   note: string | null;
   summary: string | null;

@@ -63,7 +63,7 @@ export class ScheduledTaskService {
       run_at: input.run_at,
       days_of_week: (input.days_of_week ?? []).join(','),
       timezone: input.timezone || 'Asia/Kolkata',
-      max_steps: input.max_steps ?? 40,
+      max_steps: input.max_steps ?? 500,
       ai_config_id: input.ai_config_id ?? null,
       enabled: input.enabled ?? true,
     });

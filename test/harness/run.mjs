@@ -937,6 +937,91 @@ const scenarios = [
     },
   },
   {
+    name: 'missions default to 500 steps per phone',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'open settings [sim steps=1 delay=50]', device_ids: [phones.free1.dbId] });
+      const id = created?.data?.id;
+      await waitForMission(id, 30_000);
+      const [[row]] = await db.query('SELECT max_steps FROM missions WHERE id = ?', [id]);
+      if (row?.max_steps !== 500) return `mission default is ${row?.max_steps} steps`;
+    },
+  },
+  {
+    name: 'a timed mission keeps the phone working until the time is up',
+    async run() {
+      // Each round finishes in well under a second; the phone must keep going
+      // for the whole 8 seconds instead of stopping after the first round.
+      const created = await api('POST', '/android/missions', {
+        request: 'browse random websites [sim steps=2 delay=100]',
+        device_ids: [phones.free1.dbId],
+        duration_seconds: 8,
+      });
+      const id = created?.data?.id;
+      if (!id) return `mission not created: ${JSON.stringify(created).slice(0, 160)}`;
+      const done = await waitForMission(id, 60_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `item ${item.status}: ${item.last_message}`;
+      const [[task]] = await db.query('SELECT message, started_at, finished_at FROM agent_tasks WHERE id = ?', [item.agent_task_id]);
+      const seconds = (new Date(task.finished_at) - new Date(task.started_at)) / 1000;
+      if (seconds < 7) return `stopped after ${seconds.toFixed(1)}s, before the 8s were up`;
+      const rounds = Number(/(\d+) rounds?/.exec(task.message ?? '')?.[1] ?? 0);
+      if (rounds < 3) return `only ${rounds} round(s): ${task.message}`;
+    },
+  },
+  {
+    name: 'a timed run stops at the deadline even in the middle of a round',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'scroll forever [sim steps=300 delay=100]',
+        device_ids: [phones.free2.dbId],
+        duration_seconds: 5,
+      });
+      const id = created?.data?.id;
+      const t0 = Date.now();
+      const done = await waitForMission(id, 40_000);
+      if (!done) return 'mission never finished';
+      const took = (Date.now() - t0) / 1000;
+      if (took > 20) return `ran ${took.toFixed(0)}s past a 5s limit`;
+      if (done.items[0].status !== 'SUCCEEDED') return `reaching the time limit counted as ${done.items[0].status}`;
+    },
+  },
+  {
+    name: 'a timed mission waiting in the proxy queue keeps its duration',
+    async run() {
+      // lane1 holds the one-at-a-time lane; the timed lane2 run starts after it.
+      await run('lane1', 'open settings [sim steps=6 delay=300]');
+      const created = await api('POST', '/android/missions', {
+        request: 'browse random websites [sim steps=2 delay=100]',
+        device_ids: [phones.lane2.dbId],
+        duration_seconds: 6,
+      });
+      const id = created?.data?.id;
+      const done = await waitForMission(id, 90_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      const [[task]] = await db.query('SELECT message, started_at, finished_at FROM agent_tasks WHERE id = ?', [item.agent_task_id]);
+      const seconds = (new Date(task.finished_at) - new Date(task.started_at)) / 1000;
+      if (seconds < 5) return `queued timed run lasted only ${seconds.toFixed(1)}s`;
+    },
+  },
+  {
+    name: 'chat picks the duration out of the request',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'browse random websites for 1 hour on all phones [sim steps=1 delay=50]' });
+      const mission = res?.data?.mission;
+      if (!mission) return `no mission: ${res?.data?.kind} ${res?.data?.text}`;
+      await api('POST', `/android/missions/${mission.id}/cancel`);
+      if (mission.duration_seconds !== 3600) return `duration ${mission.duration_seconds}, expected 3600`;
+      // Stopping it must stop every phone, including ones whose start was in flight.
+      const stillRunning = await waitFor(async () => {
+        const [[row]] = await db.query("SELECT COUNT(*) n FROM agent_tasks WHERE status = 'RUNNING'");
+        return row.n === 0 ? 'clear' : null;
+      }, 20_000, 500);
+      if (!stillRunning) return 'a phone kept running after the mission was stopped';
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();
