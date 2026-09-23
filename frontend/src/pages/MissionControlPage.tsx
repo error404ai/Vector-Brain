@@ -724,8 +724,8 @@ function RotationSwitch() {
         mixed
           ? `On for ${rotating.map((p) => p.name).join(', ')} only — switching turns it off everywhere`
           : on
-            ? 'IP changes after every task on all lanes'
-            : 'IP never changes on its own'
+            ? 'ON: IP changes after every task; phones on a lane take turns (queue)'
+            : 'OFF: IP never changes; all phones start together (no queue)'
       }
     >
       <FormControlLabel

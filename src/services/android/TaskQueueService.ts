@@ -152,6 +152,9 @@ export class TaskQueueService {
     const proxyId = device.proxy_id;
     const proxy = await this.proxyRepo.findOne({ where: { id: proxyId } });
     if (!proxy) return true;
+    // Rotation off: the IP never changes, so there is nothing to wait for — the
+    // lane has no queue and its phones run at once (user's choice).
+    if (proxy.rotate_every_tasks <= 0) return true;
     const capacity = Math.max(1, proxy.concurrency);
 
     // Cache lane membership and stored runs so the count below needs no await.
@@ -255,7 +258,9 @@ export class TaskQueueService {
   private async drainLane(proxy: DeviceProxy): Promise<void> {
     if (!this.runTask) return;
 
-    const capacity = Math.max(1, proxy.concurrency);
+    // Rotation off: whatever is still waiting (queued before it was switched
+    // off) starts now, all together.
+    const capacity = proxy.rotate_every_tasks <= 0 ? Number.POSITIVE_INFINITY : Math.max(1, proxy.concurrency);
 
     for (;;) {
       const running = await this.countRunningOnLane(proxy.id);

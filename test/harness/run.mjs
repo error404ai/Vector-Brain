@@ -1276,6 +1276,27 @@ const scenarios = [
     },
   },
   {
+    name: 'a lane with rotation OFF has no queue: its phones run at once',
+    async run() {
+      const lanes = (await api('GET', '/device-proxy')).data;
+      for (const p of lanes) await api('PATCH', `/device-proxy/${p.id}`, { rotate_every_tasks: 0 });
+      try {
+        const t0 = Date.now();
+        for (const name of ['lane1', 'lane2', 'lane3']) await run(name, 'open settings [sim steps=12 delay=300]');
+        const together = await waitFor(async () => {
+          const rows = await tasksSince(t0, ['lane1', 'lane2', 'lane3']);
+          return rows.filter((r) => r.status === 'RUNNING').length === 3 ? rows : null;
+        }, 15_000, 250);
+        const [[queued]] = await db.query("SELECT COUNT(*) n FROM queued_tasks WHERE status = 'QUEUED'");
+        await waitFor(async () => ((await tasksSince(t0, ['lane1', 'lane2', 'lane3'])).every((r) => TERMINAL.has(r.status)) ? true : null), 60_000, 500);
+        if (!together) return 'the three phones did not run at the same time';
+        if (queued.n !== 0) return `${queued.n} task(s) were queued on a lane with rotation off`;
+      } finally {
+        for (const p of lanes) await api('PATCH', `/device-proxy/${p.id}`, { rotate_every_tasks: p.rotate_every_tasks });
+      }
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

@@ -54,7 +54,10 @@ export class DeviceProxyController {
     @Body() request: z.infer<typeof UpdateProxyValidation>,
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
-    return this.proxyService.update(user.userId, Number(id), request);
+    const result = await this.proxyService.update(user.userId, Number(id), request);
+    // Switching rotation off (or raising concurrency) can let waiting phones go now.
+    void this.queueService.onLaneFreed(Number(id)).catch(() => undefined);
+    return result;
   }
 
   @Delete('/:id')
