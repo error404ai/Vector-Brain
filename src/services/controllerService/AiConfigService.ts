@@ -18,6 +18,7 @@ export interface AiConfigSafeView {
   model: string;
   base_url: string | null;
   is_active: boolean;
+  is_chat_default: boolean;
   label: string | null;
   config_type: AiConfigType;
   has_api_key: boolean;
@@ -41,6 +42,7 @@ export class AiConfigService {
       model: config.model,
       base_url: config.base_url,
       is_active: config.is_active,
+      is_chat_default: config.is_chat_default,
       label: config.label,
       config_type: config.config_type,
       has_api_key: Boolean(config.encrypted_api_key),
@@ -178,6 +180,32 @@ export class AiConfigService {
     await this.repo.remove(config);
 
     return { message: 'AI configuration deleted successfully' };
+  }
+
+  /** Point the Command chat at this config; clears the flag on the others. */
+  async setChatDefault(id: number, userId: number): Promise<ApiResponse> {
+    const config = await this.repo.findOne({ where: { id, user_id: userId } });
+    if (!config) throw new AppError('AI configuration not found', 404);
+    await this.repo.update({ user_id: userId }, { is_chat_default: false });
+    config.is_chat_default = true;
+    const saved = await this.repo.save(config);
+    return { message: 'AI configuration set as the chat model', data: this.toSafeView(saved) };
+  }
+
+  /**
+   * The model the Command chat should use: the one flagged is_chat_default, or
+   * the active fleet model if none is flagged. Decrypted, ready to call.
+   */
+  async resolveChatConfig(userId: number): Promise<DecryptedAiConfig | null> {
+    const chosen = await this.repo.findOne({ where: { user_id: userId, is_chat_default: true } });
+    const config = chosen ?? (await this.repo.findOne({ where: { user_id: userId, is_active: true }, order: { updated_at: 'DESC' } }));
+    if (!config) return null;
+    try {
+      return Object.assign(config, { api_key: CryptoHelper.decryptAesGcm(config.encrypted_api_key) });
+    } catch (err) {
+      Logger.error(`[AiConfigService] Failed to decrypt chat model key for user ${userId}:`, err);
+      return null;
+    }
   }
 
   async setActive(id: number, userId: number): Promise<ApiResponse> {

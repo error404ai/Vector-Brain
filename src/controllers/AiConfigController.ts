@@ -45,7 +45,12 @@ export class AiConfigController {
     return this.aiConfigService.delete(id, user.userId);
   }
 
-  @Patch('/set-active/:id')
+  @Patch("/set-chat-default/:id")
+  async setChatDefault(@Param("id") id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.aiConfigService.setChatDefault(id, user.userId);
+  }
+
+  @Patch("/set-active/:id")
   async setActive(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.aiConfigService.setActive(id, user.userId);
   }

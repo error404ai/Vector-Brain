@@ -5,6 +5,7 @@ import { Service } from 'typedi';
 import * as z from 'zod';
 import SettingService from './controllerService/SettingService';
 import { AiConfigService } from './controllerService/AiConfigService';
+import type { AiProvider } from '@/entities/AiConfig';
 
 /**
  * Used when no enhancer prompt has been saved in Settings. The generic fallback
@@ -41,6 +42,26 @@ play some music -> Open YouTube and play the first result using https://www.yout
 check weather -> Open https://www.google.com/search?q=weather+today in Chrome and read the temperature
 browse for 10 minutes -> Open Chrome and visit 6 different websites one after another, scrolling down briefly on each
 Open Settings and check battery level -> Open Settings and check the battery level`;
+
+export type ChatIntent =
+  | { kind: 'status' }
+  | { kind: 'mission'; prompt?: string }
+  | { kind: 'setting'; setting: 'rotation'; proxy?: string; every?: number }
+  | { kind: 'setting'; setting: 'concurrency'; proxy?: string; concurrency?: number }
+  | { kind: 'refuse' }
+  | { kind: 'clarify'; question?: string };
+
+const ChatIntentSchema = z
+  .object({
+    kind: z.enum(['status', 'mission', 'setting', 'refuse', 'clarify']),
+    prompt: z.string().optional(),
+    setting: z.enum(['rotation', 'concurrency']).optional(),
+    proxy: z.string().optional(),
+    every: z.number().optional(),
+    concurrency: z.number().optional(),
+    question: z.string().optional(),
+  })
+  .passthrough();
 
 const MissionPlanSchema = z.object({
   mode: z.enum(['ids', 'tag', 'count', 'all']),
@@ -162,6 +183,49 @@ export class AiService {
       return parsed.data as MissionPlan;
     } catch (error) {
       Logger.warn('Failed to plan mission with AI:', error);
+      return null;
+    }
+  }
+
+  /**
+   * The Command chat's one model call: classify a fleet instruction into a
+   * bounded intent. It never carries the instruction out — this only labels it.
+   * Returns null when the reply is unusable, so the caller's local classifier
+   * decides instead of the chat guessing.
+   */
+  async classifyChatCommand(
+    text: string,
+    config: { provider: AiProvider; model: string; api_key: string; base_url?: string | null },
+  ): Promise<ChatIntent | null> {
+    const chatModel = this.aiConfigService.createChatModel({
+      provider: config.provider,
+      model: config.model,
+      api_key: config.api_key,
+      base_url: config.base_url,
+    });
+    const systemPrompt = [
+      'You label a message sent to a tool that controls a fleet of Android phones. You never carry it out.',
+      'Choose exactly one kind:',
+      '- "status": a read-only question about the fleet (how many online, what is running, which lane).',
+      '- "mission": an instruction to perform on phones (open an app, send, search, play, scroll, close). Put the single-phone instruction, phone selection included, in "prompt", verbatim.',
+      '- "setting": change proxy rotation ("setting":"rotation", optional "proxy" lane name, "every" number of tasks) or lane concurrency ("setting":"concurrency", "proxy" lane name, "concurrency" number).',
+      '- "refuse": anything that deletes or removes devices/proxies/tasks, changes accounts or billing, or is outside running tasks / status / proxy settings.',
+      '- "clarify": too vague to act on; put one short question in "question".',
+      'Never invent a mission from a vague message — prefer clarify. Reply with ONLY minified JSON, no prose, no code fences.',
+    ].join('\n');
+    try {
+      const response = await chatModel.invoke([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text },
+      ]);
+      const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+      const parsed = ChatIntentSchema.safeParse(JSON.parse(match[0]));
+      if (!parsed.success) return null;
+      return parsed.data as ChatIntent;
+    } catch (error) {
+      Logger.warn('Failed to classify chat command with AI:', error);
       return null;
     }
   }

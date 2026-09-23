@@ -1,22 +1,20 @@
 import authManager from '@/_helpers/authManager';
 import {
   useCancelMissionMutation,
-  useCreateMissionMutation,
   useGetMissionsQuery,
   type Mission,
   type MissionItem,
   type MissionItemStatus,
 } from '@/RTKService/missionService/missionService';
+import { useConfirmCommandMutation, useSendCommandMutation, type ChatReply } from '@/RTKService/commandChatService/commandChatService';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import SendIcon from '@mui/icons-material/Send';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import {
   Box,
   Button,
-  Checkbox,
   Chip,
   CircularProgress,
-  FormControlLabel,
   IconButton,
   LinearProgress,
   Paper,
@@ -274,34 +272,99 @@ function MissionCard({ mission, frames }: { mission: Mission; frames: FrameMap }
   );
 }
 
+/** A message in the chat transcript: something you said, or the tool's reply. */
+type ChatTurn =
+  | { id: string; role: 'user'; text: string }
+  | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean };
+
+function AssistantBubble({
+  turn,
+  frames,
+  onConfirm,
+  liveMission,
+}: {
+  turn: Extract<ChatTurn, { role: 'assistant' }>;
+  frames: FrameMap;
+  onConfirm: (token: string) => void;
+  liveMission?: Mission;
+}) {
+  const { reply } = turn;
+  // A mission reply shows the live card, which polling keeps fresh.
+  if (reply.kind === 'mission' && (liveMission || reply.mission)) {
+    return <MissionCard mission={(liveMission ?? reply.mission) as Mission} frames={frames} />;
+  }
+  const tone =
+    reply.kind === 'error' ? 'error.main' : reply.kind === 'confirm' ? 'warning.main' : reply.kind === 'clarify' ? 'text.primary' : 'text.primary';
+  return (
+    <Paper variant="outlined" sx={{ alignSelf: 'flex-start', maxWidth: '80%', px: 2, py: 1.25, borderRadius: 2, borderBottomLeftRadius: 4 }}>
+      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: tone }}>
+        {reply.text}
+      </Typography>
+      {reply.kind === 'confirm' && reply.confirm_token && (
+        <Box sx={{ mt: 1 }}>
+          <Button size="small" variant="contained" disabled={turn.confirming} onClick={() => onConfirm(reply.confirm_token as string)}>
+            Confirm
+          </Button>
+        </Box>
+      )}
+    </Paper>
+  );
+}
+
 export default function MissionControlPage() {
-  const [request, setRequest] = useState('');
-  const [maxSteps, setMaxSteps] = useState(20);
-  const [noInternet, setNoInternet] = useState(false);
+  const [input, setInput] = useState('');
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const frames = useLiveFrames();
 
-  // A short list, polled while the page is open and the tab is in view.
-  const { data, isLoading } = useGetMissionsQuery(20, { pollingInterval: 2500, skipPollingIfUnfocused: true });
-  const [createMission, { isLoading: sending }] = useCreateMissionMutation();
+  const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
+  const [confirmCommand] = useConfirmCommandMutation();
 
-  // Oldest first, like a conversation.
-  const missions = useMemo(() => [...(data?.data ?? [])].reverse(), [data]);
-  // Block body on purpose: whatever an effect returns, React later calls as its
-  // cleanup. Recent Chrome returns a Promise from scrollIntoView, and an arrow
-  // that returned it crashed the page with "a is not a function".
+  // Missions the chat has started, kept fresh while any is still running.
+  const startedMissionIds = useMemo(
+    () => turns.flatMap((t) => (t.role === 'assistant' && t.reply.mission ? [t.reply.mission.id] : [])),
+    [turns],
+  );
+  const anyRunning = turns.some(
+    (t) => t.role === 'assistant' && t.reply.kind === 'mission' && t.reply.mission?.status === 'RUNNING',
+  );
+  const { data: missionsData } = useGetMissionsQuery(20, {
+    pollingInterval: anyRunning ? 2500 : 0,
+    skipPollingIfUnfocused: true,
+    skip: startedMissionIds.length === 0,
+  });
+  const missionById = useMemo(() => {
+    const map = new Map<number, Mission>();
+    for (const mission of missionsData?.data ?? []) map.set(mission.id, mission);
+    return map;
+  }, [missionsData]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [missions.length]);
+  }, [turns.length, missionById]);
+
+  const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
 
   const send = async () => {
-    const text = request.trim();
+    const text = input.trim();
     if (!text || sending) return;
+    setInput('');
+    pushTurn({ id: `u${Date.now()}`, role: 'user', text });
     try {
-      await createMission({ request: text, max_steps: maxSteps, no_internet: noInternet || undefined }).unwrap();
-      setRequest('');
+      const res = await sendCommand(text).unwrap();
+      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: res.data });
     } catch (error) {
-      toast.error(errorMessage(error));
+      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
+    }
+  };
+
+  const onConfirm = async (token: string) => {
+    setTurns((prev) => prev.map((t) => (t.role === 'assistant' && t.reply.confirm_token === token ? { ...t, confirming: true } : t)));
+    try {
+      const res = await confirmCommand(token).unwrap();
+      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: res.data });
+    } catch (error) {
+      pushTurn({ id: `a${Date.now()}`, role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     }
   };
 
@@ -313,65 +376,65 @@ export default function MissionControlPage() {
   };
 
   return (
-    <Box sx={{ maxWidth: 900, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
+    <Box sx={{ maxWidth: 820, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
       <Box sx={{ mb: 2 }}>
         <Typography variant="h5" sx={{ fontWeight: 700 }}>
           Mission Control
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Tell the fleet what to do. Each phone runs it, failures that a retry can fix are retried, and you get one summary.
+          Ask in plain language — run a task across phones, check status, or change proxy rotation. Anything that changes a setting asks you to confirm first.
         </Typography>
       </Box>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3, pb: 2 }}>
-        {isLoading && <CircularProgress sx={{ alignSelf: 'center', mt: 4 }} />}
-        {!isLoading && missions.length === 0 && (
+      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
+        {turns.length === 0 && (
           <Box sx={{ mt: 4 }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Say which phones — a number, "all phones", or a tag — and what to do. For example:
+              Try:
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-start' }}>
               {EXAMPLES.map((example) => (
-                <Chip key={example} label={example} onClick={() => setRequest(example)} variant="outlined" sx={{ maxWidth: '100%', height: 'auto', '& .MuiChip-label': { whiteSpace: 'normal', py: 0.75 } }} />
+                <Chip key={example} label={example} onClick={() => setInput(example)} variant="outlined" sx={{ maxWidth: '100%', height: 'auto', '& .MuiChip-label': { whiteSpace: 'normal', py: 0.75 } }} />
               ))}
             </Box>
           </Box>
         )}
-        {missions.map((mission) => (
-          <MissionCard key={mission.id} mission={mission} frames={frames} />
-        ))}
+        {turns.map((turn) =>
+          turn.role === 'user' ? (
+            <Box key={turn.id} sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 2, borderBottomRightRadius: 4 }}>
+              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {turn.text}
+              </Typography>
+            </Box>
+          ) : (
+            <AssistantBubble
+              key={turn.id}
+              turn={turn}
+              frames={frames}
+              onConfirm={onConfirm}
+              liveMission={turn.reply.mission ? missionById.get(turn.reply.mission.id) : undefined}
+            />
+          ),
+        )}
         <div ref={bottomRef} />
       </Box>
 
       <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
           <TextField
-            value={request}
-            onChange={(event) => setRequest(event.target.value)}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder='e.g. On 5 phones, open Gmail and send an email to test@gmail.com'
+            placeholder="Message the fleet — e.g. how many phones are online?"
             multiline
             maxRows={6}
             fullWidth
             size="small"
-            inputProps={{ maxLength: 8000, 'aria-label': 'Mission request' }}
+            inputProps={{ maxLength: 4000, 'aria-label': 'Command chat message' }}
           />
-          <IconButton color="primary" onClick={() => void send()} disabled={!request.trim() || sending} aria-label="Send mission">
+          <IconButton color="primary" onClick={() => void send()} disabled={!input.trim() || sending} aria-label="Send">
             {sending ? <CircularProgress size={20} /> : <SendIcon />}
           </IconButton>
-        </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1, flexWrap: 'wrap' }}>
-          <TextField
-            label="Steps per phone"
-            type="number"
-            size="small"
-            value={maxSteps}
-            onChange={(event) => setMaxSteps(Math.max(1, Math.min(500, Number(event.target.value) || 1)))}
-            sx={{ width: 140 }}
-          />
-          <Tooltip title="Only for tasks that use no website or online service, like changing a setting. Skips the proxy queue so all phones start at once.">
-            <FormControlLabel control={<Checkbox size="small" checked={noInternet} onChange={(event) => setNoInternet(event.target.checked)} />} label={<Typography variant="body2">No internet needed</Typography>} />
-          </Tooltip>
         </Box>
       </Paper>
     </Box>

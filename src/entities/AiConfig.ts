@@ -46,6 +46,10 @@ export class AiConfig {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  /** The model the Command chat uses. At most one per user. */
+  @Column({ type: 'boolean', default: false })
+  is_chat_default: boolean;
+
   @Column({ type: 'varchar', length: 150, nullable: true })
   label: string | null;
 

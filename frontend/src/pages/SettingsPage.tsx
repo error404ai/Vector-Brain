@@ -6,6 +6,7 @@ import {
   useTestSavedAiConfigMutation,
 } from '@/RTKService/aiConfigService/aiConfigService';
 import { AiConfigModal } from '@/components/ai-config/AiConfigModal';
+import CommandChatModelCard from '@/components/ai-config/CommandChatModelCard';
 import StorageCard from '@/components/settings/StorageCard';
 import TelegramLinkCard from '@/components/telegram/TelegramLinkCard';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
@@ -460,8 +461,13 @@ export default function SettingsPage() {
         </Paper>
         </Reveal>
 
-        {/* Section 2: Telegram bot */}
+        {/* Section 2: Command chat model */}
         <Reveal index={1}>
+          <CommandChatModelCard />
+        </Reveal>
+
+        {/* Section 3: Telegram bot */}
+        <Reveal index={2}>
           <TelegramLinkCard />
         </Reveal>
 

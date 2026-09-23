@@ -10,6 +10,7 @@ export interface AiConfig {
   model: string;
   base_url: string | null;
   is_active: boolean;
+  is_chat_default: boolean;
   label: string | null;
   config_type: AiConfigType;
   has_api_key: boolean;
@@ -115,6 +116,14 @@ const aiConfigApi = baseApi.injectEndpoints({
       invalidatesTags: [{ type: TAGS.AI_CONFIGS, id: 'LIST' }],
     }),
 
+    setChatDefaultAiConfig: builder.mutation<{ message: string; data: AiConfig }, number>({
+      query: (id) => ({
+        url: `/ai-configs/set-chat-default/${id}`,
+        method: 'PATCH',
+      }),
+      invalidatesTags: [{ type: TAGS.AI_CONFIGS, id: 'LIST' }],
+    }),
+
     testAiConfig: builder.mutation<TestResultResponse, TestAiConfigPayload>({
       query: (body) => ({
         url: '/ai-configs/test',
@@ -139,6 +148,7 @@ export const {
   useUpdateAiConfigMutation,
   useDeleteAiConfigMutation,
   useSetActiveAiConfigMutation,
+  useSetChatDefaultAiConfigMutation,
   useTestAiConfigMutation,
   useTestSavedAiConfigMutation,
 } = aiConfigApi;

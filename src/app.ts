@@ -36,6 +36,7 @@ import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
 import { MissionController } from './controllers/MissionController';
+import { CommandChatController } from './controllers/CommandChatController';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { DeviceProxyController } from './controllers/DeviceProxyController';
 import { SettingController } from './controllers/SettingController';
@@ -97,6 +98,7 @@ useExpressServer(app, {
     MaintenanceController,
     FlowController,
     MissionController,
+    CommandChatController,
     PromptController,
     ScheduledTaskController,
     DeviceProxyController,

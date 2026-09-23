@@ -764,6 +764,76 @@ const scenarios = [
     },
   },
   {
+    name: 'chat answers a read-only fleet question without changing anything',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'how many phones are online?' });
+      const reply = res?.data;
+      if (!reply) return `no reply: ${JSON.stringify(res).slice(0, 160)}`;
+      if (reply.kind !== 'answer') return `kind ${reply.kind}, expected answer`;
+      // free1 and free2 are online in this run; the lane phones connected too.
+      if (!/\b[1-9]\d*\b/.test(reply.text ?? '')) return `answer has no number: ${reply.text}`;
+      if (reply.action) return 'a read-only question produced an action';
+    },
+  },
+  {
+    name: 'chat runs a mission when asked, and it shows up',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'open settings on all phones [sim steps=1 delay=50]' });
+      const reply = res?.data;
+      if (reply?.kind !== 'mission') return `kind ${reply?.kind}: ${reply?.text}`;
+      const missionId = reply.mission?.id;
+      if (!missionId) return 'no mission attached';
+      const done = await waitForMission(missionId, 90_000);
+      if (!done) return 'mission never finished';
+      if (done.items.length === 0) return 'mission had no phones';
+    },
+  },
+  {
+    name: 'chat asks a setting change to be confirmed before it takes effect',
+    async run() {
+      const before = await api('GET', '/device-proxy');
+      const lane = (before?.data ?? [])[0];
+      if (!lane) return 'no proxy lane seeded';
+      const res = await api('POST', '/android/chat', { message: 'rotate the proxy after every task' });
+      const reply = res?.data;
+      if (reply?.kind !== 'confirm') return `kind ${reply?.kind}, expected confirm: ${reply?.text}`;
+      if (!reply.confirm_token) return 'no confirm token';
+      // Nothing changed yet.
+      const mid = await api('GET', '/device-proxy');
+      if ((mid.data.find((p) => p.id === lane.id)?.rotate_every_tasks) !== lane.rotate_every_tasks) {
+        return 'setting changed before confirmation';
+      }
+      // Confirm, then it changes.
+      const applied = await api('POST', '/android/chat/confirm', { confirm_token: reply.confirm_token });
+      if (applied?.data?.kind !== 'answer') return `confirm did not apply: ${JSON.stringify(applied).slice(0, 160)}`;
+      const after = await api('GET', '/device-proxy');
+      if ((after.data.find((p) => p.id === lane.id)?.rotate_every_tasks) !== 1) return 'rotation not set to 1 after confirm';
+    },
+  },
+  {
+    name: 'chat refuses to delete anything, even when told to',
+    async run() {
+      const before = await api('GET', '/device-proxy');
+      const lanes = before?.data?.length ?? 0;
+      const res = await api('POST', '/android/chat', { message: 'delete all proxies and remove every device' });
+      const reply = res?.data;
+      if (reply?.kind === 'confirm' || reply?.kind === 'mission') return `chat offered to act on a delete: ${reply.kind}`;
+      if (!/can.t|cannot|won.t|not able|dashboard/i.test(reply?.text ?? '')) return `did not decline clearly: ${reply?.text}`;
+      const after = await api('GET', '/device-proxy');
+      if ((after?.data?.length ?? 0) !== lanes) return 'a proxy was deleted';
+    },
+  },
+  {
+    name: 'chat asks what you mean instead of guessing',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'do the thing' });
+      const reply = res?.data;
+      if (reply?.kind !== 'clarify') return `kind ${reply?.kind}, expected clarify: ${reply?.text}`;
+      if (!(reply.text || '').includes('?')) return 'clarify had no question';
+      if (reply.action || reply.mission) return 'clarify still carried an action';
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();
