@@ -6,7 +6,12 @@ import {
   type MissionItem,
   type MissionItemStatus,
 } from '@/RTKService/missionService/missionService';
-import { useConfirmCommandMutation, useSendCommandMutation, type ChatReply } from '@/RTKService/commandChatService/commandChatService';
+import {
+  useConfirmCommandMutation,
+  useGetChatHistoryQuery,
+  useSendCommandMutation,
+  type ChatReply,
+} from '@/RTKService/commandChatService/commandChatService';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import SendIcon from '@mui/icons-material/Send';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
@@ -357,6 +362,17 @@ export default function MissionControlPage() {
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
   const [confirmCommand] = useConfirmCommandMutation();
 
+  // The conversation is stored on the server; a reload picks it back up.
+  const { data: historyData, isLoading: loadingHistory } = useGetChatHistoryQuery();
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  if (!historyLoaded && historyData) {
+    setHistoryLoaded(true);
+    setTurns((prev) => [
+      ...historyData.data.map((t): ChatTurn => (t.role === 'user' ? { id: `h${t.id}`, role: 'user', text: t.text } : { id: `h${t.id}`, role: 'assistant', reply: t.reply })),
+      ...prev,
+    ]);
+  }
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [turns.length]);
@@ -405,7 +421,8 @@ export default function MissionControlPage() {
       </Box>
 
       <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
-        {turns.length === 0 && (
+        {loadingHistory && turns.length === 0 && <CircularProgress size={22} sx={{ alignSelf: 'center', mt: 4 }} />}
+        {!loadingHistory && turns.length === 0 && (
           <Box sx={{ mt: 4 }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
               Try:

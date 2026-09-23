@@ -1520,6 +1520,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
       if (failure && /not currently connected/i.test(failure.message ?? '')) {
         throw new AppError('The phone is offline right now (it may be reconnecting). Try again in a moment.', 409);
       }
+      if (failure && /screen capture|permission prompt/i.test(failure.message ?? '')) {
+        throw new AppError(
+          "Screen capture permission is not approved on the phone. Open the Vector app on the phone and approve Android's screen-capture prompt, then try again.",
+          400,
+        );
+      }
       if (failure && /too quickly|interval/i.test(failure.message ?? '')) {
         throw new AppError(`The phone is busy taking another screenshot — try again in a moment. ${detail}`, 429);
       }

@@ -121,7 +121,9 @@ export class ProxyRotationService {
       rotation_url: String(input.rotation_url ?? '').trim(),
       concurrency: input.concurrency ?? 1,
       settle_seconds: input.settle_seconds ?? 5,
-      rotate_every_tasks: input.rotate_every_tasks ?? 1,
+      // No rotation unless asked for: rotating a mobile IP drops every phone's
+      // connection on that lane, so it is opt-in (chat or Settings).
+      rotate_every_tasks: input.rotate_every_tasks ?? 0,
     });
     await this.proxyRepo.save(proxy);
 

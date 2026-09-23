@@ -34,6 +34,8 @@ export class FakePhone {
     this.followSession = false;
     /** Refuse the next N screen observations the way Android rate-limits screenshots. */
     this.rateLimitNext = 0;
+    /** When set, every screen observation fails with this phone-side message. */
+    this.observeFailMessage = null;
     this.actionsReceived = 0;
     this.otherEvents = [];
     this.ws = null;
@@ -115,6 +117,10 @@ export class FakePhone {
 
   answer(msg) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (this.observeFailMessage && msg.payload?.action?.type === 'ObserveScreen') {
+      this.ws.send(JSON.stringify({ event: 'device:action_response', requestId: msg.requestId, payload: { status: 'FAILURE', code: 'INTERNAL_ERROR', message: this.observeFailMessage, recoverable: false } }));
+      return;
+    }
     if (this.rateLimitNext > 0 && msg.payload?.action?.type === 'ObserveScreen') {
       this.rateLimitNext -= 1;
       this.ws.send(JSON.stringify({ event: 'device:action_response', requestId: msg.requestId, payload: { status: 'FAILURE', code: 'INTERNAL_ERROR', message: 'Screenshots were requested too quickly', recoverable: true } }));

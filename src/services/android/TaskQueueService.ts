@@ -79,6 +79,25 @@ export class TaskQueueService {
   }
 
   private runTask: TaskRunner | null = null;
+
+  /**
+   * Why recent queue entries were dropped, by entry id. Entries are deleted
+   * when their phone cannot start, which left a mission following one with
+   * nothing but "the entry disappeared"; this keeps the real reason around
+   * long enough for it to be read.
+   */
+  private recentDrops = new Map<number, { reason: string; at: number }>();
+
+  dropReason(queueId: number): string | null {
+    const hit = this.recentDrops.get(queueId);
+    return hit ? hit.reason : null;
+  }
+
+  private rememberDrop(queueId: number, reason: string): void {
+    const now = Date.now();
+    this.recentDrops.set(queueId, { reason, at: now });
+    for (const [id, entry] of this.recentDrops) if (now - entry.at > 30 * 60_000) this.recentDrops.delete(id);
+  }
   private isDeviceBusy: BusyCheck | null = null;
 
   /** Lanes being drained right now, so two drains never admit the same slot. */
@@ -269,6 +288,7 @@ export class TaskQueueService {
         // the lane rather than blocking everything behind it.
         next.last_error = 'Device was offline when its turn came';
         await this.queueRepo.save(next);
+        this.rememberDrop(next.id, next.last_error);
         await this.queueRepo.delete(next.id);
 
         try {
@@ -304,6 +324,7 @@ export class TaskQueueService {
         // so the entry is dropped and the lane carries on.
         next.last_error = String(error?.message ?? 'Could not start').slice(0, 255);
         await this.queueRepo.save(next);
+        this.rememberDrop(next.id, next.last_error);
         await this.queueRepo.delete(next.id);
 
         // Dropping it quietly would leave the user waiting for a run that is

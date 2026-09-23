@@ -834,6 +834,109 @@ const scenarios = [
     },
   },
   {
+    name: 'a new proxy lane does not rotate unless told to',
+    async run() {
+      const created = await api('POST', '/device-proxy', { name: 'NoRotate', rotation_url: 'http://127.0.0.1:4700/rotate' });
+      const id = created?.data?.id;
+      const list = await api('GET', '/device-proxy');
+      const lane = (list?.data ?? []).find((p) => p.id === id);
+      await api('DELETE', `/device-proxy/${id}`).catch(() => {});
+      if (!lane) return 'lane not created';
+      if (lane.rotate_every_tasks !== 0) return `new lane rotates every ${lane.rotate_every_tasks} task(s) by default`;
+    },
+  },
+  {
+    name: 'chat can switch proxy rotation off, after confirmation',
+    async run() {
+      const res = await api('POST', '/android/chat', { message: 'stop proxy rotation on all lanes' });
+      const reply = res?.data;
+      if (reply?.kind !== 'confirm') return `kind ${reply?.kind}: ${reply?.text}`;
+      await api('POST', '/android/chat/confirm', { confirm_token: reply.confirm_token });
+      const list = await api('GET', '/device-proxy');
+      const rotating = (list?.data ?? []).filter((p) => p.rotate_every_tasks !== 0);
+      // Put the harness lane back the way the lane scenarios expect it.
+      for (const p of list?.data ?? []) await api('PATCH', `/device-proxy/${p.id}`, { rotate_every_tasks: 1 }).catch(() => {});
+      if (rotating.length) return `${rotating.length} lane(s) still rotating after "stop"`;
+    },
+  },
+  {
+    name: 'chat introduces itself as Vector',
+    async run() {
+      for (const message of ['who are you?', 'tu kaun hai', 'hi']) {
+        const res = await api('POST', '/android/chat', { message });
+        const reply = res?.data;
+        if (reply?.kind !== 'answer') return `"${message}" -> kind ${reply?.kind}`;
+        if (!/\bVector\b/.test(reply.text ?? '')) return `"${message}" did not say it is Vector: ${reply.text}`;
+      }
+    },
+  },
+  {
+    name: 'chat history survives a reload',
+    async run() {
+      const marker = `how many phones online ${Date.now()}`;
+      await api('POST', '/android/chat', { message: marker });
+      const history = await api('GET', '/android/chat/history');
+      const turns = history?.data ?? [];
+      const mine = turns.findIndex((t) => t.role === 'user' && t.text === marker);
+      if (mine < 0) return 'the message is not in the history';
+      const answer = turns[mine + 1];
+      if (answer?.role !== 'assistant' || !answer.reply?.text) return 'the reply is not stored after the message';
+    },
+  },
+  {
+    name: 'a queued phone that fails to start reports why, not "lost its place"',
+    async run() {
+      // lane2 waits behind lane1 on the one-at-a-time lane, then refuses to start.
+      phones.lane2.phone.failActions = true;
+      try {
+        const created = await api('POST', '/android/missions', {
+          request: 'open settings [sim steps=3 delay=300]',
+          device_ids: [phones.lane1.dbId, phones.lane2.dbId],
+        });
+        const id = created?.data?.id;
+        if (!id) return 'mission not created';
+        const done = await waitForMission(id, 150_000);
+        if (!done) return 'mission never finished';
+        const item = done.items.find((i) => i.device_id === phones.lane2.dbId);
+        if (!item) return 'no item for lane2';
+        if (/disappeared|lost its place/i.test(`${item.last_message} ${item.reason_text}`)) {
+          return `still vague: ${item.reason_text} — ${item.last_message}`;
+        }
+        if (!/refused|not ready|could not/i.test(item.last_message ?? '')) return `no real reason: ${item.last_message}`;
+        // A later direct retry can carry the real message; the queue drop itself
+        // must not have been filed as a vague QUEUE_DROPPED along the way.
+        const logText = fs.readFileSync(path.join(logDir, `backend-${backendRuns}.log`), 'utf8');
+        if (logText.includes(`#${id} item ${item.id} retry`) && logText.split('\n').some((l) => l.includes(`#${id} item ${item.id}`) && l.includes('QUEUE_DROPPED'))) {
+          return 'the queued start failure was filed as QUEUE_DROPPED';
+        }
+      } finally {
+        phones.lane2.phone.failActions = false;
+      }
+    },
+  },
+  {
+    name: 'a phone without screen-capture permission is labelled that way and not retried',
+    async run() {
+      phones.free2.phone.observeFailMessage = "Enable screen capture and approve Android's permission prompt first";
+      try {
+        const created = await api('POST', '/android/missions', {
+          request: 'open settings [sim steps=2 delay=100]',
+          device_ids: [phones.free2.dbId],
+        });
+        const id = created?.data?.id;
+        if (!id) return 'mission not created';
+        const done = await waitForMission(id, 90_000);
+        if (!done) return 'mission never finished';
+        const item = done.items[0];
+        if (item.last_reason !== 'CAPTURE_PERMISSION') return `filed as ${item.last_reason} (${item.reason_text})`;
+        if (item.attempts !== 1) return `retried a setup problem ${item.attempts} times`;
+        if (/accessibility/i.test(item.reason_text ?? '')) return `label still blames accessibility: ${item.reason_text}`;
+      } finally {
+        phones.free2.phone.observeFailMessage = null;
+      }
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

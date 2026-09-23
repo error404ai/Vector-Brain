@@ -13,6 +13,7 @@ import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AndroidPlannerService } from './AndroidPlannerService';
 import { FleetStateService } from './FleetStateService';
+import { TaskQueueService } from './TaskQueueService';
 
 /** Total tries per phone: the first run plus two retries. */
 const MAX_ATTEMPTS = 3;
@@ -59,6 +60,7 @@ const PLAIN_REASON: Record<string, string> = {
   TASK_MISSING: 'run record disappeared',
   DISPATCH_ERROR: 'could not be started',
   PLAN_FAILED: 'AI returned an empty plan (model hiccup)',
+  CAPTURE_PERMISSION: 'screen capture permission not approved on the phone',
 };
 
 const TERMINAL_ITEM = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);
@@ -107,6 +109,7 @@ export class MissionService {
     private fleetStateService: FleetStateService,
     private aiService: AiService,
     private gatewayService: AndroidGatewayService,
+    private taskQueueService: TaskQueueService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -404,7 +407,16 @@ export class MissionService {
       await this.followRun(mission, item);
       return;
     }
-    await this.settleFailure(mission, item, 'QUEUE_DROPPED', entry?.last_error ?? 'The proxy queue entry disappeared');
+    // The lane dropped it because the phone could not start when its turn came;
+    // file the real reason (offline, no answer, permission...) rather than a
+    // generic "lost its place", so the retry decision and the label are right.
+    const dropped = item.queue_id ? this.taskQueueService.dropReason(item.queue_id) : null;
+    const reason = dropped ?? entry?.last_error ?? null;
+    if (reason) {
+      await this.settleFailure(mission, item, classifyDispatchError(reason), reason);
+      return;
+    }
+    await this.settleFailure(mission, item, 'QUEUE_DROPPED', 'The proxy queue entry disappeared');
   }
 
   private async followRun(mission: Mission, item: MissionItem): Promise<void> {
@@ -558,6 +570,7 @@ function classifyDispatchError(message: string): string {
   if (/offline|reconnect|not connected/.test(text)) return 'DEVICE_OFFLINE';
   if (/did not answer|timed out|timeout/.test(text)) return 'TIMEOUT';
   if (/already running|waiting in the queue|busy taking another screenshot|was cancelled before the phone answered/.test(text)) return 'DEVICE_BUSY';
+  if (/screen capture permission|screen-capture prompt|approve android.s permission prompt/.test(text)) return 'CAPTURE_PERMISSION';
   if (/accessibility is not ready|enable its accessibility/.test(text)) return 'NEEDS_SETUP';
   if (/\b429\b|rate limit/.test(text)) return 'LLM_RATE_LIMIT';
   if (/api key|credit|\b401\b|\b402\b/.test(text)) return 'LLM_AUTH_OR_CREDIT';

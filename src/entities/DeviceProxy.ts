@@ -50,7 +50,7 @@ export class DeviceProxy {
   settle_seconds: number;
 
   /** Rotate after every N finished tasks. 0 turns rotation off. */
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 0 })
   rotate_every_tasks: number;
 
   /**

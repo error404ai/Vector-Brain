@@ -49,11 +49,12 @@ export type ChatIntent =
   | { kind: 'setting'; setting: 'rotation'; proxy?: string; every?: number }
   | { kind: 'setting'; setting: 'concurrency'; proxy?: string; concurrency?: number }
   | { kind: 'refuse' }
+  | { kind: 'identity' }
   | { kind: 'clarify'; question?: string };
 
 const ChatIntentSchema = z
   .object({
-    kind: z.enum(['status', 'mission', 'setting', 'refuse', 'clarify']),
+    kind: z.enum(['status', 'mission', 'setting', 'refuse', 'clarify', 'identity']),
     prompt: z.string().optional(),
     setting: z.enum(['rotation', 'concurrency']).optional(),
     proxy: z.string().optional(),
@@ -208,7 +209,8 @@ export class AiService {
       'Choose exactly one kind:',
       '- "status": a read-only question about the fleet (how many online, what is running, which lane).',
       '- "mission": an instruction to perform on phones (open an app, send, search, play, scroll, close). Put the single-phone instruction, phone selection included, in "prompt", verbatim.',
-      '- "setting": change proxy rotation ("setting":"rotation", optional "proxy" lane name, "every" number of tasks) or lane concurrency ("setting":"concurrency", "proxy" lane name, "concurrency" number).',
+      '- "setting": change proxy rotation ("setting":"rotation", optional "proxy" lane name, "every" number of tasks; "every":0 to stop rotating) or lane concurrency ("setting":"concurrency", "proxy" lane name, "concurrency" number).',
+      '- "identity": greetings, "who are you", "what can you do", help.',
       '- "refuse": anything that deletes or removes devices/proxies/tasks, changes accounts or billing, or is outside running tasks / status / proxy settings.',
       '- "clarify": too vague to act on; put one short question in "question".',
       'Never invent a mission from a vague message — prefer clarify. Reply with ONLY minified JSON, no prose, no code fences.',

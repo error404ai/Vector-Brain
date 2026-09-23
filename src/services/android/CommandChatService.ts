@@ -1,3 +1,4 @@
+import { ChatMessage } from '@/entities/ChatMessage';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -14,6 +15,10 @@ import { ProxyRotationService } from './ProxyRotationService';
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
 const CONFIRM_TTL_MS = 10 * 60_000;
+
+/** Who the chat says it is. Fixed text, so the answer never drifts with the model. */
+export const VECTOR_IDENTITY =
+  "I'm Vector — an AI assistant for Android mobile automation. I run tasks across your phone fleet in plain language, report which phones are online and what they're doing, and manage proxy rotation for you. Setting changes always wait for your confirmation, and I never delete anything.";
 
 /**
  * What the chat can do to change something. Deliberately tiny: every entry is a
@@ -53,6 +58,7 @@ export interface ChatReply {
 @Service()
 export class CommandChatService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
+  private messageRepo = AppDataSource.getRepository(ChatMessage);
   private pending = new Map<string, Pending>();
 
   constructor(
@@ -67,9 +73,45 @@ export class CommandChatService {
     const text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
 
+    await this.record(userId, 'user', text);
     const intent = await this.classify(userId, text);
     const reply = await this.act(userId, text, intent);
+    await this.record(userId, 'assistant', reply.text, reply);
     return { message: 'Chat reply', data: reply };
+  }
+
+  /** The conversation so far, oldest first, so a reload picks up where it left off. */
+  async history(userId: number, limit = 60): Promise<ApiResponse> {
+    const rows = await this.messageRepo.find({
+      where: { user_id: userId },
+      order: { id: 'DESC' },
+      take: Math.max(1, Math.min(200, limit)),
+    });
+    const turns = rows.reverse().map((row) => {
+      if (row.role === 'user') return { id: row.id, role: 'user' as const, text: row.text };
+      let reply: ChatReply = { kind: 'answer', text: row.text };
+      try {
+        if (row.reply) reply = JSON.parse(row.reply) as ChatReply;
+      } catch {
+        /* keep the plain text */
+      }
+      // A confirm from an earlier visit can't be applied any more; show it as text.
+      if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };
+      return { id: row.id, role: 'assistant' as const, reply };
+    });
+    return { message: 'Chat history', data: turns };
+  }
+
+  private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply): Promise<void> {
+    try {
+      const missionId = (reply?.mission as { id?: number } | undefined)?.id ?? null;
+      await this.messageRepo.save(
+        this.messageRepo.create({ user_id: userId, role, text: text.slice(0, 8000), reply: reply ? JSON.stringify(reply) : null, mission_id: missionId }),
+      );
+    } catch (error) {
+      // Losing a transcript line must never break the chat itself.
+      Logger.warn('[CommandChat] Could not save chat message:', error);
+    }
   }
 
   async confirm(userId: number, token: string): Promise<ApiResponse> {
@@ -79,7 +121,9 @@ export class CommandChatService {
     if (Date.now() - pending.at > CONFIRM_TTL_MS) throw new AppError('That confirmation expired — ask again', 410);
 
     await this.apply(userId, pending.action);
-    return { message: 'Applied', data: { kind: 'answer', text: `Done — ${pending.summary}.` } as ChatReply };
+    const reply: ChatReply = { kind: 'answer', text: `Done — ${pending.summary}.` };
+    await this.record(userId, 'assistant', reply.text, reply);
+    return { message: 'Applied', data: reply };
   }
 
   // ---------------------------------------------------------------------------
@@ -128,6 +172,9 @@ export class CommandChatService {
         return { kind: 'confirm', text: `${built.summary}. Confirm?`, confirm_token: token, action: built.action };
       }
 
+      case 'identity':
+        return { kind: 'answer', text: VECTOR_IDENTITY };
+
       case 'refuse':
         // Delete and anything else off-menu is declined, never offered.
         return {
@@ -161,10 +208,13 @@ export class CommandChatService {
     if (intent.setting === 'rotation') {
       const lane = resolveLane(intent.proxy);
       if (lane === null) return { error: `I couldn't find a lane called "${intent.proxy}". Which lane — ${proxies.map((p) => p.name).join(', ')}?` };
-      const every = intent.every && intent.every > 0 ? Math.floor(intent.every) : 1;
+      // 0 is an explicit "stop rotating"; no number at all means every task.
+      const every = intent.every === 0 ? 0 : intent.every && intent.every > 0 ? Math.floor(intent.every) : 1;
       const where = lane === 'all' ? 'every lane' : `lane "${lane.name}"`;
+      const action: PendingAction = { type: 'set_rotation', proxy_id: lane === 'all' ? 'all' : lane.id, every };
+      if (every === 0) return { action, summary: `Stop rotating ${where}` };
       const phrase = every === 1 ? 'after every task' : `after every ${every} tasks`;
-      return { action: { type: 'set_rotation', proxy_id: lane === 'all' ? 'all' : lane.id, every }, summary: `Rotate ${where} ${phrase}` };
+      return { action, summary: `Rotate ${where} ${phrase}` };
     }
 
     if (intent.setting === 'concurrency') {
@@ -201,7 +251,13 @@ export class CommandChatService {
   private async describeFleet(userId: number): Promise<string> {
     const state = (await this.fleetStateService.getState(userId)) as {
       counts: Record<string, number>;
-      lanes: { name: string; running: number; waiting: number }[];
+      lanes: { id: number; name: string; running: number; waiting: number }[];
+    };
+    const proxies = await this.proxyRepo.find({ where: { user_id: userId } });
+    const rotation = new Map(proxies.map((p) => [p.id, p.rotate_every_tasks]));
+    const rotationText = (id: number) => {
+      const every = rotation.get(id) ?? 0;
+      return every <= 0 ? 'no rotation' : every === 1 ? 'rotates after every task' : `rotates every ${every} tasks`;
     };
     const c = state.counts;
     const online = (c.total ?? 0) - (c.offline ?? 0);
@@ -210,7 +266,7 @@ export class CommandChatService {
     if (c.waiting) parts.push(`${c.waiting} waiting in a proxy queue`);
     if (c.needs_setup) parts.push(`${c.needs_setup} need accessibility turned on`);
     if (c.offline) parts.push(`${c.offline} offline`);
-    const lanes = state.lanes.map((l) => `${l.name}: ${l.running} running, ${l.waiting} waiting`).join(' · ');
+    const lanes = state.lanes.map((l) => `${l.name}: ${l.running} running, ${l.waiting} waiting, ${rotationText(l.id)}`).join(' · ');
     return `${parts.join(', ')}.${lanes ? `\nLanes — ${lanes}.` : ''}`;
   }
 }
@@ -220,6 +276,7 @@ export class CommandChatService {
 // is unusable. Conservative: anything it cannot place becomes a clarify.
 // -----------------------------------------------------------------------------
 
+const IDENTITY_WORDS = /\b(who are you|who r u|who ru|your name|what are you|what can you do|kaun ho|kaun hai|tum kaun|tu kaun|introduce|help)\b|^\s*(hi|hello|hey|namaste|hii+)\b/i;
 const DELETE_WORDS = /\b(delete|remove|unpair|wipe|erase|drop|hata\s*do|delete\s*all)\b/i;
 const STATUS_WORDS = /\b(status|online|offline|how many|kitne|kaun|which phones|running|idle|fleet)\b/i;
 const ROTATE_WORDS = /\brotat/i;
@@ -230,9 +287,11 @@ export function classifyLocally(text: string): ChatIntent {
   const t = text.toLowerCase();
 
   if (DELETE_WORDS.test(t)) return { kind: 'refuse' };
+  if (IDENTITY_WORDS.test(t)) return { kind: 'identity' };
 
   if (ROTATE_WORDS.test(t)) {
-    const every = /every task|har task|each task/.test(t) ? 1 : Number(/every (\d+)/.exec(t)?.[1]) || 0;
+    const stop = /\b(stop|off|disable|band|no rotation|don.?t rotate|never)\b/.test(t);
+    const every = stop ? 0 : /every task|har task|each task/.test(t) ? 1 : Number(/every (\d+)/.exec(t)?.[1]) || undefined;
     const proxy = /\ball\b|every lane|har lane/.test(t) ? 'all' : /\blane ([\w-]+)/.exec(t)?.[1];
     return { kind: 'setting', setting: 'rotation', every, proxy };
   }
