@@ -986,6 +986,14 @@ async function main() {
 
   console.log('\n──────── results ────────');
   for (const r of results) console.log(`${r.failure ? '✗' : '✓'} ${r.name}${r.failure ? `  — ${r.failure}` : ''}`);
+  // In CI, surface each failure as a GitHub annotation: the job log itself is
+  // only downloadable from blob storage, but annotations are on the API.
+  if (process.env.GITHUB_ACTIONS) {
+    for (const r of results.filter((x) => x.failure)) {
+      const text = `${r.name} — ${r.failure}`.replace(/\r?\n/g, ' ').slice(0, 900);
+      console.log(`::error title=harness scenario failed::${text}`);
+    }
+  }
   const failed = results.filter((r) => r.failure).length;
   console.log(`\n${results.length - failed}/${results.length} passed`);
   return failed;
