@@ -14,6 +14,7 @@ import { TaskQueueService } from './TaskQueueService';
 import { AiProvider } from '@/entities/AiConfig';
 import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';
+import { classifyFailure } from './failureReason';
 import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
@@ -115,15 +116,6 @@ function simulationOptions(prompt: string): { steps: number; delay: number; fail
   return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text), planFail: /\bplanfail\b/.test(text) };
 }
 
-/** Best-effort mapping of a thrown error to a stable reason code. */
-function classifyFailure(message: string | undefined): string {
-  const text = (message || '').toLowerCase();
-  if (/\b429\b|rate limit|too many requests/.test(text)) return 'LLM_RATE_LIMIT';
-  if (/\b401\b|\b402\b|api key|unauthori[sz]ed|insufficient|credit/.test(text)) return 'LLM_AUTH_OR_CREDIT';
-  if (/offline|not connected|disconnected/.test(text)) return 'DEVICE_OFFLINE';
-  if (/timed out|timeout/.test(text)) return 'TIMEOUT';
-  return 'ERROR';
-}
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
 const MAX_HISTORY_THOUGHT_CHARS = 200; // cap per-step thought when building follow-up context
 
