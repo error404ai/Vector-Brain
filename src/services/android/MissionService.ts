@@ -557,7 +557,7 @@ function classifyDispatchError(message: string): string {
   const text = message.toLowerCase();
   if (/offline|reconnect|not connected/.test(text)) return 'DEVICE_OFFLINE';
   if (/did not answer|timed out|timeout/.test(text)) return 'TIMEOUT';
-  if (/already running|waiting in the queue/.test(text)) return 'DEVICE_BUSY';
+  if (/already running|waiting in the queue|busy taking another screenshot|was cancelled before the phone answered/.test(text)) return 'DEVICE_BUSY';
   if (/accessibility is not ready|enable its accessibility/.test(text)) return 'NEEDS_SETUP';
   if (/\b429\b|rate limit/.test(text)) return 'LLM_RATE_LIMIT';
   if (/api key|credit|\b401\b|\b402\b/.test(text)) return 'LLM_AUTH_OR_CREDIT';

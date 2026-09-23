@@ -693,6 +693,60 @@ const scenarios = [
     },
   },
   {
+    name: 'a phone reporting the session the server just opened does not get its start check cancelled',
+    async run() {
+      // v10 phones report automationActive on every heartbeat. While a run is
+      // still starting there is no RUNNING task yet, and the server used to take
+      // that report for an orphaned run, cancel the pending screen check and
+      // fail the start as "Accessibility is not ready".
+      const phone = phones.free2.phone;
+      phone.followSession = true;
+      const oldLatency = phone.latencyMs;
+      phone.latencyMs = 1200;
+      const beat = setInterval(() => phone.sendHeartbeat(), 250);
+      try {
+        const res = await run('free2', 'open settings [sim steps=2 delay=100]').catch((e) => ({ error: String(e.message ?? e) }));
+        if (res?.error) return `run refused: ${res.error.slice(0, 200)}`;
+        const taskId = res?.data?.taskId;
+        if (!taskId) return `run did not start: ${JSON.stringify(res).slice(0, 160)}`;
+        const ended = await waitFor(async () => {
+          const [[row]] = await db.query('SELECT status, message FROM agent_tasks WHERE id = ?', [taskId]);
+          return TERMINAL.has(row?.status) ? row : null;
+        }, 60_000, 500);
+        if (!ended) return 'run never finished';
+        if (ended.status !== 'SUCCEEDED') return `run ended ${ended.status}: ${ended.message}`;
+        // The start retry can paper over one cancelled check, so look at what
+        // the server actually did rather than only at the outcome.
+        const logText = fs.readFileSync(path.join(logDir, `backend-${backendRuns}.log`), 'utf8');
+        const stoodDown = logText.split('\n').filter((line) => line.includes('harness_free2 reported a run nothing owns'));
+        if (stoodDown.length) return `server stood the phone down ${stoodDown.length}x while its run was starting`;
+      } finally {
+        clearInterval(beat);
+        phone.followSession = false;
+        phone.automationActive = false;
+        phone.latencyMs = oldLatency;
+      }
+    },
+  },
+  {
+    name: 'a phone refusing screenshots "too quickly" is waited for, not reported as accessibility off',
+    async run() {
+      phones.free1.phone.rateLimitNext = 2;
+      try {
+        const res = await run('free1', 'open settings [sim steps=2 delay=100]').catch((e) => ({ error: String(e.message ?? e) }));
+        if (res?.error) return `start failed: ${res.error.slice(0, 220)}`;
+        const taskId = res?.data?.taskId;
+        const ended = await waitFor(async () => {
+          const [[row]] = await db.query('SELECT status, message FROM agent_tasks WHERE id = ?', [taskId]);
+          return TERMINAL.has(row?.status) ? row : null;
+        }, 60_000, 500);
+        if (ended?.status !== 'SUCCEEDED') return `run ended ${ended?.status}: ${ended?.message}`;
+      } finally {
+        phones.free1.phone.rateLimitNext = 0;
+      }
+    },
+  },
+  {
     name: 'a mission asked for more phones than are ready says so and uses what it has',
     async run() {
       const created = await api('POST', '/android/missions', {

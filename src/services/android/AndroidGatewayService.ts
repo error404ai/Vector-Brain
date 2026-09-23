@@ -417,6 +417,12 @@ export class AndroidGatewayService {
    */
   private async reconcileAutomationSession(hardwareDeviceId: string): Promise<void> {
     try {
+      // Opened (or just closed) by this server: the phone is reporting what we
+      // told it, possibly one heartbeat late. Standing it down here cancelled
+      // the start-up screen check and failed runs as "Accessibility is not ready".
+      const session = this.serverSessions.get(hardwareDeviceId);
+      if (session && (session.active || Date.now() - session.at < AndroidGatewayService.SESSION_ECHO_GRACE_MS)) return;
+
       const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
       if (!device) return;
       const live = await AppDataSource.getRepository(AgentTask)
@@ -435,7 +441,17 @@ export class AndroidGatewayService {
     }
   }
 
+  /**
+   * The session state this server last asked each phone for, and when. A phone
+   * echoing a session the server itself opened is not an orphaned run — while a
+   * run is starting (wake, first screen check) no RUNNING task exists yet.
+   */
+  private serverSessions = new Map<string, { active: boolean; at: number }>();
+  /** A closed session may still be echoed by a heartbeat already on its way. */
+  private static readonly SESSION_ECHO_GRACE_MS = 5_000;
+
   setAutomationSession(deviceId: string, active: boolean) {
+    this.serverSessions.set(deviceId, { active, at: Date.now() });
     const ws = this.deviceSockets.get(deviceId);
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     const message: AndroidWsServerMessage = {

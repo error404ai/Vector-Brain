@@ -1500,7 +1500,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
   }
 
   private async assertDeviceReady(hardwareDeviceId: string, userId?: number): Promise<string | undefined> {
-    const observation = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ObserveScreen' });
+    let observation = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ObserveScreen' });
+    // Android allows roughly one accessibility screenshot per second; a live
+    // preview taken a moment earlier makes the phone refuse this one. That is
+    // a wait, not a setup problem.
+    for (let tries = 0; tries < 2 && observation.status === 'FAILURE' && /too quickly|interval/i.test(observation.message ?? ''); tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      observation = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'ObserveScreen' });
+    }
     const treeResult = observation;
     const captureResult = observation;
 
@@ -1512,6 +1519,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
       const failure = treeResult.status === 'FAILURE' ? treeResult : null;
       if (failure && /not currently connected/i.test(failure.message ?? '')) {
         throw new AppError('The phone is offline right now (it may be reconnecting). Try again in a moment.', 409);
+      }
+      if (failure && /too quickly|interval/i.test(failure.message ?? '')) {
+        throw new AppError(`The phone is busy taking another screenshot — try again in a moment. ${detail}`, 429);
+      }
+      if (treeResult.status === 'CANCELLED') {
+        throw new AppError('The screen check was cancelled before the phone answered — try again.', 409);
       }
       if (failure?.code === 'TIMEOUT') {
         throw new AppError(

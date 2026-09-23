@@ -30,6 +30,10 @@ export class FakePhone {
     /** What this phone claims it is doing, as the real companion reports. */
     this.automationActive = false;
     this.silent = false; // receive actions but never answer (a hung phone)
+    /** Mirror server:automation_session into automationActive, as the v10 companion does. */
+    this.followSession = false;
+    /** Refuse the next N screen observations the way Android rate-limits screenshots. */
+    this.rateLimitNext = 0;
     this.actionsReceived = 0;
     this.otherEvents = [];
     this.ws = null;
@@ -75,6 +79,10 @@ export class FakePhone {
           setTimeout(() => this.answer(msg), this.latencyMs);
           return;
         }
+        if (msg.event === 'server:automation_session' && this.followSession) {
+          this.automationActive = Boolean(msg.payload?.active);
+          this.sendHeartbeat();
+        }
         this.otherEvents.push(msg);
       });
 
@@ -107,6 +115,11 @@ export class FakePhone {
 
   answer(msg) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (this.rateLimitNext > 0 && msg.payload?.action?.type === 'ObserveScreen') {
+      this.rateLimitNext -= 1;
+      this.ws.send(JSON.stringify({ event: 'device:action_response', requestId: msg.requestId, payload: { status: 'FAILURE', code: 'INTERNAL_ERROR', message: 'Screenshots were requested too quickly', recoverable: true } }));
+      return;
+    }
     const payload = this.failActions
       ? { status: 'FAILURE', code: 'INTERNAL_ERROR', message: 'Fake phone refused the action', recoverable: true }
       : {
