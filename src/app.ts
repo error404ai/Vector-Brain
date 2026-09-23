@@ -35,6 +35,7 @@ import { DashboardController } from './controllers/DashboardController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
+import { MissionController } from './controllers/MissionController';
 import { ScheduledTaskController } from './controllers/ScheduledTaskController';
 import { DeviceProxyController } from './controllers/DeviceProxyController';
 import { SettingController } from './controllers/SettingController';
@@ -45,6 +46,7 @@ import { authorizationChecker, currentUserChecker } from './middleware/authCheck
 import { AiEmbeddingService } from './services/AiEmbeddingService';
 import { HistoryCleanupService } from './services/android/HistoryCleanupService';
 import { ScheduledTaskService } from './services/android/ScheduledTaskService';
+import { MissionService } from './services/android/MissionService';
 import { TelegramService } from './services/telegram/TelegramService';
 import { initializeWebSocketServer } from './loaders/websocket';
 
@@ -94,6 +96,7 @@ useExpressServer(app, {
     HealthController,
     MaintenanceController,
     FlowController,
+    MissionController,
     PromptController,
     ScheduledTaskController,
     DeviceProxyController,
@@ -155,6 +158,7 @@ AppDataSource.initialize()
     try {
       Container.get(ScheduledTaskService).start();
       Container.get(HistoryCleanupService).start();
+      Container.get(MissionService).start();
     } catch (error) {
       Logger.warn('Scheduled task runner failed to start:', error);
     }

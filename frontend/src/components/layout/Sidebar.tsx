@@ -1,3 +1,4 @@
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -33,6 +34,7 @@ const mainItems: NavItem[] = [
   { label: 'Android Agent', icon: <SmartToyIcon />, href: '/android-agent', roles: ['admin', 'user', 'guest'], badge: 'Live', color: '#6366f1' },
   { label: 'Android Devices', icon: <PhoneAndroidIcon />, href: '/android-devices', roles: ['admin', 'user', 'guest'], color: '#10b981' },
   { label: 'Device Fleet', icon: <PhoneAndroidIcon />, href: '/android-fleet', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#0891b2' },
+  { label: 'Mission Control', icon: <RocketLaunchIcon />, href: '/mission-control', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#9333ea' },
   { label: 'Users', icon: <GroupIcon />, href: '/users', roles: ['admin'], badge: 'Admin', color: '#7c3aed' },
   { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },

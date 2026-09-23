@@ -11,6 +11,7 @@ import AiRulesPage from './pages/AiRulesPage';
 import AndroidAgentPage from './pages/AndroidAgentPage';
 import FlowsPage from './pages/FlowsPage';
 import SchedulesPage from './pages/SchedulesPage';
+import MissionControlPage from './pages/MissionControlPage';
 import AndroidDevicesPage from './pages/AndroidDevicesPage';
 import AndroidFleetPage from './pages/AndroidFleetPage';
 import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
@@ -97,6 +98,7 @@ const router = createBrowserRouter([
           { path: '/agent-tasks', Component: AgentTasksPage },
           { path: '/my-rules', Component: MyRulesPage },
           { path: '/schedules', Component: SchedulesPage },
+          { path: '/mission-control', Component: MissionControlPage },
           { path: '/flows', Component: FlowsPage },
           { path: '/settings', Component: SettingsPage },
           {

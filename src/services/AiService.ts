@@ -42,6 +42,24 @@ check weather -> Open https://www.google.com/search?q=weather+today in Chrome an
 browse for 10 minutes -> Open Chrome and visit 6 different websites one after another, scrolling down briefly on each
 Open Settings and check battery level -> Open Settings and check the battery level`;
 
+const MissionPlanSchema = z.object({
+  mode: z.enum(['ids', 'tag', 'count', 'all']),
+  ids: z.array(z.number().int()).optional().default([]),
+  tag: z.string().optional().default(''),
+  count: z.number().int().min(0).max(500).optional().default(0),
+  prompt: z.string().min(1).max(4000),
+  no_internet: z.boolean().optional().default(false),
+});
+
+export interface MissionPlan {
+  mode: 'ids' | 'tag' | 'count' | 'all';
+  ids: number[];
+  tag: string;
+  count: number;
+  prompt: string;
+  no_internet: boolean;
+}
+
 @Service()
 export class AiService {
   constructor(
@@ -100,6 +118,54 @@ export class AiService {
    * ("open 30 random websites") make the agent burn its whole step budget deciding
    * what to do, so it is far cheaper to ask one question up front.
    */
+  /**
+   * Turns a fleet-wide request ("send an email from 5 phones") into a plan the
+   * mission runner can execute without asking the model again: which phones,
+   * and the one instruction each phone runs. Returns null when no model is
+   * configured or the reply cannot be trusted — the caller falls back to a
+   * plain-text parse rather than guessing.
+   */
+  async planMission(
+    request: string,
+    devices: { id: number; name: string; tag: string | null; ready: boolean }[],
+    userId?: number,
+  ): Promise<MissionPlan | null> {
+    const chatModel = await this.getChatModel(userId);
+    if (!chatModel) return null;
+
+    const roster = devices
+      .map((d) => `${d.id}\t${d.name}\t${d.tag ?? '-'}\t${d.ready ? 'ready' : 'busy/offline'}`)
+      .join('\n');
+    const systemPrompt = [
+      'You split a request for a fleet of Android phones into a plan. You never carry it out.',
+      'Each phone is driven by its own agent that receives ONE instruction and executes it on that phone only.',
+      'Decide which phones, and write the instruction for a single phone.',
+      'mode: "ids" when the request names phones, "tag" when it names a group/tag, "count" when it gives a number of phones, "all" when it says all/every phone.',
+      'prompt: the task for ONE phone, in the language of the request, with every name, address, URL and number preserved exactly. Remove any mention of how many phones.',
+      'no_internet: true only when the task needs no website or online service (e.g. changing a setting). Email, browsing, apps that load content = false.',
+      'Reply with ONLY minified JSON, no prose, no code fences:',
+      '{"mode":"ids|tag|count|all","ids":number[],"tag":string,"count":number,"prompt":string,"no_internet":boolean}',
+      'Phones (id, name, tag, state):',
+      roster,
+    ].join('\n');
+
+    try {
+      const response = await chatModel.invoke([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: request },
+      ]);
+      const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+      const parsed = MissionPlanSchema.safeParse(JSON.parse(match[0]));
+      if (!parsed.success || !parsed.data.prompt.trim()) return null;
+      return parsed.data as MissionPlan;
+    } catch (error) {
+      Logger.warn('Failed to plan mission with AI:', error);
+      return null;
+    }
+  }
+
   async clarifyAndroidPrompt(
     prompt: string,
     userId?: number,

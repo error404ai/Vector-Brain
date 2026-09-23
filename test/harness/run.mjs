@@ -220,6 +220,18 @@ async function waitFor(check, timeoutMs, stepMs = 250) {
 
 const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED']);
 
+async function getMission(id) {
+  const res = await api('GET', `/android/missions/${id}`);
+  return res?.data ?? null;
+}
+
+async function waitForMission(id, timeoutMs) {
+  return waitFor(async () => {
+    const m = await getMission(id);
+    return m && ['DONE', 'CANCELLED'].includes(m.status) ? m : null;
+  }, timeoutMs, 500);
+}
+
 // ---------------------------------------------------------------- scenarios
 const scenarios = [
   {
@@ -564,6 +576,82 @@ const scenarios = [
       );
       if (row?.status !== 'FAILED') return `transfer is ${row?.status}, expected FAILED`;
       if (!row.failure_message) return 'no failure message for the dashboard';
+    },
+  },
+  {
+    name: 'a mission runs one instruction on several phones and reports each result',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'check the time [sim steps=2 delay=100]',
+        device_ids: [phones.free1.dbId, phones.free2.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) return `mission not created: ${JSON.stringify(created).slice(0, 200)}`;
+      const done = await waitForMission(id, 60_000);
+      if (!done) return 'mission never finished';
+      if (done.status !== 'DONE') return `mission ended ${done.status}`;
+      const ok = done.items.filter((i) => i.status === 'SUCCEEDED').length;
+      if (ok !== 2) return `${ok}/2 items succeeded: ${JSON.stringify(done.items.map((i) => [i.status, i.last_reason]))}`;
+      if (!/2\/2/.test(done.summary ?? '')) return `summary does not say 2/2: ${done.summary}`;
+    },
+  },
+  {
+    name: 'a mission retries a phone that dropped mid-run and still finishes',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'scroll a long page [sim steps=30 delay=200]',
+        device_ids: [phones.free1.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      const running = await waitFor(async () => {
+        const m = await getMission(id);
+        return m?.items?.[0]?.status === 'RUNNING' ? m : null;
+      }, 20_000, 300);
+      if (!running) return 'item never started';
+      await sleep(1000);
+      phones.free1.phone.drop();
+      await sleep(2500);
+      await phones.free1.phone.connect();
+      const done = await waitForMission(id, 120_000);
+      if (!done) return 'mission never finished after the phone came back';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `item ended ${item.status} (${item.last_reason}) after ${item.attempts} attempts`;
+      if (item.attempts < 2) return 'finished without a retry — the drop was not noticed';
+    },
+  },
+  {
+    name: 'a mission does not retry what the agent itself reported as failed',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'open an app that is not installed [sim steps=2 delay=100 fail]',
+        device_ids: [phones.free2.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      const done = await waitForMission(id, 60_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'FAILED') return `item ended ${item.status}`;
+      if (item.attempts !== 1) return `retried a deterministic failure (${item.attempts} attempts)`;
+      if (done.status !== 'DONE') return `mission ended ${done.status}`;
+    },
+  },
+  {
+    name: 'a mission asked for more phones than are ready says so and uses what it has',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'check the time on 20 phones [sim steps=1 delay=50]',
+      });
+      const id = created?.data?.id;
+      if (!id) return `mission not created: ${JSON.stringify(created).slice(0, 200)}`;
+      const done = await waitForMission(id, 150_000);
+      if (!done) return 'mission never finished';
+      const total = done.items.length;
+      if (total === 0 || total > 7) return `planned ${total} items for 7 phones`;
+      const ok = done.items.filter((i) => i.status === 'SUCCEEDED').length;
+      if (ok !== total) return `${ok}/${total} succeeded: ${JSON.stringify(done.items.map((i) => [i.status, i.last_reason]))}`;
+      if (!/only \d+/i.test(done.summary ?? '')) return `summary hides the shortfall: ${done.summary}`;
     },
   },
   {
