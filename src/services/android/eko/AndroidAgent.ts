@@ -3,6 +3,7 @@ import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
+import { pruneStaleScreens } from './contextPruning';
 
 /**
  * Which browser open_url uses.
@@ -714,6 +715,20 @@ export class AndroidAgent extends Agent {
       description: 'An expert AI agent that inspects and interacts with an Android mobile device to accomplish user tasks step-by-step.',
       tools,
     });
+  }
+
+  /**
+   * Runs before every model call. Eko's default trims images and multi-part
+   * results; ours also drops every screen dump but the newest, which is what
+   * kept input around 100k tokens per step on ordinary tasks.
+   */
+  protected async handleMessages(
+    agentContext: AgentContext,
+    messages: Parameters<Agent['handleMessages']>[1],
+    tools: Tool[],
+  ): Promise<void> {
+    await super.handleMessages(agentContext, messages, tools);
+    pruneStaleScreens(messages as unknown as Parameters<typeof pruneStaleScreens>[0]);
   }
 
   protected async buildSystemPrompt(): Promise<string> {
