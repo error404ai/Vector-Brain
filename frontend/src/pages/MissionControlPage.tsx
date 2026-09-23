@@ -154,7 +154,12 @@ export default function MissionControlPage() {
 
   // Oldest first, like a conversation.
   const missions = useMemo(() => [...(data?.data ?? [])].reverse(), [data]);
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), [missions.length]);
+  // Block body on purpose: whatever an effect returns, React later calls as its
+  // cleanup. Recent Chrome returns a Promise from scrollIntoView, and an arrow
+  // that returned it crashed the page with "a is not a function".
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [missions.length]);
 
   const send = async () => {
     const text = request.trim();
