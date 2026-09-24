@@ -11,9 +11,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const [base, email, password] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const policyFlag = (args.find((a) => a.startsWith('--policy=')) || '').split('=')[1];
+const positional = args.filter((a) => !a.startsWith('--'));
+const [base, email, password] = positional;
 if (!base || !email || !password) {
-  console.error("usage: node scripts/chat-eval.mjs <app url> <email> '<password>'");
+  console.error("usage: node scripts/chat-eval.mjs [--policy=v1|v2] <app url> <email> "<password>"
   process.exit(2);
 }
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,7 +42,7 @@ for (const c of cases) {
   const res = await fetch(`${base}/api/android/chat/dry-run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ message: c.message, history: c.history ?? [], pending: c.pending ?? [] }),
+    body: JSON.stringify({ message: c.message, history: c.history ?? [], pending: c.pending ?? [], ...(policyFlag ? { policy: policyFlag } : {}) }),
   }).then((r) => r.json());
   const d = res?.data ?? {};
   const calls = d.calls ?? [];
@@ -57,4 +60,4 @@ for (const c of cases) {
     for (const p of problems) console.log(`      ${p}`);
   }
 }
-console.log(`\n${passed}/${cases.length} passed`);
+console.log(`\n${passed}/${cases.length} passed${policyFlag ? ` (policy ${policyFlag})` : ''}`);

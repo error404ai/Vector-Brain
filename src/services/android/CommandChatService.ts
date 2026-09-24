@@ -12,7 +12,7 @@ import { Service } from 'typedi';
 import { FleetStateService } from './FleetStateService';
 import { MissionService, MissionTargetMissing, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
-import { VectorAgentService, type Brain, type ProposedAction } from './VectorAgentService';
+import { POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
@@ -51,6 +51,8 @@ export interface ChatReply {
   action?: PendingAction;
   /** Tap-to-send answers shown under a question. */
   quick_replies?: string[];
+  /** Further missions started by the same message (different phone sets). */
+  extra_missions?: unknown[];
   /** What a Confirm will do, for the plan card. */
   plan?: import('./VectorAgentService').ProposalPlan;
   /**
@@ -93,11 +95,14 @@ export class CommandChatService {
 
     // Harness only: "[agent:{turns:[...]}]" scripts Vector's agent model.
     let scripted: Brain | null = null;
+    let policy: { v2: boolean; judge?: PolicyJudge } = { v2: POLICY_V2_DEFAULT };
     if (SIMULATION) {
       const marker = /\s*\[agent:(\{.*\})\]\s*$/.exec(text);
       if (marker) {
         try {
-          scripted = VectorAgentService.scriptedBrain(JSON.parse(marker[1]));
+          const script = JSON.parse(marker[1]);
+          scripted = VectorAgentService.scriptedBrain(script);
+          if (script.policy_v2) policy = { v2: true, judge: VectorAgentService.scriptedJudge(script.policy_blocks ?? []) };
         } catch {
           scripted = null;
         }
@@ -108,7 +113,7 @@ export class CommandChatService {
     if (brain) {
       await this.record(userId, 'user', text, undefined, conversation.id);
       try {
-        const reply = await this.runAgent(userId, brain, text, conversation.id);
+        const reply = await this.runAgent(userId, brain, text, conversation.id, policy);
         await this.record(userId, 'assistant', reply.text, reply, conversation.id);
         return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
       } catch (error) {
@@ -169,10 +174,22 @@ export class CommandChatService {
     return { history, lastMissionDevices: context.lastMissionDevices };
   }
 
-  private async runAgent(userId: number, brain: Brain, text: string, conversationId?: number): Promise<ChatReply> {
+  /** The policy check for v2: the scripted one if given, else the real model. */
+  private async policyFor(userId: number, policy: { v2: boolean; judge?: PolicyJudge }) {
+    if (!policy.v2) return { policy: 'v1' as const };
+    return { policy: 'v2' as const, judge: policy.judge ?? (await this.agent.realJudge(userId)) ?? undefined };
+  }
+
+  private async runAgent(
+    userId: number,
+    brain: Brain,
+    text: string,
+    conversationId?: number,
+    policy: { v2: boolean; judge?: PolicyJudge } = { v2: POLICY_V2_DEFAULT },
+  ): Promise<ChatReply> {
     const base = await this.agentContext(userId, conversationId);
     const pending = this.pendingFor(userId);
-    const result = await this.agent.run(brain, text, { userId, ...base, pending });
+    const result = await this.agent.run(brain, text, { userId, ...base, pending, ...(await this.policyFor(userId, policy)) });
 
     if (result.confirmToken) return this.applyToken(userId, result.confirmToken);
     if (result.cancelledPending) for (const p of pending) this.pending.delete(p.token);
@@ -185,7 +202,7 @@ export class CommandChatService {
       const text = result.text.includes(result.proposal.summary) ? result.text : `${result.text}\n\n${result.proposal.summary}.`;
       return { kind: 'confirm', text, confirm_token: token, plan: result.proposal.plan };
     }
-    if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission };
+    if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission, extra_missions: result.extraMissions?.length ? result.extraMissions : undefined };
     return { kind: 'answer', text: result.text };
   }
 
@@ -195,13 +212,17 @@ export class CommandChatService {
     message: string,
     history?: { role: 'user' | 'assistant'; text: string }[],
     pendingOverride?: string[],
+    policyChoice?: 'v1' | 'v2',
   ): Promise<ApiResponse> {
+    let policy: { v2: boolean; judge?: PolicyJudge } = { v2: policyChoice ? policyChoice === 'v2' : POLICY_V2_DEFAULT };
     let text = String(message ?? '').trim();
     let brain: Brain | null = null;
     if (SIMULATION) {
       const marker = /\s*\[agent:(\{.*\})\]\s*$/.exec(text);
       if (marker) {
-        brain = VectorAgentService.scriptedBrain(JSON.parse(marker[1]));
+        const script = JSON.parse(marker[1]);
+        brain = VectorAgentService.scriptedBrain(script);
+        if (script.policy_v2) policy = { v2: true, judge: VectorAgentService.scriptedJudge(script.policy_blocks ?? []) };
         text = text.slice(0, marker.index).trim();
       }
     } else {
@@ -215,10 +236,19 @@ export class CommandChatService {
       lastMissionDevices: base.lastMissionDevices,
       pending: pendingOverride ? pendingOverride.map((summary) => ({ summary })) : this.pendingFor(userId),
       dryRun: true,
+      ...(await this.policyFor(userId, policy)),
     });
     return {
       message: 'Dry run',
-      data: { text: result.text, calls: result.calls, proposal: result.proposal?.summary ?? null, ask: result.ask ?? null },
+      data: {
+        policy: policy.v2 ? 'v2' : 'v1',
+        text: result.text,
+        calls: result.calls,
+        proposal: result.proposal?.summary ?? null,
+        ask: result.ask ?? null,
+        skipped: result.skipped ?? [],
+        planned: result.planned?.map((p) => p.instruction) ?? [],
+      },
     };
   }
 

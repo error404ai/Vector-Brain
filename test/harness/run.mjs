@@ -1412,6 +1412,73 @@ const scenarios = [
     },
   },
   {
+    name: 'policy v2: a mixed request runs the allowed step and skips only the blocked one',
+    async run() {
+      const script = {
+        policy_v2: true,
+        policy_blocks: ['fake review'],
+        turns: [
+          { calls: [
+            { name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } },
+            { name: 'run_mission', args: { instruction: 'post a fake review on trustpilot', phones: 'free1' } },
+          ] },
+          { text: 'Settings khol diya.' },
+        ],
+      };
+      const r = (await api('POST', '/android/chat', { message: `settings kholo aur fake review daalo [agent:${JSON.stringify(script)}]` })).data;
+      if (r?.kind !== 'mission') return `the whole request was dropped: ${r?.kind} ${r?.text}`;
+      if (/fake review/i.test(r.mission.prompt ?? '')) return 'the blocked step reached the phones';
+      const skipLines = (r.text ?? '').split('\n').filter((l) => /^Skipped/.test(l));
+      if (skipLines.length !== 1) return `expected one skip line: ${JSON.stringify(r.text)}`;
+      await waitForMission(r.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'policy v2: tasks for the same phones run as one mission, in order',
+    async run() {
+      const script = {
+        policy_v2: true,
+        turns: [
+          { calls: [
+            { name: 'run_mission', args: { instruction: 'open chrome [sim steps=1 delay=50]', phones: 'free2' } },
+            { name: 'run_mission', args: { instruction: 'search phone deals', phones: 'free2' } },
+          ] },
+          { text: 'Dono kaam chalu.' },
+        ],
+      };
+      const r = (await api('POST', '/android/chat', { message: `chrome kholo phir deals search karo [agent:${JSON.stringify(script)}]` })).data;
+      if (r?.kind !== 'mission') return `kind ${r?.kind}`;
+      if (r.extra_missions?.length) return 'split into several missions';
+      if (!/1\. open chrome[\s\S]*2\. search phone deals/.test(r.mission.prompt ?? '')) return `steps not merged in order: ${r.mission.prompt}`;
+      await waitForMission(r.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'policy v2: if the policy check fails, the step is held back, not run unchecked',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
+      const script = { policy_v2: true, policy_blocks: ['__throw__'], turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings', phones: 'free1' } }] }, { text: 'ok' }] };
+      const r = (await api('POST', '/android/chat', { message: `settings [agent:${JSON.stringify(script)}]` })).data;
+      const [[after]] = await db.query('SELECT COUNT(*) n FROM missions');
+      if (after.n !== before.n) return 'ran a step whose check failed';
+      if (!/safety check/i.test(r?.text ?? '')) return `did not say why: ${r?.text}`;
+    },
+  },
+  {
+    name: 'policy v2 dry-run reports planned and skipped steps without running them',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
+      const script = { policy_v2: true, policy_blocks: ['fake'], turns: [{ calls: [
+        { name: 'run_mission', args: { instruction: 'open youtube', phones: 'free1' } },
+        { name: 'run_mission', args: { instruction: 'sign up with a fake name', phones: 'free1' } },
+      ] }, { text: 'ok' }] };
+      const d = (await api('POST', '/android/chat/dry-run', { message: `x [agent:${JSON.stringify(script)}]` })).data;
+      const [[after]] = await db.query('SELECT COUNT(*) n FROM missions');
+      if (after.n !== before.n) return 'dry run started a mission';
+      if (d?.policy !== 'v2' || d.planned?.[0] !== 'open youtube' || d.skipped?.length !== 1) return `wrong report: ${JSON.stringify(d).slice(0, 200)}`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

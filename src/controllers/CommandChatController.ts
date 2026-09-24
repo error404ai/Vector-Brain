@@ -64,8 +64,8 @@ export class CommandChatController {
   @Post('/dry-run')
   @UseBefore(zodValidationMiddleware(CommandChatDryRunValidation))
   async dryRun(@Body() request: z.infer<typeof CommandChatDryRunValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
-    const body = request as { message: string; history?: { role: 'user' | 'assistant'; text: string }[]; pending?: string[] };
-    return this.commandChatService.dryRun(user.userId, body.message, body.history, body.pending);
+    const body = request as { message: string; history?: { role: 'user' | 'assistant'; text: string }[]; pending?: string[]; policy?: 'v1' | 'v2' };
+    return this.commandChatService.dryRun(user.userId, body.message, body.history, body.pending, body.policy);
   }
 
   @Authorized()

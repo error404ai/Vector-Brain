@@ -21,4 +21,6 @@ export const CommandChatDryRunValidation = z.object({
   history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(30).optional(),
   /** Pretend "waiting for Confirm" items for evals. */
   pending: z.array(z.string().max(300)).max(5).optional(),
+  /** Compare policies: 'v1' model decides, 'v2' backend check. */
+  policy: z.enum(['v1', 'v2']).optional(),
 });

@@ -62,13 +62,25 @@ export interface ProposalPlan {
   setting?: string;
 }
 
+/**
+ * The narrow policy check (policy v2): judges ONE task instruction against the
+ * three blocked categories. The planner never decides acceptability in v2.
+ */
+export type PolicyJudge = (instruction: string) => Promise<{ block: boolean; line?: string }>;
+
 export interface AgentContext {
   userId: number;
   history: { role: 'user' | 'assistant'; text: string }[];
   lastMissionDevices: number[];
   pending: { summary: string; token?: string }[];
   dryRun?: boolean;
+  /** 'v2': model plans, backend (judge) blocks; 'v1': model decides (default). */
+  policy?: 'v1' | 'v2';
+  judge?: PolicyJudge;
 }
+
+/** Whether policy v2 is on by default (env VECTOR_POLICY_V2=1). */
+export const POLICY_V2_DEFAULT = process.env.VECTOR_POLICY_V2 === '1';
 
 export interface AgentResult {
   text: string;
@@ -78,6 +90,12 @@ export interface AgentResult {
   cancelledPending?: boolean;
   /** Set when the user's plain "yes" confirmed a pending proposal. */
   confirmToken?: string;
+  /** Policy v2: further missions when one request ran on different phone sets. */
+  extraMissions?: unknown[];
+  /** Policy v2: steps the policy check removed, each with its one-line reason. */
+  skipped?: { instruction: string; line: string }[];
+  /** Policy v2: tasks accepted this turn, run together once the model is done. */
+  planned?: { instruction: string; deviceIds: number[]; minutes: number }[];
   calls: { name: string; args: Record<string, unknown>; result: string }[];
 }
 
@@ -304,6 +322,12 @@ export class VectorAgentService {
         break;
       }
     }
+    if (ctx.policy === 'v2') await this.runPlanned(ctx, result);
+    if (result.skipped?.length) {
+      // One short line per removed step.
+      const lines = result.skipped.map((s) => `Skipped "${s.instruction.slice(0, 60)}${s.instruction.length > 60 ? '…' : ''}" — ${oneLineRefusal(s.line)}`);
+      result.text = [result.text && !REFUSAL.test(result.text) ? result.text : '', ...lines].filter(Boolean).join('\n');
+    }
     if (!result.text) {
       result.text = result.proposal
         ? 'This needs your confirmation.'
@@ -314,6 +338,81 @@ export class VectorAgentService {
             : 'Done.';
     }
     return result;
+  }
+
+  /**
+   * Policy v2: start what the policy check accepted. Tasks for the same phones
+   * become one mission with numbered steps, so they run in order on each phone.
+   */
+  private async runPlanned(ctx: AgentContext, result: AgentResult): Promise<void> {
+    const groups = new Map<string, { deviceIds: number[]; minutes: number; instructions: string[] }>();
+    for (const step of result.planned ?? []) {
+      const key = `${[...step.deviceIds].sort((a, b) => a - b).join(',')}|${step.minutes}`;
+      const group = groups.get(key) ?? { deviceIds: step.deviceIds, minutes: step.minutes, instructions: [] };
+      group.instructions.push(step.instruction);
+      groups.set(key, group);
+    }
+    const missions: unknown[] = [];
+    for (const group of groups.values()) {
+      const instruction =
+        group.instructions.length === 1 ? group.instructions[0] : `Do these in order:\n${group.instructions.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+      const durationSeconds = group.minutes ? Math.round(group.minutes * 60) : undefined;
+      if (group.deviceIds.length > CONFIRM_PHONES || group.minutes >= CONFIRM_MINUTES) {
+        if (result.proposal) continue; // one Confirm at a time
+        const steps = group.deviceIds.length * (group.minutes ? group.minutes * STEPS_PER_MINUTE : STEPS_PER_SIMPLE_TASK * group.instructions.length);
+        const cost = steps * COST_PER_STEP_USD;
+        const phoneNames = await this.namesFor(ctx.userId, group.deviceIds);
+        result.proposal = {
+          action: { type: 'run_mission', instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds },
+          summary: `Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phones — about ${steps} AI steps, roughly $${cost.toFixed(2)}`,
+          plan: { kind: 'mission', instruction, phones: phoneNames, steps, cost_usd: Math.round(cost * 100) / 100, duration_minutes: group.minutes || undefined },
+        };
+        continue;
+      }
+      if (ctx.dryRun) continue;
+      const created = await this.missionService.create(ctx.userId, { request: instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds });
+      missions.push(created.data);
+    }
+    if (missions.length) {
+      result.mission = missions[0];
+      result.extraMissions = missions.slice(1);
+    }
+  }
+
+  /** The real policy check: the chat model with a narrow rubric, no tools. */
+  async realJudge(userId: number): Promise<PolicyJudge | null> {
+    const config = await this.aiConfigService.resolveChatConfig(userId);
+    if (!config) return null;
+    const model = this.aiConfigService.createChatModel({ provider: config.provider, model: config.model, api_key: config.api_key, base_url: config.base_url, temperature: 0 });
+    return async (instruction) => {
+      const response = await model.invoke([
+        new SystemMessage(
+          [
+            'You check ONE task that an automation agent will perform on the user\'s own Android phone. Block it ONLY if it clearly falls in one of these:',
+            '1. Submitting made-up identities or false personal details to a real third party (fake sign-ups, orders, sell/buy requests, applications as invented people).',
+            '2. Writing or posting fake reviews or ratings, or faking activity to mislead a review platform.',
+            '3. Getting into accounts or devices the user does not own or control.',
+            'Everything else is allowed — browsing any site, browsing history, search, apps, forms with the user\'s own or test details, messaging from the user\'s own accounts, testing. If it is not clearly one of the three, allow it.',
+            'Reply with ONLY minified JSON: {"block":true|false,"line":"<if blocked: one short sentence in the task\'s language saying what you will not do>"}',
+          ].join('\n'),
+        ),
+        new HumanMessage(instruction),
+      ]);
+      const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('policy check returned no verdict');
+      const parsed = JSON.parse(match[0]) as { block?: unknown; line?: unknown };
+      return { block: parsed.block === true, line: typeof parsed.line === 'string' ? parsed.line : undefined };
+    };
+  }
+
+  /** A scripted policy check for the harness: blocks instructions containing any given text. */
+  static scriptedJudge(blocks: string[]): PolicyJudge {
+    return async (instruction) => {
+      if (blocks.includes('__throw__')) throw new Error('scripted policy check failure');
+      const hit = blocks.find((b) => instruction.toLowerCase().includes(b.toLowerCase()));
+      return hit ? { block: true, line: `Won't do "${hit}".` } : { block: false };
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -335,6 +434,18 @@ export class VectorAgentService {
             return JSON.stringify({ error: 'No ready phones matched. Ask the user which phones, with ask_user.' });
           }
           const minutes = Number(args.duration_minutes) > 0 ? Number(args.duration_minutes) : 0;
+          if (ctx.policy === 'v2') {
+            // The backend, not the planner, applies the blocked categories —
+            // per task, so a mixed request loses only the blocked part.
+            const verdict = ctx.judge ? await ctx.judge(instruction).catch(() => null) : null;
+            if (!verdict || verdict.block) {
+              const line = verdict?.line?.trim() || "Couldn't run the safety check for this step — try again.";
+              (result.skipped ??= []).push({ instruction, line });
+              return JSON.stringify({ status: 'skipped_by_policy', note: 'Removed by the policy check; do not repeat or explain it.' });
+            }
+            (result.planned ??= []).push({ instruction, deviceIds, minutes });
+            return JSON.stringify({ status: 'accepted', phones: deviceIds.length, note: 'Runs when you finish replying.' });
+          }
           const durationSeconds = minutes ? Math.round(minutes * 60) : undefined;
           if (deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
             const steps = deviceIds.length * (minutes ? minutes * STEPS_PER_MINUTE : STEPS_PER_SIMPLE_TASK);
@@ -539,11 +650,19 @@ export class VectorAgentService {
       '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission.',
       '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
       'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',
-      'Decline ONLY these, judged on what the current request itself asks: (1) submitting made-up identities or false details to a real third party (fake sign-ups, orders, sell/buy requests, applications as invented people); (2) writing or posting fake reviews/ratings, or faking activity to mislead a review platform; (3) getting into accounts or devices the user does not own or control. An ordinary request is not blocked because of something said earlier in the chat.',
-      'When you decline: ONE short sentence in the user\'s language — no list, no explanation of the law, no emojis — optionally ending with one alternative you can do. Example: "Nakli naam se sell requests nahi daal sakta — apni asli details ke saath kar doon?"',
       '- Ask only when you genuinely cannot tell; otherwise act.',
       '- For results of a task (emails found, what a phone reported) use mission_results; for what was done on one phone use phone_history. Answer from what they return, as a short list or table.',
       '- If the user plainly says yes while something waits for Confirm, call confirm_pending.',
+      ...(ctx.policy === 'v2'
+        ? [
+            'Never refuse and never judge whether a request is acceptable — a separate policy check reviews every task before it runs and removes only what is not allowed. Turn every part of the request into tool calls.',
+            'When a request holds several tasks, call run_mission once per task, in the order they should happen, with the same phones for tasks meant for the same phones. Do not merge different tasks into one instruction.',
+            'If a tool result says a step was skipped by the policy check, do not repeat or explain it; just report what you started.',
+          ]
+        : [
+            'Decline ONLY these, judged on what the current request itself asks: (1) submitting made-up identities or false details to a real third party (fake sign-ups, orders, sell/buy requests, applications as invented people); (2) writing or posting fake reviews/ratings, or faking activity to mislead a review platform; (3) getting into accounts or devices the user does not own or control. An ordinary request is not blocked because of something said earlier in the chat.',
+            'When you decline: ONE short sentence in the user\'s language — no list, no explanation of the law, no emojis — optionally ending with one alternative you can do. Example: "Nakli naam se sell requests nahi daal sakta — apni asli details ke saath kar doon?"',
+          ]),
       `Last task's phones: ${lastPhones.length ? lastPhones.join(', ') : 'none yet'}.`,
       `Waiting for Confirm: ${ctx.pending.length ? ctx.pending.map((p) => p.summary).join(' | ') : 'nothing'}.`,
       `Fleet now: ${JSON.stringify(snapshot)}`,
