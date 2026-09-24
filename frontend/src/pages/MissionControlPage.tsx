@@ -270,7 +270,7 @@ function PhoneZoom({ target, feed, onClose }: { target: PhoneZoomTarget | null; 
       maxWidth={false}
       slotProps={{
         paper: { sx: { bgcolor: 'transparent', boxShadow: 'none', m: 2, overflow: 'visible' } },
-        backdrop: { sx: { bgcolor: 'rgba(15,23,42,0.74)', backdropFilter: 'blur(5px)', animation: `${zoomBackdrop} 240ms ${ease}`, ...reducedMotion } },
+        backdrop: { sx: { bgcolor: 'rgba(9,13,24,0.92)', backdropFilter: 'blur(10px)', animation: `${zoomBackdrop} 240ms ${ease}`, ...reducedMotion } },
       }}
     >
       {target && (
