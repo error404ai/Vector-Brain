@@ -32,6 +32,10 @@ export class AgentTask {
   @Column({ type: 'boolean', default: false })
   success: boolean;
 
+  /** The phone's last screen when the task finished (base64 JPEG); one per task. */
+  @Column({ type: 'mediumtext', nullable: true })
+  final_screenshot: string | null;
+
   /**
    * Lifecycle state, stored so it survives a restart. `success` is kept for old
    * readers, but it defaults to false, which made running, stuck and killed runs

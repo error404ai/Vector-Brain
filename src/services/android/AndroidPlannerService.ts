@@ -1437,6 +1437,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
       agentTask.reason_code = terminal.reason;
       agentTask.finished_at = new Date();
       agentTask.lease_until = null;
+      // Keep just the final frame (one per task) so the card can show each
+      // phone's last screen after the task ends, even after a reload.
+      if (lastScreenshot) agentTask.final_screenshot = lastScreenshot;
       if (!this.shuttingDown) await this.agentTaskRepo.save(agentTask);
 
       if (!wasCancelled) {

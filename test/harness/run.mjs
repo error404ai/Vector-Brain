@@ -245,10 +245,8 @@ const scenarios = [
       // The planner stores the final screenshot in production; here we insert one
       // deterministically, then check the endpoint serves the latest for this item.
       const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-      await db.query(
-        "INSERT INTO android_task_logs (agent_task_id, device_id, step_index, action_type, screenshot_base64, status) VALUES (?, ?, 99, 'screenshot', ?, 'SUCCESS')",
-        [item.agent_task_id, phones.free1.dbId, png],
-      );
+      // The planner stores one final screenshot per task; set it deterministically here.
+      await db.query('UPDATE agent_tasks SET final_screenshot = ? WHERE id = ?', [png, item.agent_task_id]);
       const res = await api('GET', `/android/missions/items/${item.id}/final-screen`);
       if (res?.data?.base64 !== png) return `endpoint returned ${String(res?.data?.base64).slice(0, 24)}…, expected the stored screenshot`;
       // A bogus item id is rejected, not served.

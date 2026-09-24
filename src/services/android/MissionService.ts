@@ -2,14 +2,13 @@ import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { Mission, MissionTargetMode } from '@/entities/Mission';
 import { MissionItem } from '@/entities/MissionItem';
-import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import { QueuedTask } from '@/entities/QueuedTask';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiService, MissionPlan } from '@/services/AiService';
 import { ApiResponse } from '@/types/ApiResponse';
-import { In, Not, IsNull } from 'typeorm';
+import { In } from 'typeorm';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AndroidPlannerService } from './AndroidPlannerService';
@@ -120,7 +119,6 @@ export class MissionService {
   private taskRepo = AppDataSource.getRepository(AgentTask);
   private queueRepo = AppDataSource.getRepository(QueuedTask);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
-  private logRepo = AppDataSource.getRepository(AndroidTaskLog);
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
@@ -602,12 +600,8 @@ export class MissionService {
     const mission = await this.missionRepo.findOne({ where: { id: item.mission_id, user_id: userId } });
     if (!mission) throw new AppError('Not found', 404);
     if (!item.agent_task_id) return { message: 'Final screen', data: { base64: null } };
-    const log = await this.logRepo.findOne({
-      where: { agent_task_id: item.agent_task_id, device_id: item.device_id, screenshot_base64: Not(IsNull()) },
-      order: { id: 'DESC' },
-      select: ['id', 'screenshot_base64'],
-    });
-    return { message: 'Final screen', data: { base64: log?.screenshot_base64 ?? null } };
+    const task = await this.taskRepo.findOne({ where: { id: item.agent_task_id }, select: ['id', 'final_screenshot'] });
+    return { message: 'Final screen', data: { base64: task?.final_screenshot ?? null } };
   }
 
   private async describe(id: number, userId: number) {

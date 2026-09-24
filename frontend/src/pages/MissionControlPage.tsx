@@ -47,7 +47,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
 
 // -----------------------------------------------------------------------------
@@ -452,12 +452,21 @@ function useInView<T extends HTMLElement>() {
   return { ref, inView };
 }
 
-/** One target phone's final screen: the live last frame if we have it, else lazy-fetched. */
-function FinalScreenThumb({ item, feed, onOpen }: { item: MissionItem; feed: LiveFeed; onOpen: (src: string, name: string) => void }) {
+/** One target phone's final screen: live last frame if we have it, else lazy-fetched. Renders nothing when there is no screen. */
+function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionItem; feed: LiveFeed; onOpen: (src: string, name: string) => void; onResolved: (id: number, hasImage: boolean) => void }) {
   const liveFrame = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
   const { ref, inView } = useInView<HTMLDivElement>();
-  const { data, isFetching } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !inView });
+  const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !inView });
   const src = liveFrame ? frameSrc(liveFrame.data) : data?.data?.base64 ? frameSrc(data.data.base64) : null;
+  const settled = !!liveFrame || isSuccess;
+
+  useEffect(() => {
+    if (settled) onResolved(item.id, !!src);
+  }, [settled, src, item.id, onResolved]);
+
+  // Nothing to show for this phone: stay out of the way rather than a black box.
+  if (settled && !src) return <Box ref={ref} sx={{ display: 'none' }} />;
+
   return (
     <Box ref={ref} sx={{ width: 82, flexShrink: 0 }}>
       <Box
@@ -466,13 +475,11 @@ function FinalScreenThumb({ item, feed, onOpen }: { item: MissionItem; feed: Liv
         onClick={src ? () => onOpen(src, item.device_name) : undefined}
         sx={{ p: 0, border: 'none', bgcolor: 'transparent', cursor: src ? 'zoom-in' : 'default', width: '100%', display: 'block' }}
       >
-        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'divider', bgcolor: 'action.hover', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {src ? (
             <Box component="img" src={src} alt={`${item.device_name} final screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
           ) : (
-            <Typography variant="caption" sx={{ color: 'grey.600', fontSize: 10, textAlign: 'center', px: 0.5 }}>
-              {isFetching ? '…' : 'no screen'}
-            </Typography>
+            <CircularProgress size={16} thickness={5} />
           )}
         </Box>
       </Box>
@@ -483,19 +490,26 @@ function FinalScreenThumb({ item, feed, onOpen }: { item: MissionItem; feed: Liv
   );
 }
 
-/** The row of final screens for a finished mission — only the phones the task ran on. */
+/** The row of final screens for a finished mission — only phones that actually have a last screen. */
 function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
   const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const [withImage, setWithImage] = useState<Record<number, boolean>>({});
+  const onResolved = useCallback((id: number, hasImage: boolean) => {
+    setWithImage((prev) => (prev[id] === hasImage ? prev : { ...prev, [id]: hasImage }));
+  }, []);
   const ran = items.filter((i) => i.agent_task_id);
   if (ran.length === 0) return null;
+  const anyShown = ran.some((i) => withImage[i.id]);
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-        Last screen on each phone
-      </Typography>
-      <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 0.5 }}>
+      {anyShown && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+          Last screen on each phone
+        </Typography>
+      )}
+      <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: anyShown ? 0.5 : 0 }}>
         {ran.map((item) => (
-          <FinalScreenThumb key={item.id} item={item} feed={feed} onOpen={(src, name) => setZoom({ src, name })} />
+          <FinalScreenThumb key={item.id} item={item} feed={feed} onOpen={(src, name) => setZoom({ src, name })} onResolved={onResolved} />
         ))}
       </Box>
       <Dialog open={!!zoom} onClose={() => setZoom(null)} maxWidth="xs">
