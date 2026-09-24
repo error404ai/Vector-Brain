@@ -82,8 +82,13 @@ export interface AgentContext {
   judge?: PolicyJudge;
 }
 
-/** Whether policy v2 is on by default (env VECTOR_POLICY_V2=1). */
-export const POLICY_V2_DEFAULT = process.env.VECTOR_POLICY_V2 === '1';
+/**
+ * Policy v2 is on by default: the planner never refuses, and a narrow backend
+ * judge removes only the three disallowed kinds of task (fake identities to
+ * real third parties, fake reviews/activity, breaking into accounts the user
+ * doesn't own). Set VECTOR_POLICY_V2=0 to fall back to the older v1 path.
+ */
+export const POLICY_V2_DEFAULT = process.env.VECTOR_POLICY_V2 !== '0';
 
 export interface AgentResult {
   text: string;
@@ -471,12 +476,18 @@ export class VectorAgentService {
           const minutes = Number(args.duration_minutes) > 0 ? Number(args.duration_minutes) : 0;
           if (ctx.policy === 'v2') {
             // The backend, not the planner, applies the blocked categories —
-            // per task, so a mixed request loses only the blocked part.
-            const verdict = ctx.judge ? await ctx.judge(instruction).catch(() => null) : null;
-            if (!verdict || verdict.block) {
-              const line = verdict?.line?.trim() || "Couldn't run the safety check for this step — try again.";
-              (result.skipped ??= []).push({ instruction, line });
-              return JSON.stringify({ status: 'skipped_by_policy', note: 'Removed by the policy check; do not repeat or explain it.' });
+            // per task, so a mixed request loses only the blocked part. When a
+            // judge exists (a model is configured) its verdict is authoritative
+            // and a failed check holds the task back. With no judge at all there
+            // is nothing to check against, so the task runs rather than being
+            // wrongly refused — the guardrail is off, not inverted into a block.
+            if (ctx.judge) {
+              const verdict = await ctx.judge(instruction).catch(() => null);
+              if (!verdict || verdict.block) {
+                const line = verdict?.line?.trim() || "Couldn't run the safety check for this step — try again.";
+                (result.skipped ??= []).push({ instruction, line });
+                return JSON.stringify({ status: 'skipped_by_policy', note: 'Removed by the policy check; do not repeat or explain it.' });
+              }
             }
             (result.planned ??= []).push({ instruction, deviceIds, minutes });
             return JSON.stringify({ status: 'accepted', phones: deviceIds.length, note: 'Runs when you finish replying.' });

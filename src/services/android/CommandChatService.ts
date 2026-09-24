@@ -104,7 +104,11 @@ export class CommandChatService {
         try {
           const script = JSON.parse(marker[1]);
           scripted = VectorAgentService.scriptedBrain(script);
-          if (script.policy_v2) policy = { v2: true, judge: VectorAgentService.scriptedJudge(script.policy_blocks ?? []) };
+          // A scripted run opts into v2 explicitly and brings its own judge;
+          // otherwise it stays on v1, since the harness has no real model to
+          // build a judge from. The production default (POLICY_V2_DEFAULT) is
+          // for real traffic, not these deterministic scripts.
+          policy = script.policy_v2 ? { v2: true, judge: VectorAgentService.scriptedJudge(script.policy_blocks ?? []) } : { v2: false };
         } catch {
           scripted = null;
         }
