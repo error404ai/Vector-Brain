@@ -593,11 +593,121 @@ function LiveMissionCard({ initial, feed, onRerun, showLive = true }: { initial:
 // Chat
 // -----------------------------------------------------------------------------
 
+interface RotationEvent {
+  ok: boolean;
+  laneName: string;
+  oldIp: string | null;
+  newIp: string | null;
+  status: string | null;
+  deviceName: string | null;
+}
+
 type ChatTurn =
   | { id: string; role: 'user'; text: string }
-  | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean };
+  | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean }
+  | { id: string; role: 'rotation'; event: RotationEvent };
 
 const bubbleIn = { animation: `${riseIn} 280ms ${ease}`, ...reducedMotion };
+
+/**
+ * Listens on its own socket for proxy rotations and hands each one to the
+ * chat as it happens: which lane changed IP, from what to what, or why it
+ * failed. Kept apart from the live-frame feed so neither disturbs the other.
+ */
+function useRotationEvents(onRotation: (event: RotationEvent) => void) {
+  const cbRef = useRef(onRotation);
+  useEffect(() => {
+    cbRef.current = onRotation;
+  }, [onRotation]);
+  useEffect(() => {
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const connect = () => {
+      const token = authManager.getAccessToken();
+      if (!token) {
+        retry = setTimeout(connect, 2000);
+        return;
+      }
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`);
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.event !== 'proxy:rotated') return;
+          const p = msg.payload ?? {};
+          cbRef.current({
+            ok: Boolean(p.ok),
+            laneName: p.proxyName ?? 'Proxy',
+            oldIp: p.oldIp ?? null,
+            newIp: p.newIp ?? null,
+            status: p.status ?? null,
+            deviceName: p.deviceName ?? null,
+          });
+        } catch {
+          /* not ours */
+        }
+      };
+      socket.onclose = () => {
+        if (!disposed) retry = setTimeout(connect, 2000);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (retry) clearTimeout(retry);
+      socket?.close();
+    };
+  }, []);
+}
+
+/** A rotation as a slim centered chip in the conversation. */
+function RotationRow({ event }: { event: RotationEvent }) {
+  const after = event.deviceName ? ` · after ${event.deviceName}` : '';
+  return (
+    <Box sx={{ alignSelf: 'center', maxWidth: '90%', animation: `${riseIn} 260ms ${ease}`, ...reducedMotion }}>
+      <Box
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.5,
+          py: 0.75,
+          borderRadius: 99,
+          border: '1px solid',
+          borderColor: event.ok ? 'divider' : 'error.light',
+          bgcolor: event.ok ? 'action.hover' : 'rgba(220,38,38,0.06)',
+        }}
+      >
+        <Box component="span" sx={{ fontSize: 14 }} aria-hidden>
+          {event.ok ? '🔄' : '⚠️'}
+        </Box>
+        {event.ok ? (
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            <b>{event.laneName}</b> lane —{' '}
+            {event.newIp ? (
+              event.oldIp ? (
+                <>
+                  IP changed <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary' }}>{event.oldIp}</Box> →{' '}
+                  <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary' }}>{event.newIp}</Box>
+                </>
+              ) : (
+                <>new IP <Box component="span" sx={{ fontFamily: 'monospace', color: 'text.primary' }}>{event.newIp}</Box></>
+              )
+            ) : (
+              'rotated'
+            )}
+            {after}
+          </Typography>
+        ) : (
+          <Typography variant="caption" sx={{ color: 'error.main' }}>
+            <b>{event.laneName}</b> lane didn't rotate — {event.status ?? 'unknown error'}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
 
 function VectorAvatar() {
   return (
@@ -859,6 +969,17 @@ export default function MissionControlPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
+  // Stable per-page ids for new turns (history turns use their database id).
+  const turnSeq = useRef(0);
+  const nextId = (prefix: string) => `${prefix}${(turnSeq.current += 1)}`;
+  useRotationEvents((event) =>
+    setTurns((prev) => {
+      // Collapse duplicate bursts: same lane + IP within a few seconds.
+      const last = prev[prev.length - 1];
+      if (last?.role === 'rotation' && last.event.laneName === event.laneName && last.event.newIp === event.newIp) return prev;
+      return [...prev, { id: nextId('r'), role: 'rotation', event }];
+    }),
+  );
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
   const [confirmCommand] = useConfirmCommandMutation();
@@ -887,9 +1008,6 @@ export default function MissionControlPage() {
   }, [turns.length, sending]);
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
-  // Stable per-page ids for new turns (history turns use their database id).
-  const turnSeq = useRef(0);
-  const nextId = (prefix: string) => `${prefix}${(turnSeq.current += 1)}`;
 
   const send = async (override?: string) => {
     const text = (override ?? input).trim();
@@ -1000,7 +1118,9 @@ export default function MissionControlPage() {
           </Box>
         )}
         {turns.map((turn, index) =>
-          turn.role === 'user' ? (
+          turn.role === 'rotation' ? (
+            <RotationRow key={turn.id} event={turn.event} />
+          ) : turn.role === 'user' ? (
             <Box
               key={turn.id}
               sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 3, borderBottomRightRadius: 6, ...bubbleIn }}

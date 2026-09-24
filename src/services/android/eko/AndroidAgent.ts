@@ -310,7 +310,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'type_text',
         description:
-          'Type text into a focused input field. Always tap the input field first. IMPORTANT: this only sets the text — it CANNOT submit the field, and there is no way to press Enter or the keyboard search key on this device. Adding "\\n" does nothing. To run a search, do not fight the search box: use open_url with the site\'s search results URL instead (e.g. https://www.youtube.com/results?search_query=... or https://www.google.com/search?q=...).',
+          'Type text into a focused input field. Always tap the input field first. This only puts the text in the field; it does not submit it. To submit (search, send, go), call press_key with ENTER next — on Android 11+ that fires the keyboard\'s own Search/Go/Done action. If press_key is refused (older Android or the field ignores it), tap the Search, Go, Send or Done button on screen. For a web or YouTube search, opening the results URL with open_url is a quicker shortcut (e.g. https://www.google.com/search?q=... or https://www.youtube.com/results?search_query=...).',
         parameters: {
           type: 'object',
           properties: {

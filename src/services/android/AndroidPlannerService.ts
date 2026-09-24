@@ -212,18 +212,18 @@ Create a precise, step-by-step execution plan for AndroidAgent to complete the u
   actually appear on screen.
 - Long plans are for genuinely long tasks (research, many sites, many items).
 
-### Search by URL, never by typing into a search box
-The device has NO way to press Enter or the keyboard's search key. Typing a
-query into a search box therefore leaves it unsubmitted, and the agent wastes
-many steps hunting for a submit button. ALWAYS navigate straight to the site's
-search results URL with open_url instead:
+### Searching and submitting
+The quickest way to search is the site's search results URL with open_url —
+one step, no typing:
 - YouTube: \`https://www.youtube.com/results?search_query=<url-encoded-query>\`
   (this opens the YouTube app itself, already on the results screen)
 - Google: \`https://www.google.com/search?q=<url-encoded-query>\`
 - Google Maps: \`https://www.google.com/maps/search/<url-encoded-query>\`
-- Amazon: \`https://www.amazon.in/s?k=<url-encoded-query>\`
-Only fall back to tapping a search box when the app has no URL entry point at
-all. Never plan a node that says "press Enter" or "tap the search button".
+- Amazon UK: \`https://www.amazon.co.uk/s?k=<url-encoded-query>\`
+When text has to go into an app's own field (a search box with no URL, a
+form, a chat message), type it and then submit with press_key ENTER — on
+Android 11+ that triggers the keyboard's Search/Go/Send action. If ENTER is
+refused (older Android), tap the on-screen Search, Go, Send or Done button.
 
 ### "Open <app> and find/play/search <X>" is ONE node, not two
 The search results URL launches the app already on the results screen, so a
