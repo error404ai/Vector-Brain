@@ -1353,6 +1353,72 @@ function ConversationSidebar({
   );
 }
 
+/**
+ * A soft, slowly drifting aurora behind the whole page: four blurred colour
+ * blobs on a canvas, scaled up and CSS-blurred so it reads as ambient light,
+ * not shapes. Sits under everything, ignores the pointer, and holds still for
+ * anyone who asks their OS for reduced motion.
+ */
+function AuroraBackground() {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    const parent = cv?.parentElement;
+    const ctx = cv?.getContext('2d');
+    if (!cv || !parent || !ctx) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const DPR = Math.min(2, window.devicePixelRatio || 1);
+    let W = 0;
+    let H = 0;
+    let raf = 0;
+    const blobs = [
+      { x: 0.12, y: 0.16, r: 0.42, c: '#93c5fd', sx: 0.00006, sy: 0.00008, p: 0 },
+      { x: 0.86, y: 0.14, r: 0.4, c: '#a5f3ec', sx: 0.00008, sy: 0.00005, p: 2 },
+      { x: 0.72, y: 0.86, r: 0.46, c: '#c7b8f5', sx: 0.00005, sy: 0.00007, p: 4 },
+      { x: 0.24, y: 0.84, r: 0.4, c: '#bae6fd', sx: 0.00007, sy: 0.00006, p: 1 },
+    ];
+    const size = () => {
+      W = cv.width = Math.max(1, Math.floor(parent.clientWidth * DPR));
+      H = cv.height = Math.max(1, Math.floor(parent.clientHeight * DPR));
+    };
+    const draw = (t: number) => {
+      ctx.clearRect(0, 0, W, H);
+      for (const b of blobs) {
+        const x = (b.x + Math.sin(t * b.sx + b.p) * 0.05) * W;
+        const y = (b.y + Math.cos(t * b.sy + b.p) * 0.05) * H;
+        const r = b.r * Math.max(W, H);
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, b.c);
+        g.addColorStop(1, 'transparent');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (!reduce) raf = requestAnimationFrame(draw);
+    };
+    size();
+    draw(0);
+    const ro = new ResizeObserver(() => {
+      size();
+      if (reduce) draw(0);
+    });
+    ro.observe(parent);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+  return (
+    <Box
+      component="canvas"
+      ref={ref}
+      aria-hidden
+      sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 0, opacity: 0.5, filter: 'blur(50px) saturate(1.1)', pointerEvents: 'none' }}
+    />
+  );
+}
+
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -1534,7 +1600,8 @@ export default function MissionControlPage() {
   };
 
   return (
-    <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0 }}>
+    <Box sx={{ position: 'relative', display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0, overflow: 'hidden' }}>
+    <AuroraBackground />
     {isMobile ? (
       <Drawer
         open={sidebarOpen}
@@ -1561,7 +1628,7 @@ export default function MissionControlPage() {
         onDelete={removeConversation}
       />
     )}
-    <Box sx={{ flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', width: '100%', px: { xs: 1.5, md: 3 }, py: { xs: 1.5, md: 3 }, display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ position: 'relative', zIndex: 1, flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', width: '100%', px: { xs: 1.5, md: 3 }, py: { xs: 1.5, md: 3 }, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
         <IconButton size="small" aria-label={sidebarOpen ? 'Hide chats' : 'Show chats'} onClick={() => setSidebarOpen((v) => !v)}>
           <MenuIcon />
