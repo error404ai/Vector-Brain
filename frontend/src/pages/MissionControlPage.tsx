@@ -38,7 +38,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, FormControlLabel, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, FormControlLabel, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import toast from 'react-hot-toast';
 
@@ -63,11 +63,7 @@ interface LiveFeed {
   rounds: Record<number, { round: number; endsAt: number }>;
   /** Bumped when the server says a mission changed, so its card refetches. */
   missionPush: Record<number, number>;
-  /** Newest-first log of what phones just did, for the side timeline. */
-  timeline: { at: number; deviceId: number; text: string; key: string }[];
 }
-
-const TIMELINE_KEPT = 40;
 
 const MAX_STEPS_KEPT = 40;
 
@@ -77,7 +73,7 @@ function describeAction(action: unknown): string {
 }
 
 function useLiveFeed(): LiveFeed {
-  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {}, timeline: [] });
+  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -121,13 +117,9 @@ function useLiveFeed(): LiveFeed {
               action: describeAction(p.action),
               at: Date.now(),
             };
-            const deviceId = Number(p.deviceId);
             setFeed((prev) => ({
               ...prev,
               steps: { ...prev.steps, [id]: [...(prev.steps[id] ?? []), step].slice(-MAX_STEPS_KEPT) },
-              timeline: Number.isFinite(deviceId)
-                ? [{ at: step.at, deviceId, text: step.thought || step.action, key: `${id}-${step.index}-${step.at}` }, ...prev.timeline].slice(0, TIMELINE_KEPT)
-                : prev.timeline,
             }));
             break;
           }
@@ -861,90 +853,6 @@ function RotationSwitch() {
   );
 }
 
-const PANEL_PAGE = 4;
-const PANEL_ROTATE_MS = 5000;
-
-/**
- * Wide screens only: the phones that are working right now (four screens at
- * a time, cycling) and a running log of what they just did.
- */
-function LivePanel({ feed, devices }: { feed: LiveFeed; devices: { id: number; device_id: string; name: string; state: string }[] }) {
-  const running = devices.filter((d) => d.state === 'running');
-  const [page, setPage] = useState(0);
-  useEffect(() => {
-    if (running.length <= PANEL_PAGE) return;
-    const timer = setInterval(() => setPage((p) => p + 1), PANEL_ROTATE_MS);
-    return () => clearInterval(timer);
-  }, [running.length]);
-  const pages = Math.max(1, Math.ceil(running.length / PANEL_PAGE));
-  const shown = running.slice((page % pages) * PANEL_PAGE, (page % pages) * PANEL_PAGE + PANEL_PAGE);
-  const nameOf = new Map(devices.map((d) => [d.id, d.name]));
-
-  return (
-    <Box sx={{ width: 360, flexShrink: 0, borderLeft: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <Box sx={{ px: 2.5, pt: 3, pb: 1.5, display: 'flex', alignItems: 'baseline', gap: 1 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-          Live phones
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {running.length ? `${running.length} working${pages > 1 ? ` · ${(page % pages) + 1}/${pages}` : ''}` : 'none working'}
-        </Typography>
-      </Box>
-      <Box sx={{ px: 2.5, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.5 }}>
-        {shown.map((d) => {
-          const frame = feed.frames[d.device_id];
-          return (
-            <Box key={d.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, animation: `${riseIn} 260ms ${ease}`, ...reducedMotion }}>
-              <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2.5, border: '5px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden' }}>
-                {frame && (
-                  <Box
-                    key={frame.at}
-                    component="img"
-                    src={frameSrc(frame.data)}
-                    alt={`${d.name} screen`}
-                    sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }}
-                  />
-                )}
-              </Box>
-              <Typography variant="caption" sx={{ fontWeight: 600 }} noWrap>
-                {d.name}
-              </Typography>
-            </Box>
-          );
-        })}
-        {!running.length && (
-          <Typography variant="body2" color="text.secondary" sx={{ gridColumn: '1 / -1' }}>
-            Screens show up here while a task runs.
-          </Typography>
-        )}
-      </Box>
-
-      <Box sx={{ px: 2.5, pt: 3, pb: 1 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-          Timeline
-        </Typography>
-      </Box>
-      <Box sx={{ flex: 1, overflowY: 'auto', px: 2.5, pb: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {feed.timeline.map((entry) => (
-          <Box key={entry.key} sx={{ display: 'grid', gridTemplateColumns: '40px 1fr', gap: 1, animation: `${slideStep} 220ms ${ease}`, ...reducedMotion }}>
-            <Typography variant="caption" color="text.disabled">
-              {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-            </Typography>
-            <Typography variant="caption">
-              <b>{nameOf.get(entry.deviceId) ?? 'Phone'}</b> — {entry.text}
-            </Typography>
-          </Box>
-        ))}
-        {!feed.timeline.length && (
-          <Typography variant="body2" color="text.secondary">
-            Each step a phone takes appears here.
-          </Typography>
-        )}
-      </Box>
-    </Box>
-  );
-}
-
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -957,9 +865,7 @@ export default function MissionControlPage() {
   const [rerunFromChat, { isLoading: rerunning }] = useRerunFromChatMutation();
 
   // Names and tags for @ / # suggestions in the input.
-  // Wide screens get the live side panel; narrower ones keep screens in the card.
-  const wide = useMediaQuery('(min-width:1600px)');
-  const { data: fleetData } = useGetFleetStateQuery(undefined, { pollingInterval: wide ? 5000 : 0 });
+  const { data: fleetData } = useGetFleetStateQuery();
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
   const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
@@ -1112,7 +1018,6 @@ export default function MissionControlPage() {
               onRerun={onRerun}
               onQuickReply={(text) => void send(text)}
               isLatest={index === turns.length - 1 && !sending}
-              showLive={!wide}
             />
           ),
         )}
@@ -1171,7 +1076,6 @@ export default function MissionControlPage() {
         </Box>
       </Paper>
     </Box>
-    {wide && <LivePanel feed={feed} devices={(fleetData?.data?.devices ?? []) as { id: number; device_id: string; name: string; state: string }[]} />}
     </Box>
   );
 }
