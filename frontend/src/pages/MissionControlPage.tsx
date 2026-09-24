@@ -30,6 +30,8 @@ import {
   shimmer,
   slideStep,
   typingDot,
+  zoomBackdrop,
+  zoomBounce,
 } from '@/components/mission/motion';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ErrorRoundedIcon from '@mui/icons-material/ErrorRounded';
@@ -47,7 +49,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, useCallback} from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
 
 // -----------------------------------------------------------------------------
@@ -228,6 +230,87 @@ function StatusChip({ item }: { item: MissionItem }) {
   );
 }
 
+/** What the zoom lightbox shows. `hwId` keeps it live; `src` is a still fallback. */
+type PhoneZoomTarget = { name: string; hwId?: string; src?: string };
+
+/**
+ * Fires on a double-click (desktop) or a quick double-tap (touch), without
+ * hijacking single taps. Returns props to spread onto the target element.
+ */
+function useDoubleTap(onDouble: () => void) {
+  const last = useRef(0);
+  return {
+    onDoubleClick: onDouble,
+    onTouchEnd: (e: TouchEvent) => {
+      const now = Date.now();
+      if (now - last.current < 320) {
+        e.preventDefault();
+        last.current = 0;
+        onDouble();
+      } else {
+        last.current = now;
+      }
+    },
+  };
+}
+
+/**
+ * The phone zoom: taps open a big device that "picks up" off its thumbnail with
+ * a bounce. When a live hardware id is given, the screen keeps updating from the
+ * feed while zoomed; otherwise it shows the still we opened with.
+ */
+function PhoneZoom({ target, feed, onClose }: { target: PhoneZoomTarget | null; feed: LiveFeed; onClose: () => void }) {
+  const liveFrame = target?.hwId ? feed.frames[target.hwId] : undefined;
+  const src = liveFrame ? frameSrc(liveFrame.data) : target?.src;
+  return (
+    <Dialog
+      open={!!target}
+      onClose={onClose}
+      maxWidth={false}
+      slotProps={{
+        paper: { sx: { bgcolor: 'transparent', boxShadow: 'none', m: 2, overflow: 'visible' } },
+        backdrop: { sx: { bgcolor: 'rgba(15,23,42,0.74)', backdropFilter: 'blur(5px)', animation: `${zoomBackdrop} 240ms ${ease}`, ...reducedMotion } },
+      }}
+    >
+      {target && (
+        <Box onClick={onClose} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'zoom-out', outline: 'none' }}>
+          <Box
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              width: 'min(300px, 82vw)',
+              aspectRatio: '9 / 19.5',
+              borderRadius: 6,
+              border: '9px solid',
+              borderColor: 'grey.900',
+              bgcolor: 'grey.900',
+              overflow: 'hidden',
+              boxShadow: '0 34px 90px rgba(2,6,23,0.6)',
+              transformOrigin: 'center bottom',
+              animation: `${zoomBounce} 560ms ${ease}`,
+              ...reducedMotion,
+            }}
+          >
+            {src ? (
+              <Box component="img" src={src} alt={target.name} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            ) : (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                <CircularProgress size={22} thickness={5} sx={{ color: 'grey.500' }} />
+              </Box>
+            )}
+          </Box>
+          <Typography variant="body2" sx={{ color: 'grey.100', mt: 1.75, fontWeight: 700 }}>
+            {target.name}
+            {liveFrame ? ' · live' : ''}
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'grey.400', mt: 0.25 }}>
+            Tap anywhere to close
+          </Typography>
+        </Box>
+      )}
+    </Dialog>
+  );
+}
+
 /** How long each running phone stays on the big screen before the next one. */
 const ROTATE_MS = 4000;
 
@@ -235,12 +318,29 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
   const live = items.filter((item) => item.status === 'RUNNING' && item.device_hw_id);
   const [tick, setTick] = useState(0);
   const [pinned, setPinned] = useState<number | null>(null);
+  const [zoom, setZoom] = useState<PhoneZoomTarget | null>(null);
+  const lastTap = useRef(0);
 
   useEffect(() => {
     if (pinned !== null || live.length < 2) return;
     const timer = setInterval(() => setTick((t) => t + 1), ROTATE_MS);
     return () => clearInterval(timer);
   }, [pinned, live.length]);
+
+  // Double-click (desktop) or quick double-tap (touch) picks the phone up into zoom.
+  const dblTap = (target: PhoneZoomTarget) => ({
+    onDoubleClick: () => setZoom(target),
+    onTouchEnd: (e: TouchEvent) => {
+      const now = Date.now();
+      if (now - lastTap.current < 320) {
+        e.preventDefault();
+        lastTap.current = 0;
+        setZoom(target);
+      } else {
+        lastTap.current = now;
+      }
+    },
+  });
 
   if (live.length === 0) return null;
   const pinnedItem = pinned !== null ? live.find((item) => item.id === pinned) : undefined;
@@ -251,7 +351,9 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
   return (
     <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mt: 1.5, mb: 1.5, flexWrap: { xs: 'wrap', sm: 'nowrap' }, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
       <Box sx={{ width: 170, flexShrink: 0, mx: { xs: 'auto', sm: 0 } }}>
+        <Tooltip title={frame ? 'Double-click to zoom' : ''} disableHoverListener={!frame}>
         <Box
+          {...(frame ? dblTap({ name: current.device_name, hwId: current.device_hw_id ?? undefined }) : {})}
           sx={{
             aspectRatio: '9 / 19.5',
             borderRadius: 3,
@@ -263,6 +365,10 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)',
+            cursor: frame ? 'zoom-in' : 'default',
+            transition: `transform 160ms ${ease}`,
+            '&:active': frame ? { transform: 'scale(0.98)' } : undefined,
+            ...reducedMotion,
           }}
         >
           {frame ? (
@@ -279,6 +385,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
             </Typography>
           )}
         </Box>
+        </Tooltip>
         <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, fontWeight: 600 }} noWrap>
           {current.device_name}
           {pinnedItem ? ' · pinned' : live.length > 1 ? ` · ${live.indexOf(current) + 1}/${live.length}` : ''}
@@ -295,11 +402,12 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
             const thumb = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
             const active = item.id === current.id;
             return (
-              <Tooltip key={item.id} title={pinned === item.id ? `Unpin ${item.device_name}` : `Pin ${item.device_name}`}>
+              <Tooltip key={item.id} title={pinned === item.id ? `Unpin · double-click to zoom` : `Pin ${item.device_name} · double-click to zoom`}>
                 <Box
                   component="button"
                   type="button"
                   onClick={() => setPinned((p) => (p === item.id ? null : item.id))}
+                  {...dblTap({ name: item.device_name, hwId: item.device_hw_id ?? undefined })}
                   sx={{
                     p: 0,
                     width: 54,
@@ -324,6 +432,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
           })}
         </Box>
       )}
+      <PhoneZoom target={zoom} feed={feed} onClose={() => setZoom(null)} />
     </Box>
   );
 }
@@ -453,12 +562,14 @@ function useInView<T extends HTMLElement>() {
 }
 
 /** One target phone's final screen: live last frame if we have it, else lazy-fetched. Renders nothing when there is no screen. */
-function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionItem; feed: LiveFeed; onOpen: (src: string, name: string) => void; onResolved: (id: number, hasImage: boolean) => void }) {
+function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionItem; feed: LiveFeed; onOpen: (target: PhoneZoomTarget) => void; onResolved: (id: number, hasImage: boolean) => void }) {
   const liveFrame = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
   const { ref, inView } = useInView<HTMLDivElement>();
   const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !inView });
   const src = liveFrame ? frameSrc(liveFrame.data) : data?.data?.base64 ? frameSrc(data.data.base64) : null;
   const settled = !!liveFrame || isSuccess;
+  // A live phone keeps updating in the zoom; a settled still just shows its last frame.
+  const tap = useDoubleTap(() => src && onOpen({ name: item.device_name, src, hwId: liveFrame ? item.device_hw_id ?? undefined : undefined }));
 
   useEffect(() => {
     if (settled) onResolved(item.id, !!src);
@@ -469,11 +580,22 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
 
   return (
     <Box ref={ref} sx={{ width: 82, flexShrink: 0 }}>
+      <Tooltip title={src ? 'Double-click to zoom' : ''} disableHoverListener={!src}>
       <Box
         component={src ? 'button' : 'div'}
         aria-label={src ? `Enlarge ${item.device_name} final screen` : undefined}
-        onClick={src ? () => onOpen(src, item.device_name) : undefined}
-        sx={{ p: 0, border: 'none', bgcolor: 'transparent', cursor: src ? 'zoom-in' : 'default', width: '100%', display: 'block' }}
+        {...(src ? tap : {})}
+        sx={{
+          p: 0,
+          border: 'none',
+          bgcolor: 'transparent',
+          cursor: src ? 'zoom-in' : 'default',
+          width: '100%',
+          display: 'block',
+          transition: `transform 160ms ${ease}`,
+          '&:active': src ? { transform: 'scale(0.97)' } : undefined,
+          ...reducedMotion,
+        }}
       >
         <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'divider', bgcolor: 'action.hover', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {src ? (
@@ -483,6 +605,7 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
           )}
         </Box>
       </Box>
+      </Tooltip>
       <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.25, fontSize: 11 }} noWrap>
         {item.device_name}
       </Typography>
@@ -492,7 +615,7 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
 
 /** The row of final screens for a finished mission — only phones that actually have a last screen. */
 function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
-  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const [zoom, setZoom] = useState<PhoneZoomTarget | null>(null);
   const [withImage, setWithImage] = useState<Record<number, boolean>>({});
   const onResolved = useCallback((id: number, hasImage: boolean) => {
     setWithImage((prev) => (prev[id] === hasImage ? prev : { ...prev, [id]: hasImage }));
@@ -504,24 +627,15 @@ function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed })
     <Box>
       {anyShown && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-          Last screen on each phone
+          Last screen on each phone · double-click to zoom
         </Typography>
       )}
       <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: anyShown ? 0.5 : 0 }}>
         {ran.map((item) => (
-          <FinalScreenThumb key={item.id} item={item} feed={feed} onOpen={(src, name) => setZoom({ src, name })} onResolved={onResolved} />
+          <FinalScreenThumb key={item.id} item={item} feed={feed} onOpen={(target) => setZoom(target)} onResolved={onResolved} />
         ))}
       </Box>
-      <Dialog open={!!zoom} onClose={() => setZoom(null)} maxWidth="xs">
-        {zoom && (
-          <Box sx={{ p: 1 }}>
-            <Box component="img" src={zoom.src} alt={zoom.name} sx={{ width: '100%', borderRadius: 2, display: 'block' }} />
-            <Typography variant="caption" sx={{ textAlign: 'center', display: 'block', mt: 0.5 }}>
-              {zoom.name}
-            </Typography>
-          </Box>
-        )}
-      </Dialog>
+      <PhoneZoom target={zoom} feed={feed} onClose={() => setZoom(null)} />
     </Box>
   );
 }

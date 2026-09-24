@@ -61,6 +61,23 @@ export const slideStep = keyframes`
   to   { opacity: 1; transform: none; }
 `;
 
+/**
+ * "Pick up" bounce for the phone zoom: the device lifts off its thumbnail,
+ * overshoots, then settles — like picking a phone up off a table.
+ */
+export const zoomBounce = keyframes`
+  0%   { opacity: 0; transform: scale(0.32) translateY(34px); }
+  55%  { opacity: 1; transform: scale(1.06) translateY(-8px); }
+  74%  { transform: scale(0.98) translateY(3px); }
+  88%  { transform: scale(1.012) translateY(-1px); }
+  100% { transform: scale(1) translateY(0); }
+`;
+
+export const zoomBackdrop = keyframes`
+  from { opacity: 0; }
+  to   { opacity: 1; }
+`;
+
 /** Spread into any sx that animates, so reduced-motion users get a still UI. */
 export const reducedMotion = {
   '@media (prefers-reduced-motion: reduce)': { animation: 'none !important', transition: 'none !important' },
