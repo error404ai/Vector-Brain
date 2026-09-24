@@ -8,6 +8,10 @@ export class ChatMessage {
   @Column({ type: 'int' })
   user_id: number;
 
+  /** The thread this message belongs to. */
+  @Column({ type: 'int', nullable: true })
+  conversation_id: number | null;
+
   /** 'user' for what was typed, 'assistant' for Vector's reply. */
   @Column({ type: 'varchar', length: 10 })
   role: 'user' | 'assistant';

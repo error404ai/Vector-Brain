@@ -1,10 +1,14 @@
 import authManager from '@/_helpers/authManager';
 import {
   useConfirmCommandMutation,
+  useDeleteConversationMutation,
   useGetChatHistoryQuery,
+  useGetConversationsQuery,
+  useNewConversationMutation,
   useRerunFromChatMutation,
   useSendCommandMutation,
   type ChatReply,
+  type Conversation,
 } from '@/RTKService/commandChatService/commandChatService';
 import {
   useCancelMissionMutation,
@@ -38,8 +42,12 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, FormControlLabel, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import toast from 'react-hot-toast';
 
 // -----------------------------------------------------------------------------
@@ -963,6 +971,97 @@ function RotationSwitch() {
   );
 }
 
+function ConversationSidebar({
+  open,
+  conversations,
+  activeId,
+  onNew,
+  onOpen,
+  onDelete,
+}: {
+  open: boolean;
+  conversations: Conversation[];
+  activeId: number | null;
+  onNew: () => void;
+  onOpen: (id: number) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [now] = useState(() => Date.now());
+  const groups = useMemo(() => {
+    const bucket = (d: string) => {
+      const days = (now - new Date(d).getTime()) / 86_400_000;
+      if (days < 1) return 'Today';
+      if (days < 2) return 'Yesterday';
+      if (days < 7) return 'This week';
+      return 'Earlier';
+    };
+    const out: { label: string; items: Conversation[] }[] = [];
+    for (const c of conversations) {
+      const label = bucket(c.last_message_at);
+      (out.find((g) => g.label === label) ?? out[out.push({ label, items: [] }) - 1]).items.push(c);
+    }
+    return out;
+  }, [conversations, now]);
+  if (!open) return null;
+  return (
+    <Box sx={{ width: 240, flexShrink: 0, borderRight: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column', minHeight: 0, bgcolor: 'background.paper' }}>
+      <Box sx={{ p: 1.5 }}>
+        <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={onNew} sx={{ justifyContent: 'flex-start', borderRadius: 2 }}>
+          New chat
+        </Button>
+      </Box>
+      <Box sx={{ flex: 1, overflowY: 'auto', px: 1, pb: 1 }}>
+        {conversations.length === 0 && (
+          <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+            No chats yet.
+          </Typography>
+        )}
+        {groups.map((group) => (
+          <Box key={group.label} sx={{ mb: 1 }}>
+            <Typography variant="caption" sx={{ px: 1, color: 'text.disabled', textTransform: 'uppercase', letterSpacing: 0.4, fontSize: 11 }}>
+              {group.label}
+            </Typography>
+            {group.items.map((c) => (
+              <Box
+                key={c.id}
+                onClick={() => onOpen(c.id)}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 1,
+                  py: 0.9,
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                  bgcolor: c.id === activeId ? 'action.selected' : 'transparent',
+                  '&:hover': { bgcolor: c.id === activeId ? 'action.selected' : 'action.hover', '& .del': { opacity: 1 } },
+                }}
+              >
+                <ChatBubbleOutlineIcon sx={{ fontSize: 16, color: c.id === activeId ? 'primary.main' : 'text.disabled' }} />
+                <Typography variant="body2" noWrap sx={{ flex: 1, fontWeight: c.id === activeId ? 600 : 400 }}>
+                  {c.title}
+                </Typography>
+                <IconButton
+                  size="small"
+                  className="del"
+                  aria-label="Delete chat"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(c.id);
+                  }}
+                  sx={{ opacity: 0, transition: 'opacity 150ms' }}
+                >
+                  <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -985,21 +1084,72 @@ export default function MissionControlPage() {
   const [confirmCommand] = useConfirmCommandMutation();
   const [rerunFromChat, { isLoading: rerunning }] = useRerunFromChatMutation();
 
+  // Conversations (the sidebar). null = a fresh unsaved chat.
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { data: convData, refetch: refetchConversations } = useGetConversationsQuery();
+  const [newConversation] = useNewConversationMutation();
+  const [deleteConversation] = useDeleteConversationMutation();
+  const conversations = convData?.data ?? [];
+
   // Names and tags for @ / # suggestions in the input.
   const { data: fleetData } = useGetFleetStateQuery();
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
   const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
-  // The conversation is stored on the server; a reload picks it back up.
-  const { data: historyData, isLoading: loadingHistory } = useGetChatHistoryQuery();
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  if (!historyLoaded && historyData) {
-    setHistoryLoaded(true);
-    setTurns((prev) => [
-      ...historyData.data.map((t): ChatTurn => (t.role === 'user' ? { id: `h${t.id}`, role: 'user', text: t.text } : { id: `h${t.id}`, role: 'assistant', reply: t.reply })),
-      ...prev,
-    ]);
+  // The active conversation is stored on the server; a reload picks it back up.
+  const { data: historyData, isFetching: fetchingHistory } = useGetChatHistoryQuery(conversationId ?? undefined, {
+    refetchOnMountOrArgChange: true,
+  });
+  const loadingHistory = fetchingHistory;
+  const [loadedFor, setLoadedFor] = useState<number | 'first' | null>(null);
+  // Adopt history only when the fetch has settled AND its conversation_id is
+  // the one we asked for — a stale cached result for another thread is ignored.
+  const wantKey = conversationId ?? 'first';
+  const gotId = historyData?.data.conversation_id ?? null;
+  const matches = conversationId === null ? true : gotId === conversationId;
+  if (historyData && !fetchingHistory && matches && loadedFor !== wantKey) {
+    setLoadedFor(wantKey);
+    if (conversationId === null && gotId) setConversationId(gotId);
+    setTurns(
+      historyData.data.turns.map((t): ChatTurn =>
+        t.role === 'user' ? { id: `h${t.id}`, role: 'user', text: t.text } : { id: `h${t.id}`, role: 'assistant', reply: t.reply },
+      ),
+    );
   }
+
+  const startNewChat = async () => {
+    try {
+      const res = await newConversation().unwrap();
+      setConversationId(res.data.id);
+      setTurns([]);
+      setLoadedFor(res.data.id);
+      await refetchConversations();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const openConversation = (id: number) => {
+    if (id === conversationId) return;
+    setConversationId(id);
+    setTurns([]);
+    setLoadedFor(null);
+  };
+
+  const removeConversation = async (id: number) => {
+    try {
+      await deleteConversation(id).unwrap();
+      if (id === conversationId) {
+        setConversationId(null);
+        setTurns([]);
+        setLoadedFor(null);
+      }
+      await refetchConversations();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
 
   // Block body on purpose: an effect's return value is called as its cleanup,
   // and recent Chrome returns a Promise from scrollIntoView.
@@ -1015,8 +1165,13 @@ export default function MissionControlPage() {
     setInput('');
     pushTurn({ id: nextId('u'), role: 'user', text });
     try {
-      const res = await sendCommand(text).unwrap();
+      const res = await sendCommand({ message: text, conversation_id: conversationId ?? undefined }).unwrap();
+      if (res.data.conversation_id && res.data.conversation_id !== conversationId) {
+        setConversationId(res.data.conversation_id);
+        setLoadedFor(res.data.conversation_id);
+      }
       pushTurn({ id: nextId('a'), role: 'assistant', reply: res.data });
+      void refetchConversations();
     } catch (error) {
       pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     }
@@ -1084,8 +1239,19 @@ export default function MissionControlPage() {
 
   return (
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0 }}>
+    <ConversationSidebar
+      open={sidebarOpen}
+      conversations={conversations}
+      activeId={conversationId}
+      onNew={startNewChat}
+      onOpen={openConversation}
+      onDelete={removeConversation}
+    />
     <Box sx={{ flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
+        <IconButton size="small" aria-label={sidebarOpen ? 'Hide chats' : 'Show chats'} onClick={() => setSidebarOpen((v) => !v)}>
+          <MenuIcon />
+        </IconButton>
         <VectorAvatar />
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>

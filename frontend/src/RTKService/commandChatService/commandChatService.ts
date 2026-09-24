@@ -11,6 +11,8 @@ export interface ChatReply {
   action?: unknown;
   /** Tap-to-send answers under a question. */
   quick_replies?: string[];
+  /** The thread this reply belongs to. */
+  conversation_id?: number;
   /** What a Confirm will do, for the plan card. */
   plan?: {
     kind: 'mission' | 'rotation' | 'concurrency';
@@ -24,18 +26,38 @@ export interface ChatReply {
   };
 }
 
+export interface Conversation {
+  id: number;
+  title: string;
+  last_message_at: string;
+  created_at: string;
+}
+
 export type ChatHistoryTurn =
   | { id: number; role: 'user'; text: string }
   | { id: number; role: 'assistant'; reply: ChatReply };
 
 export const commandChatService = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    sendCommand: builder.mutation<{ message: string; data: ChatReply }, string>({
-      query: (message) => ({ url: '/android/chat', method: 'POST', body: { message } }),
+    sendCommand: builder.mutation<{ message: string; data: ChatReply }, { message: string; conversation_id?: number }>({
+      query: (body) => ({ url: '/android/chat', method: 'POST', body }),
     }),
-    getChatHistory: builder.query<{ message: string; data: ChatHistoryTurn[] }, void>({
-      query: () => ({ url: '/android/chat/history?limit=60', method: 'GET' }),
+    getChatHistory: builder.query<{ message: string; data: { conversation_id: number | null; turns: ChatHistoryTurn[] } }, number | undefined>({
+      query: (conversationId) => ({ url: `/android/chat/history?limit=120${conversationId ? `&conversation_id=${conversationId}` : ''}`, method: 'GET' }),
       keepUnusedDataFor: 0,
+    }),
+    getConversations: builder.query<{ message: string; data: Conversation[] }, void>({
+      query: () => ({ url: '/android/chat/conversations', method: 'GET' }),
+      keepUnusedDataFor: 0,
+    }),
+    newConversation: builder.mutation<{ message: string; data: { id: number; title: string } }, void>({
+      query: () => ({ url: '/android/chat/conversations', method: 'POST' }),
+    }),
+    renameConversation: builder.mutation<{ message: string }, { id: number; title: string }>({
+      query: ({ id, title }) => ({ url: `/android/chat/conversations/${id}/rename`, method: 'POST', body: { title } }),
+    }),
+    deleteConversation: builder.mutation<{ message: string }, number>({
+      query: (id) => ({ url: `/android/chat/conversations/${id}`, method: 'DELETE' }),
     }),
     rerunFromChat: builder.mutation<{ message: string; data: ChatReply }, { mission_id: number; scope?: 'failed' | 'all'; continue?: boolean }>({
       query: (body) => ({ url: '/android/chat/rerun', method: 'POST', body }),
@@ -46,4 +68,13 @@ export const commandChatService = baseApi.injectEndpoints({
   }),
 });
 
-export const { useSendCommandMutation, useConfirmCommandMutation, useGetChatHistoryQuery, useRerunFromChatMutation } = commandChatService;
+export const {
+  useSendCommandMutation,
+  useConfirmCommandMutation,
+  useGetChatHistoryQuery,
+  useRerunFromChatMutation,
+  useGetConversationsQuery,
+  useNewConversationMutation,
+  useRenameConversationMutation,
+  useDeleteConversationMutation,
+} = commandChatService;

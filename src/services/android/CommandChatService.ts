@@ -1,4 +1,5 @@
 import { ChatMessage } from '@/entities/ChatMessage';
+import { Conversation } from '@/entities/Conversation';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -73,6 +74,7 @@ export interface ChatReply {
 export class CommandChatService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private messageRepo = AppDataSource.getRepository(ChatMessage);
+  private conversationRepo = AppDataSource.getRepository(Conversation);
   private pending = new Map<string, Pending>();
 
   constructor(
@@ -84,9 +86,10 @@ export class CommandChatService {
     private agent: VectorAgentService,
   ) {}
 
-  async handle(userId: number, message: string): Promise<ApiResponse> {
+  async handle(userId: number, message: string, conversationId?: number): Promise<ApiResponse> {
     let text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
+    const conversation = await this.resolveConversation(userId, conversationId, text);
 
     // Harness only: "[agent:{turns:[...]}]" scripts Vector's agent model.
     let scripted: Brain | null = null;
@@ -103,21 +106,21 @@ export class CommandChatService {
     }
     const brain = scripted ?? (SIMULATION ? null : await this.agent.realBrain(userId));
     if (brain) {
-      await this.record(userId, 'user', text);
+      await this.record(userId, 'user', text, undefined, conversation.id);
       try {
-        const reply = await this.runAgent(userId, brain, text);
-        await this.record(userId, 'assistant', reply.text, reply);
-        return { message: 'Chat reply', data: reply };
+        const reply = await this.runAgent(userId, brain, text, conversation.id);
+        await this.record(userId, 'assistant', reply.text, reply, conversation.id);
+        return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
       } catch (error) {
         // The model could not be reached (credits, outage): fall back to the
         // simple built-in understanding rather than leaving the chat dead.
         Logger.warn('[CommandChat] agent failed, using the built-in fallback:', error);
-        const context = await this.recentContext(userId);
+        const context = await this.recentContext(userId, conversation.id);
         const intent = classifyLocally(await this.joinWithPending(userId, text, context.pending));
         const reply = await this.act(userId, text, intent, context.lastMissionDevices);
         reply.text = `(AI model unavailable — ${(error as Error)?.message ?? 'error'}. Used the basic mode.) ${reply.text}`;
-        await this.record(userId, 'assistant', reply.text, reply);
-        return { message: 'Chat reply', data: reply };
+        await this.record(userId, 'assistant', reply.text, reply, conversation.id);
+        return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
       }
     }
 
@@ -135,15 +138,15 @@ export class CommandChatService {
         text = text.slice(0, marker.index).trim();
       }
     }
-    await this.record(userId, 'user', text);
-    const context = await this.recentContext(userId);
+    await this.record(userId, 'user', text, undefined, conversation.id);
+    const context = await this.recentContext(userId, conversation.id);
     // Finish a question the chat just asked: "stop youtube" -> "which phone?" ->
     // "Nokia" is one request, not two unrelated messages.
     const effective = await this.joinWithPending(userId, text, context.pending);
     const intent = await this.classify(userId, effective, context.lines, stub);
     const reply = await this.act(userId, effective, intent, context.lastMissionDevices);
-    await this.record(userId, 'assistant', reply.text, reply);
-    return { message: 'Chat reply', data: reply };
+    await this.record(userId, 'assistant', reply.text, reply, conversation.id);
+    return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
   }
 
   private pendingFor(userId: number): { token: string; summary: string }[] {
@@ -153,9 +156,12 @@ export class CommandChatService {
       .map(([token, p]) => ({ token, summary: p.summary }));
   }
 
-  private async agentContext(userId: number) {
-    const rows = await this.messageRepo.find({ where: { user_id: userId }, order: { id: 'DESC' }, take: 24 });
-    const context = await this.recentContext(userId);
+  private async agentContext(userId: number, conversationId?: number) {
+    const convoId = conversationId ?? (await this.latestConversationId(userId));
+    const rows = convoId
+      ? await this.messageRepo.find({ where: { user_id: userId, conversation_id: convoId }, order: { id: 'DESC' }, take: 24 })
+      : [];
+    const context = await this.recentContext(userId, convoId ?? 0);
     const history = rows
       .slice(1)
       .reverse()
@@ -163,8 +169,8 @@ export class CommandChatService {
     return { history, lastMissionDevices: context.lastMissionDevices };
   }
 
-  private async runAgent(userId: number, brain: Brain, text: string): Promise<ChatReply> {
-    const base = await this.agentContext(userId);
+  private async runAgent(userId: number, brain: Brain, text: string, conversationId?: number): Promise<ChatReply> {
+    const base = await this.agentContext(userId, conversationId);
     const pending = this.pendingFor(userId);
     const result = await this.agent.run(brain, text, { userId, ...base, pending });
 
@@ -222,7 +228,8 @@ export class CommandChatService {
    */
   async rerun(userId: number, missionId: number, options: { scope?: 'failed' | 'all'; continue?: boolean }): Promise<ApiResponse> {
     const label = options.continue ? 'Continue' : options.scope === 'all' ? 'Run again' : 'Retry failed phones';
-    await this.record(userId, 'user', label);
+    const conversationId = await this.latestConversationId(userId);
+    await this.record(userId, 'user', label, undefined, conversationId);
     let reply: ChatReply;
     try {
       const result = await this.missionService.rerun(missionId, userId, options);
@@ -234,16 +241,21 @@ export class CommandChatService {
     } catch (error) {
       reply = { kind: 'error', text: (error as AppError)?.message ?? 'Could not run it again' };
     }
-    await this.record(userId, 'assistant', reply.text, reply);
-    return { message: 'Chat reply', data: reply };
+    await this.record(userId, 'assistant', reply.text, reply, conversationId);
+    return { message: 'Chat reply', data: { ...reply, conversation_id: conversationId } };
   }
 
   /** The conversation so far, oldest first, so a reload picks up where it left off. */
-  async history(userId: number, limit = 60): Promise<ApiResponse> {
+  async history(userId: number, conversationId?: number, limit = 100): Promise<ApiResponse> {
+    // Default to the most recent conversation, so opening the page shows it.
+    const conversation = conversationId
+      ? await this.conversationRepo.findOne({ where: { id: conversationId, user_id: userId } })
+      : await this.conversationRepo.findOne({ where: { user_id: userId }, order: { last_message_at: 'DESC' } });
+    if (!conversation) return { message: 'Chat history', data: { conversation_id: null, turns: [] } };
     const rows = await this.messageRepo.find({
-      where: { user_id: userId },
+      where: { user_id: userId, conversation_id: conversation.id },
       order: { id: 'DESC' },
-      take: Math.max(1, Math.min(200, limit)),
+      take: Math.max(1, Math.min(300, limit)),
     });
     const turns = rows.reverse().map((row) => {
       if (row.role === 'user') return { id: row.id, role: 'user' as const, text: row.text };
@@ -257,16 +269,69 @@ export class CommandChatService {
       if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };
       return { id: row.id, role: 'assistant' as const, reply };
     });
-    return { message: 'Chat history', data: turns };
+    return { message: 'Chat history', data: { conversation_id: conversation.id, turns } };
+  }
+
+  /** The sidebar list: threads newest first. */
+  async listConversations(userId: number): Promise<ApiResponse> {
+    const rows = await this.conversationRepo.find({ where: { user_id: userId }, order: { last_message_at: 'DESC' }, take: 100 });
+    return { message: 'Conversations', data: rows.map((c) => ({ id: c.id, title: c.title, last_message_at: c.last_message_at, created_at: c.created_at })) };
+  }
+
+  /** Start an empty thread; the first message names it. */
+  async newConversation(userId: number): Promise<ApiResponse> {
+    const created = await this.conversationRepo.save(this.conversationRepo.create({ user_id: userId, title: 'New chat' }));
+    return { message: 'Conversation created', data: { id: created.id, title: created.title } };
+  }
+
+  async renameConversation(userId: number, id: number, title: string): Promise<ApiResponse> {
+    const clean = title.trim().slice(0, 120) || 'New chat';
+    const res = await this.conversationRepo.update({ id, user_id: userId }, { title: clean });
+    if (!res.affected) throw new AppError('Chat not found', 404);
+    return { message: 'Renamed', data: { id, title: clean } };
+  }
+
+  async deleteConversation(userId: number, id: number): Promise<ApiResponse> {
+    const conversation = await this.conversationRepo.findOne({ where: { id, user_id: userId } });
+    if (!conversation) throw new AppError('Chat not found', 404);
+    await this.messageRepo.delete({ user_id: userId, conversation_id: id });
+    await this.conversationRepo.delete({ id, user_id: userId });
+    return { message: 'Deleted', data: { id } };
+  }
+
+  /**
+   * Finds the thread to write to, making one when needed, and titles a fresh
+   * thread from its first user message.
+   */
+  private async resolveConversation(userId: number, conversationId: number | undefined, firstText: string): Promise<Conversation> {
+    if (conversationId) {
+      const existing = await this.conversationRepo.findOne({ where: { id: conversationId, user_id: userId } });
+      if (existing) {
+        if (existing.title === 'New chat') await this.conversationRepo.update({ id: existing.id }, { title: titleFrom(firstText) });
+        return existing;
+      }
+    }
+    // No id given (an API caller that doesn't track threads, or a very first
+    // message): continue the user's most recent thread if it was active in the
+    // last 30 min, else start a fresh one. The web app always sends an id, so
+    // this only affects direct API use.
+    if (conversationId === undefined) {
+      const recent = await this.conversationRepo.findOne({ where: { user_id: userId }, order: { last_message_at: 'DESC' } });
+      if (recent && Date.now() - new Date(recent.last_message_at).getTime() < 30 * 60_000) {
+        if (recent.title === 'New chat') await this.conversationRepo.update({ id: recent.id }, { title: titleFrom(firstText) });
+        return recent;
+      }
+    }
+    return this.conversationRepo.save(this.conversationRepo.create({ user_id: userId, title: titleFrom(firstText) }));
   }
 
   /** What the chat needs from the conversation so far. */
-  private async recentContext(userId: number): Promise<{
+  private async recentContext(userId: number, conversationId: number): Promise<{
     lines: string[];
     pending: ChatReply['pending'] | null;
     lastMissionDevices: number[];
   }> {
-    const rows = await this.messageRepo.find({ where: { user_id: userId }, order: { id: 'DESC' }, take: 20 });
+    const rows = await this.messageRepo.find({ where: { user_id: userId, conversation_id: conversationId }, order: { id: 'DESC' }, take: 20 });
     // rows[0] is the message just recorded; the reply before it is the last assistant turn.
     const lastAssistant = rows.find((r, i) => i > 0 && r.role === 'assistant');
     let pending: ChatReply['pending'] | null = null;
@@ -314,12 +379,13 @@ export class CommandChatService {
     return text;
   }
 
-  private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply): Promise<void> {
+  private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply, conversationId?: number): Promise<void> {
     try {
       const missionId = (reply?.mission as { id?: number } | undefined)?.id ?? null;
       await this.messageRepo.save(
-        this.messageRepo.create({ user_id: userId, role, text: text.slice(0, 8000), reply: reply ? JSON.stringify(reply) : null, mission_id: missionId }),
+        this.messageRepo.create({ user_id: userId, conversation_id: conversationId ?? null, role, text: text.slice(0, 8000), reply: reply ? JSON.stringify(reply) : null, mission_id: missionId }),
       );
+      if (conversationId) await this.conversationRepo.update({ id: conversationId, user_id: userId }, { last_message_at: new Date() });
     } catch (error) {
       // Losing a transcript line must never break the chat itself.
       Logger.warn('[CommandChat] Could not save chat message:', error);
@@ -328,8 +394,14 @@ export class CommandChatService {
 
   async confirm(userId: number, token: string): Promise<ApiResponse> {
     const reply = await this.applyToken(userId, token);
-    await this.record(userId, 'assistant', reply.text, reply);
-    return { message: 'Applied', data: reply };
+    const conversationId = await this.latestConversationId(userId);
+    await this.record(userId, 'assistant', reply.text, reply, conversationId);
+    return { message: 'Applied', data: { ...reply, conversation_id: conversationId } };
+  }
+
+  private async latestConversationId(userId: number): Promise<number | undefined> {
+    const c = await this.conversationRepo.findOne({ where: { user_id: userId }, order: { last_message_at: 'DESC' } });
+    return c?.id;
   }
 
   /** Applies a pending proposal; the caller records the reply. */
@@ -581,6 +653,13 @@ export class CommandChatService {
     const lanes = state.lanes.map((l) => `${l.name}: ${l.running} running, ${l.waiting} waiting, ${rotationText(l.id)}`).join(' · ');
     return `${parts.join(', ')}.${lanes ? `\nLanes — ${lanes}.` : ''}`;
   }
+}
+
+/** A short thread title from the first message. */
+function titleFrom(text: string): string {
+  const clean = text.replace(/\[(agent|ai):.*$/i, '').replace(/\s+/g, ' ').trim();
+  const words = clean.split(' ').slice(0, 7).join(' ');
+  return (words || 'New chat').slice(0, 60);
 }
 
 // -----------------------------------------------------------------------------

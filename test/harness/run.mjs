@@ -876,7 +876,7 @@ const scenarios = [
       const marker = `how many phones online ${Date.now()}`;
       await api('POST', '/android/chat', { message: marker });
       const history = await api('GET', '/android/chat/history');
-      const turns = history?.data ?? [];
+      const turns = history?.data?.turns ?? [];
       const mine = turns.findIndex((t) => t.role === 'user' && t.text === marker);
       if (mine < 0) return 'the message is not in the history';
       const answer = turns[mine + 1];
@@ -1359,6 +1359,56 @@ const scenarios = [
       if (text.includes('\n')) return `refusal spans several lines: ${JSON.stringify(text)}`;
       if (text.length > 200) return `refusal too long (${text.length} chars)`;
       if (!/nahi kar sakta/i.test(text)) return `lost the refusal itself: ${text}`;
+    },
+  },
+  {
+    name: 'chat: a new conversation does not see the previous one\'s history',
+    async run() {
+      await db.query('DELETE FROM chat_messages WHERE user_id = ?', [userId]);
+      await db.query('DELETE FROM conversations WHERE user_id = ?', [userId]);
+      // First conversation.
+      const c1 = (await api('POST', '/android/chat', { message: 'open settings on free1 [sim steps=1 delay=50]' })).data.conversation_id;
+      if (!c1) return 'first message did not return a conversation id';
+      await api('POST', '/android/chat', { message: 'how many phones online' , conversation_id: c1 });
+      // New conversation.
+      const fresh = (await api('POST', '/android/chat/conversations')).data.id;
+      if (!fresh || fresh === c1) return 'new conversation not created';
+      await api('POST', '/android/chat', { message: 'who are you', conversation_id: fresh });
+      // History of the new one holds only its own messages.
+      const h = await api('GET', `/android/chat/history?conversation_id=${fresh}`);
+      const texts = (h.data.turns ?? []).map((t) => t.text || '').join(' | ');
+      if (/settings on free1|how many phones/.test(texts)) return `new chat leaked old messages: ${texts}`;
+      if (!/who are you/.test(texts)) return `new chat lost its own message: ${texts}`;
+    },
+  },
+  {
+    name: 'chat: conversations are listed newest first and titled from the first message',
+    async run() {
+      await db.query('DELETE FROM chat_messages WHERE user_id = ?', [userId]);
+      await db.query('DELETE FROM conversations WHERE user_id = ?', [userId]);
+      const c1 = (await api('POST', '/android/chat', { message: 'open settings on free1 [sim steps=1 delay=50]' })).data.conversation_id;
+      const c2 = (await api('POST', '/android/chat/conversations')).data.id;
+      await api('POST', '/android/chat', { message: 'who are you', conversation_id: c2 });
+      const rows = (await api('GET', '/android/chat/conversations')).data ?? [];
+      if (rows.length < 2) return `expected at least 2 conversations, got ${rows.length}`;
+      if (!rows.some((c) => /open settings/i.test(c.title))) return `no conversation titled from its first message: ${JSON.stringify(rows.map((c) => c.title))}`;
+      if (!/who are you/i.test(rows[0].title)) return `not sorted newest first: ${rows[0].title}`;
+      if (c1 === c2) return 'ids collided';
+    },
+  },
+  {
+    name: 'chat: deleting a conversation removes it and its messages',
+    async run() {
+      const created = (await api('POST', '/android/chat/conversations')).data.id;
+      await api('POST', '/android/chat', { message: 'test delete me', conversation_id: created });
+      await api('POST', `/android/chat/conversations/${created}/rename`, { title: 'To remove' });
+      const before = (await api('GET', '/android/chat/conversations')).data.find((c) => c.id === created);
+      if (before?.title !== 'To remove') return 'rename did not stick';
+      await api('DELETE', `/android/chat/conversations/${created}`);
+      const gone = (await api('GET', '/android/chat/conversations')).data.find((c) => c.id === created);
+      if (gone) return 'conversation still listed after delete';
+      const [[row]] = await db.query('SELECT COUNT(*) n FROM chat_messages WHERE conversation_id = ?', [created]);
+      if (row.n !== 0) return 'messages survived the delete';
     },
   },
   {

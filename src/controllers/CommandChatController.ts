@@ -1,7 +1,7 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { CommandChatService } from '@/services/android/CommandChatService';
 import { CommandChatConfirmValidation, CommandChatDryRunValidation, CommandChatRerunValidation, CommandChatValidation } from '@/validations/CommandChatValidation';
-import { Authorized, Body, CurrentUser, Get, JsonController, Post, QueryParam, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -14,13 +14,42 @@ export class CommandChatController {
   @Post('/')
   @UseBefore(zodValidationMiddleware(CommandChatValidation))
   async chat(@Body() request: z.infer<typeof CommandChatValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
-    return this.commandChatService.handle(user.userId, request.message as string);
+    const body = request as { message: string; conversation_id?: number };
+    return this.commandChatService.handle(user.userId, body.message, body.conversation_id);
   }
 
   @Authorized()
   @Get('/history')
-  async history(@QueryParam('limit') limit: number, @CurrentUser({ required: true }) user: { userId: number }) {
-    return this.commandChatService.history(user.userId, Number(limit) || 60);
+  async history(
+    @QueryParam('conversation_id') conversationId: number,
+    @QueryParam('limit') limit: number,
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.commandChatService.history(user.userId, Number(conversationId) || undefined, Number(limit) || 100);
+  }
+
+  @Authorized()
+  @Get('/conversations')
+  async conversations(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.listConversations(user.userId);
+  }
+
+  @Authorized()
+  @Post('/conversations')
+  async newConversation(@CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.newConversation(user.userId);
+  }
+
+  @Authorized()
+  @Post('/conversations/:id/rename')
+  async rename(@Param('id') id: number, @Body() body: { title?: string }, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.renameConversation(user.userId, Number(id), String(body?.title ?? ''));
+  }
+
+  @Authorized()
+  @Delete('/conversations/:id')
+  async remove(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.deleteConversation(user.userId, Number(id));
   }
 
   @Authorized()

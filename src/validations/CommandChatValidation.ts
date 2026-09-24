@@ -2,6 +2,7 @@ import z from 'zod';
 
 export const CommandChatValidation = z.object({
   message: z.string().trim().min(1).max(4000),
+  conversation_id: z.number().int().positive().optional(),
 });
 
 export const CommandChatConfirmValidation = z.object({
