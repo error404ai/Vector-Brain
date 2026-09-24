@@ -12,7 +12,7 @@ import {
 } from '@/RTKService/commandChatService/commandChatService';
 import {
   useCancelMissionMutation,
-  useGetMissionQuery,
+  useGetMissionQuery, useGetFinalScreenQuery,
   type Mission,
   type MissionItem,
   type MissionItemStatus,
@@ -42,7 +42,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -433,6 +433,85 @@ function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[
 
 const RUNNING_SHOWN = 6;
 
+/** Fetch a thumbnail only once it is near the viewport. */
+function useInView<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || inView) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setInView(true);
+      },
+      { rootMargin: '250px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
+  return { ref, inView };
+}
+
+/** One target phone's final screen: the live last frame if we have it, else lazy-fetched. */
+function FinalScreenThumb({ item, feed, onOpen }: { item: MissionItem; feed: LiveFeed; onOpen: (src: string, name: string) => void }) {
+  const liveFrame = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
+  const { ref, inView } = useInView<HTMLDivElement>();
+  const { data, isFetching } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !inView });
+  const src = liveFrame ? frameSrc(liveFrame.data) : data?.data?.base64 ? frameSrc(data.data.base64) : null;
+  return (
+    <Box ref={ref} sx={{ width: 82, flexShrink: 0 }}>
+      <Box
+        component={src ? 'button' : 'div'}
+        aria-label={src ? `Enlarge ${item.device_name} final screen` : undefined}
+        onClick={src ? () => onOpen(src, item.device_name) : undefined}
+        sx={{ p: 0, border: 'none', bgcolor: 'transparent', cursor: src ? 'zoom-in' : 'default', width: '100%', display: 'block' }}
+      >
+        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {src ? (
+            <Box component="img" src={src} alt={`${item.device_name} final screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
+          ) : (
+            <Typography variant="caption" sx={{ color: 'grey.600', fontSize: 10, textAlign: 'center', px: 0.5 }}>
+              {isFetching ? '…' : 'no screen'}
+            </Typography>
+          )}
+        </Box>
+      </Box>
+      <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.25, fontSize: 11 }} noWrap>
+        {item.device_name}
+      </Typography>
+    </Box>
+  );
+}
+
+/** The row of final screens for a finished mission — only the phones the task ran on. */
+function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
+  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const ran = items.filter((i) => i.agent_task_id);
+  if (ran.length === 0) return null;
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+        Last screen on each phone
+      </Typography>
+      <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 0.5 }}>
+        {ran.map((item) => (
+          <FinalScreenThumb key={item.id} item={item} feed={feed} onOpen={(src, name) => setZoom({ src, name })} />
+        ))}
+      </Box>
+      <Dialog open={!!zoom} onClose={() => setZoom(null)} maxWidth="xs">
+        {zoom && (
+          <Box sx={{ p: 1 }}>
+            <Box component="img" src={zoom.src} alt={zoom.name} sx={{ width: '100%', borderRadius: 2, display: 'block' }} />
+            <Typography variant="caption" sx={{ textAlign: 'center', display: 'block', mt: 0.5 }}>
+              {zoom.name}
+            </Typography>
+          </Box>
+        )}
+      </Dialog>
+    </Box>
+  );
+}
+
 function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const [showAll, setShowAll] = useState(false);
@@ -518,6 +597,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
       {/* Body: secondary detail. */}
       <Box sx={{ px: 2.5, pb: 2, pt: 0.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {running && showLive && <LiveScreens items={items} feed={feed} />}
+        {!running && <FinalScreens items={items} feed={feed} />}
 
         {running && runningItems.length > 0 && !showAll && (
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1 }}>

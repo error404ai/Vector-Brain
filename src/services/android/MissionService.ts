@@ -2,13 +2,14 @@ import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { Mission, MissionTargetMode } from '@/entities/Mission';
 import { MissionItem } from '@/entities/MissionItem';
+import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import { QueuedTask } from '@/entities/QueuedTask';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiService, MissionPlan } from '@/services/AiService';
 import { ApiResponse } from '@/types/ApiResponse';
-import { In } from 'typeorm';
+import { In, Not, IsNull } from 'typeorm';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AndroidPlannerService } from './AndroidPlannerService';
@@ -119,6 +120,7 @@ export class MissionService {
   private taskRepo = AppDataSource.getRepository(AgentTask);
   private queueRepo = AppDataSource.getRepository(QueuedTask);
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
+  private logRepo = AppDataSource.getRepository(AndroidTaskLog);
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
@@ -587,6 +589,26 @@ export class MissionService {
   // ---------------------------------------------------------------------------
   // Views
   // ---------------------------------------------------------------------------
+
+  /**
+   * The last screen a target phone showed for this mission item — read from the
+   * task's most recent log that carries a screenshot. No new storage: the
+   * planner already saves the final frame. Returns null when there is none
+   * (never ran, or the log was pruned by retention).
+   */
+  async finalScreen(itemId: number, userId: number): Promise<ApiResponse> {
+    const item = await this.itemRepo.findOne({ where: { id: itemId } });
+    if (!item) throw new AppError('Not found', 404);
+    const mission = await this.missionRepo.findOne({ where: { id: item.mission_id, user_id: userId } });
+    if (!mission) throw new AppError('Not found', 404);
+    if (!item.agent_task_id) return { message: 'Final screen', data: { base64: null } };
+    const log = await this.logRepo.findOne({
+      where: { agent_task_id: item.agent_task_id, device_id: item.device_id, screenshot_base64: Not(IsNull()) },
+      order: { id: 'DESC' },
+      select: ['id', 'screenshot_base64'],
+    });
+    return { message: 'Final screen', data: { base64: log?.screenshot_base64 ?? null } };
+  }
 
   private async describe(id: number, userId: number) {
     const mission = await this.missionRepo.findOne({ where: { id, user_id: userId } });

@@ -28,6 +28,12 @@ export class MissionController {
   }
 
   @Authorized()
+  @Get('/items/:itemId/final-screen')
+  async finalScreen(@Param('itemId') itemId: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.missionService.finalScreen(Number(itemId), user.userId);
+  }
+
+  @Authorized()
   @Get('/:id')
   async get(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.missionService.get(id, user.userId);

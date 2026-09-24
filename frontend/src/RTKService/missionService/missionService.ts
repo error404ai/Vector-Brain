@@ -69,7 +69,12 @@ export const missionService = baseApi.injectEndpoints({
       query: (id) => ({ url: `/android/missions/${id}/cancel`, method: 'POST' }),
       invalidatesTags: [TAGS.MISSIONS],
     }),
+    // The last screen a target phone showed for a finished mission item.
+    getFinalScreen: builder.query<{ message: string; data: { base64: string | null } }, number>({
+      query: (itemId) => ({ url: `/android/missions/items/${itemId}/final-screen`, method: 'GET' }),
+      keepUnusedDataFor: 300,
+    }),
   }),
 });
 
-export const { useGetMissionsQuery, useGetMissionQuery, useCreateMissionMutation, useCancelMissionMutation } = missionService;
+export const { useGetMissionsQuery, useGetMissionQuery, useCreateMissionMutation, useCancelMissionMutation, useGetFinalScreenQuery } = missionService;

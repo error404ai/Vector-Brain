@@ -235,6 +235,33 @@ async function waitForMission(id, timeoutMs) {
 // ---------------------------------------------------------------- scenarios
 const scenarios = [
   {
+    name: "final screen: a mission item returns the phone's last stored screenshot",
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'open settings [sim steps=2 delay=50]', device_ids: [phones.free1.dbId] });
+      const done = await waitForMission(created.data.id, 30_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (!item?.agent_task_id) return `item has no task: ${JSON.stringify(item)}`;
+      // The planner stores the final screenshot in production; here we insert one
+      // deterministically, then check the endpoint serves the latest for this item.
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      await db.query(
+        "INSERT INTO android_task_logs (agent_task_id, device_id, step_index, action_type, screenshot_base64, status) VALUES (?, ?, 99, 'screenshot', ?, 'SUCCESS')",
+        [item.agent_task_id, phones.free1.dbId, png],
+      );
+      const res = await api('GET', `/android/missions/items/${item.id}/final-screen`);
+      if (res?.data?.base64 !== png) return `endpoint returned ${String(res?.data?.base64).slice(0, 24)}…, expected the stored screenshot`;
+      // A bogus item id is rejected, not served.
+      let rejected = false;
+      try {
+        await api('GET', '/android/missions/items/99999999/final-screen');
+      } catch {
+        rejected = true;
+      }
+      if (!rejected) return 'a non-existent item was not rejected';
+    },
+  },
+  {
     name: 'basic run finishes as SUCCEEDED',
     async run() {
       const t0 = Date.now();
