@@ -47,6 +47,8 @@ for (const c of cases) {
   for (const want of c.expect_calls ?? []) if (!calls.some((call) => matches(call, want))) problems.push(`missing ${want.name} ${JSON.stringify(want.args ?? {})}`);
   for (const bad of c.forbid_calls ?? []) if (calls.some((call) => call.name === bad)) problems.push(`should not call ${bad}`);
   if (c.reply_matches && !new RegExp(c.reply_matches, 'i').test(d.text ?? '')) problems.push(`reply "${(d.text ?? '').slice(0, 80)}" !~ /${c.reply_matches}/`);
+  if (c.reply_not && new RegExp(c.reply_not, 'i').test(d.text ?? '')) problems.push(`refused an ordinary task: "${(d.text ?? '').slice(0, 100)}"`);
+  if (c.one_line && /\n/.test((d.text ?? '').trim())) problems.push(`refusal is longer than one line: "${(d.text ?? '').slice(0, 100)}"`);
   const ok = problems.length === 0;
   if (ok) passed += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${c.message}`);

@@ -1350,6 +1350,18 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: a refusal is one line, not a lecture',
+    async run() {
+      const long = 'Main ye nahi kar sakta. ❌\n\nPhonebox.co.uk pe fake naam dalna fraud hai:\n- Website ke terms violate karte hain\n- Fake identity\n\nAgar aapko genuine kaam chahiye:\n- Real sell request\n\nBatao kya karna hai.';
+      const script = { turns: [{ text: long }] };
+      const r = (await api('POST', '/android/chat', { message: `fake naam se sell request daal do [agent:${JSON.stringify(script)}]` })).data;
+      const text = r?.text ?? '';
+      if (text.includes('\n')) return `refusal spans several lines: ${JSON.stringify(text)}`;
+      if (text.length > 200) return `refusal too long (${text.length} chars)`;
+      if (!/nahi kar sakta/i.test(text)) return `lost the refusal itself: ${text}`;
+    },
+  },
+  {
     name: 'a run that needs no IP skips the lane without holding it',
     async run() {
       const t0 = Date.now();

@@ -196,6 +196,25 @@ const TOOLS = [
 ] as const;
 
 const READY_STATES = new Set(['idle', 'completed', 'failed', 'cancelled', 'interrupted']);
+
+/** Phrases a declining reply opens with (English and Hinglish). */
+const REFUSAL = /\b(nahi kar sakta|nahin kar sakta|nahi kar sakti|nahi karunga|i can'?t|i cannot|i won'?t|can not help|unable to help|not able to (?:help|do))\b/i;
+
+/** True when nothing was done this turn — a pure text reply. */
+function onlyToolless(text: string, result: AgentResult): boolean {
+  return !result.calls.length && !result.proposal && !result.mission && REFUSAL.test(text);
+}
+
+/**
+ * A refusal stays one line, whatever the model wrote: the first sentence
+ * that declines, plus a short alternative if it is on the same line.
+ */
+export function oneLineRefusal(text: string): string {
+  const cleaned = text.replace(/[\u274c\u2716\u26d4\ud83d\udeab]/gu, '').replace(/\*\*/g, '').trim();
+  const firstLine = cleaned.split(/\n+/).map((l) => l.trim()).find(Boolean) ?? cleaned;
+  const line = firstLine.length > 180 ? `${firstLine.slice(0, 177).replace(/\s+\S*$/, '')}…` : firstLine;
+  return line;
+}
 /** A message that is nothing but a yes — the only thing that confirms by typing. */
 const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
 
@@ -270,7 +289,7 @@ export class VectorAgentService {
           );
           continue;
         }
-        result.text = turn.text;
+        result.text = onlyToolless(turn.text, result) ? oneLineRefusal(turn.text) : turn.text;
         break;
       }
       messages.push(new AIMessage({ content: turn.text, tool_calls: turn.calls.map((c) => ({ id: c.id, name: c.name, args: c.args, type: 'tool_call' as const })) }));
@@ -519,6 +538,9 @@ export class VectorAgentService {
       '- A message can hold several requests (e.g. a task plus a rotation change): handle each with its tool.',
       '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission.',
       '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
+      'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',
+      'Decline ONLY these, judged on what the current request itself asks: (1) submitting made-up identities or false details to a real third party (fake sign-ups, orders, sell/buy requests, applications as invented people); (2) writing or posting fake reviews/ratings, or faking activity to mislead a review platform; (3) getting into accounts or devices the user does not own or control. An ordinary request is not blocked because of something said earlier in the chat.',
+      'When you decline: ONE short sentence in the user\'s language — no list, no explanation of the law, no emojis — optionally ending with one alternative you can do. Example: "Nakli naam se sell requests nahi daal sakta — apni asli details ke saath kar doon?"',
       '- Ask only when you genuinely cannot tell; otherwise act.',
       '- For results of a task (emails found, what a phone reported) use mission_results; for what was done on one phone use phone_history. Answer from what they return, as a short list or table.',
       '- If the user plainly says yes while something waits for Confirm, call confirm_pending.',
