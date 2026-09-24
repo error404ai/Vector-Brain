@@ -11,6 +11,17 @@ export interface ChatReply {
   action?: unknown;
   /** Tap-to-send answers under a question. */
   quick_replies?: string[];
+  /** What a Confirm will do, for the plan card. */
+  plan?: {
+    kind: 'mission' | 'rotation' | 'concurrency';
+    instruction?: string;
+    phones?: string[];
+    steps?: number;
+    cost_usd?: number;
+    duration_minutes?: number;
+    lanes?: string[];
+    setting?: string;
+  };
 }
 
 export type ChatHistoryTurn =

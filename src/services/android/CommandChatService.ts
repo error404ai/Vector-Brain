@@ -50,6 +50,8 @@ export interface ChatReply {
   action?: PendingAction;
   /** Tap-to-send answers shown under a question. */
   quick_replies?: string[];
+  /** What a Confirm will do, for the plan card. */
+  plan?: import('./VectorAgentService').ProposalPlan;
   /**
    * What a question is waiting for, so the next message can finish the job:
    * the phones for a request already given, or the action for phones already
@@ -175,7 +177,7 @@ export class CommandChatService {
       const token = crypto.randomBytes(12).toString('hex');
       this.pending.set(token, { userId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
       const text = result.text.includes(result.proposal.summary) ? result.text : `${result.text}\n\n${result.proposal.summary}.`;
-      return { kind: 'confirm', text, confirm_token: token };
+      return { kind: 'confirm', text, confirm_token: token, plan: result.proposal.plan };
     }
     if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission };
     return { kind: 'answer', text: result.text };

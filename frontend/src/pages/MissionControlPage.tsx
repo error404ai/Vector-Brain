@@ -38,7 +38,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, FormControlLabel, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import toast from 'react-hot-toast';
 
@@ -63,7 +63,11 @@ interface LiveFeed {
   rounds: Record<number, { round: number; endsAt: number }>;
   /** Bumped when the server says a mission changed, so its card refetches. */
   missionPush: Record<number, number>;
+  /** Newest-first log of what phones just did, for the side timeline. */
+  timeline: { at: number; deviceId: number; text: string; key: string }[];
 }
+
+const TIMELINE_KEPT = 40;
 
 const MAX_STEPS_KEPT = 40;
 
@@ -73,7 +77,7 @@ function describeAction(action: unknown): string {
 }
 
 function useLiveFeed(): LiveFeed {
-  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
+  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {}, timeline: [] });
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -117,9 +121,13 @@ function useLiveFeed(): LiveFeed {
               action: describeAction(p.action),
               at: Date.now(),
             };
+            const deviceId = Number(p.deviceId);
             setFeed((prev) => ({
               ...prev,
               steps: { ...prev.steps, [id]: [...(prev.steps[id] ?? []), step].slice(-MAX_STEPS_KEPT) },
+              timeline: Number.isFinite(deviceId)
+                ? [{ at: step.at, deviceId, text: step.thought || step.action, key: `${id}-${step.index}-${step.at}` }, ...prev.timeline].slice(0, TIMELINE_KEPT)
+                : prev.timeline,
             }));
             break;
           }
@@ -217,95 +225,6 @@ function StatusChip({ item }: { item: MissionItem }) {
       variant={item.status === 'SUCCEEDED' ? 'filled' : 'outlined'}
       sx={{ ...motion, ...reducedMotion }}
     />
-  );
-}
-
-function ItemRow({ item, steps, round }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number } }) {
-  const [open, setOpen] = useState(false);
-  const latest = steps[steps.length - 1];
-  const live = item.status === 'RUNNING';
-  // The exact error the phone or agent gave, checkable on the spot.
-  // Step-limit text was written for the fleet page ("raise the Steps value in
-  // the header"); in the chat the card's Continue button says it better.
-  const detail =
-    item.status === 'FAILED' && item.last_message && item.last_reason !== 'STEP_LIMIT' && item.last_reason !== 'UNFINISHED' ? item.last_message : null;
-  return (
-    <Box sx={{ py: 0.75, minWidth: 0, borderBottom: '1px solid', borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600, flexShrink: 0, maxWidth: 220 }} noWrap>
-          {item.device_name}
-        </Typography>
-        <StatusChip item={item} />
-        {live && round && (
-          <Typography variant="caption" color="text.secondary" noWrap>
-            Round {round.round} · {minutesLeft(round.endsAt)}
-          </Typography>
-        )}
-        {item.attempts > 1 && item.status !== 'PENDING' && (
-          <Typography variant="caption" color="text.secondary">
-            {item.attempts} tries
-          </Typography>
-        )}
-        {item.reason_text && item.status !== 'SUCCEEDED' && (
-          <Tooltip title={item.last_message ?? ''} disableHoverListener={!item.last_message}>
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
-              {item.reason_text}
-            </Typography>
-          </Tooltip>
-        )}
-        <Box sx={{ flex: 1 }} />
-        {steps.length > 0 && (
-          <Tooltip title={open ? 'Hide steps' : 'Show steps'}>
-            <IconButton size="small" onClick={() => setOpen((v) => !v)} aria-label={open ? 'Hide steps' : 'Show steps'}>
-              {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
-
-      {live && latest && !open && (
-        <Typography
-          key={latest.index}
-          variant="caption"
-          color="text.secondary"
-          component="p"
-          noWrap
-          sx={{ mt: 0.25, animation: `${slideStep} 260ms ${ease}`, ...reducedMotion }}
-        >
-          Step {latest.index} · {latest.action}
-          {latest.thought ? ` — ${latest.thought}` : ''}
-        </Typography>
-      )}
-
-      {open && (
-        <Box sx={{ mt: 0.75, pl: 1.25, borderLeft: '2px solid', borderColor: 'divider', maxHeight: 220, overflowY: 'auto' }}>
-          {steps.map((step) => (
-            <Typography key={`${step.index}-${step.at}`} variant="caption" component="p" sx={{ py: 0.25, animation: `${slideStep} 220ms ${ease}`, ...reducedMotion }}>
-              <Box component="span" sx={{ color: 'text.disabled', mr: 0.75 }}>
-                {step.index}
-              </Box>
-              <Box component="span" sx={{ fontWeight: 600 }}>
-                {step.action}
-              </Box>
-              {step.thought ? <Box component="span" sx={{ color: 'text.secondary' }}>{` — ${step.thought}`}</Box> : null}
-            </Typography>
-          ))}
-        </Box>
-      )}
-
-      {/* What the phone reported — e.g. which account is logged in. */}
-      {item.status === 'SUCCEEDED' && item.last_message && (
-        <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.25, pl: 1.5, borderLeft: '2px solid', borderColor: 'success.light', wordBreak: 'break-word' }}>
-          {item.last_message.length > 240 ? `${item.last_message.slice(0, 240)}…` : item.last_message}
-        </Typography>
-      )}
-
-      {detail && (
-        <Typography variant="caption" color="text.secondary" component="p" sx={{ pl: 1.5, mt: 0.25, borderLeft: '2px solid', borderColor: 'error.light', wordBreak: 'break-word' }}>
-          {detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}
-        </Typography>
-      )}
-    </Box>
   );
 }
 
@@ -411,14 +330,130 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
 
 type RerunHandler = (missionId: number, options: { scope: 'failed' | 'all'; continue?: boolean }) => void;
 
-function MissionCard({ mission, feed, onRerun }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler }) {
+const COUNT_TONE: { key: MissionItemStatus; label: string; color: string }[] = [
+  { key: 'RUNNING', label: 'Running', color: '#0284c7' },
+  { key: 'QUEUED', label: 'In queue', color: '#b45309' },
+  { key: 'PENDING', label: 'Waiting', color: '#64748b' },
+  { key: 'SUCCEEDED', label: 'Done', color: '#15803d' },
+  { key: 'FAILED', label: 'Failed', color: '#dc2626' },
+  { key: 'CANCELLED', label: 'Cancelled', color: '#64748b' },
+];
+
+/** "20 Running · 3 Failed · 25 Done" — only the counts that are not zero. */
+function SummaryLine({ items }: { items: MissionItem[] }) {
+  const parts = COUNT_TONE.map((tone) => ({ ...tone, n: items.filter((i) => i.status === tone.key).length })).filter((p) => p.n > 0);
+  return (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+      {parts.map((p) => (
+        <Box key={p.key} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, px: 1.25, py: 0.5, borderRadius: 99, bgcolor: `${p.color}14` }}>
+          <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: p.color }} />
+          <Typography variant="body2" sx={{ fontWeight: 700, color: p.color }}>
+            {p.n}
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            {p.label}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/** Failed phones grouped by why they failed; details on demand. */
+function FailureGroups({ items }: { items: MissionItem[] }) {
+  const failed = items.filter((i) => i.status === 'FAILED');
+  const [open, setOpen] = useState(false);
+  if (!failed.length) return null;
+  const groups = new Map<string, MissionItem[]>();
+  for (const item of failed) {
+    const key = item.reason_text ?? 'failed';
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'error.light', bgcolor: 'rgba(220,38,38,0.04)', borderRadius: 2, px: 1.5, py: 1 }}>
+      <Box component="button" type="button" onClick={() => setOpen((v) => !v)} sx={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 1, width: '100%' }} aria-expanded={open}>
+        <ErrorRoundedIcon fontSize="small" color="error" />
+        <Typography variant="body2" sx={{ fontWeight: 700, flex: 1 }}>
+          {failed.length} failed —{' '}
+          <Box component="span" sx={{ fontWeight: 400, color: 'text.secondary' }}>
+            {[...groups.entries()].map(([why, list]) => `${list.length} ${why}`).join(' · ')}
+          </Box>
+        </Typography>
+        {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+      </Box>
+      {open && (
+        <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {[...groups.entries()].map(([why, list]) => (
+            <Box key={why}>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: 'error.main' }}>
+                {why}
+              </Typography>
+              {list.map((item) => (
+                <Typography key={item.id} variant="caption" component="p" color="text.secondary" sx={{ pl: 1.5 }}>
+                  {item.device_name}
+                  {item.last_message ? ` — ${item.last_message.slice(0, 160)}` : ''}
+                </Typography>
+              ))}
+            </Box>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** A small tile for one phone: name, status, and its latest step or result. */
+function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number } }) {
+  const latest = steps[steps.length - 1];
+  const line =
+    item.status === 'RUNNING'
+      ? latest
+        ? `Step ${latest.index} · ${latest.thought || latest.action}`
+        : 'Starting…'
+      : item.status === 'SUCCEEDED'
+        ? item.last_message ?? 'Done'
+        : item.status === 'FAILED'
+          ? item.reason_text ?? 'Failed'
+          : ITEM_TONE[item.status].label;
+  return (
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1.25, py: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
+          {item.device_name}
+        </Typography>
+        <StatusChip item={item} />
+      </Box>
+      <Typography key={latest?.index} variant="caption" color="text.secondary" noWrap sx={{ animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}>
+        {item.status === 'RUNNING' && round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}
+        {line}
+      </Typography>
+    </Box>
+  );
+}
+
+const RUNNING_SHOWN = 6;
+
+function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
-  const { progress } = mission;
+  const [showAll, setShowAll] = useState(false);
+  const { progress, items } = mission;
   const running = mission.status === 'RUNNING';
   const settled = progress.succeeded + progress.failed;
   const percent = progress.total ? Math.round((settled / progress.total) * 100) : 0;
   const finishedClean = mission.status === 'DONE' && progress.failed === 0;
   const finishedWithFailures = mission.status === 'DONE' && progress.failed > 0;
+  const stepsFor = (item: MissionItem) => (item.agent_task_id ? feed.steps[item.agent_task_id] ?? [] : []);
+  const roundFor = (item: MissionItem) => (item.agent_task_id ? feed.rounds[item.agent_task_id] : undefined);
+  const runningItems = items.filter((i) => i.status === 'RUNNING');
+
+  const title = running
+    ? `Running on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'}`
+    : mission.status === 'CANCELLED'
+      ? 'Stopped'
+      : finishedClean
+        ? `Finished — all ${progress.total} done`
+        : `Finished — ${progress.succeeded} of ${progress.total} done`;
+  const tone = running ? 'info.main' : finishedClean ? 'success.main' : mission.status === 'CANCELLED' ? 'text.secondary' : 'warning.main';
 
   const onCancel = async () => {
     try {
@@ -435,11 +470,9 @@ function MissionCard({ mission, feed, onRerun }: { mission: Mission; feed: LiveF
       key={mission.status}
       variant="outlined"
       sx={{
-        alignSelf: 'flex-start',
         width: '100%',
-        maxWidth: 720,
-        p: 2,
         borderRadius: 3,
+        overflow: 'hidden',
         animation: finishedClean
           ? `${riseIn} 300ms ${ease}, ${glowSuccess} 1.1s ease-out`
           : finishedWithFailures
@@ -448,91 +481,92 @@ function MissionCard({ mission, feed, onRerun }: { mission: Mission; feed: LiveF
         ...reducedMotion,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-        {running ? (
-          <CircularProgress size={16} />
-        ) : finishedClean ? (
-          <CheckCircleRoundedIcon fontSize="small" color="success" sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
-        ) : (
-          <ErrorRoundedIcon fontSize="small" color={mission.status === 'CANCELLED' ? 'disabled' : 'warning'} sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
+      {/* Header band: the one thing to read first. */}
+      <Box sx={{ px: 2.5, pt: 2, pb: 1.5, borderLeft: '4px solid', borderColor: tone, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+          {running ? (
+            <CircularProgress size={20} thickness={5} />
+          ) : finishedClean ? (
+            <CheckCircleRoundedIcon color="success" sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
+          ) : (
+            <ErrorRoundedIcon sx={{ color: tone, animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
+          )}
+          <Typography variant="h6" sx={{ fontWeight: 800, flex: 1, lineHeight: 1.2 }}>
+            {title}
+          </Typography>
+          {running && (
+            <Button size="small" color="error" variant="outlined" startIcon={<StopCircleOutlinedIcon />} onClick={onCancel} disabled={cancelling}>
+              Stop
+            </Button>
+          )}
+        </Box>
+        {mission.prompt && (
+          <Typography variant="body2" color="text.secondary">
+            {mission.prompt}
+            {mission.duration_seconds ? ` · for ${Math.round(mission.duration_seconds / 60)} min` : ''}
+          </Typography>
         )}
-        <Typography variant="subtitle2" sx={{ flex: 1 }}>
-          {running
-            ? `Working on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'} — ${progress.succeeded} done${progress.failed ? `, ${progress.failed} failed` : ''}${progress.queued ? `, ${progress.queued} in proxy queue` : ''}`
-            : mission.status === 'CANCELLED'
-              ? 'Stopped'
-              : `Finished — ${progress.succeeded}/${progress.total} done`}
-        </Typography>
+        <SummaryLine items={items} />
         {running && (
-          <Button size="small" color="error" startIcon={<StopCircleOutlinedIcon />} onClick={onCancel} disabled={cancelling}>
-            Stop
-          </Button>
+          <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1 }}>
+            <LinearProgress variant="determinate" value={percent} sx={{ height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { transition: `transform 600ms ${ease}` } }} />
+            <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)', animation: `${shimmer} 1.8s linear infinite`, ...reducedMotion }} />
+          </Box>
         )}
       </Box>
 
-      {mission.prompt && (
-        <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1 }}>
-          Each phone runs: {mission.prompt}
-          {mission.duration_seconds ? ` · for ${Math.round(mission.duration_seconds / 60)} min` : ''}
-        </Typography>
-      )}
+      {/* Body: secondary detail. */}
+      <Box sx={{ px: 2.5, pb: 2, pt: 0.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        {running && showLive && <LiveScreens items={items} feed={feed} />}
 
-      {running && (
-        <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1, mb: 1 }}>
-          <LinearProgress variant="determinate" value={percent} sx={{ height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { transition: `transform 600ms ${ease}` } }} />
-          <Box
-            sx={{
-              position: 'absolute',
-              inset: 0,
-              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)',
-              animation: `${shimmer} 1.8s linear infinite`,
-              ...reducedMotion,
-            }}
-          />
-        </Box>
-      )}
+        {running && runningItems.length > 0 && !showAll && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1 }}>
+            {runningItems.slice(0, RUNNING_SHOWN).map((item) => (
+              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} />
+            ))}
+          </Box>
+        )}
 
-      {running && <LiveScreens items={mission.items} feed={feed} />}
+        <FailureGroups items={items} />
 
-      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-        {mission.items.map((item) => (
-          <ItemRow
-            key={item.id}
-            item={item}
-            steps={item.agent_task_id ? feed.steps[item.agent_task_id] ?? [] : []}
-            round={item.agent_task_id ? feed.rounds[item.agent_task_id] : undefined}
-          />
-        ))}
-      </Box>
+        {mission.note && (
+          <Typography variant="caption" color="warning.main">
+            {mission.note}
+          </Typography>
+        )}
 
-      {!running && onRerun && (
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
-          {mission.items.some((i) => i.status === 'FAILED' && (i.last_reason === 'STEP_LIMIT' || i.last_reason === 'UNFINISHED')) && (
-            <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} onClick={() => onRerun(mission.id, { scope: 'failed', continue: true })}>
-              Continue
-            </Button>
-          )}
-          {progress.failed > 0 && (
-            <Button size="small" variant="outlined" startIcon={<ReplayIcon />} onClick={() => onRerun(mission.id, { scope: 'failed' })}>
-              Retry failed
-            </Button>
-          )}
-          <Button size="small" variant="text" startIcon={<RestartAltIcon />} onClick={() => onRerun(mission.id, { scope: 'all' })}>
-            Run again
+        {showAll && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1, animation: `${riseIn} 220ms ${ease}`, ...reducedMotion }}>
+            {items.map((item) => (
+              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} />
+            ))}
+          </Box>
+        )}
+
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Button size="small" onClick={() => setShowAll((v) => !v)} endIcon={showAll ? <ExpandLessIcon /> : <ExpandMoreIcon />}>
+            {showAll ? 'Hide phones' : `Show all ${items.length} phones`}
           </Button>
+          <Box sx={{ flex: 1 }} />
+          {!running && onRerun && (
+            <>
+              {items.some((i) => i.status === 'FAILED' && (i.last_reason === 'STEP_LIMIT' || i.last_reason === 'UNFINISHED')) && (
+                <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} onClick={() => onRerun(mission.id, { scope: 'failed', continue: true })}>
+                  Continue
+                </Button>
+              )}
+              {progress.failed > 0 && (
+                <Button size="small" variant="outlined" startIcon={<ReplayIcon />} onClick={() => onRerun(mission.id, { scope: 'failed' })}>
+                  Retry failed
+                </Button>
+              )}
+              <Button size="small" startIcon={<RestartAltIcon />} onClick={() => onRerun(mission.id, { scope: 'all' })}>
+                Run again
+              </Button>
+            </>
+          )}
         </Box>
-      )}
-
-      {mission.summary && !running && (
-        <Typography variant="body2" sx={{ mt: 1.5, whiteSpace: 'pre-wrap', animation: `${riseIn} 360ms ${ease}`, ...reducedMotion }}>
-          {mission.summary}
-        </Typography>
-      )}
-      {running && mission.note && (
-        <Typography variant="caption" color="warning.main" component="p" sx={{ mt: 1 }}>
-          {mission.note}
-        </Typography>
-      )}
+      </Box>
     </Paper>
   );
 }
@@ -541,7 +575,7 @@ function MissionCard({ mission, feed, onRerun }: { mission: Mission; feed: LiveF
  * A mission started from the chat, kept current on its own: it polls just this
  * mission while it runs and refetches the moment the server pushes an update.
  */
-function LiveMissionCard({ initial, feed, onRerun }: { initial: Mission; feed: LiveFeed; onRerun?: RerunHandler }) {
+function LiveMissionCard({ initial, feed, onRerun, showLive = true }: { initial: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [status, setStatus] = useState(initial.status);
   const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 2000 : 0 });
   const mission = data?.data ?? initial;
@@ -553,7 +587,7 @@ function LiveMissionCard({ initial, feed, onRerun }: { initial: Mission; feed: L
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-      <MissionCard mission={mission} feed={feed} onRerun={onRerun} />
+      <MissionCard mission={mission} feed={feed} onRerun={onRerun} showLive={showLive} />
       {isError && (
         <Typography variant="caption" color="warning.main">
           Couldn't refresh this mission — retrying.
@@ -605,6 +639,76 @@ function AssistantRow({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** What a Confirm will do, laid out — phones, task, estimate — with the two choices. */
+function PlanCard({
+  plan,
+  text,
+  confirming,
+  onConfirm,
+  onCancel,
+}: {
+  plan: NonNullable<ChatReply['plan']>;
+  text: string;
+  confirming?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const phones = plan.phones ?? [];
+  const rows: { label: string; value: React.ReactNode }[] = [];
+  if (plan.kind === 'mission') {
+    rows.push({ label: 'Task', value: plan.instruction });
+    rows.push({
+      label: `Phones · ${phones.length}`,
+      value: (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+          {phones.slice(0, 6).map((name) => (
+            <Chip key={name} size="small" label={name} variant="outlined" />
+          ))}
+          {phones.length > 6 && <Chip size="small" label={`+${phones.length - 6} more`} />}
+        </Box>
+      ),
+    });
+    if (plan.duration_minutes) rows.push({ label: 'Duration', value: `${plan.duration_minutes} min per phone` });
+    rows.push({ label: 'Estimate', value: `~${plan.steps} AI steps · ~$${(plan.cost_usd ?? 0).toFixed(2)}` });
+  } else {
+    rows.push({ label: plan.kind === 'rotation' ? 'Proxy rotation' : 'Lane', value: plan.setting });
+    rows.push({ label: 'Lanes', value: (plan.lanes ?? []).join(', ') });
+  }
+  const intro = text.split('\n\n')[0];
+  return (
+    <Paper variant="outlined" sx={{ alignSelf: 'flex-start', width: '100%', maxWidth: 640, borderRadius: 3, overflow: 'hidden', borderColor: 'warning.light', animation: `${riseIn} 280ms ${ease}`, ...reducedMotion }}>
+      <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
+        <Typography variant="caption" sx={{ fontWeight: 800, letterSpacing: 0.4, color: 'warning.dark' }}>
+          PLAN · NEEDS YOUR CONFIRM
+        </Typography>
+        {intro && (
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            {intro}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={{ px: 2, pb: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {rows.map((row) => (
+          <Box key={row.label} sx={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 1.5, alignItems: 'start' }}>
+            <Typography variant="caption" color="text.secondary" sx={{ pt: 0.25 }}>
+              {row.label}
+            </Typography>
+            <Box sx={{ typography: 'body2', minWidth: 0 }}>{row.value}</Box>
+          </Box>
+        ))}
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1, px: 2, py: 1.25, bgcolor: 'action.hover' }}>
+        <Button variant="contained" disabled={confirming} onClick={onConfirm} sx={{ fontWeight: 700 }}>
+          {confirming ? 'Confirmed' : 'Confirm'}
+        </Button>
+        <Button disabled={confirming} onClick={onCancel}>
+          Cancel
+        </Button>
+      </Box>
+    </Paper>
+  );
+}
+
 function AssistantBubble({
   turn,
   feed,
@@ -612,6 +716,7 @@ function AssistantBubble({
   onRerun,
   onQuickReply,
   isLatest,
+  showLive = true,
 }: {
   turn: Extract<ChatTurn, { role: 'assistant' }>;
   feed: LiveFeed;
@@ -619,6 +724,7 @@ function AssistantBubble({
   onRerun: RerunHandler;
   onQuickReply: (text: string) => void;
   isLatest: boolean;
+  showLive?: boolean;
 }) {
   const { reply } = turn;
   if (reply.kind === 'mission' && reply.mission) {
@@ -629,7 +735,20 @@ function AssistantBubble({
             {reply.text}
           </Typography>
         )}
-        <LiveMissionCard initial={reply.mission} feed={feed} onRerun={onRerun} />
+        <LiveMissionCard initial={reply.mission} feed={feed} onRerun={onRerun} showLive={showLive} />
+      </AssistantRow>
+    );
+  }
+  if (reply.kind === 'confirm' && reply.plan && reply.confirm_token) {
+    return (
+      <AssistantRow>
+        <PlanCard
+          plan={reply.plan}
+          text={reply.text}
+          confirming={turn.confirming}
+          onConfirm={() => onConfirm(reply.confirm_token as string)}
+          onCancel={() => onQuickReply('cancel')}
+        />
       </AssistantRow>
     );
   }
@@ -730,7 +849,7 @@ function RotationSwitch() {
       }
     >
       <FormControlLabel
-        sx={{ m: 0, mt: 0.5, ml: 0.5 }}
+        sx={{ m: 0, ml: 0.5 }}
         control={<Switch size="small" checked={on} onChange={toggle} disabled={saving} />}
         label={
           <Typography variant="caption" color="text.secondary">
@@ -742,10 +861,95 @@ function RotationSwitch() {
   );
 }
 
+const PANEL_PAGE = 4;
+const PANEL_ROTATE_MS = 5000;
+
+/**
+ * Wide screens only: the phones that are working right now (four screens at
+ * a time, cycling) and a running log of what they just did.
+ */
+function LivePanel({ feed, devices }: { feed: LiveFeed; devices: { id: number; device_id: string; name: string; state: string }[] }) {
+  const running = devices.filter((d) => d.state === 'running');
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    if (running.length <= PANEL_PAGE) return;
+    const timer = setInterval(() => setPage((p) => p + 1), PANEL_ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [running.length]);
+  const pages = Math.max(1, Math.ceil(running.length / PANEL_PAGE));
+  const shown = running.slice((page % pages) * PANEL_PAGE, (page % pages) * PANEL_PAGE + PANEL_PAGE);
+  const nameOf = new Map(devices.map((d) => [d.id, d.name]));
+
+  return (
+    <Box sx={{ width: 360, flexShrink: 0, borderLeft: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <Box sx={{ px: 2.5, pt: 3, pb: 1.5, display: 'flex', alignItems: 'baseline', gap: 1 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+          Live phones
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {running.length ? `${running.length} working${pages > 1 ? ` · ${(page % pages) + 1}/${pages}` : ''}` : 'none working'}
+        </Typography>
+      </Box>
+      <Box sx={{ px: 2.5, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.5 }}>
+        {shown.map((d) => {
+          const frame = feed.frames[d.device_id];
+          return (
+            <Box key={d.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, animation: `${riseIn} 260ms ${ease}`, ...reducedMotion }}>
+              <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2.5, border: '5px solid', borderColor: 'grey.900', bgcolor: 'grey.900', overflow: 'hidden' }}>
+                {frame && (
+                  <Box
+                    key={frame.at}
+                    component="img"
+                    src={frameSrc(frame.data)}
+                    alt={`${d.name} screen`}
+                    sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }}
+                  />
+                )}
+              </Box>
+              <Typography variant="caption" sx={{ fontWeight: 600 }} noWrap>
+                {d.name}
+              </Typography>
+            </Box>
+          );
+        })}
+        {!running.length && (
+          <Typography variant="body2" color="text.secondary" sx={{ gridColumn: '1 / -1' }}>
+            Screens show up here while a task runs.
+          </Typography>
+        )}
+      </Box>
+
+      <Box sx={{ px: 2.5, pt: 3, pb: 1 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+          Timeline
+        </Typography>
+      </Box>
+      <Box sx={{ flex: 1, overflowY: 'auto', px: 2.5, pb: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {feed.timeline.map((entry) => (
+          <Box key={entry.key} sx={{ display: 'grid', gridTemplateColumns: '40px 1fr', gap: 1, animation: `${slideStep} 220ms ${ease}`, ...reducedMotion }}>
+            <Typography variant="caption" color="text.disabled">
+              {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+            </Typography>
+            <Typography variant="caption">
+              <b>{nameOf.get(entry.deviceId) ?? 'Phone'}</b> — {entry.text}
+            </Typography>
+          </Box>
+        ))}
+        {!feed.timeline.length && (
+          <Typography variant="body2" color="text.secondary">
+            Each step a phone takes appears here.
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
@@ -753,7 +957,9 @@ export default function MissionControlPage() {
   const [rerunFromChat, { isLoading: rerunning }] = useRerunFromChatMutation();
 
   // Names and tags for @ / # suggestions in the input.
-  const { data: fleetData } = useGetFleetStateQuery();
+  // Wide screens get the live side panel; narrower ones keep screens in the card.
+  const wide = useMediaQuery('(min-width:1600px)');
+  const { data: fleetData } = useGetFleetStateQuery(undefined, { pollingInterval: wide ? 5000 : 0 });
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
   const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
@@ -847,8 +1053,14 @@ export default function MissionControlPage() {
     }
   };
 
+  const insertTrigger = (trigger: '@' | '#') => {
+    setInput((prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${trigger}`);
+    inputRef.current?.focus();
+  };
+
   return (
-    <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
+    <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0 }}>
+    <Box sx={{ flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
         <VectorAvatar />
         <Box>
@@ -900,6 +1112,7 @@ export default function MissionControlPage() {
               onRerun={onRerun}
               onQuickReply={(text) => void send(text)}
               isLatest={index === turns.length - 1 && !sending}
+              showLive={!wide}
             />
           ),
         )}
@@ -923,27 +1136,42 @@ export default function MissionControlPage() {
         </Paper>
       )}
 
-      <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 3, transition: 'box-shadow 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.15)' } }}>
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end' }}>
-          <TextField
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Message Vector — type @ for a phone, # for a tag"
-            multiline
-            maxRows={6}
-            fullWidth
-            size="small"
-            variant="standard"
-            InputProps={{ disableUnderline: true, sx: { px: 1, py: 0.5 } }}
-            inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
-          />
-          <IconButton color="primary" onClick={() => void send()} disabled={!input.trim() || sending} aria-label="Send">
-            {sending ? <CircularProgress size={20} /> : <SendIcon />}
-          </IconButton>
+      <Paper
+        variant="outlined"
+        sx={{ px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' } }}
+      >
+        <TextField
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Tell Vector what the phones should do…"
+          multiline
+          minRows={2}
+          maxRows={8}
+          fullWidth
+          variant="standard"
+          inputRef={inputRef}
+          InputProps={{ disableUnderline: true, sx: { px: 0.75, fontSize: 16 } }}
+          inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
+        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
+          <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
+          <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
+          <RotationSwitch />
+          <Box sx={{ flex: 1 }} />
+          <Button
+            variant="contained"
+            onClick={() => void send()}
+            disabled={!input.trim() || sending}
+            endIcon={sending ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+            sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
+          >
+            Send
+          </Button>
         </Box>
-        <RotationSwitch />
       </Paper>
+    </Box>
+    {wide && <LivePanel feed={feed} devices={(fleetData?.data?.devices ?? []) as { id: number; device_id: string; name: string; state: string }[]} />}
     </Box>
   );
 }

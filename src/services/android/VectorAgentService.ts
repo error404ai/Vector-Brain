@@ -50,6 +50,18 @@ export type ProposedAction =
   | { type: 'set_concurrency'; proxy_id: number; concurrency: number }
   | { type: 'run_mission'; instruction: string; device_ids: number[]; duration_seconds?: number };
 
+/** What a proposal will do, laid out for the chat's plan card. */
+export interface ProposalPlan {
+  kind: 'mission' | 'rotation' | 'concurrency';
+  instruction?: string;
+  phones?: string[];
+  steps?: number;
+  cost_usd?: number;
+  duration_minutes?: number;
+  lanes?: string[];
+  setting?: string;
+}
+
 export interface AgentContext {
   userId: number;
   history: { role: 'user' | 'assistant'; text: string }[];
@@ -61,7 +73,7 @@ export interface AgentContext {
 export interface AgentResult {
   text: string;
   mission?: unknown;
-  proposal?: { action: ProposedAction; summary: string };
+  proposal?: { action: ProposedAction; summary: string; plan?: ProposalPlan };
   ask?: { question: string; options: string[] };
   cancelledPending?: boolean;
   /** Set when the user's plain "yes" confirmed a pending proposal. */
@@ -309,7 +321,12 @@ export class VectorAgentService {
             const steps = deviceIds.length * (minutes ? minutes * STEPS_PER_MINUTE : STEPS_PER_SIMPLE_TASK);
             const cost = steps * COST_PER_STEP_USD;
             const summary = `Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — about ${steps} AI steps, roughly $${cost.toFixed(cost < 1 ? 2 : 1)}`;
-            result.proposal = { action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds }, summary };
+            const phoneNames = await this.namesFor(ctx.userId, deviceIds);
+            result.proposal = {
+              action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds },
+              summary,
+              plan: { kind: 'mission', instruction, phones: phoneNames, steps, cost_usd: Math.round(cost * 100) / 100, duration_minutes: minutes || undefined },
+            };
             return JSON.stringify({ status: 'needs_confirmation', summary });
           }
           if (ctx.dryRun) return JSON.stringify({ status: 'started (dry run)', phones: deviceIds.length });
@@ -345,7 +362,11 @@ export class VectorAgentService {
           if (!lanes.length) return JSON.stringify({ error: 'No such lane' });
           const names = lanes.map((l) => l.name).join(', ');
           const summary = every === 0 ? `Proxy rotation → OFF on ${names}` : `Proxy rotation → ON (${every === 1 ? 'after every task' : `every ${every} tasks`}) on ${names}`;
-          result.proposal = { action: { type: 'set_rotation', proxy_ids: lanes.map((l) => l.id), every }, summary };
+          result.proposal = {
+            action: { type: 'set_rotation', proxy_ids: lanes.map((l) => l.id), every },
+            summary,
+            plan: { kind: 'rotation', lanes: lanes.map((l) => l.name), setting: every === 0 ? 'OFF' : every === 1 ? 'ON · after every task' : `ON · every ${every} tasks` },
+          };
           return JSON.stringify({ status: 'waiting_for_user_confirm', summary });
         }
 
@@ -354,7 +375,11 @@ export class VectorAgentService {
           const n = Math.floor(Number(args.concurrency));
           if (lanes.length !== 1 || !(n >= 1)) return JSON.stringify({ error: 'Need one lane name and a number of at least 1' });
           const summary = `Lane "${lanes[0].name}" → ${n} phone${n === 1 ? '' : 's'} at once`;
-          result.proposal = { action: { type: 'set_concurrency', proxy_id: lanes[0].id, concurrency: n }, summary };
+          result.proposal = {
+            action: { type: 'set_concurrency', proxy_id: lanes[0].id, concurrency: n },
+            summary,
+            plan: { kind: 'concurrency', lanes: [lanes[0].name], setting: `${n} at once` },
+          };
           return JSON.stringify({ status: 'waiting_for_user_confirm', summary });
         }
 
