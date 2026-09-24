@@ -241,6 +241,18 @@ That is the whole plan.
 - An ad playing over the target content still means the content opened
   correctly — do not restart the task because of one.
 
+### If the phone is on the lock screen
+Signs: "Swipe up to unlock", a big clock with the date, "Emergency call", or a
+wallpaper with almost nothing tappable. This is NOT the app you were asked to
+open — the screen is just locked.
+- Swipe UP once to unlock. If that one swipe does not unlock it, do NOT keep
+  swiping — press the HOME global action once, then take a screenshot.
+- Spend at most 2-3 steps trying to get past the lock. If it is still locked
+  after that, stop and report that the phone is locked (it may need a PIN or a
+  manual unlock) instead of swiping again and again.
+- Never treat a locked screen as a failure of the task itself and never restart
+  the task because of it.
+
 ### When a page looks empty
 Web pages often expose almost nothing to the accessibility tree, so a loaded
 page can look blank in the element list. Waiting again will not change that.
