@@ -42,7 +42,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -1086,7 +1086,10 @@ export default function MissionControlPage() {
 
   // Conversations (the sidebar). null = a fresh unsaved chat.
   const [conversationId, setConversationId] = useState<number | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On phones the sidebar is a temporary overlay and starts closed so the chat
+  // gets the full width; on wider screens it sits beside the chat, open.
+  const isMobile = useMediaQuery('(max-width:900px)');
+  const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth > 900));
   const { data: convData, refetch: refetchConversations } = useGetConversationsQuery();
   const [newConversation] = useNewConversationMutation();
   const [deleteConversation] = useDeleteConversationMutation();
@@ -1124,6 +1127,7 @@ export default function MissionControlPage() {
       setConversationId(res.data.id);
       setTurns([]);
       setLoadedFor(res.data.id);
+      if (isMobile) setSidebarOpen(false);
       await refetchConversations();
     } catch (error) {
       toast.error(errorMessage(error));
@@ -1131,6 +1135,7 @@ export default function MissionControlPage() {
   };
 
   const openConversation = (id: number) => {
+    if (isMobile) setSidebarOpen(false);
     if (id === conversationId) return;
     setConversationId(id);
     setTurns([]);
@@ -1239,15 +1244,33 @@ export default function MissionControlPage() {
 
   return (
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0 }}>
-    <ConversationSidebar
-      open={sidebarOpen}
-      conversations={conversations}
-      activeId={conversationId}
-      onNew={startNewChat}
-      onOpen={openConversation}
-      onDelete={removeConversation}
-    />
-    <Box sx={{ flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', px: { xs: 1.5, md: 3 }, py: 3, display: 'flex', flexDirection: 'column' }}>
+    {isMobile ? (
+      <Drawer
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        ModalProps={{ keepMounted: true }}
+        PaperProps={{ sx: { width: 260, top: { xs: 60, md: 64 }, height: { xs: 'calc(100% - 60px)', md: 'calc(100% - 64px)' } } }}
+      >
+        <ConversationSidebar
+          open
+          conversations={conversations}
+          activeId={conversationId}
+          onNew={startNewChat}
+          onOpen={openConversation}
+          onDelete={removeConversation}
+        />
+      </Drawer>
+    ) : (
+      <ConversationSidebar
+        open={sidebarOpen}
+        conversations={conversations}
+        activeId={conversationId}
+        onNew={startNewChat}
+        onOpen={openConversation}
+        onDelete={removeConversation}
+      />
+    )}
+    <Box sx={{ flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', width: '100%', px: { xs: 1.5, md: 3 }, py: { xs: 1.5, md: 3 }, display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
         <IconButton size="small" aria-label={sidebarOpen ? 'Hide chats' : 'Show chats'} onClick={() => setSidebarOpen((v) => !v)}>
           <MenuIcon />
@@ -1257,7 +1280,7 @@ export default function MissionControlPage() {
           <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
             Vector
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
             Android mobile automation — run tasks across phones, check status, manage proxy rotation. Setting changes ask you first.
           </Typography>
         </Box>
