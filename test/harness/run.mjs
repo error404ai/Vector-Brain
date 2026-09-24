@@ -1221,6 +1221,21 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: show_screens returns a live frame per phone and does not store it',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'show_screens', args: { phones: 'free1' } }] }, { text: 'Ye rahi free1 ki screen.' }] };
+      const res = await api('POST', '/android/chat', { message: `free1 ki screen dikha [agent:${JSON.stringify(script)}]` });
+      const reply = res?.data;
+      if (reply?.kind !== 'screens') return `kind ${reply?.kind}: ${reply?.text}`;
+      if (reply.text !== 'Ye rahi free1 ki screen.') return `reply was not the model's words: ${reply.text}`;
+      const shot = (reply.screens ?? []).find((s) => s.base64);
+      if (!shot) return `no screen came back: ${JSON.stringify(reply.screens)}`;
+      // Screens are live, not transcript — the base64 must not survive into history.
+      const history = await api('GET', '/android/chat/history');
+      if (JSON.stringify(history?.data?.turns ?? []).includes(shot.base64)) return 'history stored the screenshot base64 (should be stripped)';
+    },
+  },
+  {
     name: 'agent: a task on many phones waits for Confirm, with an estimate',
     async run() {
       const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');

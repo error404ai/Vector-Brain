@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { AndroidDevice } from '@/entities/AndroidDevice';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import { Mission } from '@/entities/Mission';
 import AppError from '@/helpers/AppError';
@@ -6,7 +7,9 @@ import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import { In } from 'typeorm';
 import { Service } from 'typedi';
+import { AndroidGatewayService } from './AndroidGatewayService';
 import { FleetStateService } from './FleetStateService';
 import { MissionService, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
@@ -96,8 +99,21 @@ export interface AgentResult {
   skipped?: { instruction: string; line: string }[];
   /** Policy v2: tasks accepted this turn, run together once the model is done. */
   planned?: { instruction: string; deviceIds: number[]; minutes: number }[];
+  /** One point-in-time screenshot per phone the user asked to see. */
+  screens?: PhoneShot[];
   calls: { name: string; args: Record<string, unknown>; result: string }[];
 }
+
+/** A single phone's current screen for the chat: the image, or why there is none. */
+export interface PhoneShot {
+  device_name: string;
+  hw_id: string | null;
+  base64?: string;
+  error?: string;
+}
+
+/** Most phones we screenshot in one "show me the screens" — bounds cost and time. */
+const MAX_SCREENS = 12;
 
 const TOOLS = [
   {
@@ -194,6 +210,15 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'show_screens',
+      description:
+        "Show the user a live picture of what is on the phones' screens right now, in the chat. Call this whenever the user wants to SEE or LOOK AT a screen — \"show me the screens\", \"screen dikhao\", \"what's on X right now\", \"let me see phone 2\". phones: \"all\" (every online phone), \"last\" (the last task's phones), \"tag:<Tag>\", or comma-separated exact phone names. The images are rendered for the user; you never need to describe what is on them.",
+      parameters: { type: 'object', properties: { phones: { type: 'string' } }, required: ['phones'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'confirm_pending',
       description: 'Apply what is waiting for Confirm — ONLY when the user plainly says yes (yes, haan, confirm, ok, kar do) with nothing else added.',
       parameters: { type: 'object', properties: {} },
@@ -236,17 +261,27 @@ export function oneLineRefusal(text: string): string {
 /** A message that is nothing but a yes — the only thing that confirms by typing. */
 const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
 
+/** A short, human reason a phone couldn't hand back its screen. */
+function screenFailReason(code?: string, message?: string): string {
+  if (code === 'CAPTURE_NOT_CONFIGURED') return 'Screen sharing off on the phone';
+  if (code === 'ACCESSIBILITY_DISABLED') return 'Offline';
+  if (code === 'TIMEOUT') return 'No answer';
+  return (message ?? 'No screen').slice(0, 80);
+}
+
 @Service()
 export class VectorAgentService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private missionRepo = AppDataSource.getRepository(Mission);
   private taskRepo = AppDataSource.getRepository(AgentTask);
+  private deviceRepo = AppDataSource.getRepository(AndroidDevice);
 
   constructor(
     private aiConfigService: AiConfigService,
     private fleetStateService: FleetStateService,
     private missionService: MissionService,
     private proxyService: ProxyRotationService,
+    private gatewayService: AndroidGatewayService,
   ) {}
 
   /** The real model with the tools bound, or null when no chat model is configured. */
@@ -560,6 +595,24 @@ export class VectorAgentService {
           });
         }
 
+        case 'show_screens': {
+          const deviceIds = await this.resolveScreenPhones(ctx, String(args.phones ?? ''));
+          if (!deviceIds.length) {
+            return JSON.stringify({ error: 'No phones matched. Ask which phones with ask_user, or check the fleet with fleet_status.' });
+          }
+          if (ctx.dryRun) return JSON.stringify({ status: 'would_show', phones: deviceIds.length });
+          const shots = await this.captureScreens(ctx.userId, deviceIds);
+          result.screens = shots;
+          const shown = shots.filter((s) => s.base64).length;
+          const failed = shots.filter((s) => !s.base64);
+          return JSON.stringify({
+            status: 'shown',
+            note: 'The screens are shown to the user as live images. Do not describe what is on them. Reply with one short caption only.',
+            shown,
+            unavailable: failed.map((s) => `${s.device_name}: ${s.error ?? 'no screen'}`),
+          });
+        }
+
         case 'confirm_pending': {
           if (!ctx.pending.length) return JSON.stringify({ error: 'Nothing is waiting for Confirm' });
           // A plain yes only. "yes but only 2 phones" changes the request, so
@@ -652,6 +705,7 @@ export class VectorAgentService {
       'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',
       '- Ask only when you genuinely cannot tell; otherwise act.',
       '- For results of a task (emails found, what a phone reported) use mission_results; for what was done on one phone use phone_history. Answer from what they return, as a short list or table.',
+      "- To let the user SEE what is on the phones right now, call show_screens (phones like run_mission). You CAN show screens — never say you cannot. After it, write only a one-line caption; the images speak for themselves.",
       '- If the user plainly says yes while something waits for Confirm, call confirm_pending.',
       ...(ctx.policy === 'v2'
         ? [
@@ -683,6 +737,52 @@ export class VectorAgentService {
     const tag = /^(?:tag:|#)(.+)$/i.exec(spec)?.[1]?.trim().toLowerCase();
     if (tag) return state.devices.filter((d) => READY_STATES.has(d.state) && (d.tag ?? '').split(':').pop()?.trim().toLowerCase() === tag).map((d) => d.id);
     return matchNamedDevices(spec.replace(/,/g, ' , '), state.devices).map((d) => d.id);
+  }
+
+  /**
+   * Phones to screenshot. Unlike resolvePhones, "all" includes phones that are
+   * mid-task (they still have a screen to show); connectivity is filtered later,
+   * per phone, so an offline one is reported rather than silently dropped.
+   */
+  private async resolveScreenPhones(ctx: AgentContext, phones: string): Promise<number[]> {
+    const state = (await this.fleetStateService.getState(ctx.userId)) as { devices: { id: number; name: string; state: string; tag: string | null }[] };
+    const spec = phones.trim();
+    if (!spec || /^last$/i.test(spec)) return ctx.lastMissionDevices.filter((id) => state.devices.some((d) => d.id === id));
+    if (/^all$/i.test(spec)) return state.devices.map((d) => d.id);
+    const tag = /^(?:tag:|#)(.+)$/i.exec(spec)?.[1]?.trim().toLowerCase();
+    if (tag) return state.devices.filter((d) => (d.tag ?? '').split(':').pop()?.trim().toLowerCase() === tag).map((d) => d.id);
+    return matchNamedDevices(spec.replace(/,/g, ' , '), state.devices).map((d) => d.id);
+  }
+
+  /**
+   * Ask each phone for a small preview frame of its current screen, in parallel.
+   * A phone that is offline, or refuses (no screen-capture permission), comes
+   * back as an error entry instead of holding up the others.
+   */
+  private async captureScreens(userId: number, deviceIds: number[]): Promise<PhoneShot[]> {
+    const devices = await this.deviceRepo.find({ where: { id: In([...new Set(deviceIds)]), user_id: userId }, select: ['id', 'device_id', 'device_name'] });
+    const chosen = devices.slice(0, MAX_SCREENS);
+    const shots = await Promise.all(
+      chosen.map(async (d): Promise<PhoneShot> => {
+        if (!this.gatewayService.isDeviceConnected(d.device_id)) {
+          return { device_name: d.device_name, hw_id: d.device_id, error: 'Offline' };
+        }
+        try {
+          const res = await this.gatewayService.executeAction(d.device_id, { type: 'CaptureScreen', preview: true, awaitStability: false }, 12000);
+          if (res.status === 'SUCCESS') {
+            return res.screenCapture?.base64Data
+              ? { device_name: d.device_name, hw_id: d.device_id, base64: res.screenCapture.base64Data }
+              : { device_name: d.device_name, hw_id: d.device_id, error: 'No screen' };
+          }
+          const code = res.status === 'FAILURE' ? res.code : undefined;
+          const message = res.status === 'FAILURE' ? res.message : 'Cancelled';
+          return { device_name: d.device_name, hw_id: d.device_id, error: screenFailReason(code, message) };
+        } catch (error) {
+          return { device_name: d.device_name, hw_id: d.device_id, error: (error as Error)?.message?.slice(0, 80) ?? 'Failed' };
+        }
+      }),
+    );
+    return shots;
   }
 
   private async resolveLanes(userId: number, lanes: string): Promise<DeviceProxy[]> {

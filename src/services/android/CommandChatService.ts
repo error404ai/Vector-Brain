@@ -42,10 +42,12 @@ interface Pending {
 }
 
 export interface ChatReply {
-  /** answer: plain text · mission: a mission started · confirm: awaiting yes · clarify: a question back · error */
-  kind: 'answer' | 'mission' | 'confirm' | 'clarify' | 'error';
+  /** answer: plain text · mission: a mission started · confirm: awaiting yes · clarify: a question back · screens: live phone screens · error */
+  kind: 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error';
   text: string;
   mission?: unknown;
+  /** kind 'screens': one live screenshot per phone (base64 stripped before storage). */
+  screens?: import('./VectorAgentService').PhoneShot[];
   confirm_token?: string;
   /** Echoes the action a confirm will apply, for the UI to describe. */
   action?: PendingAction;
@@ -203,6 +205,7 @@ export class CommandChatService {
       return { kind: 'confirm', text, confirm_token: token, plan: result.proposal.plan };
     }
     if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission, extra_missions: result.extraMissions?.length ? result.extraMissions : undefined };
+    if (result.screens?.length) return { kind: 'screens', text: result.text, screens: result.screens };
     return { kind: 'answer', text: result.text };
   }
 
@@ -297,6 +300,8 @@ export class CommandChatService {
       }
       // A confirm from an earlier visit can't be applied any more; show it as text.
       if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };
+      // Old screenshots aren't kept (they're live) — show the caption as plain text.
+      if (reply.kind === 'screens') reply = { kind: 'answer', text: reply.text };
       return { id: row.id, role: 'assistant' as const, reply };
     });
     return { message: 'Chat history', data: { conversation_id: conversation.id, turns } };
@@ -412,8 +417,14 @@ export class CommandChatService {
   private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply, conversationId?: number): Promise<void> {
     try {
       const missionId = (reply?.mission as { id?: number } | undefined)?.id ?? null;
+      // Live screenshots are point-in-time — never store the (large) base64 in
+      // the transcript. Keep the names so history shows "showed these phones".
+      const toStore =
+        reply?.kind === 'screens'
+          ? { ...reply, screens: reply.screens?.map((s) => ({ device_name: s.device_name, hw_id: s.hw_id, error: s.base64 ? undefined : s.error })) }
+          : reply;
       await this.messageRepo.save(
-        this.messageRepo.create({ user_id: userId, conversation_id: conversationId ?? null, role, text: text.slice(0, 8000), reply: reply ? JSON.stringify(reply) : null, mission_id: missionId }),
+        this.messageRepo.create({ user_id: userId, conversation_id: conversationId ?? null, role, text: text.slice(0, 8000), reply: toStore ? JSON.stringify(toStore) : null, mission_id: missionId }),
       );
       if (conversationId) await this.conversationRepo.update({ id: conversationId, user_id: userId }, { last_message_at: new Date() });
     } catch (error) {

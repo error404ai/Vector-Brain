@@ -1,12 +1,22 @@
 import { baseApi } from '../baseApi';
 import type { Mission } from '../missionService/missionService';
 
-export type ChatReplyKind = 'answer' | 'mission' | 'confirm' | 'clarify' | 'error';
+export type ChatReplyKind = 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error';
+
+/** One phone's current screen for the chat: the image, or why there isn't one. */
+export interface PhoneShot {
+  device_name: string;
+  hw_id: string | null;
+  base64?: string;
+  error?: string;
+}
 
 export interface ChatReply {
   kind: ChatReplyKind;
   text: string;
   mission?: Mission;
+  /** kind 'screens': one live screenshot per phone the user asked to see. */
+  screens?: PhoneShot[];
   confirm_token?: string;
   action?: unknown;
   /** Tap-to-send answers under a question. */

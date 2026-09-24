@@ -9,6 +9,7 @@ import {
   useSendCommandMutation,
   type ChatReply,
   type Conversation,
+  type PhoneShot,
 } from '@/RTKService/commandChatService/commandChatService';
 import {
   useCancelMissionMutation,
@@ -640,6 +641,76 @@ function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed })
   );
 }
 
+/**
+ * "Show me the screens" — a grid of each phone's current screen, right in the
+ * chat. A live/running phone keeps updating; a still capture just shows what was
+ * grabbed. Double-tap any phone to zoom it with the same pick-up bounce.
+ */
+function ScreensReply({ screens, feed }: { screens: PhoneShot[]; feed: LiveFeed }) {
+  const [zoom, setZoom] = useState<PhoneZoomTarget | null>(null);
+  const lastTap = useRef(0);
+  if (!screens.length) return null;
+  const dblTap = (target: PhoneZoomTarget) => ({
+    onDoubleClick: () => setZoom(target),
+    onTouchEnd: (e: TouchEvent) => {
+      const now = Date.now();
+      if (now - lastTap.current < 320) {
+        e.preventDefault();
+        lastTap.current = 0;
+        setZoom(target);
+      } else {
+        lastTap.current = now;
+      }
+    },
+  });
+  return (
+    <Box sx={{ mt: 0.75, alignSelf: 'flex-start', width: '100%' }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 1.25 }}>
+        {screens.map((shot) => {
+          const live = shot.hw_id ? feed.frames[shot.hw_id] : undefined;
+          const src = live ? frameSrc(live.data) : shot.base64 ? frameSrc(shot.base64) : null;
+          return (
+            <Box key={`${shot.device_name}-${shot.hw_id ?? ''}`} sx={{ minWidth: 0 }}>
+              <Tooltip title={src ? 'Double-click to zoom' : ''} disableHoverListener={!src}>
+                <Box
+                  {...(src ? dblTap({ name: shot.device_name, src: shot.base64 ? frameSrc(shot.base64) : undefined, hwId: shot.hw_id ?? undefined }) : {})}
+                  sx={{
+                    aspectRatio: '9 / 19.5',
+                    borderRadius: 2.5,
+                    border: '3px solid',
+                    borderColor: 'grey.900',
+                    bgcolor: 'grey.900',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: src ? 'zoom-in' : 'default',
+                    transition: `transform 160ms ${ease}`,
+                    '&:active': src ? { transform: 'scale(0.97)' } : undefined,
+                    ...reducedMotion,
+                  }}
+                >
+                  {src ? (
+                    <Box component="img" src={src} alt={`${shot.device_name} screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
+                  ) : (
+                    <Typography variant="caption" sx={{ color: 'grey.500', px: 1, textAlign: 'center', fontSize: 11 }}>
+                      {shot.error ?? 'No screen'}
+                    </Typography>
+                  )}
+                </Box>
+              </Tooltip>
+              <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.25, fontSize: 11, fontWeight: 600 }} noWrap>
+                {shot.device_name}
+              </Typography>
+            </Box>
+          );
+        })}
+      </Box>
+      <PhoneZoom target={zoom} feed={feed} onClose={() => setZoom(null)} />
+    </Box>
+  );
+}
+
 function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const [showAll, setShowAll] = useState(false);
@@ -1054,6 +1125,18 @@ function AssistantBubble({
           </Typography>
         )}
         <LiveMissionCard initial={reply.mission} feed={feed} onRerun={onRerun} showLive={showLive} />
+      </AssistantRow>
+    );
+  }
+  if (reply.kind === 'screens' && reply.screens && reply.screens.length > 0) {
+    return (
+      <AssistantRow>
+        {reply.text && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.25 }}>
+            {reply.text}
+          </Typography>
+        )}
+        <ScreensReply screens={reply.screens} feed={feed} />
       </AssistantRow>
     );
   }
