@@ -86,7 +86,7 @@ async function main() {
     const admin = userRepository.create({
       email,
       name: name || 'Admin',
-      password: CryptoHelper.generateHash(password),
+      password: await CryptoHelper.hashPassword(password),
       role: Role.ADMIN,
       isActive: true,
     });

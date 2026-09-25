@@ -9,6 +9,7 @@ import { ApiResponse } from '@/types/ApiResponse';
 import { GoogleAuthValidation, LoginValidation, RefreshTokenValidation, SignupValidation } from '@/validations/AuthValidation';
 import envConfig from '@/config/envConfig';
 import crypto from 'crypto';
+import { In } from 'typeorm';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -26,13 +27,18 @@ export class AuthService {
     return crypto.randomBytes(64).toString('hex');
   }
 
+  /**
+   * Issues a refresh token. Only its SHA-256 hash is stored, so a leaked
+   * database doesn't hand out live sessions; the returned object carries the
+   * raw token (for the cookie / response body) in `.token`.
+   */
   private async createRefreshToken(userId: number, userAgent?: string, ipAddress?: string): Promise<RefreshToken> {
-    const token = this.generateRefreshToken();
+    const raw = this.generateRefreshToken();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     const refreshToken = this.refreshTokenRepository.create({
-      token,
+      token: CryptoHelper.hashToken(raw),
       userId,
       expiresAt,
       userAgent,
@@ -40,8 +46,22 @@ export class AuthService {
       revoked: false,
     });
 
-    return this.refreshTokenRepository.save(refreshToken);
+    const saved = await this.refreshTokenRepository.save(refreshToken);
+    return Object.assign(saved, { token: raw });
   }
+
+  /** Finds a live refresh token by its hash — or, for rows issued before hashing, by the raw value. */
+  private findActiveRefreshToken(raw: string): Promise<RefreshToken | null> {
+    return this.refreshTokenRepository.findOne({
+      where: [
+        { token: CryptoHelper.hashToken(raw), revoked: false },
+        { token: raw, revoked: false },
+      ],
+    });
+  }
+
+  /** How long a rotated-out refresh token keeps working, so two tabs refreshing at once don't log each other out. */
+  private static readonly ROTATION_GRACE_MS = 60_000;
 
   private buildAccessTokenPayload(user: User) {
     const token = JwtHelper.generateToken(
@@ -70,9 +90,13 @@ export class AuthService {
       throw new UnauthorizedError('Your account has been deactivated');
     }
 
-    const hashedPassword = CryptoHelper.generateHash(request.password);
-    if (user.password !== hashedPassword) {
+    const check = await CryptoHelper.verifyPassword(request.password, user.password);
+    if (!check.ok) {
       throw new UnauthorizedError('Invalid email or password');
+    }
+    // Upgrade a legacy SHA-256 password to scrypt now that we know it's right.
+    if (check.needsRehash) {
+      await this.userRepository.update({ id: user.id }, { password: await CryptoHelper.hashPassword(request.password) });
     }
 
     const accessToken = this.buildAccessTokenPayload(user);
@@ -105,9 +129,7 @@ export class AuthService {
       throw new UnauthorizedError('Refresh token not provided');
     }
 
-    const refreshToken = await this.refreshTokenRepository.findOne({
-      where: { token: refreshTokenString, revoked: false },
-    });
+    const refreshToken = await this.findActiveRefreshToken(refreshTokenString);
 
     if (!refreshToken) {
       throw new UnauthorizedError('Invalid refresh token');
@@ -129,7 +151,16 @@ export class AuthService {
 
     const newAccessToken = this.buildAccessTokenPayload(user);
 
-    await this.cookieService.setRefreshToken(refreshToken.token);
+    // Rotate: every refresh issues a fresh refresh token, and the old one stops
+    // working after a short grace (so two tabs refreshing together don't knock
+    // each other out). A stolen token is therefore only useful briefly.
+    const graceUntil = new Date(Date.now() + AuthService.ROTATION_GRACE_MS);
+    if (refreshToken.expiresAt > graceUntil) {
+      refreshToken.expiresAt = graceUntil;
+      await this.refreshTokenRepository.save(refreshToken);
+    }
+    const rotated = await this.createRefreshToken(user.id, refreshToken.userAgent, refreshToken.ipAddress);
+    await this.cookieService.setRefreshToken(rotated.token);
 
     return {
       status: 'success',
@@ -165,7 +196,7 @@ export class AuthService {
     }
 
     if (tokenToRevoke) {
-      await this.refreshTokenRepository.update({ token: tokenToRevoke }, { revoked: true });
+      await this.refreshTokenRepository.update({ token: In([CryptoHelper.hashToken(tokenToRevoke), tokenToRevoke]) }, { revoked: true });
     } else if (userId) {
       await this.refreshTokenRepository.update({ userId }, { revoked: true });
     }
@@ -201,7 +232,7 @@ export class AuthService {
       }
     }
 
-    const hashedPassword = CryptoHelper.generateHash(password!);
+    const hashedPassword = await CryptoHelper.hashPassword(password!);
 
     const user = this.userRepository.create({
       name: name!,
@@ -293,7 +324,7 @@ export class AuthService {
         email: profile.email,
         // The column is NOT NULL and this account never signs in with a
         // password, so it gets an unguessable one that is never shown anywhere.
-        password: CryptoHelper.generateHash(crypto.randomBytes(32).toString('hex')),
+        password: await CryptoHelper.hashPassword(crypto.randomBytes(32).toString('hex')),
         google_id: profile.sub,
         avatar_url: profile.picture || null,
         role: Role.USER,

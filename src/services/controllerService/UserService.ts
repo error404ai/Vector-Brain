@@ -81,7 +81,7 @@ export class UserService {
       throw new AppError('Email already exists', 400);
     }
 
-    const hashedPassword = CryptoHelper.generateHash(request.password);
+    const hashedPassword = await CryptoHelper.hashPassword(request.password);
 
     const user = this.userRepository.create({
       ...request,
@@ -121,7 +121,7 @@ export class UserService {
     }
 
     if (data.password) {
-      data.password = CryptoHelper.generateHash(data.password);
+      data.password = await CryptoHelper.hashPassword(data.password);
     }
 
     Object.assign(user, data);

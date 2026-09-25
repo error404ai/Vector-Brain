@@ -1236,6 +1236,51 @@ const scenarios = [
     },
   },
   {
+    name: 'auth: legacy password upgrades to scrypt; refresh token is hashed, rotates, and dies on logout',
+    async run() {
+      const { createHash } = await import('node:crypto');
+      const email = `authcheck${Date.now()}@test.local`;
+      const pw = 'Legacy-pass-123';
+      const legacy = createHash('sha256').update(pw).digest('base64');
+      await db.query("INSERT INTO users (name, email, password, isActive, role) VALUES ('Auth', ?, ?, 1, 'user')", [email, legacy]);
+      const post = async (url, body, cookie) => {
+        const res = await fetch(`${BASE}/api${url}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: `RefreshToken=${cookie}` } : {}) },
+          body: JSON.stringify(body ?? {}),
+        });
+        let json = {};
+        try {
+          json = await res.json();
+        } catch {
+          /* empty body */
+        }
+        const rt = /RefreshToken=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1];
+        return { status: res.status, json, rt };
+      };
+      const bad = await post('/auth/login', { email, password: 'wrong-pass' });
+      if (bad.status !== 401) return `wrong password gave ${bad.status}`;
+      const ok = await post('/auth/login', { email, password: pw });
+      if (ok.status !== 200) return `legacy login failed ${ok.status}: ${JSON.stringify(ok.json).slice(0, 150)}`;
+      const [[u]] = await db.query('SELECT password FROM users WHERE email = ?', [email]);
+      if (!String(u.password).startsWith('scrypt$')) return 'legacy password was not upgraded to scrypt';
+      if ((await post('/auth/login', { email, password: pw })).status !== 200) return 'login failed after the scrypt upgrade';
+      const rt1 = ok.json?.data?.refreshToken;
+      if (!rt1) return 'no refresh token returned';
+      const [[plain]] = await db.query('SELECT COUNT(*) n FROM refresh_tokens WHERE token = ?', [rt1]);
+      if (Number(plain.n) !== 0) return 'refresh token stored in plaintext';
+      const r1 = await post('/auth/refresh-token', { refresh_token: rt1 });
+      if (r1.status !== 200 || !r1.rt) return `refresh failed ${r1.status}`;
+      if (r1.rt === rt1) return 'refresh did not rotate the token';
+      if ((await post('/auth/refresh-token', { refresh_token: rt1 })).status !== 200) return 'old token rejected inside the grace window';
+      const r2 = await post('/auth/refresh-token', { refresh_token: r1.rt });
+      if (r2.status !== 200 || !r2.rt) return `rotated token did not work (${r2.status})`;
+      await post('/auth/logout', {}, r2.rt);
+      const after = await post('/auth/refresh-token', { refresh_token: r2.rt });
+      if (after.status !== 401) return `token still worked after logout (${after.status})`;
+    },
+  },
+  {
     name: 'agent: a task on many phones waits for Confirm, with an estimate',
     async run() {
       const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
