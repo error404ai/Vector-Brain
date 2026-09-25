@@ -3,11 +3,9 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import GroupIcon from '@mui/icons-material/Group';
-import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import BoltIcon from '@mui/icons-material/Bolt';
-import ScheduleIcon from '@mui/icons-material/Schedule';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { alpha, Box, Chip, Divider, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography, useTheme } from '@mui/material';
@@ -39,8 +37,8 @@ const mainItems: NavItem[] = [
   { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },
   { label: 'BrowserWorker Errors', icon: <BugReportIcon />, href: '/browserworker-errors', roles: ['admin'], badge: 'Admin', color: '#dc2626' },
-  { label: 'My Rules', icon: <ManageAccountsIcon />, href: '/my-rules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#059669' },
-  { label: 'Schedules', icon: <ScheduleIcon />, href: '/schedules', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#ea580c' },
+  // My Rules (/my-rules) and Schedules (/schedules) are hidden for now; the
+  // pages and routes still exist, so adding the two entries back restores them.
   { label: 'Flows', icon: <BoltIcon />, href: '/flows', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#0891b2' },
 ];
 
