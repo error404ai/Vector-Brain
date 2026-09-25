@@ -291,7 +291,12 @@ const scenarios = [
       if (queued !== 4) return `expected 4 queued at dispatch, got ${queued}`;
       const bad = all.filter((r) => r.status !== 'SUCCEEDED');
       if (bad.length) return `${bad.length} did not succeed: ${bad.map((b) => `${b.status}/${b.reason_code}`).join(', ')}`;
-      if (rotation.calls.length - rotationsBefore < 5) return `only ${rotation.calls.length - rotationsBefore} rotations for 5 runs`;
+      // The rotation after a task fires once that task has finished, so the last
+      // run's rotation can land a moment after all five read as terminal. Wait
+      // for it (bounded) instead of counting in that gap — a rotation that never
+      // comes still fails this.
+      const rotated = await waitFor(async () => (rotation.calls.length - rotationsBefore >= 5 ? true : null), 15_000, 200);
+      if (!rotated) return `only ${rotation.calls.length - rotationsBefore} rotations for 5 runs`;
     },
   },
   {
