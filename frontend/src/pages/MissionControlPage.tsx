@@ -1457,6 +1457,24 @@ function ConversationSidebar({
   );
 }
 
+// Browser storage can be unavailable (private mode, blocked site data);
+// losing a draft then is fine, breaking the chat is not.
+function readDraft(key: string): string {
+  try {
+    return window.localStorage.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+}
+function writeDraft(key: string, text: string): void {
+  try {
+    if (text.trim()) window.localStorage.setItem(key, text.slice(0, 4000));
+    else window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * A soft, slowly drifting aurora behind the whole page: four blurred colour
  * blobs on a canvas, scaled up and CSS-blurred so it reads as ambient light,
@@ -1471,10 +1489,16 @@ function AuroraBackground() {
     const ctx = cv?.getContext('2d');
     if (!cv || !parent || !ctx) return;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const DPR = Math.min(2, window.devicePixelRatio || 1);
+    // Drawn small and stretched by CSS: it is blurred into soft light anyway,
+    // so a quarter-size canvas looks the same and costs a fraction of the
+    // memory and GPU time (the full-size one, at 2x on retina, was heavy).
+    const SCALE = 0.25;
+    // A slow drift needs no 60fps.
+    const FRAME_MS = 1000 / 15;
     let W = 0;
     let H = 0;
     let raf = 0;
+    let last = -Infinity;
     const blobs = [
       { x: 0.12, y: 0.16, r: 0.42, c: '#93c5fd', sx: 0.00006, sy: 0.00008, p: 0 },
       { x: 0.86, y: 0.14, r: 0.4, c: '#a5f3ec', sx: 0.00008, sy: 0.00005, p: 2 },
@@ -1482,10 +1506,19 @@ function AuroraBackground() {
       { x: 0.24, y: 0.84, r: 0.4, c: '#bae6fd', sx: 0.00007, sy: 0.00006, p: 1 },
     ];
     const size = () => {
-      W = cv.width = Math.max(1, Math.floor(parent.clientWidth * DPR));
-      H = cv.height = Math.max(1, Math.floor(parent.clientHeight * DPR));
+      W = cv.width = Math.max(1, Math.floor(parent.clientWidth * SCALE));
+      H = cv.height = Math.max(1, Math.floor(parent.clientHeight * SCALE));
     };
-    const draw = (t: number) => {
+    const tick = (t: number) => {
+      raf = 0;
+      if (document.hidden) return; // resumed by visibilitychange
+      if (t - last >= FRAME_MS) {
+        last = t;
+        paint(t);
+      }
+      if (!reduce) raf = requestAnimationFrame(tick);
+    };
+    const paint = (t: number) => {
       ctx.clearRect(0, 0, W, H);
       for (const b of blobs) {
         const x = (b.x + Math.sin(t * b.sx + b.p) * 0.05) * W;
@@ -1499,17 +1532,22 @@ function AuroraBackground() {
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
       }
-      if (!reduce) raf = requestAnimationFrame(draw);
+    };
+    const onVisibility = () => {
+      if (!document.hidden && !reduce && !raf) raf = requestAnimationFrame(tick);
     };
     size();
-    draw(0);
+    paint(0);
+    if (!reduce) raf = requestAnimationFrame(tick);
+    document.addEventListener('visibilitychange', onVisibility);
     const ro = new ResizeObserver(() => {
       size();
-      if (reduce) draw(0);
+      paint(last > 0 ? last : 0);
     });
     ro.observe(parent);
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener('visibilitychange', onVisibility);
       ro.disconnect();
     };
   }, []);
@@ -1645,6 +1683,30 @@ export default function MissionControlPage() {
   const [newConversation] = useNewConversationMutation();
   const [deleteConversation] = useDeleteConversationMutation();
   const conversations = convData?.data ?? [];
+
+  // The half-written message survives a reload or a crashed tab: saved per
+  // conversation as it is typed, cleared once sent.
+  const draftKey = `vb:chat-draft:${conversationId ?? 'new'}`;
+  const draftKeyRef = useRef(draftKey);
+  useEffect(() => {
+    const previous = draftKeyRef.current;
+    draftKeyRef.current = draftKey;
+    const saved = readDraft(draftKey);
+    if (previous === draftKey) {
+      if (saved) setInput(saved); // first mount
+      return;
+    }
+    // A new chat that just got its id (first message, or reload adopting the
+    // last thread) keeps what is in the box rather than blanking it.
+    if (previous === 'vb:chat-draft:new' && !saved) {
+      writeDraft(previous, '');
+      return;
+    }
+    setInput(saved);
+  }, [draftKey]);
+  useEffect(() => {
+    writeDraft(draftKeyRef.current, input);
+  }, [input]);
 
   // Names and tags for @ / # suggestions in the input.
   const { data: fleetData } = useGetFleetStateQuery();
