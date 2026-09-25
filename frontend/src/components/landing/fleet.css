@@ -68,7 +68,7 @@
 .fl .steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule)}
 .fl .steps li{background:var(--paper);padding:20px;display:grid;gap:10px;align-content:start}
 .fl .st-shot{aspect-ratio:4/3;max-width:100%;background:#E8EEF7;display:grid;place-items:center;overflow:hidden;margin-bottom:8px}
-.fl .st-shot canvas{height:86%;width:auto;display:block;border-radius:12px;box-shadow:0 18px 30px rgba(15,23,42,.18)}
+.fl .st-shot img,.fl .st-shot canvas{height:86%;width:auto;display:block;border-radius:12px;box-shadow:0 18px 30px rgba(15,23,42,.18)}
 .fl .st-n{color:var(--clay)}
 .fl .steps h3{margin:0;font-size:clamp(30px,3vw,44px)}
 .fl .steps p{margin:0;color:var(--graphite);max-width:40ch}
@@ -134,8 +134,8 @@
 .fl .run{background:var(--black);padding:18px;display:grid;gap:14px;grid-template-rows:auto 1fr auto;min-width:0}
 .fl .run-top{display:flex;justify-content:space-between;color:#64748B}
 .fl .shot{aspect-ratio:4/3;max-width:100%;background:#111a2e;display:grid;place-items:center;overflow:hidden;position:relative}
-.fl .shot canvas{height:88%;width:auto;display:block;transition:transform .6s cubic-bezier(.2,.7,.1,1);box-shadow:0 18px 30px rgba(0,0,0,.5)}
-.fl .run:hover .shot canvas{transform:scale(1.06) rotate(-2deg)}
+.fl .shot img,.fl .shot canvas{height:88%;width:auto;display:block;transition:transform .6s cubic-bezier(.2,.7,.1,1);box-shadow:0 18px 30px rgba(0,0,0,.5)}
+.fl .run:hover .shot img,.fl .run:hover .shot canvas{transform:scale(1.06) rotate(-2deg)}
 .fl .run h3{margin:0;font-size:34px;color:var(--paper)}
 .fl .run p{margin:4px 0 0;color:#94A3B8;font-size:14px}
 .fl .run dl{display:flex;gap:18px;margin:0;border-top:1px solid #1E293B;padding-top:10px;color:#64748B}
@@ -182,3 +182,26 @@
 .fl .h-sub{font-size:15px}}
 @media (prefers-reduced-motion:reduce){.fl .h-word,.fl .h-sub,.fl .hctl{animation:none}
 .fl .scrollcue::after,.fl .prompt .caret,.fl .fl-aurora{animation:none}}
+
+/* real screens from the fleet */
+.fl .real{position:relative;z-index:2;background:var(--paper);padding-inline:calc(var(--g) + 44px) var(--g);padding-block:clamp(90px,14vh,150px);border-top:1px solid var(--rule)}
+.fl .real-head{display:grid;gap:14px;margin-bottom:40px;max-width:900px}
+.fl .real-head h2{font-size:clamp(52px,8vw,124px);margin:0}
+.fl .real-head h2 em{font-style:normal;color:var(--clay)}
+.fl .real-head p{margin:0;color:var(--graphite);max-width:60ch}
+.fl .real-wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:22px 18px}
+.fl .real-wall figure{margin:0;display:grid;gap:8px;min-width:0}
+.fl .real-wall .ph{aspect-ratio:9/19.5;max-width:100%;border-radius:22px;background:#0B1220;padding:6px;box-shadow:0 22px 34px -18px rgba(15,23,42,.45)}
+.fl .real-wall img{width:100%;height:100%;object-fit:cover;border-radius:17px;display:block}
+.fl .real-wall figcaption{font:500 10px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--graphite);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fl .real-apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:24px;margin-top:48px}
+.fl .real-apps:empty{display:none}
+.fl .real-apps figure{margin:0;border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 30px 50px -30px rgba(15,23,42,.35)}
+.fl .real-apps .tb{height:28px;display:flex;gap:6px;align-items:center;padding-inline:12px;background:#EEF2F7;border-bottom:1px solid var(--rule)}
+.fl .real-apps .tb i{width:9px;height:9px;border-radius:50%;background:#CBD5E1}
+.fl .real-apps img{display:block;width:100%;height:auto}
+.fl .real-apps figcaption{font:500 10px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--graphite);padding:10px 12px;border-top:1px solid var(--rule)}
+@media (max-width:900px){.fl .real{padding-inline:var(--g)}.fl .real-wall{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}}
+/* real screenshots in the step and run cards: sized against the card, not their own pixels */
+.fl .st-shot,.fl .shot{position:relative}
+.fl .st-shot img,.fl .shot img{position:absolute;top:7%;bottom:7%;left:0;right:0;margin-inline:auto;height:86%;width:auto;max-width:92%;object-fit:contain;border-radius:12px}

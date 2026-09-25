@@ -68,6 +68,8 @@ import {
 } from '@mui/material';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import toast from 'react-hot-toast';
+import { useGetProfileQuery } from '@/RTKService/authService/authService';
+import { useCaptureLandingPhonesMutation } from '@/RTKService/landingShotService/landingShotService';
 import {
   INLINE_UPLOAD_LIMIT,
   UPLOAD_CHUNK_SIZE,
@@ -242,6 +244,26 @@ export default function AndroidFleetPage() {
 
   const [runtime, setRuntime] = useState<RuntimeMap>({});
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const { data: profile } = useGetProfileQuery();
+  const isAdmin = profile?.data?.role === 'admin';
+  const [captureLandingPhones, { isLoading: capturingLanding }] = useCaptureLandingPhonesMutation();
+  /** Full-resolution screenshots for the landing page (admins only); review them under Landing shots. */
+  const captureForLanding = async (ids: number[]) => {
+    if (!ids.length) return;
+    const pending = toast.loading(ids.length === 1 ? 'Capturing the screen…' : `Capturing ${ids.length} screens…`);
+    try {
+      const res = await captureLandingPhones(ids).unwrap();
+      const results = res.data.results;
+      const saved = results.filter((r) => r.shot_id).length;
+      const skipped = results.filter((r) => r.error);
+      toast.dismiss(pending);
+      if (saved) toast.success(`${saved} screen${saved === 1 ? '' : 's'} saved to Landing shots`);
+      if (skipped.length) toast.error(skipped.slice(0, 3).map((r) => `${r.label}: ${r.error}`).join('\n') + (skipped.length > 3 ? `\n+${skipped.length - 3} more` : ''));
+    } catch (error) {
+      toast.dismiss(pending);
+      toast.error(errorMessage(error));
+    }
+  };
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [queueFile, { isLoading: isSendingFile }] = useQueueDeviceFileMutation();
   const [initDeviceUpload] = useInitDeviceUploadMutation();
@@ -842,6 +864,15 @@ export default function AndroidFleetPage() {
                       </IconButton>
                     </span>
                   </Tooltip>
+                  {isAdmin && (
+                    <Tooltip title="Capture this screen for the landing page">
+                      <span>
+                        <IconButton size="small" disabled={!isOnline || capturingLanding} onClick={() => void captureForLanding([device.id])}>
+                          <PhotoCameraIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  )}
                   <Tooltip title="Send a file to this device">
                     <span>
                       <IconButton size="small" onClick={() => setFileDeviceId(device.id)}>
@@ -1093,6 +1124,8 @@ export default function AndroidFleetPage() {
       broadcastConfigId,
       aiConfigs,
       activeAiConfig?.id,
+      isAdmin,
+      capturingLanding,
     ];
   };
 
@@ -1551,6 +1584,21 @@ export default function AndroidFleetPage() {
           <Button size="small" color="error" variant="outlined" startIcon={<StopCircleIcon />} onClick={handleStopAll}>
             Stop all
           </Button>
+        )}
+        {isAdmin && (
+          <Tooltip title={selectedIds.length ? 'Capture the selected phones for the landing page' : 'Capture every online phone for the landing page'}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<PhotoCameraIcon />}
+                disabled={capturingLanding || onlineDevices.length === 0}
+                onClick={() => void captureForLanding(selectedIds.length ? selectedIds : onlineDevices.map((d) => d.id))}
+              >
+                {selectedIds.length ? `Capture ${selectedIds.length}` : 'Capture all'}
+              </Button>
+            </span>
+          </Tooltip>
         )}
         <Tooltip title="Refresh devices">
           <IconButton size="small" onClick={() => refetch()}>

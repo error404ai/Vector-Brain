@@ -10,7 +10,13 @@ import { clamp, doneFrac, ease, fleetCount, lerp, type FleetState } from './flee
  *
  * Returns null when WebGL is unavailable; the page then shows its CSS fallback.
  */
-export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): (() => void) | null {
+export interface FleetScene {
+  dispose: () => void;
+  /** Puts a real screenshot on hero phone `index` (0 is the front phone), cropped to fill the screen. */
+  setScreenImage: (index: number, img: HTMLImageElement) => void;
+}
+
+export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): FleetScene | null {
   let renderer: THREE.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -97,7 +103,7 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): (
   const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x080808, roughness: 0.08, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.05 });
   const lensMat = new THREE.MeshPhysicalMaterial({ color: 0x0b0b0c, roughness: 0.1, metalness: 0.3, clearcoat: 1 });
 
-  interface HeroPhone { group: THREE.Group; canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; kind: ScreenKind; shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> }
+  interface HeroPhone { group: THREE.Group; canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; kind: ScreenKind; real: boolean; shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> }
 
   const shadowTex = (() => {
     const c = document.createElement('canvas');
@@ -147,7 +153,7 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): (
     }
     const shadow = new THREE.Mesh(shadowGeo, new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0 }));
     scene.add(group, shadow);
-    return { group, canvas: cv, tex, kind, shadow };
+    return { group, canvas: cv, tex, kind, real: false, shadow };
   };
 
   const HERO = [
@@ -353,12 +359,28 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): (
   document.fonts?.ready.then(() => {
     if (!alive) return;
     for (const hp of HERO) {
+      if (hp.real) continue;
       paintScreen(hp.canvas, hp.kind);
       hp.tex.needsUpdate = true;
     }
   });
 
-  return () => {
+  const setScreenImage = (index: number, img: HTMLImageElement) => {
+    const hp = HERO[index];
+    const ctx = hp?.canvas.getContext('2d');
+    if (!hp || !ctx || !img.naturalWidth) return;
+    const cw = hp.canvas.width, ch = hp.canvas.height;
+    const scale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+    const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
+    hp.real = true;
+    hp.tex.needsUpdate = true;
+  };
+
+  const dispose = () => {
     alive = false;
     cancelAnimationFrame(raf);
     window.removeEventListener('resize', resize);
@@ -377,4 +399,6 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): (
     shadowTex.dispose();
     renderer.dispose();
   };
+
+  return { dispose, setScreenImage };
 }

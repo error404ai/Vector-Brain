@@ -1,3 +1,5 @@
+import { fetchPublicLandingShots, publicShotUrl, type PublicLandingShot } from '@/RTKService/landingShotService/landingShotService';
+import type { FleetScene } from './fleetScene';
 import { paintScreen, type ScreenKind } from './screens';
 import { clamp, doneFrac, fleetCount, lerp, type FleetState } from './fleetState';
 
@@ -50,6 +52,7 @@ export function startFleetLanding(root: HTMLElement): () => void {
     const h = r.height - window.innerHeight;
     return h <= 0 ? (r.top <= 0 ? 1 : 0) : clamp(-r.top / h);
   };
+  const visibleLabelled = () => labelled.filter((el) => !el.hidden);
   const readScroll = () => {
     let ph = 0;
     chapters.forEach((el, i) => {
@@ -60,7 +63,8 @@ export function startFleetLanding(root: HTMLElement): () => void {
     });
     state.phase = ph;
     let a = 0;
-    labelled.forEach((el, i) => {
+    const list = visibleLabelled();
+    list.forEach((el, i) => {
       if (el.getBoundingClientRect().top < window.innerHeight * 0.5) a = i;
     });
     if (a !== active && rail) {
@@ -68,10 +72,10 @@ export function startFleetLanding(root: HTMLElement): () => void {
       rail.style.opacity = '0';
       window.clearTimeout(railTimer);
       railTimer = window.setTimeout(() => {
-        rail.textContent = labelled[a].dataset.label ?? '';
+        rail.textContent = list[a]?.dataset.label ?? '';
         rail.style.opacity = '1';
       }, 180);
-      const n = String(Math.min(a, 7)).padStart(2, '0');
+      const n = String(a).padStart(2, '0');
       if (railN) railN.textContent = n;
       if (ixN) ixN.textContent = n;
     }
@@ -170,21 +174,71 @@ export function startFleetLanding(root: HTMLElement): () => void {
 
   // WebGL scene, loaded after first paint.
   const canvas = q<HTMLCanvasElement>('.fl-gl');
-  let disposeScene: (() => void) | null = null;
+  let scene: FleetScene | null = null;
+  const heroImages = new Map<number, HTMLImageElement>();
+  const applyHero = () => heroImages.forEach((img, i) => scene?.setScreenImage(i, img));
   if (canvas) {
     import('./fleetScene')
       .then(({ startFleetScene }) => {
         if (!alive) return;
-        disposeScene = startFleetScene(canvas, state);
-        if (!disposeScene) root.classList.add('nogl');
+        scene = startFleetScene(canvas, state);
+        if (!scene) root.classList.add('nogl');
+        applyHero();
       })
       .catch(() => alive && root.classList.add('nogl'));
   }
+
+  // Real screenshots, approved in Landing shots, replace the drawn stand-ins.
+  const applyShots = (shots: PublicLandingShot[]) => {
+    const one = new Map<string, PublicLandingShot>();
+    for (const s of shots) if (!one.has(s.slot)) one.set(s.slot, s);
+    root.querySelectorAll<HTMLCanvasElement>('canvas[data-slot]').forEach((cv) => {
+      const shot = one.get(cv.dataset.slot ?? '');
+      if (!shot) return;
+      const img = document.createElement('img');
+      img.src = publicShotUrl(shot);
+      img.alt = shot.label;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      cv.replaceWith(img);
+    });
+    for (let i = 0; i < 5; i++) {
+      const shot = one.get(`hero-${i + 1}`);
+      if (!shot) continue;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (!alive) return;
+        heroImages.set(i, img);
+        applyHero();
+      };
+      img.src = publicShotUrl(shot);
+    }
+    const wall = q('.fl-real-wall'), apps = q('.fl-real-apps'), section = q('#real');
+    const phones = shots.filter((s) => s.slot === 'fleet');
+    const pages = shots.filter((s) => s.slot === 'app');
+    if (!section || !wall || !apps || (!phones.length && !pages.length)) return;
+    const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);
+    wall.innerHTML = phones
+      .map((s) => `<figure><div class="ph"><img src="${publicShotUrl(s)}" alt="${esc(s.label)}" loading="lazy" decoding="async"></div><figcaption>${esc(s.device_model || s.label)}</figcaption></figure>`)
+      .join('');
+    apps.innerHTML = pages
+      .map((s) => `<figure><div class="tb"><i></i><i></i><i></i></div><img src="${publicShotUrl(s)}" alt="${esc(s.label)}" loading="lazy" decoding="async"><figcaption>${esc(s.label)}</figcaption></figure>`)
+      .join('');
+    section.hidden = false;
+    const total = q('.fl-ix-total');
+    if (total) total.textContent = String(visibleLabelled().length - 1).padStart(2, '0');
+    active = -1;
+    readScroll();
+  };
+  fetchPublicLandingShots()
+    .then((shots) => alive && shots.length && applyShots(shots))
+    .catch(() => undefined);
 
   return () => {
     alive = false;
     window.clearTimeout(railTimer);
     cleanups.forEach((fn) => fn());
-    disposeScene?.();
+    scene?.dispose();
   };
 }

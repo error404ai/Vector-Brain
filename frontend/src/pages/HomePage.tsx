@@ -100,7 +100,7 @@ export default function HomePage() {
         <span className="mono fl-rail-n">00</span>
       </div>
       <div className="hud corner c-tr" aria-hidden="true">
-        <span>Index</span> <b className="fl-ix-n">00</b> / 07
+        <span>Index</span> <b className="fl-ix-n">00</b> / <span className="fl-ix-total">07</span>
         <br />
         <span>SKU</span> VB-FLT-001
       </div>
@@ -146,7 +146,7 @@ export default function HomePage() {
             {STEPS.map((s, i) => (
               <li key={s.title}>
                 <div className="st-shot">
-                  <canvas width={280} height={603} data-kind={s.kind} aria-hidden="true" />
+                  <canvas width={280} height={603} data-kind={s.kind} data-slot={`step-${i + 1}`} aria-hidden="true" />
                 </div>
                 <span className="mono st-n">Step {i + 1}</span>
                 <h3 className="display">{s.title}</h3>
@@ -266,6 +266,21 @@ export default function HomePage() {
           </ol>
         </section>
 
+        {/* Real screens from the fleet; filled and shown only when approved shots exist. */}
+        <section className="real" id="real" data-label="Real phones" aria-label="Real phones, real screens" hidden>
+          <div className="real-head">
+            <p className="mono" style={{ color: 'var(--graphite)' }}>Captured from the fleet</p>
+            <h2 className="display">
+              Real phones.
+              <br />
+              <em>Real screens.</em>
+            </h2>
+            <p>Every screen below was captured from a phone in our own test fleet: different brands, different Android versions, one platform.</p>
+          </div>
+          <div className="real-wall fl-real-wall" />
+          <div className="real-apps fl-real-apps" />
+        </section>
+
         <section className="runs" id="runs" data-label="Example runs" aria-label="Example runs">
           <div className="runs-head">
             <h2 className="display">
@@ -283,7 +298,7 @@ export default function HomePage() {
                   <span>Example</span>
                 </div>
                 <div className="shot">
-                  <canvas width={280} height={603} data-kind={r.kind} aria-hidden="true" />
+                  <canvas width={280} height={603} data-kind={r.kind} data-slot={`run-${i + 1}`} aria-hidden="true" />
                 </div>
                 <div>
                   <h3 className="display">{r.title}</h3>

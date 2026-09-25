@@ -8,6 +8,11 @@ import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import MenuIcon from '@mui/icons-material/Menu';
 import PersonIcon from '@mui/icons-material/Person';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import CollectionsIcon from '@mui/icons-material/Collections';
+import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
+import { capturePage } from '@/_helpers/capturePage';
+import { useUploadLandingPageMutation } from '@/RTKService/landingShotService/landingShotService';
+import toast from 'react-hot-toast';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import {
@@ -73,6 +78,22 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const { data: profile } = useGetProfileQuery();
   const user = profile?.data;
   const [logout] = useLogoutMutation();
+  const [uploadLandingPage] = useUploadLandingPageMutation();
+  /** Admin: capture this page as it looks now and keep it for the landing page. */
+  const handleCapturePage = async () => {
+    setProfileAnchor(null);
+    try {
+      const image = await capturePage(() => new Promise((r) => setTimeout(r, 300)));
+      const label = (document.title.split(/[—|-]/)[0] || location.pathname).trim().slice(0, 150);
+      await uploadLandingPage({ image, label }).unwrap();
+      toast.success('Page saved to Landing shots');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : (error as { data?: { message?: string } })?.data?.message;
+      // Cancelling the share prompt is not an error worth shouting about.
+      if (error instanceof DOMException && error.name === 'NotAllowedError') return;
+      toast.error(msg || 'Could not capture the page');
+    }
+  };
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -194,6 +215,27 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   <PsychologyIcon fontSize="small" />
                 </ListItemIcon>
                 AI Rules
+              </MenuItem>
+            ) : null}
+            {user?.role === 'admin' ? (
+              <MenuItem
+                onClick={() => {
+                  setProfileAnchor(null);
+                  navigate('/landing-shots');
+                }}
+              >
+                <ListItemIcon>
+                  <CollectionsIcon fontSize="small" />
+                </ListItemIcon>
+                Landing shots
+              </MenuItem>
+            ) : null}
+            {user?.role === 'admin' ? (
+              <MenuItem onClick={() => void handleCapturePage()}>
+                <ListItemIcon>
+                  <ScreenshotMonitorIcon fontSize="small" />
+                </ListItemIcon>
+                Capture this page
               </MenuItem>
             ) : null}
             <Divider />

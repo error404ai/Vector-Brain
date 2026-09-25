@@ -1362,6 +1362,41 @@ const scenarios = [
     },
   },
   {
+    name: 'landing shots: admin-only capture, public serves only approved shots with a slot, single slots move',
+    async run() {
+      const adminToken = jwt.sign({ userId, email: 'harness@test.local', role: 'admin' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const as = async (token, method, url, body) => {
+        const r = await fetch(`${BASE}/api${url}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
+        return { status: r.status, type: r.headers.get('content-type') ?? '', json: r.headers.get('content-type')?.includes('json') ? await r.json() : null };
+      };
+      const denied = await as(userToken, 'GET', '/landing-shots');
+      if (denied.status !== 403 && denied.status !== 401) return `a non-admin got ${denied.status} on the admin list`;
+      const cap = await as(adminToken, 'POST', '/landing-shots/capture', { device_ids: [phones.free1.dbId, phones.free2.dbId] });
+      const ok = (cap.json?.data?.results ?? []).filter((r) => r.shot_id);
+      if (ok.length !== 2) return `capture saved ${ok.length} of 2: ${JSON.stringify(cap.json)}`;
+      const [a, b] = ok.map((r) => r.shot_id);
+      const pub0 = await as(null, 'GET', '/public/landing-shots');
+      if ((pub0.json?.data ?? []).some((s) => s.id === a || s.id === b)) return 'an unapproved shot is public';
+      const hidden = await as(null, 'GET', `/public/landing-shots/${a}/image`);
+      if (hidden.status !== 404) return `unapproved image served publicly (${hidden.status})`;
+      // Approved but no slot: still private.
+      await as(adminToken, 'PATCH', `/landing-shots/${a}`, { approved: true });
+      if ((await as(null, 'GET', `/public/landing-shots/${a}/image`)).status !== 404) return 'an approved shot without a slot is public';
+      await as(adminToken, 'PATCH', `/landing-shots/${a}`, { slot: 'hero-1' });
+      const img = await as(null, 'GET', `/public/landing-shots/${a}/image`);
+      if (img.status !== 200 || !img.type.startsWith('image/png')) return `public image: ${img.status} ${img.type}`;
+      // A single slot holds one shot: giving hero-1 to b takes it from a.
+      await as(adminToken, 'PATCH', `/landing-shots/${b}`, { slot: 'hero-1', approved: true });
+      const pub = (await as(null, 'GET', '/public/landing-shots')).json?.data ?? [];
+      const hero = pub.filter((s) => s.slot === 'hero-1');
+      if (hero.length !== 1 || hero[0].id !== b) return `hero-1 holds ${JSON.stringify(hero)}`;
+      if ((await as(adminToken, 'PATCH', `/landing-shots/${b}`, { slot: 'nope' })).status !== 400) return 'an unknown slot was accepted';
+      const del = await as(adminToken, 'DELETE', `/landing-shots/${b}`);
+      if (del.status !== 200) return `delete ${del.status}`;
+      if ((await as(null, 'GET', `/public/landing-shots/${b}/image`)).status !== 404) return 'a deleted shot is still served';
+    },
+  },
+  {
     name: 'agent: show_screens "all" returns every online phone, offline ones last and never in a capture slot',
     async run() {
       const script = { turns: [{ calls: [{ name: 'show_screens', args: { phones: 'all' } }] }, { text: 'Here.' }] };

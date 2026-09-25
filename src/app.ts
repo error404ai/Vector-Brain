@@ -32,6 +32,7 @@ import { AndroidFileController } from './controllers/AndroidFileController';
 import { AuthController } from './controllers/AuthController';
 import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorController';
 import { DashboardController } from './controllers/DashboardController';
+import { LandingShotController, PublicLandingShotController } from './controllers/LandingShotController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
@@ -76,6 +77,8 @@ app.use(
 // unauthenticated caller can't make the server buffer tens of megabytes.
 app.use('/api/android/files', express.json({ limit: '50mb' }));
 app.use('/api/android/files', express.urlencoded({ extended: true, limit: '50mb' }));
+// Browser captures of app pages are full-size screenshots.
+app.use('/api/landing-shots', express.json({ limit: '20mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
@@ -100,6 +103,8 @@ useExpressServer(app, {
     BrowserWorkerErrorController,
     DashboardController,
     HealthController,
+    LandingShotController,
+    PublicLandingShotController,
     MaintenanceController,
     FlowController,
     MissionController,

@@ -17,6 +17,7 @@ import AndroidFleetPage from './pages/AndroidFleetPage';
 import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
 import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
+import LandingShotsPage from './pages/LandingShotsPage';
 import LoginPage from './pages/LoginPage';
 import MyRulesPage from './pages/MyRulesPage';
 import SettingsPage from './pages/SettingsPage';
@@ -101,6 +102,14 @@ const router = createBrowserRouter([
           { path: '/mission-control', Component: MissionControlPage },
           { path: '/flows', Component: FlowsPage },
           { path: '/settings', Component: SettingsPage },
+          {
+            path: '/landing-shots',
+            element: (
+              <AdminOnly>
+                <LandingShotsPage />
+              </AdminOnly>
+            ),
+          },
           {
             path: '/users',
             element: (
