@@ -12,6 +12,7 @@ import { In } from 'typeorm';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AndroidPlannerService } from './AndroidPlannerService';
+import { DeviceFactService } from './DeviceFactService';
 import { FleetStateService } from './FleetStateService';
 import { TaskQueueService } from './TaskQueueService';
 
@@ -131,6 +132,7 @@ export class MissionService {
     private aiService: AiService,
     private gatewayService: AndroidGatewayService,
     private taskQueueService: TaskQueueService,
+    private deviceFactService: DeviceFactService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -527,6 +529,9 @@ export class MissionService {
       item.last_reason = null;
       item.last_message = truncate(task.message);
       await this.itemRepo.save(item);
+      // A run asked for the phone's email accounts ends with an "EMAILS:" line;
+      // remember them on the phone (the full message, not the truncated one).
+      await this.deviceFactService.recordReport(mission.user_id, item.device_id, task.message, mission.id);
       return;
     }
     const reason = task.status === 'INTERRUPTED' ? task.reason_code || 'INTERRUPTED' : task.reason_code || task.status;

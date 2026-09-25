@@ -1,4 +1,4 @@
-import { baseApi } from '../baseApi';
+import { baseApi, TAGS } from '../baseApi';
 
 export interface AndroidDevice {
   id: number;
@@ -52,6 +52,16 @@ export type FleetDeviceState =
   | 'cancelled'
   | 'idle';
 
+export interface DeviceEmails {
+  emails: string[];
+  source: 'ai' | 'user';
+  mission_id: number | null;
+  updated_at: string;
+  /** A newer read that differs from what the user entered. */
+  suggested: string[] | null;
+  suggested_mission_id: number | null;
+}
+
 export interface FleetStateDevice {
   id: number;
   device_id: string;
@@ -64,6 +74,8 @@ export interface FleetStateDevice {
   /** Last battery percentage reported by the phone; null until it reports one. */
   battery?: number | null;
   tag: string | null;
+  /** Email accounts on the phone: read by a run (source ai) or entered by the user. */
+  emails?: DeviceEmails | null;
   proxy_id: number | null;
   last_seen_at?: string | null;
   state: FleetDeviceState;
@@ -207,6 +219,18 @@ const androidApi = baseApi.injectEndpoints({
       invalidatesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    setDeviceEmails: builder.mutation<{ message: string }, { id: number; emails: string[] }>({
+      query: ({ id, emails }) => ({ url: `/android/devices/${id}/emails`, method: 'PUT', body: { emails } }),
+      invalidatesTags: [TAGS.ANDROID_DEVICES],
+    }),
+    resolveDeviceEmails: builder.mutation<{ message: string }, { id: number; choice: 'accept' | 'dismiss' | 'clear' }>({
+      query: ({ id, choice }) =>
+        choice === 'clear'
+          ? { url: `/android/devices/${id}/emails`, method: 'DELETE' }
+          : { url: `/android/devices/${id}/emails/${choice}`, method: 'POST' },
+      invalidatesTags: [TAGS.ANDROID_DEVICES],
+    }),
+
     setDeviceTag: builder.mutation<{ message: string; data: { id: number; tag: string | null } }, { id: number; tag: string }>({
       query: ({ id, tag }) => ({ url: `/android/devices/${id}/tag`, method: 'PATCH', body: { tag } }),
     }),
@@ -299,6 +323,8 @@ export const {
   useUnwatchDeviceScreenMutation,
   useSendDirectActionMutation,
   useSetDeviceTagMutation,
+  useSetDeviceEmailsMutation,
+  useResolveDeviceEmailsMutation,
   useRunAndroidTaskMutation,
   useCancelAndroidTaskMutation,
   useGetAndroidTaskLogsQuery,

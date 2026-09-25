@@ -82,6 +82,7 @@ import PasteToDevices from '@/components/android/PasteToDevices';
 import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import DeviceEmailRow from '@/components/android/DeviceEmailRow';
 import DeviceTagChip, { TAG_COLORS, parseTag, type TagColor } from '@/components/android/DeviceTagChip';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
@@ -860,6 +861,8 @@ export default function AndroidFleetPage() {
                     </span>
                   </Tooltip>
                 </Stack>
+
+                <DeviceEmailRow deviceId={device.id} value={serverStateByDevice.get(device.id)?.emails} />
 
                 {state.isRunning && <LinearProgress />}
 

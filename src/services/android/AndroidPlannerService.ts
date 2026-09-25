@@ -106,14 +106,15 @@ const leaseFromNow = () => new Date(Date.now() + LEASE_MS);
  */
 const AGENT_SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 
-function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean; planFail: boolean } {
+function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean; planFail: boolean; report: string | null } {
   const match = /\[sim([^\]]*)\]/i.exec(prompt);
   const text = match?.[1] ?? '';
   const number = (key: string, fallback: number) => {
     const found = new RegExp(`${key}=(\\d+)`).exec(text);
     return found ? Number(found[1]) : fallback;
   };
-  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text), planFail: /\bplanfail\b/.test(text) };
+  const report = /report="([^"]*)"/.exec(text)?.[1] ?? null;
+  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text), planFail: /\bplanfail\b/.test(text), report };
 }
 
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
@@ -1337,7 +1338,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           await new Promise((resolve) => setTimeout(resolve, options.delay));
         }
         if (options.fail) throw new Error('Simulated failure');
-        return { success: true, stopReason: 'done', result: `Simulated run finished after ${options.steps} steps.` };
+        return { success: true, stopReason: 'done', result: options.report ?? `Simulated run finished after ${options.steps} steps.` };
       };
       const runRound = (roundPrompt: string) =>
         Promise.race([

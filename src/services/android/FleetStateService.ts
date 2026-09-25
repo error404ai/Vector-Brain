@@ -4,6 +4,7 @@ import { DeviceProxy } from '@/entities/DeviceProxy';
 import { QueuedTask } from '@/entities/QueuedTask';
 import { AppDataSource } from '@/loaders/database';
 import { Service } from 'typedi';
+import { DeviceFactService } from './DeviceFactService';
 import { ProxyRotationService } from './ProxyRotationService';
 
 /**
@@ -35,7 +36,10 @@ export type FleetDeviceState =
  */
 @Service()
 export class FleetStateService {
-  constructor(private rotationService: ProxyRotationService) {}
+  constructor(
+    private rotationService: ProxyRotationService,
+    private deviceFactService: DeviceFactService,
+  ) {}
 
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
   private taskRepo = AppDataSource.getRepository(AgentTask);
@@ -49,7 +53,7 @@ export class FleetStateService {
     );
     const deviceIds = devices.map((device) => device.id);
 
-    const [running, queued, proxies] = await Promise.all([
+    const [running, queued, proxies, emails] = await Promise.all([
       deviceIds.length
         ? this.taskRepo
             .createQueryBuilder('task')
@@ -61,6 +65,7 @@ export class FleetStateService {
         : [],
       this.queueRepo.find({ where: { user_id: userId }, order: { id: 'ASC' } }),
       this.proxyRepo.find({ where: { user_id: userId }, order: { id: 'ASC' } }),
+      this.deviceFactService.emailsByDevice(userId),
     ]);
 
     // The newest finished run per device, for the outcome a card keeps showing.
@@ -122,6 +127,8 @@ export class FleetStateService {
         app_version: device.capabilities?.appVersion ?? null,
         battery: typeof device.capabilities?.battery === 'number' ? device.capabilities.battery : null,
         tag: device.tag,
+        /** Email accounts on the phone, as a run read them or the user entered them. */
+        emails: emails.get(device.id) ?? null,
         proxy_id: device.proxy_id ?? null,
         last_seen_at: device.last_seen_at,
         state,

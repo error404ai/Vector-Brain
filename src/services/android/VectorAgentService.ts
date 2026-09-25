@@ -1,3 +1,4 @@
+import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
 import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { DeviceProxy } from '@/entities/DeviceProxy';
@@ -145,6 +146,11 @@ const TOOLS = [
           instruction: { type: 'string', description: 'What ONE phone should do, in plain words. Do not mention phone names, proxies or rotation here.' },
           phones: { type: 'string' },
           duration_minutes: { type: 'number', description: 'Only when the user asked to keep doing it for a time ("for 1 hour").' },
+          collect_emails: {
+            type: 'boolean',
+            description:
+              'true when the user wants to find, list or remember which email accounts are on the phones. Each phone then reports its accounts and they are saved on that phone automatically.',
+          },
         },
         required: ['instruction', 'phones'],
       },
@@ -511,8 +517,11 @@ export class VectorAgentService {
           return JSON.stringify(await this.fleetSnapshot(ctx.userId));
 
         case 'run_mission': {
-          const instruction = String(args.instruction ?? '').trim();
+          let instruction = String(args.instruction ?? '').trim();
           if (!instruction) return JSON.stringify({ error: 'instruction is empty' });
+          // The fixed report line is what the server saves; added by code so
+          // it is there whatever the model wrote.
+          if (args.collect_emails === true && !instruction.includes('EMAILS:')) instruction = `${instruction}\n${EMAIL_REPORT_INSTRUCTION}`;
           const deviceIds = await this.resolvePhones(ctx, String(args.phones ?? ''));
           if (!deviceIds.length) {
             return JSON.stringify({ error: 'No ready phones matched. Ask the user which phones, with ask_user.' });
@@ -725,7 +734,7 @@ export class VectorAgentService {
   private async fleetSnapshot(userId: number) {
     const state = (await this.fleetStateService.getState(userId)) as {
       counts: Record<string, number>;
-      devices: { id: number; name: string; state: string; tag: string | null; proxy_id: number | null }[];
+      devices: { id: number; name: string; state: string; tag: string | null; proxy_id: number | null; emails: EmailFactView | null }[];
       lanes: { id: number; name: string; running: number; waiting: number }[];
     };
     const proxies = await this.proxyRepo.find({ where: { user_id: userId } });
@@ -765,6 +774,8 @@ export class VectorAgentService {
         state: d.state,
         lane: d.proxy_id ? laneName.get(d.proxy_id) ?? null : null,
         tag: d.tag ? d.tag.split(':').pop() : null,
+        emails: d.emails ? d.emails.emails : null,
+        ...(d.emails?.suggested ? { emails_newer_read: d.emails.suggested } : {}),
       })),
       lanes: proxies.map((p) => ({
         name: p.name,
@@ -785,6 +796,7 @@ export class VectorAgentService {
       'Understand what the user means from the whole conversation, in any wording or language (English, Hindi, Hinglish), and act with the tools. Reply briefly.',
       "Language: ALWAYS reply in the SAME language as the user's latest message — English gets English, Hinglish gets Hinglish, Hindi in Devanagari gets Hindi in Devanagari. Earlier messages don't decide it; only the latest one does.",
       '- Formatting: plain text. You may use **bold** and "- " bullet lines; no headings, tables or emoji.',
+      "- Each phone's `emails` are the email accounts saved on it (read by an earlier run, or entered by the user); null means never checked. Answer \"which email is on X\" / \"list the emails\" from them without running anything. To check or refresh, call run_mission with collect_emails true — the results are saved on each phone by the system, so never claim you saved or will remember them yourself.",
       '- Numbers about the fleet come ONLY from `counts` and `by_lane` in the fleet data — quote them exactly. Never count, add up or regroup phones yourself. When listing phones, list each lane\'s `online`/`offline` names as given (several phones can share a model name — that is not a duplicate).',
       'Rules:',
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',

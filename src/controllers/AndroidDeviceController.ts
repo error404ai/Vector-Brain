@@ -2,10 +2,11 @@ import { FleetStateService } from '@/services/android/FleetStateService';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
+import { DeviceFactService } from '@/services/android/DeviceFactService';
 import { LiveScreenService } from '@/services/android/LiveScreenService';
 import { AutomationAction } from '@/services/android/AndroidProtocol';
 import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation, UpdateDeviceTagValidation } from '@/validations/AndroidDeviceValidation';
-import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, Put, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -17,6 +18,7 @@ export class AndroidDeviceController {
     private gatewayService: AndroidGatewayService,
     private liveScreenService: LiveScreenService,
     private fleetStateService: FleetStateService,
+    private deviceFactService: DeviceFactService,
   ) {}
 
   /**
@@ -87,6 +89,36 @@ export class AndroidDeviceController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     return this.deviceService.setDeviceTag(id, user.userId, String(request.tag ?? ''));
+  }
+
+  /**
+   * The phone's email accounts as the user wants them. Once set by the user,
+   * later runs no longer overwrite them — a differing read waits as a
+   * suggestion (accept / dismiss below). DELETE hands the field back to runs.
+   */
+  @Authorized()
+  @Put('/:id/emails')
+  @UseBefore(zodValidationMiddleware(z.object({ emails: z.array(z.string().max(254)).max(10) })))
+  async setEmails(@Param('id') id: number, @Body() body: { emails: string[] }, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.deviceFactService.setEmails(user.userId, Number(id), body.emails);
+  }
+
+  @Authorized()
+  @Post('/:id/emails/accept')
+  async acceptEmails(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.deviceFactService.acceptSuggestion(user.userId, Number(id));
+  }
+
+  @Authorized()
+  @Post('/:id/emails/dismiss')
+  async dismissEmails(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.deviceFactService.dismissSuggestion(user.userId, Number(id));
+  }
+
+  @Authorized()
+  @Delete('/:id/emails')
+  async clearEmails(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.deviceFactService.clear(user.userId, Number(id));
   }
 
   /**

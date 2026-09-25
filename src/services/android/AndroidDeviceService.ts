@@ -1,5 +1,7 @@
 import { AndroidDevice, AndroidDeviceStatus } from '@/entities/AndroidDevice';
+import { DeviceFact } from '@/entities/DeviceFact';
 import AppError from '@/helpers/AppError';
+import { In } from 'typeorm';
 import { AppDataSource } from '@/loaders/database';
 import { ApiResponse } from '@/types/ApiResponse';
 import { ConfirmPairingValidation, RequestPairingCodeValidation } from '@/validations/AndroidDeviceValidation';
@@ -220,6 +222,7 @@ export class AndroidDeviceService {
       throw new AppError('Device not found', 404);
     }
 
+    await AppDataSource.getRepository(DeviceFact).delete({ user_id: userId, device_id: device.id });
     await this.deviceRepo.remove(device);
     return { message: 'Device unpaired successfully' };
   }
@@ -237,6 +240,7 @@ export class AndroidDeviceService {
       where: { user_id: userId, status: AndroidDeviceStatus.OFFLINE },
     });
     if (offline.length > 0) {
+      await AppDataSource.getRepository(DeviceFact).delete({ user_id: userId, device_id: In(offline.map((d) => d.id)) });
       await this.deviceRepo.remove(offline);
     }
     return { message: `Removed ${offline.length} offline device${offline.length === 1 ? '' : 's'}`, data: { removed: offline.length } };

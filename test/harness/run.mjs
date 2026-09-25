@@ -1226,6 +1226,57 @@ const scenarios = [
     },
   },
   {
+    name: "emails: a run's EMAILS line is saved on the phone; the user's own list wins; a newer read waits as a suggestion",
+    async run() {
+      const emailsOf = async () => (await api('GET', '/android/devices/fleet-state')).data.devices.find((d) => d.id === phones.free1.dbId)?.emails;
+      const sim = (report) => `[sim steps=1 delay=50 report="${report}"]`;
+      const script = {
+        turns: [{ calls: [{ name: 'run_mission', args: { instruction: `open gmail and check the account ${sim('Checked. EMAILS: Ravi.K@gmail.com, ravi@outlook.com')}`, phones: 'free1', collect_emails: true } }] }, { text: 'Check kar raha hoon.' }],
+      };
+      const reply = (await api('POST', '/android/chat', { message: `free1 ki email id batao [agent:${JSON.stringify(script)}]` }))?.data;
+      if (reply?.kind !== 'mission') return `kind ${reply?.kind}: ${reply?.text}`;
+      if (!/EMAILS:/.test(reply.mission.prompt ?? '')) return `the report line was not added to the instruction: ${reply.mission.prompt}`;
+      await waitForMission(reply.mission.id, 30_000);
+      let e = await emailsOf();
+      if (JSON.stringify(e?.emails) !== JSON.stringify(['ravi.k@gmail.com', 'ravi@outlook.com']) || e.source !== 'ai') return `after the run: ${JSON.stringify(e)}`;
+
+      // A run that only mentions an address (no EMAILS line) changes nothing.
+      const m1 = await api('POST', '/android/missions', { request: `send a mail ${sim('Sent a mail to boss@company.com')}`, device_ids: [phones.free1.dbId] });
+      await waitForMission(m1.data.id, 30_000);
+      e = await emailsOf();
+      if (e.emails.includes('boss@company.com')) return 'an address merely mentioned in a report was saved as the phone account';
+
+      // The user's list wins over later reads.
+      const bad = await fetch(`${BASE}/api/android/devices/${phones.free1.dbId}/emails`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${userToken}` },
+        body: JSON.stringify({ emails: ['not-an-email'] }),
+      });
+      if (bad.status !== 400) return `an invalid email was accepted (${bad.status})`;
+      await api('PUT', `/android/devices/${phones.free1.dbId}/emails`, { emails: ['Mine@gmail.com'] });
+      const m2 = await api('POST', '/android/missions', { request: `check ${sim('EMAILS: other@gmail.com')}`, device_ids: [phones.free1.dbId] });
+      await waitForMission(m2.data.id, 30_000);
+      e = await emailsOf();
+      if (JSON.stringify(e.emails) !== '["mine@gmail.com"]' || e.source !== 'user') return `a run overwrote the user's list: ${JSON.stringify(e)}`;
+      if (JSON.stringify(e.suggested) !== '["other@gmail.com"]') return `the differing read was not kept as a suggestion: ${JSON.stringify(e)}`;
+      await api('POST', `/android/devices/${phones.free1.dbId}/emails/accept`);
+      e = await emailsOf();
+      if (JSON.stringify(e.emails) !== '["other@gmail.com"]' || e.suggested !== null) return `accept did not apply: ${JSON.stringify(e)}`;
+
+      // Nobody else can touch them.
+      const [other] = await db.query("INSERT INTO users (name, email, password, isActive, role) VALUES ('O', ?, 'x', 1, 'user')", [`factother${Date.now()}@test.local`]);
+      const otherToken = jwt.sign({ userId: other.insertId, email: 'o@test.local', role: 'user' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const peek = await fetch(`${BASE}/api/android/devices/${phones.free1.dbId}/emails`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${otherToken}` },
+        body: JSON.stringify({ emails: ['x@y.com'] }),
+      });
+      if (peek.status !== 404) return `another user could set this phone's emails (${peek.status})`;
+      await api('DELETE', `/android/devices/${phones.free1.dbId}/emails`);
+      if ((await emailsOf()) !== null) return 'clear did not remove the emails';
+    },
+  },
+  {
     name: 'agent: show_screens survives a reload — history keeps shot ids, image served only to its owner',
     async run() {
       const script = { turns: [{ calls: [{ name: 'show_screens', args: { phones: 'free1' } }] }, { text: 'Ye rahi free1 ki screen.' }] };
