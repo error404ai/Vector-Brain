@@ -29,6 +29,14 @@ export const TAGS = {
 } as const;
 
 
+/**
+ * Never served from the IndexedDB cache. The chat adopts its history once on
+ * load, so a stale cached copy used to stick — a reload sometimes showed the
+ * conversation with its latest messages missing. Missions and threads change
+ * by the second; an old snapshot of them is wrong, not just old.
+ */
+const NEVER_CACHE_ENDPOINTS = new Set(['getChatHistory', 'getConversations', 'getMission']);
+
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
   const rawBaseQuery = fetchBaseQuery({
     baseUrl: Global.BASE_API_PATH,
@@ -47,9 +55,10 @@ const baseQuery = async (args: any, api: any, extraOptions: any) => {
     const cacheEnabled = RTKCacheManager.CACHE_ENABLED;
     const isQuery = api?.type === 'query';
     const hasCacheKey = Boolean(cacheKey);
-    // Simplified caching logic for Vector-Brain - always cache queries
-    // The user cache prefix is included in the cache key if available
-    return cacheEnabled && isQuery && hasCacheKey;
+    const live = typeof api?.endpoint === 'string' && NEVER_CACHE_ENDPOINTS.has(api.endpoint);
+    // Cache queries (stale-while-revalidate), except live ones where an old
+    // copy is actively wrong — the user cache prefix is part of the key.
+    return cacheEnabled && isQuery && hasCacheKey && !live;
   };
 
   const executeWithRefresh = async (requestArgs: any, requestApi: any, requestExtraOptions: any) => {

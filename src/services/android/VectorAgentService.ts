@@ -266,6 +266,30 @@ export function oneLineRefusal(text: string): string {
 /** A message that is nothing but a yes — the only thing that confirms by typing. */
 const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
 
+/**
+ * Romanised Hindi words that don't occur in ordinary English. Deliberately
+ * leaves out overlaps like "to", "me", "main", "so" so an English sentence is
+ * never mistaken for Hinglish.
+ */
+const HINGLISH_WORDS = new Set(
+  (
+    'hai hain ho hoon hun hu kya kyaa kyu kyun kyon kaise kaisa kaisi kar karo kardo karna krna kro kr karte karta karti sakte sakta sakti ' +
+    'nahi nahin nhi mat bhai yaar yar mein mai ka ki ke ko se pe aur ye yeh wo woh tum tu aap apna apni mujhe mera meri hum hame humein ' +
+    'chahiye dikha dikhao bata batao khol kholo chala chalao chalu abhi sab saare sabhi kitne kitna kaun kab kaha kahan theek thik ' +
+    'accha acha achha haan han hanji ji bhi bol bolo dekh dekho raha rahi rahe gaya gayi diya liya wala wali jaldi phir fir lekin toh ' +
+    'sirf baat bohat bahut thoda kuch kuchh matlab samjha samjho hoga hogi tha thi rakh rakho dena lena'
+  ).split(' '),
+);
+
+/** Which language to answer a message in: the one it is written in. */
+export function replyLanguage(text: string): 'English' | 'Hindi' | 'Hinglish' {
+  if (/[ऀ-ॿ]/.test(text)) return 'Hindi';
+  const words = text.toLowerCase().match(/[a-z]+/g) ?? [];
+  const hits = words.filter((w) => HINGLISH_WORDS.has(w)).length;
+  if (hits >= 2 || (hits === 1 && words.length <= 4)) return 'Hinglish';
+  return 'English';
+}
+
 /** A short, human reason a phone couldn't hand back its screen. */
 function screenFailReason(code?: string, message?: string): string {
   if (code === 'CAPTURE_NOT_CONFIGURED') return 'Screen sharing off on the phone';
@@ -318,11 +342,15 @@ export class VectorAgentService {
 
   async run(brain: Brain, message: string, ctx: AgentContext): Promise<AgentResult> {
     const result: AgentResult = { text: '', calls: [] };
-    const messages: BaseMessage[] = [new SystemMessage(await this.systemPrompt(ctx))];
+    // Decided in code, not left to the model: earlier replies in the history
+    // (often Hinglish) otherwise pull it into the wrong language. The note rides
+    // on the latest message, where the model weighs instructions most.
+    const lang = replyLanguage(message);
+    const messages: BaseMessage[] = [new SystemMessage(`${await this.systemPrompt(ctx)}\nReply language for this turn: ${lang}.`)];
     for (const turn of ctx.history.slice(-12)) {
       messages.push(turn.role === 'user' ? new HumanMessage(turn.text) : new AIMessage(turn.text));
     }
-    messages.push(new HumanMessage(message));
+    messages.push(new HumanMessage(`${message}\n\n(Reply in ${lang}${lang === 'Hindi' ? ', in Devanagari script' : ''}, whatever language earlier messages used.)`));
 
     let corrected = false;
     for (let i = 0; i < MAX_MODEL_TURNS; i += 1) {
@@ -719,7 +747,8 @@ export class VectorAgentService {
     return [
       "You are Vector — an AI assistant for Android mobile automation. You control the user's fleet of real Android phones through tools.",
       'Understand what the user means from the whole conversation, in any wording or language (English, Hindi, Hinglish), and act with the tools. Reply briefly.',
-      "Language: ALWAYS reply in the SAME language as the user's latest message. If they wrote in English, reply in English. If they wrote in Hindi or Hinglish, reply in Hinglish. Never switch languages on your own and never default to Hinglish when the user wrote in English.",
+      "Language: ALWAYS reply in the SAME language as the user's latest message — English gets English, Hinglish gets Hinglish, Hindi in Devanagari gets Hindi in Devanagari. Earlier messages don't decide it; only the latest one does.",
+      '- Formatting: plain text. You may use **bold** and "- " bullet lines; no headings, tables or emoji.',
       'Rules:',
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',
       '- Settings (proxy rotation, lane concurrency) are only proposed; the user presses Confirm. Rotation 0 means OFF. Propose ON only if the user clearly asked for it.',

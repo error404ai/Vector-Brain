@@ -1100,6 +1100,25 @@ function PlanCard({
   );
 }
 
+/**
+ * Vector's replies may carry light markdown (**bold**, `code`). Render just
+ * those two as real formatting instead of showing raw asterisks — built as
+ * React nodes, never injected HTML.
+ */
+function richText(text: string): React.ReactNode {
+  if (!text || !/\*\*|`/.test(text)) return text;
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) return <b key={i}>{part.slice(2, -2)}</b>;
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2)
+      return (
+        <Box key={i} component="code" sx={{ fontFamily: 'monospace', fontSize: '0.92em', px: 0.5, borderRadius: 0.5, bgcolor: 'action.hover' }}>
+          {part.slice(1, -1)}
+        </Box>
+      );
+    return part;
+  });
+}
+
 function AssistantBubble({
   turn,
   feed,
@@ -1123,7 +1142,7 @@ function AssistantBubble({
       <AssistantRow>
         {reply.text && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
-            {reply.text}
+            {richText(reply.text)}
           </Typography>
         )}
         <LiveMissionCard initial={reply.mission} feed={feed} onRerun={onRerun} showLive={showLive} />
@@ -1135,7 +1154,7 @@ function AssistantBubble({
       <AssistantRow>
         {reply.text && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 0.25 }}>
-            {reply.text}
+            {richText(reply.text)}
           </Typography>
         )}
         <ScreensReply screens={reply.screens} feed={feed} />
@@ -1173,7 +1192,7 @@ function AssistantBubble({
         }}
       >
         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: error ? 'error.main' : 'text.primary' }}>
-          {reply.text}
+          {richText(reply.text)}
         </Typography>
         {isLatest && reply.quick_replies && reply.quick_replies.length > 0 && (
           <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1 }}>
