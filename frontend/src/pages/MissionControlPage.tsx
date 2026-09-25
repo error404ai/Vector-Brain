@@ -265,47 +265,101 @@ function useDoubleTap(onDouble: () => void) {
 function PhoneZoom({ target, feed, onClose }: { target: PhoneZoomTarget | null; feed: LiveFeed; onClose: () => void }) {
   const liveFrame = target?.hwId ? feed.frames[target.hwId] : undefined;
   const src = liveFrame ? frameSrc(liveFrame.data) : target?.src;
+  // A hardware key on the frame edge: brushed metal with a lit top edge.
+  const key = (side: 'left' | 'right', top: string, height: number) => ({
+    position: 'absolute' as const,
+    [side]: -3,
+    top,
+    width: 4,
+    height,
+    borderRadius: side === 'left' ? '3px 0 0 3px' : '0 3px 3px 0',
+    background: 'linear-gradient(90deg, #1b1e23, #4a505a 50%, #1b1e23)',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,.18)',
+  });
   return (
     <Dialog
       open={!!target}
       onClose={onClose}
       maxWidth={false}
       slotProps={{
-        paper: { sx: { bgcolor: 'transparent', boxShadow: 'none', m: 2, overflow: 'visible' } },
+        // The theme gives every Paper a 1px grey border; here it drew a box
+        // around the phone, so this surface is fully bare.
+        paper: { sx: { bgcolor: 'transparent', backgroundImage: 'none', boxShadow: 'none', border: 'none', outline: 'none', m: 2, overflow: 'visible' } },
         backdrop: { sx: { bgcolor: 'rgba(9,13,24,0.92)', backdropFilter: 'blur(10px)', animation: `${zoomBackdrop} 240ms ${ease}`, ...reducedMotion } },
       }}
     >
       {target && (
-        <Box onClick={onClose} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'zoom-out', outline: 'none' }}>
+        <Box onClick={onClose} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'zoom-out', outline: 'none', pb: 1 }}>
+          {/* The device: metal frame, keys, bezel, glass. */}
           <Box
             onClick={(e) => e.stopPropagation()}
             sx={{
-              width: 'min(300px, 82vw)',
-              aspectRatio: '9 / 19.5',
-              borderRadius: 6,
-              border: '9px solid',
-              borderColor: 'grey.900',
-              bgcolor: 'grey.900',
-              overflow: 'hidden',
-              boxShadow: '0 34px 90px rgba(2,6,23,0.6)',
+              position: 'relative',
+              p: '11px',
+              borderRadius: '48px',
+              background: 'linear-gradient(145deg, #454b55 0%, #1a1d22 38%, #0f1114 62%, #353a42 100%)',
+              boxShadow:
+                '0 0 0 1px rgba(255,255,255,.09), 0 0 0 2px #07080a, inset 0 0 0 1.5px rgba(255,255,255,.16), inset 0 2px 0 rgba(255,255,255,.12), 0 50px 100px -24px rgba(0,0,0,.85), 0 24px 44px -20px rgba(0,0,0,.7)',
               transformOrigin: 'center bottom',
               animation: `${zoomBounce} 560ms ${ease}`,
+              cursor: 'default',
               ...reducedMotion,
             }}
           >
-            {src ? (
-              <Box component="img" src={src} alt={target.name} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-            ) : (
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                <CircularProgress size={22} thickness={5} sx={{ color: 'grey.500' }} />
+            <Box sx={key('right', '21%', 70)} />
+            <Box sx={key('left', '17%', 34)} />
+            <Box sx={key('left', '27%', 58)} />
+            <Box sx={{ position: 'relative', borderRadius: '38px', overflow: 'hidden', bgcolor: '#000', lineHeight: 0, boxShadow: '0 0 0 2px #000' }}>
+              {src ? (
+                <Box
+                  component="img"
+                  src={src}
+                  alt={target.name}
+                  sx={{ display: 'block', width: 'auto', height: 'auto', maxHeight: '76vh', maxWidth: 'min(340px, 76vw)', minWidth: 220 }}
+                />
+              ) : (
+                <Box sx={{ width: 'min(300px, 76vw)', aspectRatio: '9 / 19.5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <CircularProgress size={22} thickness={5} sx={{ color: 'grey.600' }} />
+                </Box>
+              )}
+              {/* Punch-hole camera. */}
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 9,
+                  left: '50%',
+                  width: 12,
+                  height: 12,
+                  ml: '-6px',
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle at 35% 35%, #2a3140 0 22%, #07090d 45%)',
+                  boxShadow: '0 0 0 1.5px #000',
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Glass: a soft diagonal glare over the screen. */}
+              <Box
+                sx={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  background: 'linear-gradient(118deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,.03) 26%, transparent 42%, transparent 78%, rgba(255,255,255,.05) 100%)',
+                }}
+              />
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2.25 }}>
+            <Typography variant="body2" sx={{ color: 'grey.100', fontWeight: 700 }}>
+              {target.name}
+            </Typography>
+            {liveFrame && (
+              <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.25, borderRadius: 99, bgcolor: 'rgba(34,197,94,.16)', color: '#4ade80', fontSize: 11, fontWeight: 700 }}>
+                <Box component="span" sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#22c55e', animation: `${pulseDot} 1.6s infinite`, ...reducedMotion }} />
+                LIVE
               </Box>
             )}
           </Box>
-          <Typography variant="body2" sx={{ color: 'grey.100', mt: 1.75, fontWeight: 700 }}>
-            {target.name}
-            {liveFrame ? ' · live' : ''}
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'grey.400', mt: 0.25 }}>
+          <Typography variant="caption" sx={{ color: 'grey.500', mt: 0.25 }}>
             Tap anywhere to close
           </Typography>
         </Box>
