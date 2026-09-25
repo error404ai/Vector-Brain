@@ -8,6 +8,7 @@ import {
   useNewConversationMutation,
   useRerunFromChatMutation,
   useSendCommandMutation,
+  useStopCommandMutation,
   type ChatReply,
   type Conversation,
   type PhoneShot,
@@ -41,6 +42,7 @@ import ErrorRoundedIcon from '@mui/icons-material/ErrorRounded';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
+import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
 import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKService/androidService/proxyService';
@@ -1626,6 +1628,10 @@ export default function MissionControlPage() {
   );
 
   const [sendCommand, { isLoading: sending }] = useSendCommandMutation();
+  const [stopCommand] = useStopCommandMutation();
+  /** The message being worked on right now, so Stop can reach it. */
+  const inFlightRef = useRef<{ id: string; abort: () => void } | null>(null);
+  const stoppedIdsRef = useRef(new Set<string>());
   const [confirmCommand] = useConfirmCommandMutation();
   const [rerunFromChat, { isLoading: rerunning }] = useRerunFromChatMutation();
 
@@ -1740,8 +1746,13 @@ export default function MissionControlPage() {
     setInput('');
     stickRef.current = true; // sending always follows to the bottom
     pushTurn({ id: nextId('u'), role: 'user', text });
+    // Not crypto.randomUUID: it is missing on plain-http origins.
+    const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    const call = sendCommand({ message: text, conversation_id: conversationId ?? undefined, request_id: requestId });
+    inFlightRef.current = { id: requestId, abort: call.abort };
     try {
-      const res = await sendCommand({ message: text, conversation_id: conversationId ?? undefined }).unwrap();
+      const res = await call.unwrap();
+      if (stoppedIdsRef.current.has(requestId)) return;
       if (res.data.conversation_id && res.data.conversation_id !== conversationId) {
         setConversationId(res.data.conversation_id);
         setLoadedFor(res.data.conversation_id);
@@ -1749,8 +1760,27 @@ export default function MissionControlPage() {
       pushTurn({ id: nextId('a'), role: 'assistant', reply: res.data });
       void refetchConversations();
     } catch (error) {
+      if (stoppedIdsRef.current.has(requestId)) return; // Stop already said so
       pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
+    } finally {
+      if (inFlightRef.current?.id === requestId) inFlightRef.current = null;
     }
+  };
+
+  /**
+   * Stop, the moment it is pressed — also before any task has started. The
+   * server is told first, so nothing keeps running there; the wait on the
+   * reply is dropped at once so the chat is free again.
+   */
+  const stopSending = () => {
+    const current = inFlightRef.current;
+    if (!current) return;
+    stoppedIdsRef.current.add(current.id);
+    inFlightRef.current = null;
+    void stopCommand(current.id);
+    current.abort();
+    pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'answer', text: 'Stopped.' } });
+    inputRef.current?.focus();
   };
 
   const onConfirm = async (token: string) => {
@@ -1963,15 +1993,30 @@ export default function MissionControlPage() {
               </IconButton>
             </Tooltip>
           )}
-          <Button
-            variant="contained"
-            onClick={() => void send()}
-            disabled={!input.trim() || sending}
-            endIcon={sending ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
-            sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
-          >
-            Send
-          </Button>
+          {sending ? (
+            <Tooltip title="Stop — nothing more runs for this message">
+              <Button
+                variant="contained"
+                color="inherit"
+                onClick={stopSending}
+                aria-label="Stop"
+                startIcon={<StopRoundedIcon />}
+                sx={{ borderRadius: 99, px: 2.5, fontWeight: 700, bgcolor: 'grey.900', color: '#fff', '&:hover': { bgcolor: 'grey.800' } }}
+              >
+                Stop
+              </Button>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => void send()}
+              disabled={!input.trim()}
+              endIcon={<SendIcon />}
+              sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
+            >
+              Send
+            </Button>
+          )}
         </Box>
       </Paper>
     </Box>

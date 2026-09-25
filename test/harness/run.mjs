@@ -1226,6 +1226,61 @@ const scenarios = [
     },
   },
   {
+    name: 'stop: Stop while Vector thinks starts nothing, an early Stop still counts, and a mission that raced it is cancelled',
+    async run() {
+      const missionCount = async () => (await db.query('SELECT COUNT(*) AS n FROM missions WHERE user_id = ?', [userId]))[0][0].n;
+      const chat = (text, script, requestId) => api('POST', '/android/chat', { message: `${text} [agent:${JSON.stringify(script)}]`, request_id: requestId });
+      const slow = { policy_v2: true, turns: [{ delay_ms: 2500, calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'Chalu.' }] };
+
+      // 1. Stop while the model is still thinking.
+      const before = await missionCount();
+      const id1 = `stop-${Date.now()}-a`;
+      const pending = chat('settings kholo free1 pe', slow, id1);
+      await sleep(400);
+      await api('POST', '/android/chat/stop', { request_id: id1 });
+      const r1 = (await pending)?.data;
+      if (!r1?.stopped || r1.text !== 'Stopped.') return `stop mid-think: ${JSON.stringify(r1)}`;
+      await sleep(3000); // the scripted model would have answered by now
+      if ((await missionCount()) !== before) return 'a mission started after Stop';
+      const turns = (await api('GET', `/android/chat/history?conversation_id=${r1.conversation_id}`))?.data?.turns ?? [];
+      const last = turns[turns.length - 1];
+      if (last?.role !== 'assistant' || last.reply?.text !== 'Stopped.') return `history does not end with Stopped: ${JSON.stringify(last)}`;
+
+      // 2. The Stop reaches the server before the message does.
+      const id2 = `stop-${Date.now()}-b`;
+      await api('POST', '/android/chat/stop', { request_id: id2 });
+      const r2 = (await chat('settings kholo free1 pe', slow, id2))?.data;
+      if (!r2?.stopped) return `an early Stop was lost: ${JSON.stringify(r2)}`;
+      if ((await missionCount()) !== before) return 'a mission started after an early Stop';
+
+      // 3. v1 starts the mission at once; Stop during the next model turn cancels it.
+      const race = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=30 delay=200]', phones: 'free1' } }] }, { delay_ms: 2500, text: 'Chalu.' }] };
+      const id3 = `stop-${Date.now()}-c`;
+      const p3 = chat('settings kholo free1 pe', race, id3);
+      await sleep(800);
+      await api('POST', '/android/chat/stop', { request_id: id3 });
+      const r3 = (await p3)?.data;
+      if (!r3?.stopped) return `race stop: ${JSON.stringify(r3)}`;
+      const [[latest]] = await db.query('SELECT id FROM missions WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+      const m = await waitForMission(latest.id, 20_000);
+      if (m?.status !== 'CANCELLED') return `the mission that raced Stop ended ${m?.status}`;
+
+      // Another user's Stop can't reach this user's message.
+      const id4 = `stop-${Date.now()}-d`;
+      const p4 = chat('kuch nahi', { turns: [{ delay_ms: 1200, text: 'Theek hai.' }] }, id4);
+      await sleep(300);
+      const [other] = await db.query("INSERT INTO users (name, email, password, isActive, role) VALUES ('S', ?, 'x', 1, 'user')", [`stopother${Date.now()}@test.local`]);
+      const otherToken = jwt.sign({ userId: other.insertId, email: 's@test.local', role: 'user' }, env.JWT_SECRET, { expiresIn: '1h' });
+      await fetch(`${BASE}/api/android/chat/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${otherToken}` },
+        body: JSON.stringify({ request_id: id4 }),
+      });
+      const r4 = (await p4)?.data;
+      if (r4?.stopped || r4?.text !== 'Theek hai.') return `another user's Stop stopped this message: ${JSON.stringify(r4)}`;
+    },
+  },
+  {
     name: "emails: a run's EMAILS line is saved on the phone; the user's own list wins; a newer read waits as a suggestion",
     async run() {
       const emailsOf = async () => (await api('GET', '/android/devices/fleet-state')).data.devices.find((d) => d.id === phones.free1.dbId)?.emails;

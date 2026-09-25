@@ -13,7 +13,7 @@ import { Service } from 'typedi';
 import { FleetStateService } from './FleetStateService';
 import { MissionService, MissionTargetMissing, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
-import { POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
+import { ChatStopped, POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
@@ -86,6 +86,10 @@ export class CommandChatService {
   private conversationRepo = AppDataSource.getRepository(Conversation);
   private shotRepo = AppDataSource.getRepository(ChatScreenShot);
   private pending = new Map<string, Pending>();
+  /** Messages Vector is still working on, by "user:request id", so Stop can reach them. */
+  private inFlight = new Map<string, AbortController>();
+  /** A Stop that arrived before its message did (it can overtake it on the wire). */
+  private stoppedEarly = new Map<string, number>();
   private lastShotSweep = 0;
 
   constructor(
@@ -97,7 +101,49 @@ export class CommandChatService {
     private agent: VectorAgentService,
   ) {}
 
-  async handle(userId: number, message: string, conversationId?: number): Promise<ApiResponse> {
+  /**
+   * The user pressed Stop on a message still being worked on. Nothing further
+   * runs for it — no model call, no tool, no task on a phone — and a mission it
+   * managed to start is cancelled.
+   */
+  stop(userId: number, requestId: string): ApiResponse {
+    const key = `${userId}:${requestId}`;
+    const running = this.inFlight.get(key);
+    if (running) {
+      running.abort();
+      return { message: 'Stopped', data: { stopped: true } };
+    }
+    const now = Date.now();
+    for (const [k, at] of this.stoppedEarly) if (now - at > 120_000) this.stoppedEarly.delete(k);
+    this.stoppedEarly.set(key, now);
+    return { message: 'Stopped', data: { stopped: false } };
+  }
+
+  async handle(userId: number, message: string, conversationId?: number, requestId?: string): Promise<ApiResponse> {
+    if (!requestId) return this.handleMessage(userId, message, conversationId);
+    const key = `${userId}:${requestId}`;
+    const controller = new AbortController();
+    if (this.stoppedEarly.delete(key)) controller.abort();
+    this.inFlight.set(key, controller);
+    try {
+      return await this.handleMessage(userId, message, conversationId, controller.signal);
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+
+  /** What a stopped message leaves behind: the question, and a plain "Stopped." */
+  private async stoppedReply(userId: number, conversationId: number, reply?: ChatReply): Promise<ApiResponse> {
+    // Stop landed after the work finished: undo what it would have started.
+    const missions = reply ? ([reply.mission, ...((reply as { extra_missions?: unknown[] }).extra_missions ?? [])] as ({ id?: number } | undefined)[]) : [];
+    for (const mission of missions) if (mission?.id) await this.missionService.cancel(mission.id, userId).catch(() => undefined);
+    if (reply?.confirm_token) this.pending.delete(reply.confirm_token);
+    const stopped: ChatReply = { kind: 'answer', text: 'Stopped.' };
+    await this.record(userId, 'assistant', stopped.text, stopped, conversationId);
+    return { message: 'Chat reply', data: { ...stopped, stopped: true, conversation_id: conversationId } };
+  }
+
+  private async handleMessage(userId: number, message: string, conversationId?: number, stop?: AbortSignal): Promise<ApiResponse> {
     let text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
     const conversation = await this.resolveConversation(userId, conversationId, text);
@@ -126,10 +172,12 @@ export class CommandChatService {
     if (brain) {
       await this.record(userId, 'user', text, undefined, conversation.id);
       try {
-        const reply = await this.runAgent(userId, brain, text, conversation.id, policy);
+        const reply = await this.runAgent(userId, brain, text, conversation.id, policy, stop);
+        if (stop?.aborted) return this.stoppedReply(userId, conversation.id, reply);
         await this.record(userId, 'assistant', reply.text, reply, conversation.id);
         return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
       } catch (error) {
+        if (error instanceof ChatStopped || stop?.aborted) return this.stoppedReply(userId, conversation.id);
         // The model could not be reached (credits, outage): fall back to the
         // simple built-in understanding rather than leaving the chat dead.
         Logger.warn('[CommandChat] agent failed, using the built-in fallback:', error);
@@ -199,10 +247,13 @@ export class CommandChatService {
     text: string,
     conversationId?: number,
     policy: { v2: boolean; judge?: PolicyJudge } = { v2: POLICY_V2_DEFAULT },
+    stop?: AbortSignal,
   ): Promise<ChatReply> {
     const base = await this.agentContext(userId, conversationId);
     const pending = this.pendingFor(userId, conversationId);
-    const result = await this.agent.run(brain, text, { userId, ...base, pending, ...(await this.policyFor(userId, policy)) });
+    const result = await this.agent.run(brain, text, { userId, ...base, pending, ...(await this.policyFor(userId, policy)), stop });
+    // A "yes" that would confirm something must not go through once stopped.
+    if (stop?.aborted) throw new ChatStopped();
 
     if (result.confirmToken) return this.applyToken(userId, result.confirmToken);
     if (result.cancelledPending) for (const p of pending) this.pending.delete(p.token);

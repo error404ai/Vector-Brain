@@ -3,6 +3,12 @@ import z from 'zod';
 export const CommandChatValidation = z.object({
   message: z.string().trim().min(1).max(4000),
   conversation_id: z.number().int().positive().optional(),
+  /** Client-made id, so a Stop can reach this message while it is worked on. */
+  request_id: z.string().trim().min(8).max(64).optional(),
+});
+
+export const CommandChatStopValidation = z.object({
+  request_id: z.string().trim().min(8).max(64),
 });
 
 export const CommandChatConfirmValidation = z.object({

@@ -51,7 +51,7 @@ export type ChatHistoryTurn =
 
 export const commandChatService = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    sendCommand: builder.mutation<{ message: string; data: ChatReply }, { message: string; conversation_id?: number }>({
+    sendCommand: builder.mutation<{ message: string; data: ChatReply }, { message: string; conversation_id?: number; request_id?: string }>({
       query: (body) => ({ url: '/android/chat', method: 'POST', body }),
     }),
     getChatHistory: builder.query<{ message: string; data: { conversation_id: number | null; turns: ChatHistoryTurn[] } }, number | undefined>({
@@ -78,6 +78,9 @@ export const commandChatService = baseApi.injectEndpoints({
       query: (id) => ({ url: `/android/chat/screens/${id}`, method: 'GET' }),
       keepUnusedDataFor: 300,
     }),
+    stopCommand: builder.mutation<{ message: string }, string>({
+      query: (request_id) => ({ url: '/android/chat/stop', method: 'POST', body: { request_id } }),
+    }),
     confirmCommand: builder.mutation<{ message: string; data: ChatReply }, string>({
       query: (confirm_token) => ({ url: '/android/chat/confirm', method: 'POST', body: { confirm_token } }),
     }),
@@ -87,6 +90,7 @@ export const commandChatService = baseApi.injectEndpoints({
 export const {
   useSendCommandMutation,
   useConfirmCommandMutation,
+  useStopCommandMutation,
   useGetChatHistoryQuery,
   useGetChatScreenQuery,
   useRerunFromChatMutation,

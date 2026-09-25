@@ -46,7 +46,35 @@ export interface BrainTurn {
   calls: ToolCall[];
 }
 /** One model turn given the conversation so far. Real model or a scripted one. */
-export type Brain = (messages: BaseMessage[]) => Promise<BrainTurn>;
+export type Brain = (messages: BaseMessage[], signal?: AbortSignal) => Promise<BrainTurn>;
+
+/** The user pressed Stop while Vector was still working on their message. */
+export class ChatStopped extends Error {
+  constructor() {
+    super('Stopped by the user');
+    this.name = 'ChatStopped';
+  }
+}
+
+/** Settles with the call, or rejects with ChatStopped the moment the signal fires. */
+function untilStopped<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(new ChatStopped());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new ChatStopped());
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(signal.aborted ? new ChatStopped() : error);
+      },
+    );
+  });
+}
 
 /** A change waiting for the user's Confirm. */
 export type ProposedAction =
@@ -81,6 +109,8 @@ export interface AgentContext {
   /** 'v2': model plans, backend (judge) blocks; 'v1': model decides (default). */
   policy?: 'v1' | 'v2';
   judge?: PolicyJudge;
+  /** Fires when the user presses Stop: no further model call or tool runs. */
+  stop?: AbortSignal;
 }
 
 /**
@@ -330,8 +360,8 @@ export class VectorAgentService {
     const model = this.aiConfigService
       .createChatModel({ provider: config.provider, model: config.model, api_key: config.api_key, base_url: config.base_url, temperature: 0.2 })
       .bindTools(TOOLS as unknown as Parameters<ReturnType<AiConfigService['createChatModel']>['bindTools']>[0]);
-    return async (messages) => {
-      const response = await model.invoke(messages);
+    return async (messages, signal) => {
+      const response = await model.invoke(messages, signal ? { signal } : undefined);
       const text = typeof response.content === 'string' ? response.content : '';
       const calls = (response.tool_calls ?? []).map((c, i) => ({ id: c.id ?? `call_${i}`, name: c.name, args: (c.args ?? {}) as Record<string, unknown> }));
       return { text: text.trim(), calls };
@@ -339,10 +369,12 @@ export class VectorAgentService {
   }
 
   /** A scripted brain for the harness: plays back the given turns in order. */
-  static scriptedBrain(script: { turns: { text?: string; calls?: { name: string; args?: Record<string, unknown> }[] }[] }): Brain {
+  static scriptedBrain(script: { turns: { text?: string; delay_ms?: number; calls?: { name: string; args?: Record<string, unknown> }[] }[] }): Brain {
     let index = 0;
     return async () => {
       const turn = script.turns[index++] ?? { text: '' };
+      // Stands in for a slow model answer, so Stop can be tested mid-think.
+      if (turn.delay_ms) await new Promise((resolve) => setTimeout(resolve, Math.min(turn.delay_ms ?? 0, 20_000)));
       return {
         text: turn.text ?? '',
         calls: (turn.calls ?? []).map((c, i) => ({ id: `s${index}_${i}`, name: c.name, args: c.args ?? {} })),
@@ -352,6 +384,30 @@ export class VectorAgentService {
 
   async run(brain: Brain, message: string, ctx: AgentContext): Promise<AgentResult> {
     const result: AgentResult = { text: '', calls: [] };
+    try {
+      return await this.runTurns(brain, message, ctx, result);
+    } catch (error) {
+      if (!(error instanceof ChatStopped)) throw error;
+      // Stop means nothing keeps going on the phones: anything this message
+      // already started (the Stop raced the start) is cancelled too.
+      await this.cancelStarted(ctx.userId, result);
+      throw error;
+    }
+  }
+
+  private async cancelStarted(userId: number, result: AgentResult): Promise<void> {
+    const started = [result.mission, ...(result.extraMissions ?? [])] as ({ id?: number } | undefined)[];
+    for (const mission of started) {
+      if (!mission?.id) continue;
+      await this.missionService.cancel(mission.id, userId).catch((error) => Logger.warn(`[VectorAgent] could not cancel mission ${mission.id} on stop:`, error));
+    }
+  }
+
+  private async runTurns(brain: Brain, message: string, ctx: AgentContext, result: AgentResult): Promise<AgentResult> {
+    const halt = () => {
+      if (ctx.stop?.aborted) throw new ChatStopped();
+    };
+    halt();
     // Decided in code, not left to the model: earlier replies in the history
     // (often Hinglish) otherwise pull it into the wrong language. The note rides
     // on the latest message, where the model weighs instructions most.
@@ -365,9 +421,11 @@ export class VectorAgentService {
     let corrected = false;
     for (let i = 0; i < MAX_MODEL_TURNS; i += 1) {
       let turn: BrainTurn;
+      halt();
       try {
-        turn = await brain(messages);
+        turn = await untilStopped(brain(messages, ctx.stop), ctx.stop);
       } catch (error) {
+        if (error instanceof ChatStopped) throw error;
         Logger.warn('[VectorAgent] model call failed:', error);
         throw new AppError(`The AI model did not answer (${(error as Error)?.message ?? 'error'}). Try again in a moment.`, 502);
       }
@@ -390,6 +448,7 @@ export class VectorAgentService {
       }
       messages.push(new AIMessage({ content: turn.text, tool_calls: turn.calls.map((c) => ({ id: c.id, name: c.name, args: c.args, type: 'tool_call' as const })) }));
       for (const call of turn.calls) {
+        halt();
         const output = await this.execute(call, ctx, result, message);
         result.calls.push({ name: call.name, args: call.args, result: output });
         messages.push(new ToolMessage({ content: output, tool_call_id: call.id }));
@@ -400,7 +459,9 @@ export class VectorAgentService {
         break;
       }
     }
+    halt();
     if (ctx.policy === 'v2') await this.runPlanned(ctx, result);
+    halt();
     if (result.skipped?.length) {
       // One short line per removed step.
       const lines = result.skipped.map((s) => `Skipped "${s.instruction.slice(0, 60)}${s.instruction.length > 60 ? '…' : ''}" — ${oneLineRefusal(s.line)}`);

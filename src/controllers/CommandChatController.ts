@@ -1,6 +1,6 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { CommandChatService } from '@/services/android/CommandChatService';
-import { CommandChatConfirmValidation, CommandChatDryRunValidation, CommandChatRerunValidation, CommandChatValidation } from '@/validations/CommandChatValidation';
+import { CommandChatConfirmValidation, CommandChatStopValidation, CommandChatDryRunValidation, CommandChatRerunValidation, CommandChatValidation } from '@/validations/CommandChatValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
@@ -14,8 +14,16 @@ export class CommandChatController {
   @Post('/')
   @UseBefore(zodValidationMiddleware(CommandChatValidation))
   async chat(@Body() request: z.infer<typeof CommandChatValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
-    const body = request as { message: string; conversation_id?: number };
-    return this.commandChatService.handle(user.userId, body.message, body.conversation_id);
+    const body = request as { message: string; conversation_id?: number; request_id?: string };
+    return this.commandChatService.handle(user.userId, body.message, body.conversation_id, body.request_id);
+  }
+
+  /** Stop a message Vector is still working on (the chat's Stop button). */
+  @Authorized()
+  @Post('/stop')
+  @UseBefore(zodValidationMiddleware(CommandChatStopValidation))
+  async stop(@Body() request: z.infer<typeof CommandChatStopValidation>, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.stop(user.userId, String(request.request_id));
   }
 
   @Authorized()
