@@ -1456,6 +1456,12 @@ export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // True while the reader is at (or near) the bottom, so we only auto-follow new
+  // content when they haven't scrolled up to read something. A ref, not state,
+  // so a running task's frequent growth doesn't re-render the whole page.
+  const stickRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
 
@@ -1595,10 +1601,34 @@ export default function MissionControlPage() {
     }
   };
 
-  // Block body on purpose: an effect's return value is called as its cleanup,
-  // and recent Chrome returns a Promise from scrollIntoView.
+  const scrollToBottom = (smooth: boolean) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  };
+  // Remember whether the reader is pinned to the bottom as they scroll.
+  const onThreadScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+  // Follow the conversation as it grows — a running task keeps adding screens,
+  // steps and phone tiles without a new turn, and ChatGPT-style we stay at the
+  // bottom for that. If the reader scrolled up, we leave them where they are.
+  // This also lands a reload/refresh at the bottom instead of the top.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+  // A new turn (yours or Vector's) always follows to the bottom, smoothly.
+  useEffect(() => {
+    if (stickRef.current) scrollToBottom(true);
   }, [turns.length, sending]);
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
@@ -1608,6 +1638,7 @@ export default function MissionControlPage() {
     if (!text || sending) return;
     stopDictation();
     setInput('');
+    stickRef.current = true; // sending always follows to the bottom
     pushTurn({ id: nextId('u'), role: 'user', text });
     try {
       const res = await sendCommand({ message: text, conversation_id: conversationId ?? undefined }).unwrap();
@@ -1727,7 +1758,8 @@ export default function MissionControlPage() {
         </Box>
       </Box>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, pb: 2, pr: 0.5 }}>
+      <Box ref={scrollRef} onScroll={onThreadScroll} sx={{ flex: 1, overflowY: 'auto', pr: 0.5 }}>
+      <Box ref={contentRef} sx={{ display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
         {loadingHistory && turns.length === 0 && <CircularProgress size={22} sx={{ alignSelf: 'center', mt: 4 }} />}
         {!loadingHistory && turns.length === 0 && (
           <Box sx={{ mt: 4, ...bubbleIn }}>
@@ -1773,6 +1805,7 @@ export default function MissionControlPage() {
         )}
         {(sending || rerunning) && <TypingIndicator />}
         <div ref={bottomRef} />
+      </Box>
       </Box>
 
       {suggestions.length > 0 && (

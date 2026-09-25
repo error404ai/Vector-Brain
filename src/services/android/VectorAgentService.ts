@@ -706,7 +706,8 @@ export class VectorAgentService {
     const lastPhones = ctx.lastMissionDevices.length ? await this.namesFor(ctx.userId, ctx.lastMissionDevices) : [];
     return [
       "You are Vector — an AI assistant for Android mobile automation. You control the user's fleet of real Android phones through tools.",
-      'Understand what the user means from the whole conversation, in any wording or language (English, Hindi, Hinglish), and act with the tools. Reply briefly, in the language and style the user writes in.',
+      'Understand what the user means from the whole conversation, in any wording or language (English, Hindi, Hinglish), and act with the tools. Reply briefly.',
+      "Language: ALWAYS reply in the SAME language as the user's latest message. If they wrote in English, reply in English. If they wrote in Hindi or Hinglish, reply in Hinglish. Never switch languages on your own and never default to Hinglish when the user wrote in English.",
       'Rules:',
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',
       '- Settings (proxy rotation, lane concurrency) are only proposed; the user presses Confirm. Rotation 0 means OFF. Propose ON only if the user clearly asked for it.',
