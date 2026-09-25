@@ -48,6 +48,14 @@ export class QueuedTask {
   @Column({ type: 'varchar', length: 16, default: 'QUEUED' })
   status: string;
 
+  /**
+   * When the runner moved this entry to STARTING. The stale-STARTING sweep is
+   * measured from here, not from created_at — an entry that waited a long time
+   * in the queue before its turn must not be reclaimed the instant it starts.
+   */
+  @Column({ type: 'datetime', nullable: true })
+  starting_at: Date | null;
+
   /** Why it was dropped, when it never ran. */
   @Column({ type: 'varchar', length: 255, nullable: true })
   last_error: string | null;

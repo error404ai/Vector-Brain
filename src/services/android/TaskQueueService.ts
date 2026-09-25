@@ -287,7 +287,9 @@ export class TaskQueueService {
       if (!next) return;
 
       // Claimed before launching so a second drain cannot take the same entry.
+      // Stamp the moment it started so the stale-STARTING sweep times from here.
       next.status = 'STARTING';
+      next.starting_at = new Date();
       await this.queueRepo.save(next);
 
       const device = await this.deviceRepo.findOne({ where: { id: next.device_id } });
@@ -376,14 +378,15 @@ export class TaskQueueService {
         .where('created_at < :cutoff', { cutoff })
         .execute();
 
-      // STARTING entries older than a minute belong to a launch that never
-      // completed; put them back in line.
+      // STARTING entries whose launch never completed within a minute go back
+      // in line — timed from when they became STARTING, not when they were
+      // queued. Legacy rows with no starting_at fall back to created_at.
       const stale = new Date(Date.now() - 60_000);
       await this.queueRepo
         .createQueryBuilder()
         .update()
-        .set({ status: 'QUEUED' })
-        .where('status = :status AND created_at < :stale', { status: 'STARTING', stale })
+        .set({ status: 'QUEUED', starting_at: null })
+        .where('status = :status AND ((starting_at IS NOT NULL AND starting_at < :stale) OR (starting_at IS NULL AND created_at < :stale))', { status: 'STARTING', stale })
         .execute();
 
       const waiting = await this.queueRepo

@@ -33,6 +33,8 @@ type PendingAction =
 
 interface Pending {
   userId: number;
+  /** The thread this confirmation belongs to, so a "yes" in another chat can't apply it. */
+  conversationId?: number;
   /** Old classifier path action, or a proposal from Vector's agent. */
   action: PendingAction | { type: 'agent'; proposal: ProposedAction };
   summary: string;
@@ -128,7 +130,7 @@ export class CommandChatService {
         Logger.warn('[CommandChat] agent failed, using the built-in fallback:', error);
         const context = await this.recentContext(userId, conversation.id);
         const intent = classifyLocally(await this.joinWithPending(userId, text, context.pending));
-        const reply = await this.act(userId, text, intent, context.lastMissionDevices);
+        const reply = await this.act(userId, text, intent, context.lastMissionDevices, conversation.id);
         reply.text = `(AI model unavailable — ${(error as Error)?.message ?? 'error'}. Used the basic mode.) ${reply.text}`;
         await this.record(userId, 'assistant', reply.text, reply, conversation.id);
         return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
@@ -155,15 +157,15 @@ export class CommandChatService {
     // "Nokia" is one request, not two unrelated messages.
     const effective = await this.joinWithPending(userId, text, context.pending);
     const intent = await this.classify(userId, effective, context.lines, stub);
-    const reply = await this.act(userId, effective, intent, context.lastMissionDevices);
+    const reply = await this.act(userId, effective, intent, context.lastMissionDevices, conversation.id);
     await this.record(userId, 'assistant', reply.text, reply, conversation.id);
     return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
   }
 
-  private pendingFor(userId: number): { token: string; summary: string }[] {
+  private pendingFor(userId: number, conversationId?: number): { token: string; summary: string }[] {
     const now = Date.now();
     return [...this.pending.entries()]
-      .filter(([, p]) => p.userId === userId && now - p.at <= CONFIRM_TTL_MS)
+      .filter(([, p]) => p.userId === userId && now - p.at <= CONFIRM_TTL_MS && (conversationId === undefined || p.conversationId === undefined || p.conversationId === conversationId))
       .map(([token, p]) => ({ token, summary: p.summary }));
   }
 
@@ -194,7 +196,7 @@ export class CommandChatService {
     policy: { v2: boolean; judge?: PolicyJudge } = { v2: POLICY_V2_DEFAULT },
   ): Promise<ChatReply> {
     const base = await this.agentContext(userId, conversationId);
-    const pending = this.pendingFor(userId);
+    const pending = this.pendingFor(userId, conversationId);
     const result = await this.agent.run(brain, text, { userId, ...base, pending, ...(await this.policyFor(userId, policy)) });
 
     if (result.confirmToken) return this.applyToken(userId, result.confirmToken);
@@ -204,7 +206,7 @@ export class CommandChatService {
     }
     if (result.proposal) {
       const token = crypto.randomBytes(12).toString('hex');
-      this.pending.set(token, { userId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
+      this.pending.set(token, { userId, conversationId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
       const text = result.text.includes(result.proposal.summary) ? result.text : `${result.text}\n\n${result.proposal.summary}.`;
       return { kind: 'confirm', text, confirm_token: token, plan: result.proposal.plan };
     }
@@ -498,7 +500,7 @@ export class CommandChatService {
   // Act
   // ---------------------------------------------------------------------------
 
-  private async act(userId: number, text: string, intent: ChatIntent, lastMissionDevices: number[] = []): Promise<ChatReply> {
+  private async act(userId: number, text: string, intent: ChatIntent, lastMissionDevices: number[] = [], conversationId?: number): Promise<ChatReply> {
     switch (intent.kind) {
       case 'target': {
         const target = (intent as { target: string }).target;
@@ -551,7 +553,7 @@ export class CommandChatService {
         const thenMission = rest && classifyLocally(rest).kind === 'mission' ? rest : undefined;
         const summary = thenMission ? `${built.summary}, then run: "${rest}"` : built.summary;
         const token = crypto.randomBytes(12).toString('hex');
-        this.pending.set(token, { userId, action: built.action, summary: built.summary, at: Date.now(), thenMission });
+        this.pending.set(token, { userId, conversationId, action: built.action, summary: built.summary, at: Date.now(), thenMission });
         return { kind: 'confirm', text: `${summary}. Confirm?`, confirm_token: token, action: built.action };
       }
 

@@ -441,8 +441,20 @@ export class VectorAgentService {
       const raw = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
       const match = raw.match(/\{[\s\S]*\}/);
       if (!match) throw new Error('policy check returned no verdict');
-      const parsed = JSON.parse(match[0]) as { block?: unknown; line?: unknown };
-      return { block: parsed.block === true, line: typeof parsed.line === 'string' ? parsed.line : undefined };
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch {
+        throw new Error('policy check returned invalid JSON');
+      }
+      // Strict: `block` must be a real boolean. A malformed verdict must not
+      // quietly become "allow" (e.g. block:"true" is not true) — it throws, and
+      // the caller holds the task back rather than running it unchecked.
+      if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { block?: unknown }).block !== 'boolean') {
+        throw new Error('policy check returned an invalid verdict');
+      }
+      const verdict = parsed as { block: boolean; line?: unknown };
+      return { block: verdict.block, line: typeof verdict.line === 'string' ? verdict.line : undefined };
     };
   }
 
