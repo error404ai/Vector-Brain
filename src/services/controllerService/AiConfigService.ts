@@ -1,6 +1,7 @@
 import { AiConfig, AiConfigType, AiProvider } from '@/entities/AiConfig';
 import AppError from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
+import { assertPublicHttpUrl } from '@/helpers/ssrfGuard';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
@@ -118,6 +119,8 @@ export class AiConfigService {
   }
 
   async create(dto: z.infer<typeof CreateAiConfigValidation>, userId: number): Promise<ApiResponse> {
+    const baseUrl = dto.base_url?.trim() || null;
+    if (baseUrl) await assertPublicHttpUrl(baseUrl);
     const willBeActive = dto.is_active ?? true;
 
     if (willBeActive) {
@@ -131,7 +134,7 @@ export class AiConfigService {
       provider: dto.provider,
       model: dto.model,
       encrypted_api_key: encryptedKey,
-      base_url: dto.base_url?.trim() || null,
+      base_url: baseUrl,
       is_active: willBeActive,
       label: dto.label?.trim() || null,
       config_type: dto.config_type || AiConfigType.VISION,
@@ -158,7 +161,11 @@ export class AiConfigService {
 
     if (dto.provider) config.provider = dto.provider;
     if (dto.model) config.model = dto.model;
-    if (dto.base_url !== undefined) config.base_url = dto.base_url?.trim() || null;
+    if (dto.base_url !== undefined) {
+      const baseUrl = dto.base_url?.trim() || null;
+      if (baseUrl) await assertPublicHttpUrl(baseUrl);
+      config.base_url = baseUrl;
+    }
     if (dto.label !== undefined) config.label = dto.label?.trim() || null;
     if (dto.config_type) config.config_type = dto.config_type;
     if (dto.api_key) {

@@ -64,11 +64,16 @@ export class AndroidDeviceService {
       throw new AppError('Pairing code has expired. Please generate a new one from the dashboard.', 400);
     }
 
-    // A physical companion can move to a different account after the user unpairs it locally.
-    // Remove the previous ownership record before claiming the unique hardware ID. Historical
-    // task logs retain safely because their device relation uses ON DELETE SET NULL.
+    // A physical companion can move between accounts, but only its own owner may
+    // release it: if this hardware ID already belongs to a DIFFERENT account, we
+    // refuse rather than silently delete that account's device. Otherwise anyone
+    // who learns a victim's hardware ID could pair with it and wipe their device
+    // row. Re-pairing within the same account still replaces the old record.
     const previousDevice = await this.deviceRepo.findOne({ where: { device_id: request.device_id } });
     if (previousDevice && previousDevice.id !== device.id) {
+      if (previousDevice.user_id !== device.user_id) {
+        throw new AppError('This device is already paired to another account. Unpair it there first.', 409);
+      }
       await this.deviceRepo.remove(previousDevice);
     }
 

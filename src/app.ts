@@ -71,8 +71,13 @@ app.use(
   express.raw({ type: 'application/octet-stream', limit: '12mb' }),
 );
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Small-file base64 uploads legitimately post large JSON, so that route keeps a
+// high ceiling; every other route (parsed before auth) is capped low so an
+// unauthenticated caller can't make the server buffer tens of megabytes.
+app.use('/api/android/files', express.json({ limit: '50mb' }));
+app.use('/api/android/files', express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use(cookieParser());
 // app.use((req, res, next) => {

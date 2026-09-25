@@ -33,7 +33,9 @@ services:
     container_name: vector-brain-mysql-prod
     restart: always
     ports:
-      - '${MYSQL_EXTERNAL_PORT:-3306}:3306'
+      # Bound to localhost only — reach it through an SSH tunnel, never the
+      # public internet. Exposing the database port to the world is a breach.
+      - '127.0.0.1:${MYSQL_EXTERNAL_PORT:-3306}:3306'
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQLPASSWORD}
       - MYSQL_DATABASE=${DATABASE}
@@ -61,7 +63,9 @@ services:
     container_name: vector-brain-phpmyadmin-prod
     restart: always
     ports:
-      - '${PHPMYADMIN_PORT:-8082}:80'
+      # Localhost only — tunnel in to use phpMyAdmin. A public admin panel over
+      # the database is one weak password away from full data loss.
+      - '127.0.0.1:${PHPMYADMIN_PORT:-8082}:80'
     environment:
       - PMA_HOST=db
       - PMA_PORT=3306
@@ -85,8 +89,10 @@ services:
     container_name: vector-brain-qdrant-prod
     restart: always
     ports:
-      - '${QDRANT_PORT:-6333}:6333'
-      - '${QDRANT_GRPC_PORT:-6334}:6334'
+      # Localhost only — the app reaches Qdrant over the internal network
+      # (qdrant:6333); nothing outside the host needs these ports.
+      - '127.0.0.1:${QDRANT_PORT:-6333}:6333'
+      - '127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334'
     volumes:
       - qdrant_data_prod:/qdrant/storage
     environment:

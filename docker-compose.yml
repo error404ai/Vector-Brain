@@ -7,7 +7,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQLPASSWORD:-password}
       MYSQL_DATABASE: ${DATABASE:-vector_brain}
     ports:
-      - '${MYSQL_EXTERNAL_PORT:-3307}:3306'
+      - '127.0.0.1:${MYSQL_EXTERNAL_PORT:-3307}:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -38,7 +38,7 @@ services:
       PMA_PASSWORD: ${MYSQLPASSWORD:-password}
       UPLOAD_LIMIT: 100M
     ports:
-      - '${PHPMYADMIN_PORT:-8080}:80'
+      - '127.0.0.1:${PHPMYADMIN_PORT:-8080}:80'
     depends_on:
       mysql:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
     container_name: vector-brain-qdrant
     restart: unless-stopped
     ports:
-      - '${QDRANT_PORT:-6333}:6333'
+      - '127.0.0.1:${QDRANT_PORT:-6333}:6333'
       - '${QDRANT_GRPC_PORT:-6334}:6334'
     volumes:
       - qdrant_data:/qdrant/storage

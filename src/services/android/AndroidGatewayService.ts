@@ -6,6 +6,7 @@ import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { Service } from 'typedi';
 import { WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
 
 interface PendingRequest {
   resolve: (result: ActionResult) => void;
@@ -182,15 +183,21 @@ export class AndroidGatewayService {
           }
           break;
 
-        case 'device:action_response':
+        case 'device:action_response': {
           const pending = this.pendingRequests.get(msg.requestId);
-          if (pending) {
+          // Only the device the request was actually sent to may answer it.
+          // Without this, any authenticated device could resolve another
+          // device's pending action with a forged result (a fake screenshot,
+          // a false success), since request IDs travel over the wire.
+          if (pending && pending.deviceId === authenticatedDeviceId) {
             clearTimeout(pending.timeoutId);
             this.pendingRequests.delete(msg.requestId);
             pending.resolve(msg.payload);
+          } else if (pending) {
+            Logger.warn(`[AndroidGateway] action_response for ${msg.requestId} came from ${authenticatedDeviceId}, not its owner ${pending.deviceId}; ignored`);
           }
-
           break;
+        }
 
         default:
           Logger.warn(`[AndroidGateway] Unknown message from device:`, rawData);
@@ -285,7 +292,7 @@ export class AndroidGatewayService {
       };
     }
 
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const requestId = `req_${randomUUID()}`;
 
     const message: AndroidWsServerMessage = {
       event: 'server:execute_action',

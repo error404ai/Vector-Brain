@@ -1,6 +1,7 @@
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import AppError from '@/helpers/AppError';
+import { assertPublicHttpUrl } from '@/helpers/ssrfGuard';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
@@ -115,10 +116,12 @@ export class ProxyRotationService {
    * what the controller passes in.
    */
   async create(userId: number, input: z.infer<typeof CreateProxyValidation>): Promise<ApiResponse> {
+    const rotationUrl = String(input.rotation_url ?? '').trim();
+    if (rotationUrl) await assertPublicHttpUrl(rotationUrl);
     const proxy = this.proxyRepo.create({
       user_id: userId,
       name: String(input.name ?? '').trim(),
-      rotation_url: String(input.rotation_url ?? '').trim(),
+      rotation_url: rotationUrl,
       concurrency: input.concurrency ?? 1,
       settle_seconds: input.settle_seconds ?? 5,
       // No rotation unless asked for: rotating a mobile IP drops every phone's
@@ -137,7 +140,11 @@ export class ProxyRotationService {
     if (input.name !== undefined) proxy.name = String(input.name).trim();
     // An empty string means "leave the saved URL alone", so the browser never
     // has to send a secret back just to rename a proxy.
-    if (input.rotation_url) proxy.rotation_url = input.rotation_url.trim();
+    if (input.rotation_url) {
+      const url = input.rotation_url.trim();
+      await assertPublicHttpUrl(url);
+      proxy.rotation_url = url;
+    }
     if (input.concurrency !== undefined) proxy.concurrency = input.concurrency;
     if (input.settle_seconds !== undefined) proxy.settle_seconds = input.settle_seconds;
     if (input.rotate_every_tasks !== undefined) proxy.rotate_every_tasks = input.rotate_every_tasks;
@@ -253,6 +260,9 @@ export class ProxyRotationService {
     let status: string;
 
     try {
+      // Re-check just before the request: the saved URL is trusted, but this
+      // keeps the guard next to the fetch so a future caller can't skip it.
+      await assertPublicHttpUrl(proxy.rotation_url);
       const response = await fetch(proxy.rotation_url, {
         method: 'GET',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
