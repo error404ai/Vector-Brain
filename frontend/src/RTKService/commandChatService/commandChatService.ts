@@ -9,6 +9,8 @@ export interface PhoneShot {
   hw_id: string | null;
   base64?: string;
   error?: string;
+  /** Saved copy (after a reload the image is fetched by this id). */
+  shot_id?: number;
 }
 
 export interface ChatReply {
@@ -72,6 +74,10 @@ export const commandChatService = baseApi.injectEndpoints({
     rerunFromChat: builder.mutation<{ message: string; data: ChatReply }, { mission_id: number; scope?: 'failed' | 'all'; continue?: boolean }>({
       query: (body) => ({ url: '/android/chat/rerun', method: 'POST', body }),
     }),
+    getChatScreen: builder.query<{ message: string; data: { id: number; device_name: string; base64: string; captured_at: string } }, number>({
+      query: (id) => ({ url: `/android/chat/screens/${id}`, method: 'GET' }),
+      keepUnusedDataFor: 300,
+    }),
     confirmCommand: builder.mutation<{ message: string; data: ChatReply }, string>({
       query: (confirm_token) => ({ url: '/android/chat/confirm', method: 'POST', body: { confirm_token } }),
     }),
@@ -82,6 +88,7 @@ export const {
   useSendCommandMutation,
   useConfirmCommandMutation,
   useGetChatHistoryQuery,
+  useGetChatScreenQuery,
   useRerunFromChatMutation,
   useGetConversationsQuery,
   useNewConversationMutation,

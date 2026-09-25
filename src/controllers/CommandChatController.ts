@@ -28,6 +28,13 @@ export class CommandChatController {
     return this.commandChatService.history(user.userId, Number(conversationId) || undefined, Number(limit) || 100);
   }
 
+  /** A screen Vector showed earlier in the chat, fetched when its tile comes into view. */
+  @Authorized()
+  @Get('/screens/:id')
+  async screen(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.commandChatService.screenShot(user.userId, Number(id));
+  }
+
   @Authorized()
   @Get('/conversations')
   async conversations(@CurrentUser({ required: true }) user: { userId: number }) {

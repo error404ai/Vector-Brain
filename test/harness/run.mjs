@@ -1226,7 +1226,7 @@ const scenarios = [
     },
   },
   {
-    name: 'agent: show_screens returns a live frame per phone and does not store it',
+    name: 'agent: show_screens survives a reload — history keeps shot ids, image served only to its owner',
     async run() {
       const script = { turns: [{ calls: [{ name: 'show_screens', args: { phones: 'free1' } }] }, { text: 'Ye rahi free1 ki screen.' }] };
       const res = await api('POST', '/android/chat', { message: `free1 ki screen dikha [agent:${JSON.stringify(script)}]` });
@@ -1235,9 +1235,24 @@ const scenarios = [
       if (reply.text !== 'Ye rahi free1 ki screen.') return `reply was not the model's words: ${reply.text}`;
       const shot = (reply.screens ?? []).find((s) => s.base64);
       if (!shot) return `no screen came back: ${JSON.stringify(reply.screens)}`;
-      // Screens are live, not transcript — the base64 must not survive into history.
+      // After a reload: the screens reply is still there, carrying an id, not the image.
       const history = await api('GET', '/android/chat/history');
-      if (JSON.stringify(history?.data?.turns ?? []).includes(shot.base64)) return 'history stored the screenshot base64 (should be stripped)';
+      const turns = history?.data?.turns ?? [];
+      if (JSON.stringify(turns).includes(shot.base64)) return 'history carries the raw base64 (should be an id)';
+      const saved = [...turns].reverse().find((t) => t.role === 'assistant' && t.reply?.kind === 'screens');
+      if (!saved) return 'the screens reply vanished from history';
+      const stored = saved.reply.screens.find((s) => s.device_name === shot.device_name && s.shot_id);
+      if (!stored) return `no shot_id kept for ${shot.device_name}: ${JSON.stringify(saved.reply.screens)}`;
+      const got = await api('GET', `/android/chat/screens/${stored.shot_id}`);
+      if (got?.data?.base64 !== shot.base64) return 'stored image differs from what was shown';
+      // Another user must not be able to read it.
+      const [other] = await db.query(
+        "INSERT INTO users (name, email, password, isActive, role) VALUES ('Other', ?, 'x', 1, 'user')",
+        [`shotother${Date.now()}@test.local`],
+      );
+      const otherToken = jwt.sign({ userId: other.insertId, email: 'o@test.local', role: 'user' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const peek = await fetch(`${BASE}/api/android/chat/screens/${stored.shot_id}`, { headers: { Authorization: `Bearer ${otherToken}` } });
+      if (peek.status !== 404) return `another user got status ${peek.status} for someone else's screen`;
     },
   },
   {

@@ -115,6 +115,8 @@ export interface PhoneShot {
   hw_id: string | null;
   base64?: string;
   error?: string;
+  /** Once stored: the saved copy, fetched on demand after a reload. */
+  shot_id?: number;
 }
 
 /** Most phones we screenshot in one "show me the screens" — bounds cost and time. */

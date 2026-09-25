@@ -1,4 +1,5 @@
 import { ChatMessage } from '@/entities/ChatMessage';
+import { ChatScreenShot } from '@/entities/ChatScreenShot';
 import { Conversation } from '@/entities/Conversation';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import AppError from '@/helpers/AppError';
@@ -17,6 +18,8 @@ import { POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, ty
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
 const CONFIRM_TTL_MS = 10 * 60_000;
+/** Screens shown in the chat are kept this long, then swept. */
+const SCREEN_SHOT_TTL_MS = 7 * 24 * 60 * 60_000;
 
 /** Who the chat says it is. Fixed text, so the answer never drifts with the model. */
 export const VECTOR_IDENTITY =
@@ -81,7 +84,9 @@ export class CommandChatService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private messageRepo = AppDataSource.getRepository(ChatMessage);
   private conversationRepo = AppDataSource.getRepository(Conversation);
+  private shotRepo = AppDataSource.getRepository(ChatScreenShot);
   private pending = new Map<string, Pending>();
+  private lastShotSweep = 0;
 
   constructor(
     private aiService: AiService,
@@ -306,8 +311,8 @@ export class CommandChatService {
       }
       // A confirm from an earlier visit can't be applied any more; show it as text.
       if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };
-      // Old screenshots aren't kept (they're live) — show the caption as plain text.
-      if (reply.kind === 'screens') reply = { kind: 'answer', text: reply.text };
+      // Screens from before they were stored have nothing to show — keep the caption.
+      if (reply.kind === 'screens' && !reply.screens?.some((s) => s.shot_id)) reply = { kind: 'answer', text: reply.text };
       return { id: row.id, role: 'assistant' as const, reply };
     });
     return { message: 'Chat history', data: { conversation_id: conversation.id, turns } };
@@ -336,6 +341,7 @@ export class CommandChatService {
     const conversation = await this.conversationRepo.findOne({ where: { id, user_id: userId } });
     if (!conversation) throw new AppError('Chat not found', 404);
     await this.messageRepo.delete({ user_id: userId, conversation_id: id });
+    await this.shotRepo.delete({ user_id: userId, conversation_id: id });
     await this.conversationRepo.delete({ id, user_id: userId });
     return { message: 'Deleted', data: { id } };
   }
@@ -423,12 +429,10 @@ export class CommandChatService {
   private async record(userId: number, role: 'user' | 'assistant', text: string, reply?: ChatReply, conversationId?: number): Promise<void> {
     try {
       const missionId = (reply?.mission as { id?: number } | undefined)?.id ?? null;
-      // Live screenshots are point-in-time — never store the (large) base64 in
-      // the transcript. Keep the names so history shows "showed these phones".
-      const toStore =
-        reply?.kind === 'screens'
-          ? { ...reply, screens: reply.screens?.map((s) => ({ device_name: s.device_name, hw_id: s.hw_id, error: s.base64 ? undefined : s.error })) }
-          : reply;
+      // The (large) images never go into the transcript row: each is saved on
+      // its own and the reply keeps only its id, so a reload shows the same
+      // screens while the history itself stays small.
+      const toStore = reply?.kind === 'screens' ? { ...reply, screens: await this.storeShots(userId, conversationId, reply.screens ?? []) } : reply;
       await this.messageRepo.save(
         this.messageRepo.create({ user_id: userId, conversation_id: conversationId ?? null, role, text: text.slice(0, 8000), reply: toStore ? JSON.stringify(toStore) : null, mission_id: missionId }),
       );
@@ -437,6 +441,50 @@ export class CommandChatService {
       // Losing a transcript line must never break the chat itself.
       Logger.warn('[CommandChat] Could not save chat message:', error);
     }
+  }
+
+  /** Saves each captured screen and returns the reply's screens with ids in place of images. */
+  private async storeShots(userId: number, conversationId: number | undefined, shots: import('./VectorAgentService').PhoneShot[]) {
+    const out: import('./VectorAgentService').PhoneShot[] = [];
+    for (const shot of shots) {
+      if (!shot.base64) {
+        out.push({ device_name: shot.device_name, hw_id: shot.hw_id, error: shot.error });
+        continue;
+      }
+      try {
+        const saved = await this.shotRepo.save(
+          this.shotRepo.create({ user_id: userId, conversation_id: conversationId ?? null, device_name: shot.device_name.slice(0, 150), image: shot.base64 }),
+        );
+        out.push({ device_name: shot.device_name, hw_id: shot.hw_id, shot_id: saved.id });
+      } catch (error) {
+        Logger.warn('[CommandChat] Could not store a chat screen:', error);
+        out.push({ device_name: shot.device_name, hw_id: shot.hw_id, error: 'Not saved' });
+      }
+    }
+    void this.sweepOldShots();
+    return out;
+  }
+
+  /** Drops screens older than the retention window, at most once an hour. */
+  private async sweepOldShots(): Promise<void> {
+    if (Date.now() - this.lastShotSweep < 60 * 60_000) return;
+    this.lastShotSweep = Date.now();
+    try {
+      await this.shotRepo
+        .createQueryBuilder()
+        .delete()
+        .where('created_at < :cutoff', { cutoff: new Date(Date.now() - SCREEN_SHOT_TTL_MS) })
+        .execute();
+    } catch (error) {
+      Logger.warn('[CommandChat] Could not sweep old chat screens:', error);
+    }
+  }
+
+  /** One stored chat screen, only for its owner. */
+  async screenShot(userId: number, shotId: number): Promise<ApiResponse> {
+    const shot = await this.shotRepo.findOne({ where: { id: shotId, user_id: userId }, select: ['id', 'device_name', 'image', 'created_at'] });
+    if (!shot) throw new AppError('This screen is no longer available', 404);
+    return { message: 'Chat screen', data: { id: shot.id, device_name: shot.device_name, base64: shot.image, captured_at: shot.created_at } };
   }
 
   async confirm(userId: number, token: string): Promise<ApiResponse> {
