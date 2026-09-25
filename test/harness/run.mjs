@@ -1241,6 +1241,20 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: show_screens "all" returns every online phone, offline ones last and never in a capture slot',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'show_screens', args: { phones: 'all' } }] }, { text: 'Here.' }] };
+      const res = await api('POST', '/android/chat', { message: `show all screens [agent:${JSON.stringify(script)}]` });
+      const shots = res?.data?.screens ?? [];
+      const fleet = (await api('GET', '/android/devices/fleet-state')).data;
+      const online = fleet.counts.total - fleet.counts.offline;
+      const withImage = shots.filter((s) => s.base64).length;
+      if (withImage !== online) return `${withImage} screens for ${online} online phones`;
+      const firstOffline = shots.findIndex((s) => s.error === 'Offline');
+      if (firstOffline !== -1 && shots.slice(firstOffline).some((s) => s.base64)) return 'an offline phone was listed before a live screen';
+    },
+  },
+  {
     name: 'auth: legacy password upgrades to scrypt; refresh token is hashed, rotates, and dies on logout',
     async run() {
       const { createHash } = await import('node:crypto');

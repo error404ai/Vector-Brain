@@ -118,7 +118,9 @@ export interface PhoneShot {
 }
 
 /** Most phones we screenshot in one "show me the screens" — bounds cost and time. */
-const MAX_SCREENS = 12;
+const MAX_SCREENS = 40;
+/** How many phones are asked for a frame at the same time. */
+const SCREEN_CONCURRENCY = 6;
 
 const TOOLS = [
   {
@@ -652,14 +654,17 @@ export class VectorAgentService {
             return JSON.stringify({ error: 'No phones matched. Ask which phones with ask_user, or check the fleet with fleet_status.' });
           }
           if (ctx.dryRun) return JSON.stringify({ status: 'would_show', phones: deviceIds.length });
-          const shots = await this.captureScreens(ctx.userId, deviceIds);
-          result.screens = shots;
-          const shown = shots.filter((s) => s.base64).length;
-          const failed = shots.filter((s) => !s.base64);
+          const capture = await this.captureScreens(ctx.userId, deviceIds);
+          result.screens = capture.shots;
+          const shown = capture.shots.filter((s) => s.base64).length;
+          const failed = capture.shots.filter((s) => !s.base64);
           return JSON.stringify({
             status: 'shown',
-            note: 'The screens are shown to the user as live images. Do not describe what is on them. Reply with one short caption only.',
+            note: `The screens are shown to the user as live images. Do not describe what is on them. Reply with one short caption only, using these exact numbers: ${shown} screen(s) shown of ${capture.online} online phone(s)${capture.truncated ? ` (capped at ${MAX_SCREENS} — say so, do not call it "all")` : ''}${capture.offline ? `, ${capture.offline} offline` : ''}.`,
             shown,
+            online_phones: capture.online,
+            offline_phones: capture.offline,
+            truncated: capture.truncated,
             unavailable: failed.map((s) => `${s.device_name}: ${s.error ?? 'no screen'}`),
           });
         }
@@ -842,30 +847,51 @@ export class VectorAgentService {
    * A phone that is offline, or refuses (no screen-capture permission), comes
    * back as an error entry instead of holding up the others.
    */
-  private async captureScreens(userId: number, deviceIds: number[]): Promise<PhoneShot[]> {
+  /**
+   * Ask each online phone for a small preview frame, a few at a time. Offline
+   * phones never take a capture slot — they are listed after the screens — so
+   * the cap only ever limits how many live screens come back, and `truncated`
+   * says honestly when it did.
+   */
+  private async captureScreens(
+    userId: number,
+    deviceIds: number[],
+  ): Promise<{ shots: PhoneShot[]; online: number; offline: number; truncated: boolean }> {
     const devices = await this.deviceRepo.find({ where: { id: In([...new Set(deviceIds)]), user_id: userId }, select: ['id', 'device_id', 'device_name'] });
-    const chosen = devices.slice(0, MAX_SCREENS);
-    const shots = await Promise.all(
-      chosen.map(async (d): Promise<PhoneShot> => {
-        if (!this.gatewayService.isDeviceConnected(d.device_id)) {
-          return { device_name: d.device_name, hw_id: d.device_id, error: 'Offline' };
+    const connected = devices.filter((d) => this.gatewayService.isDeviceConnected(d.device_id));
+    const disconnected = devices.filter((d) => !this.gatewayService.isDeviceConnected(d.device_id));
+    const chosen = connected.slice(0, MAX_SCREENS);
+
+    const captureOne = async (d: (typeof chosen)[number]): Promise<PhoneShot> => {
+      try {
+        const res = await this.gatewayService.executeAction(d.device_id, { type: 'CaptureScreen', preview: true, awaitStability: false }, 12000);
+        if (res.status === 'SUCCESS') {
+          return res.screenCapture?.base64Data
+            ? { device_name: d.device_name, hw_id: d.device_id, base64: res.screenCapture.base64Data }
+            : { device_name: d.device_name, hw_id: d.device_id, error: 'No screen' };
         }
-        try {
-          const res = await this.gatewayService.executeAction(d.device_id, { type: 'CaptureScreen', preview: true, awaitStability: false }, 12000);
-          if (res.status === 'SUCCESS') {
-            return res.screenCapture?.base64Data
-              ? { device_name: d.device_name, hw_id: d.device_id, base64: res.screenCapture.base64Data }
-              : { device_name: d.device_name, hw_id: d.device_id, error: 'No screen' };
-          }
-          const code = res.status === 'FAILURE' ? res.code : undefined;
-          const message = res.status === 'FAILURE' ? res.message : 'Cancelled';
-          return { device_name: d.device_name, hw_id: d.device_id, error: screenFailReason(code, message) };
-        } catch (error) {
-          return { device_name: d.device_name, hw_id: d.device_id, error: (error as Error)?.message?.slice(0, 80) ?? 'Failed' };
-        }
-      }),
-    );
-    return shots;
+        const code = res.status === 'FAILURE' ? res.code : undefined;
+        const message = res.status === 'FAILURE' ? res.message : 'Cancelled';
+        return { device_name: d.device_name, hw_id: d.device_id, error: screenFailReason(code, message) };
+      } catch (error) {
+        return { device_name: d.device_name, hw_id: d.device_id, error: (error as Error)?.message?.slice(0, 80) ?? 'Failed' };
+      }
+    };
+
+    // A small worker pool keeps order and never fires 40 captures at once.
+    const shots: PhoneShot[] = new Array(chosen.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < chosen.length) {
+        const i = next;
+        next += 1;
+        shots[i] = await captureOne(chosen[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SCREEN_CONCURRENCY, chosen.length) }, worker));
+
+    const offlineShots = disconnected.map((d): PhoneShot => ({ device_name: d.device_name, hw_id: d.device_id, error: 'Offline' }));
+    return { shots: [...shots, ...offlineShots], online: connected.length, offline: disconnected.length, truncated: connected.length > chosen.length };
   }
 
   private async resolveLanes(userId: number, lanes: string): Promise<DeviceProxy[]> {
