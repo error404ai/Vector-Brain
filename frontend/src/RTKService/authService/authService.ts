@@ -1,4 +1,5 @@
 import authManager from '@/_helpers/authManager';
+import RTKCacheManager from '@/_helpers/RTKCacheManager';
 import { logout } from '@/store/authSlice';
 import { baseApi, TAGS } from '../baseApi';
 
@@ -125,14 +126,20 @@ const authApi = baseApi.injectEndpoints({
         method: 'POST',
       }),
       async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
+        const clearEverything = () => {
+          authManager.clearAccessToken();
+          dispatch(logout());
+          // Drop the in-memory RTK Query cache and the persisted IndexedDB
+          // cache, so nothing from this session survives into the next login.
+          dispatch(baseApi.util.resetApiState());
+          void RTKCacheManager.clearAll();
+        };
         try {
           await queryFulfilled;
-          authManager.clearAccessToken();
-          dispatch(logout());
+          clearEverything();
         } catch {
-          // Still clear tokens on logout even if API fails
-          authManager.clearAccessToken();
-          dispatch(logout());
+          // Still clear locally even if the logout API call fails.
+          clearEverything();
         }
       },
       invalidatesTags: [TAGS.ACCOUNT_INFO, TAGS.PROFILE],

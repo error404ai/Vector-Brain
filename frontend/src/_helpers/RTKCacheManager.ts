@@ -221,6 +221,21 @@ class RTKCacheManager {
     }
   }
 
+  /**
+   * Wipe every cached entry and the user prefix. Called on logout so the next
+   * person to sign in on this browser can never be served the previous user's
+   * cached responses out of IndexedDB.
+   */
+  static async clearAll(): Promise<void> {
+    this.clearUserCachePrefix();
+    try {
+      const db = await this.getDB();
+      await db.clear(this.STORE_NAME);
+    } catch (error) {
+      console.warn('Failed to clear RTK cache store', error);
+    }
+  }
+
   static getUserCachePrefix(): string | null {
     try {
       return localStorage.getItem('RTKCacheUserPrefix');
