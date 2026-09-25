@@ -21,6 +21,25 @@ class RTKCacheManager {
   private static readonly MAX_CACHE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
   private static readonly CACHE_INVALIDATION_STATUS_CODES = [500, 404]; // Status codes that invalidate cache
   private static dbPromise: Promise<IDBPDatabase> | null = null;
+  /**
+   * Endpoints that return screenshots. They were written to IndexedDB like any
+   * other query — 100KB+ each, dozens on one page — and every write read the
+   * whole store back into memory to size it, which helped crash the tab.
+   */
+  private static readonly NEVER_PERSIST = ['getFinalScreen', 'getChatScreen', 'sendDirectAction'];
+  /** Anything bigger than this is served from the network only. */
+  private static readonly MAX_ENTRY_SIZE = 256 * 1024;
+  /** A polled query rewrites its entry at most this often. */
+  private static readonly MIN_REWRITE_MS = 60_000;
+  private static lastWrite = new Map<string, number>();
+  /** Queries already answered once in this tab. */
+  private static served = new Set<string>();
+  /** Running size of the store, so a write never has to read it all back. */
+  private static sizes: Map<string, number> | null = null;
+
+  static canPersist(endpointName: string | null | undefined): boolean {
+    return !endpointName || !this.NEVER_PERSIST.includes(endpointName);
+  }
 
   private static async getDB(): Promise<IDBPDatabase> {
     if (!this.dbPromise) {
@@ -31,6 +50,20 @@ class RTKCacheManager {
             store.createIndex('timestamp', 'timestamp');
           }
         },
+      }).then(async (db) => {
+        // Drop screenshots cached by earlier builds (keys only — no data read).
+        try {
+          const keys = (await db.getAllKeys(RTKCacheManager.STORE_NAME)) as string[];
+          const stale = keys.filter((k) => RTKCacheManager.NEVER_PERSIST.some((name) => String(k).includes(`${name}:`)));
+          if (stale.length) {
+            const tx = db.transaction(RTKCacheManager.STORE_NAME, 'readwrite');
+            for (const k of stale) void tx.store.delete(k);
+            await tx.done;
+          }
+        } catch {
+          // best effort
+        }
+        return db;
       });
     }
     return this.dbPromise;
@@ -44,31 +77,39 @@ class RTKCacheManager {
     }
   }
 
-  private static async cleanupOldCache(newEntrySize: number): Promise<void> {
+  /** Sizes of every entry, read once per session with a cursor (values are not kept). */
+  private static async loadSizes(): Promise<Map<string, number>> {
+    if (this.sizes) return this.sizes;
+    const sizes = new Map<string, number>();
+    const db = await this.getDB();
+    let cursor = await db.transaction(this.STORE_NAME, 'readonly').store.openCursor();
+    while (cursor) {
+      sizes.set(String(cursor.key), (cursor.value as CacheEntry)?.size || 0);
+      cursor = await cursor.continue();
+    }
+    this.sizes = sizes;
+    return sizes;
+  }
+
+  private static async cleanupOldCache(key: string, newEntrySize: number): Promise<void> {
     try {
+      const sizes = await this.loadSizes();
+      let total = 0;
+      for (const [k, size] of sizes) if (k !== key) total += size;
+      if (total + newEntrySize <= this.MAX_CACHE_SIZE) return;
+
+      // Oldest first, by key order of the timestamp index (keys only).
       const db = await this.getDB();
-      const tx = db.transaction(this.STORE_NAME, 'readonly');
-      const index = tx.store.index('timestamp');
-      const allEntries = await index.getAll();
+      const oldest = (await db.getAllKeysFromIndex(this.STORE_NAME, 'timestamp')) as string[];
+      const tx = db.transaction(this.STORE_NAME, 'readwrite');
+      for (const k of oldest) {
+        if (total + newEntrySize <= this.MAX_CACHE_SIZE) break;
+        if (k === key) continue;
+        void tx.store.delete(k);
+        total -= sizes.get(k) ?? 0;
+        sizes.delete(k);
+      }
       await tx.done;
-
-      // Sort by timestamp (oldest first)
-      allEntries.sort((a, b) => a.timestamp - b.timestamp);
-
-      let totalSize = allEntries.reduce((sum, entry) => sum + (entry.size || 0), 0);
-      const targetSize = this.MAX_CACHE_SIZE - newEntrySize;
-
-      if (totalSize + newEntrySize <= this.MAX_CACHE_SIZE) {
-        return; // No cleanup needed
-      }
-
-      const writeTx = db.transaction(this.STORE_NAME, 'readwrite');
-      for (const entry of allEntries) {
-        if (totalSize <= targetSize) break;
-        await writeTx.store.delete(entry.key);
-        totalSize -= entry.size || 0;
-      }
-      await writeTx.done;
     } catch (error) {
       console.warn('Failed to cleanup old cache entries', error);
     }
@@ -107,10 +148,20 @@ class RTKCacheManager {
     }
 
     try {
-      const size = this.calculateSize(data);
+      // Polled queries (fleet state every few seconds) would rewrite their
+      // entry on every poll; the cache is for a fast first paint, so once a
+      // minute is plenty.
+      const now = Date.now();
+      if (now - (this.lastWrite.get(key) ?? 0) < this.MIN_REWRITE_MS) return;
+      this.lastWrite.set(key, now);
 
-      // Cleanup old entries if needed
-      await this.cleanupOldCache(size);
+      const size = this.calculateSize(data);
+      if (size > this.MAX_ENTRY_SIZE) {
+        await this.deleteCacheEntry(key);
+        return;
+      }
+
+      await this.cleanupOldCache(key, size);
 
       const db = await this.getDB();
       const entry: CacheEntry = {
@@ -121,6 +172,7 @@ class RTKCacheManager {
       };
 
       await db.put(this.STORE_NAME, entry);
+      this.sizes?.set(key, size);
     } catch (error) {
       console.warn(`Failed to persist RTK Query cache for key "${key}"`, error);
     }
@@ -132,6 +184,8 @@ class RTKCacheManager {
     }
 
     try {
+      this.sizes?.delete(key);
+      this.lastWrite.delete(key);
       const db = await this.getDB();
       await db.delete(this.STORE_NAME, key);
     } catch (error) {
@@ -143,7 +197,12 @@ class RTKCacheManager {
     cachedResponse: { data: unknown; meta: { size: number; cacheTimestamp: number; source: string } } | null;
     networkPromise: Promise<any>;
   }> {
-    const cachedEntryPromise = RTKCacheManager.readCacheEntry(cacheKey);
+    // The stored copy is only for the first paint of a query in this tab.
+    // Serving it on every poll showed an up-to-a-minute-old copy first and
+    // then the fresh one — two renders per poll for nothing.
+    const firstThisSession = !RTKCacheManager.served.has(cacheKey);
+    RTKCacheManager.served.add(cacheKey);
+    const cachedEntryPromise = firstThisSession ? RTKCacheManager.readCacheEntry(cacheKey) : Promise.resolve(null);
 
     const networkPromise = rawBaseQuery(args, api, extraOptions)
       .then(async (result: any) => {
@@ -158,7 +217,10 @@ class RTKCacheManager {
 
         if (result && typeof result === 'object' && 'data' in result) {
           await RTKCacheManager.writeCacheEntry(cacheKey, result.data);
-          // Synchronise RTK Query cache with refreshed data
+          // Only needed when a cached copy was handed out first: then this
+          // fresher result must replace it. Otherwise the network result is
+          // returned directly, and a second store update just re-rendered.
+          if (!(await cachedEntryPromise)) return result;
           const state = api.getState?.();
           const queryCacheKey = api.queryCacheKey;
           const queryState = state?.[baseApi.reducerPath]?.queries?.[queryCacheKey];
@@ -231,6 +293,9 @@ class RTKCacheManager {
     try {
       const db = await this.getDB();
       await db.clear(this.STORE_NAME);
+      this.sizes = new Map();
+      this.lastWrite.clear();
+      this.served.clear();
     } catch (error) {
       console.warn('Failed to clear RTK cache store', error);
     }

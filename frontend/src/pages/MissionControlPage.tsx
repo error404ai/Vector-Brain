@@ -88,11 +88,28 @@ function describeAction(action: unknown): string {
   return type.replace(/_/g, ' ');
 }
 
+/**
+ * Frames are committed to state at most this often. Every phone streaming
+ * pushes a frame every ~0.5–1s; committing each one re-rendered the whole chat
+ * ~30 times a second with 22 phones, which is what made the tab heavy.
+ */
+const FRAME_FLUSH_MS = 1000;
+
 function useLiveFeed(): LiveFeed {
   const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
+    // Newest frame per phone since the last commit; older ones are dropped.
+    let pendingFrames: FrameMap = {};
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushFrames = () => {
+      flushTimer = undefined;
+      const batch = pendingFrames;
+      pendingFrames = {};
+      if (disposed || !Object.keys(batch).length) return;
+      setFeed((prev) => ({ ...prev, frames: { ...prev.frames, ...batch } }));
+    };
     let retry: ReturnType<typeof setTimeout> | undefined;
     const connect = () => {
       const token = authManager.getAccessToken();
@@ -115,7 +132,8 @@ function useLiveFeed(): LiveFeed {
             const hw = p.deviceId;
             const data = (p.result as { screenCapture?: { base64Data?: string } })?.screenCapture?.base64Data;
             if (typeof hw === 'string' && typeof data === 'string') {
-              setFeed((prev) => ({ ...prev, frames: { ...prev.frames, [hw]: { data, at: Date.now() } } }));
+              pendingFrames[hw] = { data, at: Date.now() };
+              if (!flushTimer) flushTimer = setTimeout(flushFrames, FRAME_FLUSH_MS);
             }
             break;
           }
@@ -163,6 +181,7 @@ function useLiveFeed(): LiveFeed {
     return () => {
       disposed = true;
       if (retry) clearTimeout(retry);
+      if (flushTimer) clearTimeout(flushTimer);
       socket?.close();
     };
   }, []);
@@ -1004,6 +1023,9 @@ function useRotationEvents(onRotation: (event: RotationEvent) => void) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       socket = new WebSocket(`${protocol}//${window.location.host}/ws/android?type=web&token=${encodeURIComponent(token)}`);
       socket.onmessage = (event) => {
+        // This socket also receives every live frame (~100KB each, many a
+        // second); skip parsing anything that is not a rotation.
+        if (typeof event.data !== 'string' || !event.data.includes('proxy:rotated')) return;
         try {
           const msg = JSON.parse(event.data);
           if (msg.event !== 'proxy:rotated') return;

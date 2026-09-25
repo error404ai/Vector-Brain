@@ -1267,9 +1267,12 @@ export default function AndroidFleetPage() {
       const batch = targets.slice(start, start + BATCH);
       const results = await Promise.allSettled(
         batch.map(async (device) => {
+          // Preview frame, not full resolution: the card is ~250px wide, and 22
+          // full 1080x2400 frames decoded at once cost the tab 200MB+ of image
+          // memory — a large part of why it crashed. Enlarge fetches its own.
           const response = await sendDirectAction({
             device_id: device.id,
-            action: { type: 'CaptureScreen' },
+            action: { type: 'CaptureScreen', preview: true, awaitStability: false },
           }).unwrap();
           const base64 = response?.data?.screenCapture?.base64Data;
           if (base64) patchRuntime(device.id, { screenshot: base64 });

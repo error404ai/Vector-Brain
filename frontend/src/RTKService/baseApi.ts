@@ -58,7 +58,7 @@ const baseQuery = async (args: any, api: any, extraOptions: any) => {
     const live = typeof api?.endpoint === 'string' && NEVER_CACHE_ENDPOINTS.has(api.endpoint);
     // Cache queries (stale-while-revalidate), except live ones where an old
     // copy is actively wrong — the user cache prefix is part of the key.
-    return cacheEnabled && isQuery && hasCacheKey && !live;
+    return cacheEnabled && isQuery && hasCacheKey && !live && RTKCacheManager.canPersist(api?.endpoint);
   };
 
   const executeWithRefresh = async (requestArgs: any, requestApi: any, requestExtraOptions: any) => {
