@@ -1,423 +1,337 @@
-import FleetWall from '@/components/landing/FleetWall';
-import ScrollReveal from '@/components/landing/ScrollReveal';
-import VectorMark from '@/components/brand/VectorMark';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import CloseIcon from '@mui/icons-material/Close';
-import DoneIcon from '@mui/icons-material/Done';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Box,
-  Button,
-  Container,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { useEffect, useRef } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
+import { startFleetLanding } from '@/components/landing/fleetLanding';
+import type { ScreenKind } from '@/components/landing/screens';
+import '@/components/landing/fleet.css';
 
-const LINE = '1px solid rgba(148,163,184,0.16)';
-const PANEL = 'linear-gradient(160deg, rgba(23,33,55,0.72) 0%, rgba(8,12,24,0.72) 100%)';
-
-interface ComparisonRow {
-  signal: string;
-  vector: string;
-  scripts: string;
-  cloud: string;
-  vectorWins: boolean;
-}
-
-const COMPARISON: ComparisonRow[] = [
-  { signal: 'Writing a test', vector: 'plain English', scripts: 'Appium code', cloud: 'Appium code', vectorWins: true },
-  { signal: 'Who has to write it', vector: 'anyone', scripts: 'a QA engineer', cloud: 'a QA engineer', vectorWins: true },
-  { signal: 'When the UI changes', vector: 'agent adapts', scripts: 'selector breaks', cloud: 'selector breaks', vectorWins: true },
-  { signal: 'Apps that block emulators', vector: 'work normally', scripts: 'depends', cloud: 'blocked', vectorWins: true },
-  { signal: 'Your logged-in accounts', vector: 'already there', scripts: 'already there', cloud: 'set up each run', vectorWins: false },
-  { signal: 'Repeat runs', vector: 'replay, no model calls', scripts: 'free', cloud: 'billed per minute', vectorWins: false },
-  { signal: 'Devices', vector: 'as many as you own', scripts: 'as many as you own', cloud: 'rented per seat', vectorWins: true },
-];
-
-const STEPS: { tag: string; title: string; body: string }[] = [
+const STEPS: { kind: ScreenKind; title: string; body: string }[] = [
   {
-    tag: '01 · PAIR',
-    title: 'Pair your phones',
-    body: 'Install the companion app on each handset, turn on accessibility, enter the code. Any Android from 10 upwards, however many you have.',
+    kind: 'status',
+    title: 'Connect your phones',
+    body: 'Install the companion app on each phone, turn on accessibility and enter the pairing code. Any Android 10 or newer, as many as you own.',
   },
   {
-    tag: '02 · CONNECT',
-    title: 'Bring your own model',
-    body: 'A key from OpenAI, Anthropic, Google, DeepSeek, Groq or OpenRouter. You pay your provider directly, and can run a different model on each device.',
+    kind: 'command',
+    title: 'Type the task',
+    body: 'Write what you want done in plain words, in English or any language. Choose one phone, a group, or every phone.',
   },
   {
-    tag: '03 · INSTRUCT',
-    title: 'Say it in plain words',
-    body: 'No scripts, no selectors, no SDK. The agent reads the screen, decides what to do, and taps, types and scrolls its way through the task.',
-  },
-  {
-    tag: '04 · SCALE',
-    title: 'Send it to the fleet',
-    body: 'One instruction goes out to every phone. Watch each one step by step from a single page, or take manual control of any screen.',
-  },
-  {
-    tag: '05 · REPLAY',
-    title: 'Save it as a flow',
-    body: 'Turn a finished run into a flow and it replays with no model calls at all. Regression runs cost nothing and do the same thing every time.',
+    kind: 'checkout',
+    title: 'Watch it run',
+    body: 'The AI reads each screen and does the taps for you. Watch every screen live, stop any run at once and read the results in chat.',
   },
 ];
 
-const FAQ: { q: string; a: string }[] = [
-  {
-    q: 'Real phones or emulators?',
-    a: 'Phones you already own. The agent works through the Android accessibility service on your own hardware, so nothing about the device looks unusual and the sessions signed into your apps are the real ones.',
-  },
-  {
-    q: 'Do I need to know Appium or write code?',
-    a: 'No. That is the point. A test is a sentence describing what should happen. Nobody on the team has to learn a mobile automation framework or maintain selectors when a screen changes.',
-  },
-  {
-    q: 'How many devices can I run?',
-    a: 'As many as you pair. There is no per-device seat and no rented hardware — the phones are yours, so the ceiling is whatever you have on the desk.',
-  },
-  {
-    q: 'What does it cost to run?',
-    a: 'The platform is free and you bring your own API key, so a run costs whatever your model provider charges for it. Replaying a saved flow calls no model at all, so it costs nothing.',
-  },
-  {
-    q: 'What happens when an app updates and the screen changes?',
-    a: 'An AI run reads whatever is actually on screen, so a moved button is not a broken test. A saved flow replays fixed steps, so a changed screen is caught there and can be handed back to the agent.',
-  },
-  {
-    q: 'Can I start a run without opening the dashboard?',
-    a: 'Yes. Link a Telegram chat and send the task there. The result and a picture of the final screen come back in the same chat.',
-  },
+const OPERATIONS: [string, string, string][] = [
+  ['QA & regression', 'Run the same test on every model and Android version you own, and get a pass or fail per phone.', 'Taps · checks'],
+  ['App flows', 'Sign-in, onboarding, checkout, settings. Describe the flow once and replay it across the fleet.', 'Flows'],
+  ['Monitoring', 'Open an app on a schedule, read what is on screen and report what changed since the last run.', 'Scheduled'],
+  ['Routines', 'The daily chores every phone repeats: updates, clean-ups, checks. Done without anyone watching.', 'Daily'],
+  ['Any app', 'No SDK and no app changes. FLEET works through the screen, so it runs the apps you already use.', 'Any app'],
+];
+
+const RUNS: { kind: ScreenKind; title: string; body: string; devices: string; cadence: string }[] = [
+  { kind: 'checkout', title: 'Checkout regression', body: 'Add to cart, pay and confirm on every model.', devices: '240', cadence: 'Android 10–15' },
+  { kind: 'onboard', title: 'Onboarding sweep', body: 'First launch, permissions and sign-in, fresh install.', devices: '60', cadence: 'Per build' },
+  { kind: 'monitor', title: 'Nightly app check', body: 'Open, read the screen, report what changed.', devices: '1,000', cadence: 'Every night' },
+  { kind: 'settings', title: 'Settings audit', body: 'Read and set the same system options everywhere.', devices: '120', cadence: 'Weekly' },
+  { kind: 'mail', title: 'Account inventory', body: 'Open the mail app and list the account on each phone.', devices: '36', cadence: 'On demand' },
+  { kind: 'update', title: 'Rollout check', body: 'Confirm the new build installs and opens.', devices: '500', cadence: 'Per release' },
+];
+
+const NOTES: [string, string, string][] = [
+  ['A', 'Input', 'Plain language. English or any language.'],
+  ['B', 'Control', 'Android accessibility service. Real taps, types, swipes.'],
+  ['C', 'Link', 'Live connection to the cloud. See every screen as it runs.'],
+  ['D', 'Command queue', 'One instruction fans out to every phone you select.'],
+  ['E', 'Stop', 'Instant. Mid-run, on one phone or all of them.'],
 ];
 
 /**
- * Public landing page at `/`.
- *
- * The fleet is the pitch, so the fleet is the first thing on the page: one
- * instruction, every phone, each one visibly doing its own work. Everything
- * below it answers the questions an operator asks next, in the order they ask
- * them — why real phones, how it compares to writing Appium, what the steps are.
+ * Public landing page. A scroll-driven catalogue: floating phones assemble into
+ * a fleet, one phone is shown as a product, then the fleet grows from 1 to
+ * 1,000 as the camera pulls back. The scroll engine and the WebGL scene live
+ * in components/landing; this component is only the markup.
  */
 export default function HomePage() {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!rootRef.current) return;
+    return startFleetLanding(rootRef.current);
+  }, []);
+
   return (
-    <Box sx={{ bgcolor: '#05070f', color: '#e2e8f0', minHeight: '100vh', overflowX: 'hidden' }}>
+    <div className="fl" ref={rootRef}>
       <Helmet>
-        <title>Vector Brain — run one instruction across every Android phone you own</title>
+        <title>FLEET by Vector Brain — AI that automates unlimited Android phones</title>
         <meta
           name="description"
-          content="Automate real Android phones with plain English instead of Appium scripts. Pair as many devices as you own, run one task across the whole fleet, and replay saved flows with no model calls."
+          content="Type one instruction in plain words and an AI carries it out on every Android phone you connect: opening apps, tapping, typing and swiping. One phone or 10,000. Bring your own API key."
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500&display=swap"
         />
       </Helmet>
 
-      {/* Header */}
-      <Box
-        component="header"
-        sx={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 20,
-          borderBottom: LINE,
-          bgcolor: 'rgba(5,7,15,0.78)',
-          backdropFilter: 'blur(14px)',
-        }}
-      >
-        <Container maxWidth="lg">
-          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ py: 1.5 }}>
-            <Stack direction="row" spacing={1.25} alignItems="center">
-              <VectorMark size={26} color="#60a5fa" accent="#7dd3fc" />
-              <Typography sx={{ fontWeight: 800, fontSize: 16.5, color: '#f8fafc' }}>Vector Brain</Typography>
-            </Stack>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Button component={Link} to="/login" sx={{ color: '#cbd5e1', '&:hover': { color: '#fff' } }}>
-                Sign in
-              </Button>
-              <Button
-                component={Link}
-                to="/signup"
-                variant="contained"
-                disableElevation
-                sx={{ bgcolor: '#2563eb', '&:hover': { bgcolor: '#1d4ed8' } }}
-              >
-                Get started free
-              </Button>
-            </Stack>
-          </Stack>
-        </Container>
-      </Box>
+      <div className="fl-aurora" aria-hidden="true" />
+      <canvas className="fl-gl" aria-hidden="true" />
 
-      {/* Hero */}
-      <Container maxWidth="lg" sx={{ pt: { xs: 5, md: 8 }, pb: { xs: 6, md: 9 } }}>
-        <Stack spacing={2.5} sx={{ maxWidth: 780, mb: { xs: 4, md: 6 } }}>
-          <Typography sx={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.6, color: '#7dd3fc' }}>
-            ONE INSTRUCTION · EVERY PHONE
-          </Typography>
-          <Typography
-            component="h1"
-            sx={{ fontSize: { xs: 38, sm: 50, md: 60 }, fontWeight: 800, lineHeight: 1.05, letterSpacing: -1.6, color: '#f8fafc' }}
-          >
-            Automate unlimited Android phones with plain English
-          </Typography>
-          <Typography sx={{ fontSize: { xs: 17, md: 19 }, color: 'rgba(203,213,225,0.82)', lineHeight: 1.55, maxWidth: 620 }}>
-            Say what you want done. An AI agent reads the screen and carries it out on real phones you own — one of
-            them, or every one of them at once. No Appium, no selectors, no QA engineer.
-          </Typography>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ pt: 0.5 }}>
-            <Button
-              component={Link}
-              to="/signup"
-              size="large"
-              endIcon={<ArrowForwardIcon />}
-              sx={{ px: 4, py: 1.35, fontSize: 16, color: '#fff', bgcolor: '#2563eb', '&:hover': { bgcolor: '#1d4ed8' } }}
-            >
-              Start free
-            </Button>
-            <Button
-              component={Link}
-              to="/login"
-              size="large"
-              sx={{
-                px: 4,
-                py: 1.35,
-                fontSize: 16,
-                color: '#e2e8f0',
-                border: '1px solid rgba(148,163,184,0.3)',
-                '&:hover': { borderColor: 'rgba(148,163,184,0.6)', bgcolor: 'rgba(148,163,184,0.08)' },
-              }}
-            >
-              Sign in
-            </Button>
-          </Stack>
-        </Stack>
+      <header className="hud nav">
+        <a className="brand" href="#c0" aria-label="FLEET by Vector Brain, back to top">
+          <b>FLEET</b>
+          <span className="mono">by Vector Brain</span>
+        </a>
+        <nav className="navr" aria-label="Primary">
+          <a className="ctl" href="#how">How it works</a>
+          <a className="ctl" href="#c3">Scale</a>
+          <a className="ctl" href="#runs">Runs</a>
+          <Link className="ctl" to="/login">Sign in</Link>
+          <Link className="ctl solid" to="/signup">Get started</Link>
+        </nav>
+      </header>
+      <div className="hud rail" aria-hidden="true">
+        <span className="mono rl fl-rail-label">AI automation</span>
+        <i />
+        <span className="mono fl-rail-n">00</span>
+      </div>
+      <div className="hud corner c-tr" aria-hidden="true">
+        <span>Index</span> <b className="fl-ix-n">00</b> / 07
+        <br />
+        <span>SKU</span> VB-FLT-001
+      </div>
+      <div className="hud corner c-bl" aria-hidden="true">
+        <span>London, UK</span> · <b className="fl-clock">00:00:00</b> GMT
+        <br />
+        <span>Frame</span> <b className="fl-frame">0000</b>
+      </div>
+      <div className="hud corner c-br" aria-hidden="true">
+        <span className="scrollcue">Scroll to operate</span>
+      </div>
 
-        {/* Fleet wall */}
-        <ScrollReveal>
-          <Box sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 3, border: LINE, background: PANEL }}>
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              flexWrap="wrap"
-              useFlexGap
-              spacing={1}
-              sx={{ mb: 1.75, px: 0.5 }}
-            >
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: '#22c55e', boxShadow: '0 0 10px #22c55e' }} />
-                <Typography sx={{ fontSize: 13.5, fontWeight: 700, color: '#e2e8f0' }}>
-                  1 instruction → 24 devices
-                </Typography>
-              </Stack>
-              <Typography sx={{ fontSize: 12.5, color: 'rgba(148,163,184,0.85)' }}>
-                “Open the app, sign in, and check the home feed loads”
-              </Typography>
-            </Stack>
-            <FleetWall count={24} />
-          </Box>
-        </ScrollReveal>
-      </Container>
+      <main>
+        <section className="ch" id="c0" data-ch="0" data-label="AI automation" aria-label="FLEET">
+          <div className="stage hero">
+            <div className="hero-in">
+              <p className="mono kicker">FLEET · AI automation for Android phones</p>
+              <h1 className="display h-word">
+                AI that automates <em>unlimited</em> Android phones.
+              </h1>
+              <p className="h-sub">
+                Type one instruction in plain words. The AI opens apps, taps, types and swipes on every phone you
+                connect, the way a person would. One phone or 10,000, all at the same time.
+              </p>
+              <div className="hctl">
+                <Link className="ctl solid" to="/signup">Start automating</Link>
+                <button className="ctl fl-watch" type="button">Watch 12s</button>
+              </div>
+            </div>
+          </div>
+        </section>
 
-      {/* Comparison */}
-      <Box sx={{ borderTop: LINE, borderBottom: LINE }}>
-        <Container maxWidth="lg" sx={{ py: { xs: 7, md: 10 } }}>
-          <ScrollReveal>
-            <Stack spacing={1.5} sx={{ maxWidth: 700, mb: { xs: 3.5, md: 5 } }}>
-              <Typography sx={{ fontSize: { xs: 28, md: 38 }, fontWeight: 800, letterSpacing: -1, color: '#f8fafc', lineHeight: 1.15 }}>
-                Not scripts. Not rented emulators.
-              </Typography>
-              <Typography sx={{ fontSize: 17, color: 'rgba(148,163,184,0.9)', lineHeight: 1.6 }}>
-                Mobile test automation normally costs you an engineer to write it and a cloud bill to run it. This
-                removes the first and makes the second your own hardware.
-              </Typography>
-            </Stack>
-          </ScrollReveal>
+        <section className="how solid" id="how" data-label="How it works" aria-label="How it works">
+          <div className="how-head">
+            <p className="mono" style={{ color: 'var(--graphite)' }}>How it works</p>
+            <h2 className="display">
+              Three steps.
+              <br />
+              <em>No code.</em>
+            </h2>
+          </div>
+          <ol className="steps">
+            {STEPS.map((s, i) => (
+              <li key={s.title}>
+                <div className="st-shot">
+                  <canvas width={280} height={603} data-kind={s.kind} aria-hidden="true" />
+                </div>
+                <span className="mono st-n">Step {i + 1}</span>
+                <h3 className="display">{s.title}</h3>
+                <p>{s.body}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
 
-          <ScrollReveal>
-            <Box sx={{ borderRadius: 3, border: LINE, overflow: 'hidden', background: PANEL }}>
-              <Box sx={{ overflowX: 'auto' }}>
-                <Box sx={{ minWidth: 640 }}>
-                  <Box
-                    sx={{
-                      display: 'grid',
-                      gridTemplateColumns: '1.3fr 1fr 1fr 1fr',
-                      px: 2,
-                      py: 1.5,
-                      borderBottom: LINE,
-                    }}
-                  >
-                    {['', 'Vector Brain', 'Appium scripts', 'Cloud device farm'].map((head, index) => (
-                      <Typography
-                        key={head || 'blank'}
-                        sx={{
-                          fontSize: 12.5,
-                          fontWeight: 800,
-                          letterSpacing: 0.6,
-                          color: index === 1 ? '#7dd3fc' : 'rgba(148,163,184,0.8)',
-                        }}
-                      >
-                        {head.toUpperCase()}
-                      </Typography>
-                    ))}
-                  </Box>
+        <section className="ch" id="c1" data-ch="1" data-label="Any Android phone" aria-label="Any Android phone">
+          <div className="stage sheet">
+            <div className="lbl">
+              <div className="mono" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Object</span>
+                <span>VB-FLT-001</span>
+              </div>
+              <div className="no">#01</div>
+              <h2 className="display">Any Android phone</h2>
+              <div className="mono sub">Becomes an AI-operated unit</div>
+              <svg className="bar fl-barcode" viewBox="0 0 240 44" preserveAspectRatio="none" aria-hidden="true" />
+              <dl className="mono">
+                <dt>Specs</dt>
+                <dd>Accessibility · Live link · Cloud runtime · AI pilot</dd>
+                <dt>Keys</dt>
+                <dd>Bring your own (BYOK)</dd>
+                <dt>Origin</dt>
+                <dd>London, UK</dd>
+              </dl>
+            </div>
+            <ul className="notes" aria-label="Unit notes">
+              {NOTES.map(([k, title, body]) => (
+                <li key={k}>
+                  <b>{k}</b>
+                  <span>
+                    <strong>{title}</strong>
+                    {body}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mono sheet-cap">Fig. 1 · Nothing to program on the phone. Move the cursor to turn it.</p>
+          </div>
+        </section>
 
-                  {COMPARISON.map((row) => (
-                    <Box
-                      key={row.signal}
-                      sx={{
-                        display: 'grid',
-                        gridTemplateColumns: '1.3fr 1fr 1fr 1fr',
-                        alignItems: 'center',
-                        px: 2,
-                        py: 1.5,
-                        borderBottom: LINE,
-                        '&:last-of-type': { borderBottom: 'none' },
-                      }}
-                    >
-                      <Typography sx={{ fontSize: 14, color: '#e2e8f0' }}>{row.signal}</Typography>
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        {row.vectorWins && <DoneIcon sx={{ fontSize: 15, color: '#22c55e' }} />}
-                        <Typography sx={{ fontSize: 13.5, color: '#bfdbfe' }}>{row.vector}</Typography>
-                      </Stack>
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        {row.vectorWins && <CloseIcon sx={{ fontSize: 15, color: 'rgba(148,163,184,0.55)' }} />}
-                        <Typography sx={{ fontSize: 13.5, color: 'rgba(148,163,184,0.85)' }}>{row.scripts}</Typography>
-                      </Stack>
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        {row.vectorWins && <CloseIcon sx={{ fontSize: 15, color: 'rgba(148,163,184,0.55)' }} />}
-                        <Typography sx={{ fontSize: 13.5, color: 'rgba(148,163,184,0.85)' }}>{row.cloud}</Typography>
-                      </Stack>
-                    </Box>
-                  ))}
-                </Box>
-              </Box>
-            </Box>
-          </ScrollReveal>
-        </Container>
-      </Box>
+        <section className="ch" id="c2" data-ch="2" data-label="The AI does the work" aria-label="What the AI does">
+          <div className="stage mani">
+            <div className="mani-txt">
+              <p className="mono" style={{ color: 'var(--graphite)' }}>What the AI does</p>
+              <h2 className="display">
+                You type it.
+                <br />
+                <em>The AI taps it.</em>
+              </h2>
+              <div className="cols">
+                <p>
+                  You give the instruction the way you would brief a person. The AI looks at the screen, decides the
+                  next tap and does it, step by step, until the task is done. If an app changes its layout, the AI
+                  adapts instead of breaking.
+                </p>
+                <p>
+                  No scripts to write and nothing to record. The same instruction works on one phone or on every phone
+                  you own, at the same time. You bring your own AI key, so you pick the model and you own the cost.
+                </p>
+              </div>
+              <div className="facts mono">
+                <span><b>BYOK</b> · your own model keys</span>
+                <span><b>Multilingual</b> · commands in any language</span>
+                <span><b>Worldwide</b> · run from London, UK</span>
+              </div>
+            </div>
+          </div>
+        </section>
 
-      {/* How it works */}
-      <Container maxWidth="lg" sx={{ py: { xs: 7, md: 10 } }}>
-        <ScrollReveal>
-          <Typography
-            sx={{ fontSize: { xs: 28, md: 38 }, fontWeight: 800, letterSpacing: -1, color: '#f8fafc', mb: { xs: 4, md: 6 } }}
-          >
-            How it works
-          </Typography>
-        </ScrollReveal>
+        <section className="ch" id="c3" data-ch="3" data-label="Unlimited devices" aria-label="One instruction, every phone">
+          <div className="stage cmd">
+            <div className="cmd-top">
+              <p className="mono" style={{ color: 'var(--graphite)' }}>Unlimited devices</p>
+              <h2 className="display">One instruction runs on every phone.</h2>
+              <div className="prompt">
+                <span>run checkout test on all devices</span>
+                <span className="caret">&nbsp;</span>
+              </div>
+            </div>
+            <div className="cmd-low">
+              <p className="display count fl-count" aria-live="off">
+                1<small>phone</small>
+              </p>
+              <div className="cmd-cap">
+                <p className="fl-cap">One phone. Try the instruction here first.</p>
+                <div className="status mono">
+                  <span>Running <b className="fl-nrun">1</b></span>
+                  <span>Done <b className="fl-ndone">0</b></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        <Box
-          sx={{
-            display: 'grid',
-            gap: 2.5,
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' },
-          }}
-        >
-          {STEPS.map((step, index) => (
-            <ScrollReveal key={step.tag} delay={index * 70}>
-              <Box sx={{ height: '100%', p: 3, borderRadius: 3, border: LINE, background: PANEL }}>
-                <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 1.2, color: '#60a5fa' }}>
-                    {step.tag}
-                  </Typography>
-                  <Typography sx={{ fontSize: 19, fontWeight: 800, color: '#f1f5f9' }}>{step.title}</Typography>
-                  <Typography sx={{ fontSize: 14.5, color: 'rgba(148,163,184,0.9)', lineHeight: 1.65 }}>
-                    {step.body}
-                  </Typography>
-                </Stack>
-              </Box>
-            </ScrollReveal>
-          ))}
-        </Box>
-      </Container>
+        <section className="index" id="index" data-label="What you can automate" aria-label="What you can automate">
+          <div className="ix-head">
+            <h2 className="display">
+              What you can
+              <br />
+              <em>automate</em>
+            </h2>
+            <p>If a person can do it with a thumb on the screen, FLEET can run it. These are the jobs teams hand over first.</p>
+          </div>
+          <ol className="ix">
+            {OPERATIONS.map(([title, body, tag], i) => (
+              <li key={title}>
+                <span className="mono n">No. {String(i + 1).padStart(2, '0')}</span>
+                <h3 className="display">{title}</h3>
+                <p>{body}</p>
+                <span className="mono tag">{tag}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
 
-      {/* FAQ */}
-      <Box sx={{ borderTop: LINE }}>
-        <Container maxWidth="md" sx={{ py: { xs: 7, md: 10 } }}>
-          <ScrollReveal>
-            <Typography
-              sx={{ fontSize: { xs: 28, md: 38 }, fontWeight: 800, letterSpacing: -1, color: '#f8fafc', mb: { xs: 3, md: 4.5 } }}
-            >
-              Questions operators ask
-            </Typography>
-          </ScrollReveal>
+        <section className="runs" id="runs" data-label="Example runs" aria-label="Example runs">
+          <div className="runs-head">
+            <h2 className="display">
+              Example
+              <br />
+              runs
+            </h2>
+            <p>Illustrative jobs, written the way operators type them. Each one is a single instruction sent to the whole fleet.</p>
+          </div>
+          <div className="grid">
+            {RUNS.map((r, i) => (
+              <article className="run" key={r.title}>
+                <div className="run-top mono">
+                  <span>Run {String(i + 1).padStart(2, '0')}</span>
+                  <span>Example</span>
+                </div>
+                <div className="shot">
+                  <canvas width={280} height={603} data-kind={r.kind} aria-hidden="true" />
+                </div>
+                <div>
+                  <h3 className="display">{r.title}</h3>
+                  <p>{r.body}</p>
+                </div>
+                <dl className="mono">
+                  <div>
+                    <dt>Devices</dt>
+                    <dd>{r.devices}</dd>
+                  </div>
+                  <div>
+                    <dt>Cadence</dt>
+                    <dd>{r.cadence}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        </section>
 
-          {FAQ.map((item) => (
-            <Accordion
-              key={item.q}
-              disableGutters
-              elevation={0}
-              square
-              sx={{
-                bgcolor: 'transparent',
-                borderBottom: LINE,
-                '&::before': { display: 'none' },
-              }}
-            >
-              <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: 'rgba(148,163,184,0.8)' }} />} sx={{ px: 0 }}>
-                <Typography sx={{ fontSize: 16.5, fontWeight: 700, color: '#e2e8f0' }}>{item.q}</Typography>
-              </AccordionSummary>
-              <AccordionDetails sx={{ px: 0, pb: 2.5 }}>
-                <Typography sx={{ fontSize: 15.5, color: 'rgba(148,163,184,0.92)', lineHeight: 1.7 }}>
-                  {item.a}
-                </Typography>
-              </AccordionDetails>
-            </Accordion>
-          ))}
-        </Container>
-      </Box>
-
-      {/* CTA */}
-      <Box sx={{ borderTop: LINE }}>
-        <Container maxWidth="lg" sx={{ py: { xs: 8, md: 11 } }}>
-          <ScrollReveal>
-            <Stack spacing={2.5} alignItems="center" sx={{ textAlign: 'center' }}>
-              <Typography
-                sx={{ fontSize: { xs: 30, md: 44 }, fontWeight: 800, letterSpacing: -1.2, color: '#f8fafc', lineHeight: 1.12 }}
-              >
-                Put the whole fleet to work
-              </Typography>
-              <Typography sx={{ fontSize: 17, color: 'rgba(148,163,184,0.9)', maxWidth: 540, lineHeight: 1.6 }}>
-                Pair a phone, add your API key, type what you want done. The platform is free — you only pay your own
-                model provider.
-              </Typography>
-              <Button
-                component={Link}
-                to="/signup"
-                size="large"
-                endIcon={<ArrowForwardIcon />}
-                sx={{ px: 4.5, py: 1.5, fontSize: 16.5, color: '#fff', bgcolor: '#2563eb', '&:hover': { bgcolor: '#1d4ed8' } }}
-              >
-                Start free
-              </Button>
-            </Stack>
-          </ScrollReveal>
-        </Container>
-      </Box>
-
-      {/* Footer */}
-      <Box component="footer" sx={{ borderTop: LINE }}>
-        <Container maxWidth="lg" sx={{ py: 3.5 }}>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={1.5}
-            alignItems={{ xs: 'flex-start', sm: 'center' }}
-            justifyContent="space-between"
-          >
-            <Stack direction="row" spacing={1} alignItems="center">
-              <VectorMark size={20} color="#60a5fa" accent="#7dd3fc" />
-              <Typography sx={{ fontWeight: 700, fontSize: 14.5, color: 'rgba(226,232,240,0.85)' }}>
-                Vector Brain
-              </Typography>
-            </Stack>
-            <Typography sx={{ fontSize: 13, color: 'rgba(148,163,184,0.7)' }}>
-              © {new Date().getFullYear()} Vector Brain. All rights reserved.
-            </Typography>
-          </Stack>
-        </Container>
-      </Box>
-    </Box>
+        <section className="close" id="close" data-label="Get started" aria-label="Get started">
+          <p className="mono" style={{ color: '#64748B' }}>Get started</p>
+          <h2 className="display">
+            Start
+            <br />
+            <em>automating.</em>
+          </h2>
+          <div className="close-row">
+            <p>
+              Connect your first phone, add your own API key and send one instruction. When it works on one, send it
+              to all of them.
+            </p>
+            <div className="auth">
+              <Link className="ctl solid" to="/signup">Sign up with Google</Link>
+              <Link className="ctl" to="/signup">Sign up with email</Link>
+              <span className="mono">
+                <small>Have an account?</small> <Link className="ctl" to="/login">Sign in</Link>
+              </span>
+            </div>
+          </div>
+          <div className="foot mono">
+            <span>FLEET · by Vector Brain</span>
+            <span>London, UK · Worldwide</span>
+            <span>English + multilingual</span>
+            <span>© {new Date().getFullYear()}</span>
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }
