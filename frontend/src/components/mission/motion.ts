@@ -78,6 +78,13 @@ export const zoomBackdrop = keyframes`
   to   { opacity: 1; }
 `;
 
+/** The recording halo on the mic button while dictation is listening. */
+export const micPulse = keyframes`
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }
+  70%  { box-shadow: 0 0 0 9px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+`;
+
 /** Spread into any sx that animates, so reduced-motion users get a still UI. */
 export const reducedMotion = {
   '@media (prefers-reduced-motion: reduce)': { animation: 'none !important', transition: 'none !important' },

@@ -29,6 +29,7 @@ import {
   screenFade,
   shake,
   shimmer,
+  micPulse,
   slideStep,
   typingDot,
   zoomBackdrop,
@@ -47,6 +48,7 @@ import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
+import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -1419,12 +1421,92 @@ function AuroraBackground() {
   );
 }
 
+// --- Voice dictation: the browser's built-in speech recognition, no backend. ---
+interface SRAlt {
+  transcript: string;
+}
+interface SRResult {
+  isFinal: boolean;
+  0: SRAlt;
+}
+interface SREvent {
+  resultIndex: number;
+  results: { length: number; [i: number]: SRResult };
+}
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((e: SREvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+type SRCtor = new () => SpeechRecognitionLike;
+
+/** SpeechRecognition where it exists (Chrome/Edge), else undefined (Firefox, older browsers). */
+function getSpeechRecognition(): SRCtor | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const w = window as unknown as { SpeechRecognition?: SRCtor; webkitSpeechRecognition?: SRCtor };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
+
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
+
+  // Voice-to-text for the composer: speak, and it types for you. All in the
+  // browser — nothing recorded or sent anywhere by us.
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const dictationBase = useRef('');
+  const speechSupported = !!getSpeechRecognition();
+  const stopDictation = () => {
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
+  };
+  const startDictation = () => {
+    const SR = getSpeechRecognition();
+    if (!SR || recognitionRef.current) return;
+    const rec = new SR();
+    rec.lang = 'en-IN';
+    rec.continuous = true;
+    rec.interimResults = true;
+    dictationBase.current = input ? `${input.replace(/\s+$/, '')} ` : '';
+    let finalText = '';
+    rec.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const r = event.results[i];
+        if (r.isFinal) finalText += `${r[0].transcript} `;
+        else interim += r[0].transcript;
+      }
+      setInput(dictationBase.current + finalText + interim);
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = rec;
+    setListening(true);
+    try {
+      rec.start();
+      inputRef.current?.focus();
+    } catch {
+      setListening(false);
+      recognitionRef.current = null;
+    }
+  };
+  const toggleDictation = () => (recognitionRef.current ? stopDictation() : startDictation());
+  useEffect(() => () => stopDictation(), []);
   // Stable per-page ids for new turns (history turns use their database id).
   const turnSeq = useRef(0);
   const nextId = (prefix: string) => `${prefix}${(turnSeq.current += 1)}`;
@@ -1524,6 +1606,7 @@ export default function MissionControlPage() {
   const send = async (override?: string) => {
     const text = (override ?? input).trim();
     if (!text || sending) return;
+    stopDictation();
     setInput('');
     pushTurn({ id: nextId('u'), role: 'user', text });
     try {
@@ -1731,6 +1814,22 @@ export default function MissionControlPage() {
           <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
           <RotationSwitch />
           <Box sx={{ flex: 1 }} />
+          {speechSupported && (
+            <Tooltip title={listening ? 'Stop dictation' : 'Speak to type'}>
+              <IconButton
+                onClick={toggleDictation}
+                aria-label={listening ? 'Stop dictation' : 'Speak to type'}
+                sx={{
+                  color: listening ? 'error.main' : 'text.secondary',
+                  bgcolor: listening ? 'rgba(220,38,38,0.08)' : 'transparent',
+                  ...(listening ? { animation: `${micPulse} 1.6s infinite` } : {}),
+                  ...reducedMotion,
+                }}
+              >
+                <MicRoundedIcon />
+              </IconButton>
+            </Tooltip>
+          )}
           <Button
             variant="contained"
             onClick={() => void send()}
