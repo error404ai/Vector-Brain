@@ -717,13 +717,42 @@ export class VectorAgentService {
 
   private async fleetSnapshot(userId: number) {
     const state = (await this.fleetStateService.getState(userId)) as {
+      counts: Record<string, number>;
       devices: { id: number; name: string; state: string; tag: string | null; proxy_id: number | null }[];
       lanes: { id: number; name: string; running: number; waiting: number }[];
     };
     const proxies = await this.proxyRepo.find({ where: { user_id: userId } });
     const running = await this.missionRepo.find({ where: { user_id: userId, status: 'RUNNING' }, order: { id: 'DESC' }, take: 5 });
     const laneName = new Map(proxies.map((p) => [p.id, p.name]));
+    // Counted here, not by the model: asked "how many are online", it used to
+    // count the list itself and get it wrong (said 21 while listing 23 names).
+    // "online" matches the fleet page: everything that isn't offline.
+    const c = state.counts ?? {};
+    const counts = {
+      total: c.total ?? state.devices.length,
+      online: (c.total ?? state.devices.length) - (c.offline ?? 0),
+      offline: c.offline ?? 0,
+      running: c.running ?? 0,
+      waiting_in_queue: c.waiting ?? 0,
+      needs_setup: c.needs_setup ?? 0,
+    };
+    const groups = new Map<string, { online: string[]; offline: string[] }>();
+    for (const d of state.devices) {
+      const key = d.proxy_id ? laneName.get(d.proxy_id) ?? 'unknown lane' : 'no lane';
+      const g = groups.get(key) ?? { online: [], offline: [] };
+      (d.state === 'offline' ? g.offline : g.online).push(d.name);
+      groups.set(key, g);
+    }
+    const by_lane = [...groups.entries()].map(([lane, g]) => ({
+      lane,
+      online_count: g.online.length,
+      offline_count: g.offline.length,
+      online: g.online,
+      offline: g.offline,
+    }));
     return {
+      counts,
+      by_lane,
       phones: state.devices.map((d) => ({
         name: d.name,
         state: d.state,
@@ -749,6 +778,7 @@ export class VectorAgentService {
       'Understand what the user means from the whole conversation, in any wording or language (English, Hindi, Hinglish), and act with the tools. Reply briefly.',
       "Language: ALWAYS reply in the SAME language as the user's latest message — English gets English, Hinglish gets Hinglish, Hindi in Devanagari gets Hindi in Devanagari. Earlier messages don't decide it; only the latest one does.",
       '- Formatting: plain text. You may use **bold** and "- " bullet lines; no headings, tables or emoji.',
+      '- Numbers about the fleet come ONLY from `counts` and `by_lane` in the fleet data — quote them exactly. Never count, add up or regroup phones yourself. When listing phones, list each lane\'s `online`/`offline` names as given (several phones can share a model name — that is not a duplicate).',
       'Rules:',
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',
       '- Settings (proxy rotation, lane concurrency) are only proposed; the user presses Confirm. Rotation 0 means OFF. Propose ON only if the user clearly asked for it.',

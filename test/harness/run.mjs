@@ -1354,6 +1354,24 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: fleet_status gives exact counts that match the fleet page',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'fleet_status', args: {} }] }, { text: 'ok' }] };
+      const res = await api('POST', '/android/chat/dry-run', { message: `how many phones are online [agent:${JSON.stringify(script)}]` });
+      const call = (res?.data?.calls ?? []).find((c) => c.name === 'fleet_status');
+      if (!call) return 'fleet_status was not called';
+      const snap = JSON.parse(call.result);
+      const fleet = (await api('GET', '/android/devices/fleet-state')).data;
+      const online = fleet.counts.total - fleet.counts.offline;
+      if (snap?.counts?.online !== online) return `chat says ${snap?.counts?.online} online, fleet page ${online}`;
+      if (snap.counts.total !== fleet.counts.total) return `total ${snap.counts.total} vs ${fleet.counts.total}`;
+      const listed = (snap.by_lane ?? []).reduce((n, l) => n + l.online_count, 0);
+      if (listed !== online) return `by_lane lists ${listed} online, expected ${online}`;
+      const names = (snap.by_lane ?? []).reduce((n, l) => n + l.online.length, 0);
+      if (names !== listed) return 'a lane online_count does not match its list';
+    },
+  },
+  {
     name: 'agent dry-run shows what it would do without doing it',
     async run() {
       const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
