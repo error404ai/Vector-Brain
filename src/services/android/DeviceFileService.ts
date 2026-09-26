@@ -230,8 +230,7 @@ export class DeviceFileService {
 
     // The bytes go in exactly once. If this file (or an identical one) is already
     // stored, the insert is a no-op - that is the whole point of keying on sha256.
-    const existing = await this.blobRepo.findOne({ where: { sha256 } });
-    if (!existing) await this.writeBlobInSlices(sha256, content);
+    await this.ensureBlobStored(sha256, content);
 
     const records = devices.map((device) =>
       this.fileRepo.create({
@@ -399,6 +398,59 @@ export class DeviceFileService {
       if (!part || part.length === 0) break;
       yield part;
     }
+  }
+
+  /** Writes in flight per sha256 in this process, so identical uploads queue up. */
+  private blobWrites = new Map<string, Promise<void>>();
+
+  /**
+   * Makes sure the bytes for `sha256` are stored completely, exactly once.
+   *
+   * Two uploads of the same file (one APK sent to phones one after another, or
+   * a retry) share one stored copy. Written at the same time, each one's
+   * "clear the old slices" wiped the other's, which surfaced as "Duplicate
+   * entry for UQ_blob_chunk" or "kept 20676224 of 24870528 bytes". Writes for
+   * one sha256 now run one at a time (an in-process queue plus a MySQL named
+   * lock for a second server), and a copy that is already complete is reused
+   * instead of rewritten. A partial copy left by a crash is rewritten.
+   */
+  private async ensureBlobStored(sha256: string, content: Buffer): Promise<void> {
+    const previous = this.blobWrites.get(sha256) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => this.lockedBlobWrite(sha256, content));
+    this.blobWrites.set(sha256, run);
+    try {
+      await run;
+    } finally {
+      if (this.blobWrites.get(sha256) === run) this.blobWrites.delete(sha256);
+    }
+  }
+
+  private async lockedBlobWrite(sha256: string, content: Buffer): Promise<void> {
+    // Named locks belong to one connection, so hold a dedicated one.
+    const runner = AppDataSource.createQueryRunner();
+    await runner.connect();
+    const lockName = `vb_blob_${sha256.slice(0, 40)}`;
+    try {
+      const [got] = await runner.query('SELECT GET_LOCK(?, 120) AS ok', [lockName]);
+      if (Number(got?.ok) !== 1) throw new AppError('The file is busy being stored; please try again in a moment.', 503);
+      try {
+        if (await this.blobIsComplete(sha256, content.length)) return;
+        await this.writeBlobInSlices(sha256, content);
+      } finally {
+        await runner.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => undefined);
+      }
+    } finally {
+      await runner.release();
+    }
+  }
+
+  /** True when every byte of this blob is stored, as slices or (older rows) inline. */
+  private async blobIsComplete(sha256: string, sizeBytes: number): Promise<boolean> {
+    const [blob] = await this.blobRepo.query('SELECT size_bytes, LENGTH(content) AS inline_bytes FROM device_file_blobs WHERE sha256 = ? LIMIT 1', [sha256]);
+    if (!blob || Number(blob.size_bytes) !== sizeBytes) return false;
+    if (Number(blob.inline_bytes) === sizeBytes) return true;
+    const [row] = await this.blobRepo.query('SELECT COALESCE(SUM(size_bytes), 0) AS stored_bytes FROM device_file_blob_chunks WHERE sha256 = ?', [sha256]);
+    return Number(row?.stored_bytes ?? 0) === sizeBytes;
   }
 
   /**

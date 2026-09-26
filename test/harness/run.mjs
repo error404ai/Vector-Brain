@@ -556,6 +556,43 @@ const scenarios = [
     },
   },
   {
+    name: 'the same large file sent to two phones at once is stored whole and both phones get every byte',
+    async run() {
+      // Same bytes, two separate uploads finishing together (sending one APK to
+      // phones one after another). They share one stored copy keyed by sha256.
+      const payload = crypto.randomBytes(24_870_528);
+      const sha256 = crypto.createHash('sha256').update(payload).digest('hex');
+      const chunkSize = 8 * 1024 * 1024;
+      const totalChunks = Math.ceil(payload.length / chunkSize);
+      const upload = async (dbId) => {
+        const init = await api('POST', '/android/files/init', {
+          device_ids: [dbId], file_name: 'race.apk', mime_type: 'application/vnd.android.package-archive',
+          size_bytes: payload.length, sha256, total_chunks: totalChunks,
+        });
+        const uploadId = init.data.upload_id;
+        for (let index = 0; index < totalChunks; index += 1) {
+          const slice = payload.subarray(index * chunkSize, Math.min((index + 1) * chunkSize, payload.length));
+          await fetch(`${BASE}/api/android/files/chunk?upload_id=${uploadId}&index=${index}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${userToken}` }, body: slice,
+          });
+        }
+        return uploadId;
+      };
+      const [u1, u2] = await Promise.all([upload(phones.free1.dbId), upload(phones.free2.dbId)]);
+      const [f1, f2] = await Promise.all([api('POST', '/android/files/finish', { upload_id: u1 }), api('POST', '/android/files/finish', { upload_id: u2 })]);
+      for (const f of [f1, f2]) if (!f?.data?.sha256) return `an upload failed: ${JSON.stringify(f).slice(0, 200)}`;
+      for (const name of ['free1', 'free2']) {
+        const listed = await fetch(`${BASE}/api/android/companion/files`, { headers: { Authorization: `Bearer ${phones[name].phone.token}` } }).then((r) => r.json());
+        const entry = (listed.data ?? []).find((x) => x.name === 'race.apk');
+        if (!entry) return `${name} was not offered the file`;
+        const dl = await fetch(`${BASE}/api/android/companion/files/${entry.id}/content`, { headers: { Authorization: `Bearer ${phones[name].phone.token}` } });
+        if (!dl.ok) return `${name} download refused: ${dl.status}`;
+        const got = Buffer.from(await dl.arrayBuffer());
+        if (crypto.createHash('sha256').update(got).digest('hex') !== sha256) return `${name} got ${got.length} bytes that do not match`;
+      }
+    },
+  },
+  {
     name: 'a download the phone never finishes is given up on, not offered forever',
     async run() {
       // A phone that dies mid-download (old APK, low memory) comes back and asks
