@@ -51,6 +51,48 @@ export class AndroidTaskLog {
   @Column({ type: 'longtext', nullable: true })
   error_message: string;
 
+  // --- Run diagnostics (all optional; see RunDiagnosticsService) -------------
+
+  /** The screen the step acted on. ui_tree_snapshot is the screen after it. */
+  @Column({ type: 'longtext', nullable: true, select: false })
+  ui_tree_before: string | null;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  package_before: string | null;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  package_after: string | null;
+
+  /** Short structural fingerprints of the screen before/after (see screenFingerprint). */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  screen_before: string | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  screen_after: string | null;
+
+  /** Time the model took to choose this step (previous result -> this call). */
+  @Column({ type: 'int', nullable: true })
+  think_ms: number | null;
+
+  /** Which model call (1-based within the run) produced this step. */
+  @Column({ type: 'int', nullable: true })
+  llm_call: number | null;
+
+  /** Tokens of the model call that produced this step; set on its first step only. */
+  @Column({ type: 'int', nullable: true })
+  prompt_tokens: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  completion_tokens: number | null;
+
+  /** Who decided this step: 'ai', 'replay' or 'direct'. */
+  @Column({ type: 'varchar', length: 12, default: 'ai' })
+  source: string;
+
+  /** Why the step was wasted, when it was (set when the run ends). */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  waste: string | null;
+
   @CreateDateColumn({ type: 'datetime' })
   created_at: Date;
 

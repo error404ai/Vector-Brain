@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
+import type { RunDiagnostics } from '@/services/android/runDiagnostics';
 import { User } from './User';
 
 export type AgentTaskStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
@@ -96,6 +97,10 @@ export class AgentTask {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  /** Where the run's steps and time went; written when the run ends (RunDiagnosticsService). */
+  @Column({ type: 'json', nullable: true })
+  diagnostics: RunDiagnostics | null;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'user_id' })

@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AutomationAction } from './AndroidProtocol';
+import { RunDiagnosticsService } from './RunDiagnosticsService';
 
 /** Lease for a replay run; renewed on every step (see AndroidPlannerService). */
 const REPLAY_LEASE_MS = 45_000;
@@ -35,7 +36,10 @@ export class FlowReplayService {
   private logRepo: Repository<AndroidTaskLog> = AppDataSource.getRepository(AndroidTaskLog);
   private deviceRepo: Repository<AndroidDevice> = AppDataSource.getRepository(AndroidDevice);
 
-  constructor(private gatewayService: AndroidGatewayService) {}
+  constructor(
+    private gatewayService: AndroidGatewayService,
+    private runDiagnosticsService: RunDiagnosticsService,
+  ) {}
 
   async listFlows(userId: number): Promise<ApiResponse> {
     const flows = await this.flowRepo.find({ where: { user_id: userId }, order: { updated_at: 'DESC' } });
@@ -198,6 +202,9 @@ export class FlowReplayService {
         action_payload: step.action_payload,
         thought_reasoning: step.label,
         status: AndroidStepStatus.EXECUTING,
+        // Chosen by the saved flow, not by a model.
+        source: 'replay',
+        think_ms: 0,
       });
       await this.logRepo.save(log);
 
@@ -278,6 +285,9 @@ export class FlowReplayService {
       ? `Replayed "${flow.name}" — ${executed} steps in ${durationSeconds.toFixed(1)}s with no AI calls.`
       : `${failure}\n\nThe screen may have changed since this flow was recorded. Run the original instruction with the agent and save it again.`;
     await this.taskRepo.save(task);
+
+    // Replays make no model calls; the summary still counts their steps and failures.
+    void this.runDiagnosticsService.finalize(task.id, { llmCalls: 0, promptTokens: 0, completionTokens: 0, tokensReported: false });
 
     flow.run_count += 1;
     flow.last_run_at = new Date();

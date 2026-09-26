@@ -12,6 +12,8 @@ import CollectionsIcon from '@mui/icons-material/Collections';
 import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import { capturePage } from '@/_helpers/capturePage';
 import { canManageLandingShots } from '@/_helpers/landingAccess';
+import { isOwner } from '@/_helpers/ownerAccess';
+import InsightsIcon from '@mui/icons-material/Insights';
 import { useUploadLandingPageMutation } from '@/RTKService/landingShotService/landingShotService';
 import toast from 'react-hot-toast';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -216,6 +218,19 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                   <PsychologyIcon fontSize="small" />
                 </ListItemIcon>
                 AI Rules
+              </MenuItem>
+            ) : null}
+            {isOwner(user) ? (
+              <MenuItem
+                onClick={() => {
+                  setProfileAnchor(null);
+                  navigate('/diagnostics');
+                }}
+              >
+                <ListItemIcon>
+                  <InsightsIcon fontSize="small" />
+                </ListItemIcon>
+                Run diagnostics
               </MenuItem>
             ) : null}
             {canManageLandingShots(user) ? (

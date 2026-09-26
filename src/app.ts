@@ -33,6 +33,7 @@ import { AuthController } from './controllers/AuthController';
 import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorController';
 import { DashboardController } from './controllers/DashboardController';
 import { LandingShotController, PublicLandingShotController } from './controllers/LandingShotController';
+import { DiagnosticsController } from './controllers/DiagnosticsController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
@@ -47,6 +48,7 @@ import { UserController } from './controllers/UserController';
 import { authorizationChecker, currentUserChecker } from './middleware/authChecker';
 import { AiEmbeddingService } from './services/AiEmbeddingService';
 import { HistoryCleanupService } from './services/android/HistoryCleanupService';
+import { DiagnosticsSyncService } from './services/android/DiagnosticsSyncService';
 import { ScheduledTaskService } from './services/android/ScheduledTaskService';
 import { MissionService } from './services/android/MissionService';
 import { TelegramService } from './services/telegram/TelegramService';
@@ -102,6 +104,7 @@ useExpressServer(app, {
     AuthController,
     BrowserWorkerErrorController,
     DashboardController,
+    DiagnosticsController,
     HealthController,
     LandingShotController,
     PublicLandingShotController,
@@ -171,6 +174,7 @@ AppDataSource.initialize()
       Container.get(ScheduledTaskService).start();
       Container.get(HistoryCleanupService).start();
       Container.get(MissionService).start();
+      Container.get(DiagnosticsSyncService).start();
     } catch (error) {
       Logger.warn('Scheduled task runner failed to start:', error);
     }

@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import mysql from 'mysql2/promise';
@@ -90,7 +91,9 @@ let backendRuns = 0;
 async function startBackend() {
   backendRuns += 1;
   const out = fs.openSync(path.join(logDir, `backend-${backendRuns}.log`), 'w');
-  backend = spawn(process.execPath, ['dist/app.js'], { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', out, out] });
+  // Run-diagnostics sync points at the fake GitHub below.
+  const diag = { DIAG_GITHUB_REPO: 'harness/diagnostics', DIAG_GITHUB_TOKEN: 'harness-token', DIAG_GITHUB_API: 'http://127.0.0.1:4701' };
+  backend = spawn(process.execPath, ['dist/app.js'], { cwd: root, env: { ...process.env, ...env, ...diag }, stdio: ['ignore', out, out] });
   const started = Date.now();
   while (Date.now() - started < 40_000) {
     if (backend.exitCode !== null) throw new Error(`backend exited during boot (see logs/backend-${backendRuns}.log)`);
@@ -144,6 +147,37 @@ const rotationServer = http.createServer((req, res) => {
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ip: `10.0.0.${rotation.calls.length}` }));
+});
+
+// Fake GitHub contents API for the run-diagnostics sync. Stores files by path.
+const github = { files: new Map(), auth: [] };
+const githubServer = http.createServer((req, res) => {
+  github.auth.push(req.headers.authorization);
+  const match = /^\/repos\/([^/]+\/[^/]+)\/contents\/([^?]+)/.exec(req.url);
+  if (!match) {
+    res.writeHead(404);
+    return res.end('{}');
+  }
+  const file = decodeURIComponent(match[2]);
+  if (req.method === 'GET') {
+    const known = github.files.get(file);
+    res.writeHead(known ? 200 : 404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(known ? { sha: known.sha } : { message: 'Not Found' }));
+  }
+  let body = '';
+  req.on('data', (chunk) => (body += chunk));
+  req.on('end', () => {
+    const payload = JSON.parse(body);
+    const known = github.files.get(file);
+    if (known && payload.sha !== known.sha) {
+      res.writeHead(409);
+      return res.end('{"message":"sha mismatch"}');
+    }
+    const sha = crypto.createHash('sha1').update(payload.content).digest('hex');
+    github.files.set(file, { sha, content: Buffer.from(payload.content, 'base64'), message: payload.message, branch: payload.branch });
+    res.writeHead(known ? 200 : 201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ content: { sha } }));
+  });
 });
 
 const phones = {}; // name -> { phone, dbId, hw }
@@ -1974,6 +2008,94 @@ const scenarios = [
       if (ended.status !== 'FAILED') return `ended as ${ended.status}/${ended.reason_code}`;
     },
   },
+  {
+    name: 'diagnostics: a run records screens, time, tokens and tags wasted steps',
+    async run() {
+      const t0 = Date.now();
+      // open → reread → no-effect tap → same tap again → useful tap → back → failed tap → useful tap
+      await run('free1', 'open the app [sim actions=open:com.example.app,read,tap0,tap0,tap,back,fail,tap delay=30]');
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free1']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 30_000);
+      if (!done) return 'task never finished';
+      if (done.status !== 'SUCCEEDED') return `status ${done.status} (${done.reason_code})`;
+
+      // The summary is written just after the run ends.
+      const diagnostics = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT diagnostics FROM agent_tasks WHERE id = ?', [done.id]);
+        const value = typeof row?.diagnostics === 'string' ? JSON.parse(row.diagnostics) : row?.diagnostics;
+        return value ?? null;
+      }, 10_000);
+      if (!diagnostics) return 'no diagnostics stored on the run';
+
+      const [steps] = await db.query(
+        `SELECT step_index, action_type, status, waste, source, think_ms, llm_call, prompt_tokens, package_before, package_after,
+                screen_before, screen_after, ui_tree_before, ui_tree_snapshot
+           FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index`,
+        [done.id],
+      );
+      if (steps.length !== 8) return `expected 8 steps, got ${steps.length}`;
+      const tags = steps.map((s) => s.waste ?? '-').join(',');
+      if (tags !== '-,reread,no_effect,repeat,-,backtrack,failed,-') return `waste tags ${tags}`;
+      if (steps[0].package_before !== 'com.android.launcher3' || steps[0].package_after !== 'com.example.app') {
+        return `packages ${steps[0].package_before} -> ${steps[0].package_after}`;
+      }
+      if (!steps.every((s) => s.source === 'ai' && s.screen_before && s.screen_after && s.think_ms !== null && s.llm_call)) {
+        return `missing per-step fields: ${JSON.stringify(steps.map((s) => [s.source, s.screen_before, s.think_ms, s.llm_call]))}`;
+      }
+      if (steps[0].ui_tree_before === steps[0].ui_tree_snapshot) return 'the screen before the first step was overwritten by the screen after it';
+      if (steps.some((s) => !s.prompt_tokens)) return 'token usage missing on a step';
+      if (diagnostics.steps !== 8 || diagnostics.wasted !== 5 || diagnostics.llm_calls !== 8 || diagnostics.prompt_tokens !== 8028) {
+        return `summary ${JSON.stringify({ steps: diagnostics.steps, wasted: diagnostics.wasted, llm: diagnostics.llm_calls, tokens: diagnostics.prompt_tokens })}`;
+      }
+
+      // Owner-only endpoints.
+      const ownerToken = jwt.sign({ userId, email: 'harness@test.local', role: 'admin' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const asOwner = async (url) => {
+        const res = await fetch(`${BASE}/api${url}`, { headers: { Authorization: `Bearer ${ownerToken}` } });
+        if (!res.ok) throw new Error(`${url} -> ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        return res;
+      };
+      let blocked = false;
+      try {
+        await api('GET', '/diagnostics/summary');
+      } catch (error) {
+        blocked = /403/.test(error.message);
+      }
+      if (!blocked) return 'a normal account could read platform diagnostics';
+
+      const summary = (await (await asOwner('/diagnostics/summary?days=1')).json()).data;
+      const reread = summary.waste.find((w) => w.tag === 'reread')?.count ?? 0;
+      if (summary.measured_runs < 1 || reread < 1) return `summary did not count the run: ${JSON.stringify(summary).slice(0, 200)}`;
+
+      const detail = (await (await asOwner(`/diagnostics/runs/${done.id}`)).json()).data;
+      if (detail.steps?.length !== 8 || detail.steps[1].waste !== 'reread') return 'run detail is missing steps or tags';
+
+      const gz = Buffer.from(await (await asOwner('/diagnostics/export?days=1')).arrayBuffer());
+      const lines = zlib.gunzipSync(gz).toString('utf8').trim().split('\n').map((l) => JSON.parse(l));
+      const types = new Set(lines.map((l) => l.t));
+      for (const t of ['meta', 'task', 'step', 'screen']) if (!types.has(t)) return `export has no ${t} records`;
+      const exported = lines.filter((l) => l.t === 'step' && l.task_id === done.id);
+      if (exported.length !== 8 || !exported[1].tree_before || exported[1].waste !== 'reread') return 'export steps incomplete';
+      if (lines.some((l) => JSON.stringify(l).includes('screenshot_base64'))) return 'export leaked a screenshot column';
+
+      // GitHub sync: today's runs and the 7-day summary land in the repo; a second
+      // push updates the same files instead of failing on them.
+      for (let pass = 0; pass < 2; pass += 1) {
+        const res = await fetch(`${BASE}/api/diagnostics/sync`, { method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` } });
+        const state = (await res.json()).data;
+        if (state?.last_error) return `sync pass ${pass + 1} failed: ${state.last_error}`;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const pushed = github.files.get(`runs/${today}.jsonl.gz`);
+      if (!pushed) return `sync wrote no runs file (files: ${[...github.files.keys()].join(', ') || 'none'})`;
+      const pushedSteps = zlib.gunzipSync(pushed.content).toString('utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.t === 'step' && l.task_id === done.id);
+      if (pushedSteps.length !== 8) return `pushed file has ${pushedSteps.length} steps of the run`;
+      if (!github.files.has('summary-7d.json')) return 'sync wrote no summary';
+      if (!github.auth.every((a) => a === 'Bearer harness-token')) return 'sync did not authenticate with the configured token';
+    },
+  },
 ];
 
 // ---------------------------------------------------------------- main
@@ -1982,6 +2104,7 @@ const selected = scenarios.filter((s) => !filters.length || filters.some((f) => 
 
 async function main() {
   await new Promise((resolve) => rotationServer.listen(4700, '127.0.0.1', resolve));
+  await new Promise((resolve) => githubServer.listen(4701, '127.0.0.1', resolve));
   log('resetting database + migrations');
   await resetDatabase();
   log('starting backend');
@@ -2025,6 +2148,7 @@ main()
     Object.values(phones).forEach((p) => p.phone.close());
     await stopBackend('SIGTERM');
     rotationServer.close();
+    githubServer.close();
     await db?.end();
     process.exit(failed ? 1 : 0);
   })

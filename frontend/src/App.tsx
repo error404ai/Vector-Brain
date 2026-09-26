@@ -19,6 +19,8 @@ import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
 import { canManageLandingShots } from './_helpers/landingAccess';
 import LandingShotsPage from './pages/LandingShotsPage';
+import DiagnosticsPage from './pages/DiagnosticsPage';
+import { isOwner } from './_helpers/ownerAccess';
 import LoginPage from './pages/LoginPage';
 import MyRulesPage from './pages/MyRulesPage';
 import SettingsPage from './pages/SettingsPage';
@@ -70,6 +72,13 @@ function LandingShotsOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Run diagnostics: admins plus the owner account (see _helpers/ownerAccess). */
+function OwnerOnly({ children }: { children: React.ReactNode }) {
+  const user = useAppSelector((state) => state.auth.user) ?? store.getState().auth.user;
+  if (user && !isOwner(user)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const user = useAppSelector((state) => state.auth.user);
   const fallbackUser = store.getState().auth.user;
@@ -110,6 +119,14 @@ const router = createBrowserRouter([
           { path: '/mission-control', Component: MissionControlPage },
           { path: '/flows', Component: FlowsPage },
           { path: '/settings', Component: SettingsPage },
+          {
+            path: '/diagnostics',
+            element: (
+              <OwnerOnly>
+                <DiagnosticsPage />
+              </OwnerOnly>
+            ),
+          },
           {
             path: '/landing-shots',
             element: (

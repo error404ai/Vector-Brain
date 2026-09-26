@@ -15,6 +15,8 @@ import { AiProvider } from '@/entities/AiConfig';
 import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';
 import { classifyFailure } from './failureReason';
+import { RunDiagnosticsService } from './RunDiagnosticsService';
+import { screenFingerprint } from './runDiagnostics';
 import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
@@ -106,7 +108,14 @@ const leaseFromNow = () => new Date(Date.now() + LEASE_MS);
  */
 const AGENT_SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 
-function simulationOptions(prompt: string): { steps: number; delay: number; fail: boolean; planFail: boolean; report: string | null } {
+function simulationOptions(prompt: string): {
+  steps: number;
+  delay: number;
+  fail: boolean;
+  planFail: boolean;
+  report: string | null;
+  actions: string[] | null;
+} {
   const match = /\[sim([^\]]*)\]/i.exec(prompt);
   const text = match?.[1] ?? '';
   const number = (key: string, fallback: number) => {
@@ -114,7 +123,22 @@ function simulationOptions(prompt: string): { steps: number; delay: number; fail
     return found ? Number(found[1]) : fallback;
   };
   const report = /report="([^"]*)"/.exec(text)?.[1] ?? null;
-  return { steps: number('steps', 5), delay: number('delay', 400), fail: /\bfail\b/.test(text), planFail: /\bplanfail\b/.test(text), report };
+  // actions=open:com.app,read,tap,tap0,back,fail,wait — a scripted run that goes
+  // through the real step recording (tool_use / tool_result / finish).
+  const actions = /actions=([\w.:,]+)/.exec(text)?.[1]?.split(',').filter(Boolean) ?? null;
+  return {
+    steps: number('steps', 5),
+    delay: number('delay', 400),
+    fail: /\bfail\b/.test(text.replace(/actions=[\w.:,]+/, '')),
+    planFail: /\bplanfail\b/.test(text),
+    report,
+    actions,
+  };
+}
+
+/** The formatted tree a simulated screen shows; the clock row changes without changing the screen. */
+function simulatedTree(screen: number, tick: number): string {
+  return ['idx|type|label|flags|tap_at', `0|text|12:${String(tick % 60).padStart(2, '0')}||40,20`, `1|btn|Screen ${screen}|t|100,200`].join('\n');
 }
 
 const MAX_THOUGHT_CHARS = 1200; // hard cap — prevents any runaway thought-text growth
@@ -468,6 +492,7 @@ export class AndroidPlannerService {
     private aiConfigService: AiConfigService,
     private proxyRotationService: ProxyRotationService,
     private taskQueueService: TaskQueueService,
+    private runDiagnosticsService: RunDiagnosticsService,
   ) {
     // The queue launches tasks through the planner, so it is handed the entry
     // point rather than injecting the planner back — that would be a cycle.
@@ -1011,6 +1036,15 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let lastObservationFingerprint: string | undefined;
     let unchangedObservationCount = 0;
 
+    // Run diagnostics: where this run's time and model usage go (RunDiagnosticsService).
+    let lastResultAt = Date.now();
+    let llmCalls = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let tokensReported = false;
+    /** Steps the current model call has produced so far (its usage is booked on the first). */
+    let callSteps: AndroidTaskLog[] = [];
+
     const device = await this.deviceService.getDeviceByHardwareId(hardwareDeviceId);
     const deviceDbId = device?.id;
     const baseEkoTaskId = `android-task-${agentTask.id}`;
@@ -1107,11 +1141,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
       },
     });
 
+    // Kept in a variable so the harness simulation can drive the very same
+    // step recording a real model run goes through.
+    let handleMessage: (message: AgentStreamMessage) => Promise<void> = async () => undefined;
     const ekoInstance = new Eko({
       llms: this.buildEkoLlms(aiConfig),
       agents: [androidAgent],
       callback: {
-        onMessage: async (message: AgentStreamMessage) => {
+        onMessage: (handleMessage = async (message: AgentStreamMessage) => {
           // Any message means the model is still talking to us. Reset before the
           // cancellation check so a cancelling run is not also reported as stalled.
           noteActivity();
@@ -1223,8 +1260,17 @@ Use the current visible Android screen and UI state as context. Continue from wh
               thought_reasoning: currentThought || `Executing ${toolName}`,
               status: AndroidStepStatus.EXECUTING,
               ui_tree_snapshot: lastUiTree,
+              // What the model was looking at when it chose this step. The
+              // snapshot above is replaced by the screen after the step.
+              ui_tree_before: lastUiTree ?? null,
+              package_before: lastForegroundApp ?? null,
+              screen_before: screenFingerprint(lastUiTree, lastForegroundApp),
+              think_ms: Math.max(0, stepStartTime - lastResultAt),
+              llm_call: llmCalls + 1,
+              source: 'ai',
             });
             await this.taskLogRepo.save(currentTaskLog);
+            callSteps.push(currentTaskLog);
 
             this.gatewayService.broadcastToUser(userId, 'task:step', {
               taskId: agentTask.id,
@@ -1254,6 +1300,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
               currentTaskLog.result_message = stripScreenDump(textContent);
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
+              currentTaskLog.package_after = lastForegroundApp ?? null;
+              currentTaskLog.screen_after = screenFingerprint(lastUiTree, lastForegroundApp);
               // Frames already arrive with every observation for the live view;
               // recording simply keeps them so the run can be replayed or
               // shared. Off by default because they are large.
@@ -1272,10 +1320,30 @@ Use the current visible Android screen and UI state as context. Continue from wh
               error: isError ? textContent : undefined,
               foregroundApp: lastForegroundApp,
             });
+            lastResultAt = Date.now();
           } else if (message.type === 'agent_result') {
             finalMessage = message.result || '';
+          } else if (message.type === 'finish') {
+            // One model call ended. Its usage belongs to the first step it chose;
+            // a call that chose no step (planning, final answer) only counts in the totals.
+            llmCalls += 1;
+            const usage = (message as { usage?: { promptTokens?: number; completionTokens?: number } }).usage;
+            const inTokens = Math.max(0, Number(usage?.promptTokens) || 0);
+            const outTokens = Math.max(0, Number(usage?.completionTokens) || 0);
+            if (inTokens || outTokens) tokensReported = true;
+            promptTokens += inTokens;
+            completionTokens += outTokens;
+            const first = callSteps[0];
+            if (first?.id && (inTokens || outTokens)) {
+              first.prompt_tokens = inTokens;
+              first.completion_tokens = outTokens;
+              await this.taskLogRepo
+                .update({ id: first.id }, { prompt_tokens: inTokens, completion_tokens: outTokens })
+                .catch((error) => Logger.warn(`[AndroidPlanner] Could not store token usage for step ${first.id}:`, error));
+            }
+            callSteps = [];
           }
-        },
+        }),
       },
     });
     eko = ekoInstance;
@@ -1313,6 +1381,62 @@ Use the current visible Android screen and UI state as context. Continue from wh
         const options = simulationOptions(roundPrompt);
         // What Eko returns when the model's plan comes back with no agent in it.
         if (options.planFail) return { success: false, stopReason: 'error', result: 'Error: Workflow error' };
+        if (options.actions) {
+          // Scripted run: feed Eko-shaped messages to the real handler so step
+          // recording and diagnostics are exercised exactly as in a model run.
+          let screen = 0;
+          let tick = 0;
+          let pkg = 'com.android.launcher3';
+          lastUiTree = simulatedTree(screen, tick);
+          lastForegroundApp = pkg;
+          const envelope = { streamType: 'agent', chatId: 'sim', taskId: ekoTaskId, agentName: 'Android' };
+          for (const [index, step] of options.actions.entries()) {
+            if (this.activeTasks.get(agentTask.id)?.cancelled) {
+              wasCancelled = true;
+              return { success: false, stopReason: 'abort', result: 'Cancelled' };
+            }
+            if (guardStopReason) throw new Error(guardStopReason);
+            const [kind, arg] = step.split(':');
+            const tool =
+              kind === 'open'
+                ? { toolName: 'open_app', params: { packageName: arg || 'com.example.app' } }
+                : kind === 'read'
+                  ? { toolName: 'read_ui_tree', params: {} }
+                  : kind === 'back'
+                    ? { toolName: 'global_action', params: { action: 'BACK' } }
+                    : kind === 'wait'
+                      ? { toolName: 'wait', params: { durationMillis: 10 } }
+                      : kind === 'tap0'
+                        ? { toolName: 'tap_coordinate', params: { x: 5, y: 5 } }
+                        : kind === 'fail'
+                          ? { toolName: 'tap_coordinate', params: { x: 9, y: 9 } }
+                          : { toolName: 'tap_coordinate', params: { x: 100, y: 200 + index } };
+            await handleMessage({ ...envelope, type: 'tool_use', toolCallId: `sim-${index}`, ...tool } as unknown as AgentStreamMessage);
+            const outcome = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
+            noteDeviceAction();
+            const failed = kind === 'fail' || outcome.status !== 'SUCCESS';
+            tick += 1;
+            if (!failed && (kind === 'open' || kind === 'tap' || kind === 'back')) screen += 1;
+            if (kind === 'open') pkg = arg || 'com.example.app';
+            lastUiTree = simulatedTree(screen, tick);
+            lastForegroundApp = pkg;
+            await handleMessage({
+              ...envelope,
+              type: 'tool_result',
+              toolCallId: `sim-${index}`,
+              ...tool,
+              toolResult: { content: [{ type: 'text', text: failed ? 'Action failed: simulated' : 'Action succeeded' }], isError: failed },
+            } as unknown as AgentStreamMessage);
+            await handleMessage({
+              ...envelope,
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { promptTokens: 1000 + index, completionTokens: 40, totalTokens: 1040 + index },
+            } as unknown as AgentStreamMessage);
+            await new Promise((resolve) => setTimeout(resolve, Math.min(options.delay, 50)));
+          }
+          return { success: true, stopReason: 'done', result: options.report ?? `Simulated run finished after ${options.actions.length} steps.` };
+        }
         for (let index = 0; index < options.steps; index += 1) {
           if (this.activeTasks.get(agentTask.id)?.cancelled) {
             wasCancelled = true;
@@ -1488,6 +1612,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
         }
       }
       this.gatewayService.setAutomationSession(hardwareDeviceId, false);
+      // Explain where the run's steps went. Not awaited and never throws: the
+      // result the user is waiting for must not wait on bookkeeping.
+      void this.runDiagnosticsService.finalize(agentTask.id, {
+        llmCalls,
+        promptTokens,
+        completionTokens,
+        tokensReported,
+      });
       this.activeTasks.delete(agentTask.id);
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
         this.activeDeviceTasks.delete(hardwareDeviceId);
