@@ -85,7 +85,7 @@ function ShotImage({ id, alt, onOpen }: { id: number; alt: string; onOpen?: (url
       src={url}
       alt={alt}
       onClick={() => onOpen?.(url)}
-      sx={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block', cursor: 'zoom-in', borderRadius: 1 }}
+      sx={{ height: '100%', width: '100%', objectFit: 'contain', display: 'block', cursor: 'zoom-in', borderRadius: 1 }}
     />
   );
 }
@@ -103,7 +103,8 @@ function ShotCard({ shot, slots, onOpen }: { shot: LandingShot; slots: string[];
   const live = shot.approved && !!shot.slot;
   return (
     <Card variant="outlined" sx={{ display: 'flex', flexDirection: 'column', borderColor: live ? 'success.main' : 'divider', borderWidth: live ? 2 : 1 }}>
-      <Box sx={{ height: 280, bgcolor: 'grey.100', display: 'grid', placeItems: 'center', p: 1.5 }}>
+      {/* Fixed-height frame; the image is contained inside it so tall phone shots never spill over the card. */}
+      <Box sx={{ height: 280, bgcolor: 'grey.100', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 1.5, overflow: 'hidden', flexShrink: 0 }}>
         <ShotImage id={shot.id} alt={shot.label} onOpen={onOpen} />
       </Box>
       {(saving || deleting) && <LinearProgress />}
