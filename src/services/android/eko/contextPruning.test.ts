@@ -1,4 +1,5 @@
-import { pruneStaleScreens } from './contextPruning';
+import { pruneStaleScreens, keepOnlyFreshImage } from './contextPruning';
+import { visionFromName } from './modelVision';
 
 const dump = (n: number) => `\n\nUPDATED SCREEN ELEMENTS:\n${`${n}|Button|Item ${n}|t|100,200\n`.repeat(400)}`;
 const toolMsg = (text: string, type = 'text') => ({
@@ -38,5 +39,48 @@ describe('pruneStaleScreens', () => {
     pruneStaleScreens(messages);
     expect(messages[0].content[0].output.value[0].text).toContain('older screen omitted');
     expect(messages[1].content[0].output.value).toContain('9|Button');
+  });
+});
+
+describe('keepOnlyFreshImage', () => {
+  const image = (data: string) => ({ role: 'user', content: [{ type: 'file', mediaType: 'image/jpeg', data }, { type: 'text', text: 'call `capture_screen` tool result' }] });
+  const conversation = () => [
+    { role: 'user', content: [{ type: 'text', text: 'task' }] },
+    { role: 'assistant', content: [{ type: 'tool-call', toolName: 'capture_screen' }] },
+    { role: 'tool', content: [{ type: 'tool-result', output: { type: 'text', value: 'Screenshot captured successfully.' } }] },
+    image('OLD'),
+    { role: 'assistant', content: [{ type: 'tool-call', toolName: 'capture_screen' }] },
+    { role: 'tool', content: [{ type: 'tool-result', output: { type: 'content', value: [{ type: 'text', text: 'ok' }, { type: 'media', mediaType: 'image/jpeg', data: 'INLINE' }] } }] },
+    image('NEW'),
+  ];
+
+  it('keeps only the newest screenshot of the latest step for a vision model, and never one inside a tool result', () => {
+    const messages = conversation();
+    expect(keepOnlyFreshImage(messages, true)).toEqual({ kept: 1, removed: 2 });
+    const text = JSON.stringify(messages);
+    expect(text).toContain('NEW');
+    expect(text).not.toContain('OLD');
+    expect(text).not.toContain('INLINE');
+  });
+
+  it('drops a screenshot once the model has moved on to the next step', () => {
+    const messages = [...conversation(), { role: 'assistant', content: [{ type: 'tool-call', toolName: 'tap_coordinate' }] }];
+    expect(keepOnlyFreshImage(messages, true).kept).toBe(0);
+    expect(JSON.stringify(messages)).not.toContain('NEW');
+  });
+
+  it('sends no image at all to a text-only model', () => {
+    const messages = conversation();
+    expect(keepOnlyFreshImage(messages, false)).toEqual({ kept: 0, removed: 3 });
+  });
+});
+
+describe('visionFromName', () => {
+  it('knows text-only DeepSeek V4 from the vision variants', () => {
+    expect(visionFromName('deepseek/deepseek-v4-flash-0731')).toBe(false);
+    expect(visionFromName('deepseek/deepseek-v4-flash-vision-exp')).toBe(true);
+    expect(visionFromName('deepseek/deepseek-v4.1-flash')).toBe(true);
+    expect(visionFromName('google/gemini-2.5-flash')).toBe(true);
+    expect(visionFromName('deepseek-chat')).toBe(false);
   });
 });

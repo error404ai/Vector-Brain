@@ -21,7 +21,10 @@ describe('AndroidAgent Eko Integration', () => {
     expect(rawAgent.name).toBe('AndroidAgent');
     const toolNames = rawAgent.tools.map((t: any) => t.name);
     expect(toolNames).toContain('read_ui_tree');
-    expect(toolNames).toContain('capture_screen');
+    // Screenshots are only offered to models that can read images.
+    expect(toolNames).not.toContain('capture_screen');
+    const visionAgent = new AndroidAgent(mockGatewayService as unknown as AndroidGatewayService, 'device-hw-123', undefined, { vision: true }) as any;
+    expect(visionAgent.tools.map((t: any) => t.name)).toContain('capture_screen');
     expect(toolNames).toContain('click_node');
     expect(toolNames).toContain('type_text');
     expect(toolNames).toContain('tap_coordinate');

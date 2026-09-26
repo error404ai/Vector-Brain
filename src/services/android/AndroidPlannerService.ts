@@ -17,6 +17,7 @@ import { AndroidAgent } from './eko/AndroidAgent';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint } from './runDiagnostics';
+import { modelSeesImages } from './eko/modelVision';
 import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
@@ -29,6 +30,10 @@ config.platform = 'linux';
 config.maxReactNum = 20000;
 config.compressThreshold = 30;
 config.compressTokensThreshold = 60000;
+// Images go to the model as a user message with a real image part, never inside
+// a tool result: OpenRouter and OpenAI-compatible APIs turn tool-result images
+// into base64 text (~80k tokens per screenshot, re-sent on every later call).
+config.toolResultMultimodal = false;
 
 const MAX_CONSECUTIVE_FAILURES = 6;
 const MAX_IDENTICAL_TOOL_STATES = 3;
@@ -1102,6 +1107,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
       }, STALL_TIMEOUT_MS);
     };
 
+    // Screenshots only for models that can read them (see modelVision).
+    const vision = await modelSeesImages(aiConfig.provider, aiConfig.model);
+    Logger.info(`[AndroidPlanner] Task ${agentTask.id}: ${aiConfig.provider}/${aiConfig.model} ${vision ? 'can' : 'cannot'} read screenshots`);
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
       onStepExecuted: (info) => {
         // A device action came back, including waits. Proof the phone is alive.
@@ -1139,7 +1147,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           }
         }
       },
-    });
+    }, { vision });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.

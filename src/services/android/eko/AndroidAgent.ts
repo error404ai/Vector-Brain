@@ -3,7 +3,7 @@ import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
-import { pruneStaleScreens } from './contextPruning';
+import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 
 /**
  * Which browser open_url uses.
@@ -133,6 +133,12 @@ export class AndroidAgent extends Agent {
     private gatewayService: AndroidGatewayService,
     private hardwareDeviceId: string,
     private callbacks?: AndroidAgentCallbacks,
+    /**
+     * vision: the model can read images (see modelVision). Without it the agent
+     * is never offered a screenshot — a text-only model cannot read one, and
+     * each capture cost ~80k tokens of base64 on every later call.
+     */
+    private readonly options: { vision?: boolean } = {},
   ) {
     const tools: Tool[] = [
       {
@@ -178,6 +184,17 @@ export class AndroidAgent extends Agent {
           const rowCount = formatted.split('\n').length - 1;
           const treeIsThin = rowCount < MIN_INFORMATIVE_ROWS;
           const freshShot = res.screenCapture?.base64Data;
+
+          if (treeIsThin && !this.options.vision) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `${textContent.text}\n\nNOTE: this screen exposes very little to the accessibility tree (typical for web pages and games), and screenshots are not available with this model. Prefer open_url or a deep link, wait_for_element for the text you expect, or scroll_element — do not keep waiting for the list to fill in.`,
+                },
+              ],
+            };
+          }
 
           if (treeIsThin && freshShot && this.autoVisionUsed < this.autoVisionBudget) {
             this.autoVisionUsed += 1;
@@ -713,7 +730,8 @@ export class AndroidAgent extends Agent {
     super({
       name: 'AndroidAgent',
       description: 'An expert AI agent that inspects and interacts with an Android mobile device to accomplish user tasks step-by-step.',
-      tools,
+      // A model that cannot see images gets no screenshot tool at all.
+      tools: options.vision ? tools : tools.filter((tool) => tool.name !== 'capture_screen'),
     });
   }
 
@@ -729,9 +747,17 @@ export class AndroidAgent extends Agent {
   ): Promise<void> {
     await super.handleMessages(agentContext, messages, tools);
     pruneStaleScreens(messages as unknown as Parameters<typeof pruneStaleScreens>[0]);
+    keepOnlyFreshImage(messages as unknown as Parameters<typeof keepOnlyFreshImage>[0], Boolean(this.options.vision));
   }
 
   protected async buildSystemPrompt(): Promise<string> {
+    const vision = this.options.vision
+      ? '\n\nSCREENSHOTS: capture_screen shows you the screen as an image. It is expensive; use it only when the element list cannot describe what you need.'
+      : '\n\nSCREENSHOTS: this model cannot see images, so there is no screenshot tool. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".';
+    return this.baseSystemPrompt() + vision;
+  }
+
+  private baseSystemPrompt(): string {
     return `You are Vector-Brain, an expert autonomous AI agent controlling an Android mobile device.
 Your goal is to accomplish the user's task step-by-step using available tools.
 
@@ -913,6 +939,7 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     // waiting because the tree is not telling it whether the page loaded, and
     // more waiting will not fix that. Show it the screen once.
     if (
+      this.options.vision &&
       action.type === 'Wait' &&
       this.consecutiveWaits >= 2 &&
       this.lastScreenshotBase64 &&
