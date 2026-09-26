@@ -304,7 +304,8 @@ export function oneLineRefusal(text: string): string {
   return line;
 }
 /** A message that is nothing but a yes — the only thing that confirms by typing. */
-const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
+/** A bare yes (and nothing else), in English or Hinglish. */
+export const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
 
 /**
  * Romanised Hindi words that don't occur in ordinary English. Deliberately
@@ -604,6 +605,15 @@ export class VectorAgentService {
               }
             }
             (result.planned ??= []).push({ instruction, deviceIds, minutes });
+            // Big or long runs become a Confirm card after the reply (runPlanned).
+            // Say so now, or the model tells the user it already started.
+            if (deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
+              return JSON.stringify({
+                status: 'needs_confirmation',
+                phones: deviceIds.length,
+                note: 'Nothing runs yet: the user must press Confirm (or reply "ok") first. Say it is waiting for their OK; do not say it started or is running.',
+              });
+            }
             return JSON.stringify({ status: 'accepted', phones: deviceIds.length, note: 'Runs when you finish replying.' });
           }
           const durationSeconds = minutes ? Math.round(minutes * 60) : undefined;

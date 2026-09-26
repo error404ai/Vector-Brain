@@ -13,7 +13,7 @@ import { Service } from 'typedi';
 import { FleetStateService } from './FleetStateService';
 import { MissionService, MissionTargetMissing, matchNamedDevices } from './MissionService';
 import { ProxyRotationService } from './ProxyRotationService';
-import { ChatStopped, POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
+import { ChatStopped, PLAIN_YES, POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 /** A pending confirmation lives this long before the token is refused. */
@@ -249,8 +249,15 @@ export class CommandChatService {
     policy: { v2: boolean; judge?: PolicyJudge } = { v2: POLICY_V2_DEFAULT },
     stop?: AbortSignal,
   ): Promise<ChatReply> {
-    const base = await this.agentContext(userId, conversationId);
     const pending = this.pendingFor(userId, conversationId);
+    // A bare "ok / haan / yes" while something waits for Confirm confirms it —
+    // decided here, not left to the model, which may just say "running" and
+    // start nothing.
+    if (pending.length && PLAIN_YES.test(text.trim())) {
+      if (stop?.aborted) throw new ChatStopped();
+      return this.applyToken(userId, pending[pending.length - 1].token);
+    }
+    const base = await this.agentContext(userId, conversationId);
     const result = await this.agent.run(brain, text, { userId, ...base, pending, ...(await this.policyFor(userId, policy)), stop });
     // A "yes" that would confirm something must not go through once stopped.
     if (stop?.aborted) throw new ChatStopped();
@@ -263,7 +270,10 @@ export class CommandChatService {
     if (result.proposal) {
       const token = crypto.randomBytes(12).toString('hex');
       this.pending.set(token, { userId, conversationId, action: { type: 'agent', proposal: result.proposal.action }, summary: result.proposal.summary, at: Date.now() });
-      const text = result.text.includes(result.proposal.summary) ? result.text : `${result.text}\n\n${result.proposal.summary}.`;
+      // Nothing has started yet, whatever the model wrote.
+      const claimsStarted = /\b(started|starting|running|is running|closing|opening|launched|on it|chal raha|chal rahi|chalu|shuru)\b/i.test(result.text);
+      const intro = !result.text.trim() || claimsStarted ? 'Waiting for your OK — nothing has started yet. Tap Confirm or reply "ok".' : result.text;
+      const text = intro.includes(result.proposal.summary) ? intro : `${intro}\n\n${result.proposal.summary}.`;
       return { kind: 'confirm', text, confirm_token: token, plan: result.proposal.plan };
     }
     if (result.mission) return { kind: 'mission', text: result.text, mission: result.mission, extra_missions: result.extraMissions?.length ? result.extraMissions : undefined };

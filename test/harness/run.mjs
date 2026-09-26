@@ -1601,6 +1601,25 @@ const scenarios = [
     },
   },
   {
+    name: 'agent (v2): a fleet task over the limit waits for Confirm, never claims it started, and a plain "Ok" starts it',
+    async run() {
+      const [[before]] = await db.query('SELECT COUNT(*) n FROM missions');
+      // The model says it started — the reply must not, since it needs a Confirm.
+      const ask = { policy_v2: true, turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'close the app [sim steps=1 delay=50]', phones: 'all' } }] }, { text: 'Started — closing the app on all online phones.' }] };
+      const r1 = (await api('POST', '/android/chat', { message: `stop the app on all online phones [agent:${JSON.stringify(ask)}]` })).data;
+      if (r1?.kind !== 'confirm' || !r1.confirm_token || !r1.plan) return `no Confirm card: kind ${r1?.kind}, token ${!!r1?.confirm_token}, plan ${!!r1?.plan}`;
+      if (/Started —|closing the app|is running/i.test(r1.text)) return `claims it started while waiting for Confirm: ${r1.text}`;
+      if (!/waiting for your ok/i.test(r1.text)) return `does not say it is waiting for an OK: ${r1.text}`;
+      const [[mid]] = await db.query('SELECT COUNT(*) n FROM missions');
+      if (mid.n !== before.n) return 'a mission was created before Confirm';
+      // "Ok", and the model only chats instead of calling confirm_pending.
+      const chat = { policy_v2: true, turns: [{ text: 'Got it — the task is running on the online phones.' }] };
+      const r2 = (await api('POST', '/android/chat', { message: `Ok [agent:${JSON.stringify(chat)}]` })).data;
+      if (r2?.kind !== 'mission' || !r2.mission?.id) return `"Ok" did not start it: kind ${r2?.kind}: ${r2?.text}`;
+      await waitForMission(r2.mission.id, 60_000);
+    },
+  },
+  {
     name: 'agent: typing "haan" confirms a pending proposal, anything more does not',
     async run() {
       const propose = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'all' } }] }, { text: 'Confirm?' }] };
