@@ -1362,7 +1362,7 @@ const scenarios = [
     },
   },
   {
-    name: 'landing shots: admin-only capture, public serves only approved shots with a slot, single slots move',
+    name: 'landing shots: admins and the allowlist only, public serves only approved shots with a slot, single slots move',
     async run() {
       const adminToken = jwt.sign({ userId, email: 'harness@test.local', role: 'admin' }, env.JWT_SECRET, { expiresIn: '1h' });
       const as = async (token, method, url, body) => {
@@ -1370,7 +1370,12 @@ const scenarios = [
         return { status: r.status, type: r.headers.get('content-type') ?? '', json: r.headers.get('content-type')?.includes('json') ? await r.json() : null };
       };
       const denied = await as(userToken, 'GET', '/landing-shots');
-      if (denied.status !== 403 && denied.status !== 401) return `a non-admin got ${denied.status} on the admin list`;
+      if (denied.status !== 403) return `a regular account got ${denied.status} on the landing-shot list`;
+      if ((await as(null, 'GET', '/landing-shots')).status !== 401 && (await as(null, 'GET', '/landing-shots')).status !== 403) return 'no login still reached the list';
+      // The temporary allowlist: a non-admin account with that email gets in.
+      const listed = jwt.sign({ userId, email: 'R7Rewards@gmail.com', role: 'user' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const allowed = await as(listed, 'GET', '/landing-shots');
+      if (allowed.status !== 200) return `the allowlisted account got ${allowed.status}`;
       const cap = await as(adminToken, 'POST', '/landing-shots/capture', { device_ids: [phones.free1.dbId, phones.free2.dbId] });
       const ok = (cap.json?.data?.results ?? []).filter((r) => r.shot_id);
       if (ok.length !== 2) return `capture saved ${ok.length} of 2: ${JSON.stringify(cap.json)}`;

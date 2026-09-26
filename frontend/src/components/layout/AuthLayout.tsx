@@ -11,6 +11,7 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import CollectionsIcon from '@mui/icons-material/Collections';
 import ScreenshotMonitorIcon from '@mui/icons-material/ScreenshotMonitor';
 import { capturePage } from '@/_helpers/capturePage';
+import { canManageLandingShots } from '@/_helpers/landingAccess';
 import { useUploadLandingPageMutation } from '@/RTKService/landingShotService/landingShotService';
 import toast from 'react-hot-toast';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -217,7 +218,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                 AI Rules
               </MenuItem>
             ) : null}
-            {user?.role === 'admin' ? (
+            {canManageLandingShots(user) ? (
               <MenuItem
                 onClick={() => {
                   setProfileAnchor(null);
@@ -230,7 +231,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
                 Landing shots
               </MenuItem>
             ) : null}
-            {user?.role === 'admin' ? (
+            {canManageLandingShots(user) ? (
               <MenuItem onClick={() => void handleCapturePage()}>
                 <ListItemIcon>
                   <ScreenshotMonitorIcon fontSize="small" />

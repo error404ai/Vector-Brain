@@ -69,6 +69,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import toast from 'react-hot-toast';
 import { useGetProfileQuery } from '@/RTKService/authService/authService';
+import { canManageLandingShots } from '@/_helpers/landingAccess';
 import { useCaptureLandingPhonesMutation } from '@/RTKService/landingShotService/landingShotService';
 import {
   INLINE_UPLOAD_LIMIT,
@@ -245,7 +246,8 @@ export default function AndroidFleetPage() {
   const [runtime, setRuntime] = useState<RuntimeMap>({});
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const { data: profile } = useGetProfileQuery();
-  const isAdmin = profile?.data?.role === 'admin';
+  // Admins, plus a temporary allowlist while the first landing shots are taken.
+  const isAdmin = canManageLandingShots(profile?.data);
   const [captureLandingPhones, { isLoading: capturingLanding }] = useCaptureLandingPhonesMutation();
   /** Full-resolution screenshots for the landing page (admins only); review them under Landing shots. */
   const captureForLanding = async (ids: number[]) => {

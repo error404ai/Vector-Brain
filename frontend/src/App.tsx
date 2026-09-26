@@ -17,6 +17,7 @@ import AndroidFleetPage from './pages/AndroidFleetPage';
 import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
 import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
+import { canManageLandingShots } from './_helpers/landingAccess';
 import LandingShotsPage from './pages/LandingShotsPage';
 import LoginPage from './pages/LoginPage';
 import MyRulesPage from './pages/MyRulesPage';
@@ -62,6 +63,13 @@ function ProtectedShell() {
   );
 }
 
+/** Landing shots: admins plus a temporary allowlist (see _helpers/landingAccess). */
+function LandingShotsOnly({ children }: { children: React.ReactNode }) {
+  const user = useAppSelector((state) => state.auth.user) ?? store.getState().auth.user;
+  if (user && !canManageLandingShots(user)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const user = useAppSelector((state) => state.auth.user);
   const fallbackUser = store.getState().auth.user;
@@ -105,9 +113,9 @@ const router = createBrowserRouter([
           {
             path: '/landing-shots',
             element: (
-              <AdminOnly>
+              <LandingShotsOnly>
                 <LandingShotsPage />
-              </AdminOnly>
+              </LandingShotsOnly>
             ),
           },
           {
