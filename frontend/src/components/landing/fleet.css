@@ -242,3 +242,22 @@
   .fl .live-row::-webkit-scrollbar{display:none}
   .fl .live-tile{flex:0 0 42%;scroll-snap-align:start}}
 @media (prefers-reduced-motion:reduce){.fl .live-dot,.fl .live-feed li.in{animation:none}}
+
+/* FAQ */
+.fl .faq{position:relative;z-index:2;background:var(--paper);padding-inline:var(--g);padding-block:clamp(90px,14vh,150px);border-top:1px solid var(--rule)}
+.fl .faq-eyebrow{margin:0 0 14px;text-align:center;color:var(--clay);letter-spacing:.16em}
+.fl .faq-title{margin:0 auto 56px;text-align:center;display:grid;gap:4px;text-wrap:balance;max-width:1100px}
+.fl .faq-title .display{font-size:clamp(46px,7vw,104px);line-height:.9;text-transform:none;letter-spacing:-.01em}
+.fl .faq-title em{font:italic 400 clamp(44px,6.6vw,98px)/1 'Instrument Serif',Georgia,'Times New Roman',serif;color:var(--graphite);letter-spacing:-.01em}
+.fl .faq-list{max-width:880px;margin:0 auto;border-top:1px solid var(--rule)}
+.fl .faq-item{border-bottom:1px solid var(--rule)}
+.fl .faq-item summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) 20px;gap:20px;align-items:center;padding:24px 0;font-size:clamp(16px,1.5vw,19px);font-weight:500;color:var(--ink)}
+.fl .faq-item summary::-webkit-details-marker{display:none}
+.fl .faq-item summary:hover span{color:var(--clay)}
+.fl .faq-item summary:focus-visible{outline:2px solid var(--clay);outline-offset:4px}
+.fl .faq-item summary i{position:relative;width:14px;height:14px;justify-self:end}
+.fl .faq-item summary i::before,.fl .faq-item summary i::after{content:"";position:absolute;left:0;right:0;top:50%;height:1.5px;background:var(--graphite);transition:transform .25s ease}
+.fl .faq-item summary i::after{transform:rotate(90deg)}
+.fl .faq-item[open] summary i::after{transform:rotate(0deg)}
+.fl .faq-item p{margin:0;padding:0 40px 26px 0;max-width:68ch;color:var(--graphite);line-height:1.65}
+@media (prefers-reduced-motion:reduce){.fl .faq-item summary i::before,.fl .faq-item summary i::after{transition:none}}

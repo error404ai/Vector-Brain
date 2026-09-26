@@ -50,6 +50,54 @@ const LIVE: { id: string; task: string; status: 'Playing' | 'Scrolling' | 'Check
   { id: 'PH-06', task: 'Loop', status: 'Playing', tone: 'run' },
 ];
 
+/** FAQ: only answers the product actually backs (see the pairing, BYOK, flows and proxy code). */
+const FAQ: { q: string; a: string }[] = [
+  {
+    q: 'Why real phones instead of emulators or a cloud device farm?',
+    a: 'Apps that refuse to run on emulators work normally on a real phone, and the accounts already signed in on it stay signed in. The phones are yours, so there are no rented seats and nothing is billed per minute.',
+  },
+  {
+    q: 'Do I need to know Appium or write code?',
+    a: 'No. A task is a sentence describing what should happen. Nobody has to learn a mobile automation framework or maintain selectors when a screen changes.',
+  },
+  {
+    q: 'Which phones work?',
+    a: 'Any Android phone on Android 10 or newer, from any brand. Install the companion app, turn on accessibility, enter the pairing code and the phone joins your fleet.',
+  },
+  {
+    q: 'Which apps can it use?',
+    a: 'Any app installed on the phone. FLEET works through the screen the way a person does, so there is no SDK to add and nothing to change in the app.',
+  },
+  {
+    q: 'How many phones can I run?',
+    a: 'As many as you pair. There is no per-device limit; the ceiling is the number of phones you have connected.',
+  },
+  {
+    q: 'Which AI models does it use?',
+    a: 'Your own. Add a key from OpenAI, Anthropic, Google, DeepSeek, Groq or OpenRouter; you pay your provider directly and can run a different model on each phone.',
+  },
+  {
+    q: 'What happens when an app updates and the screen changes?',
+    a: 'An AI run reads whatever is on screen right now, so a moved button does not break it. A saved flow replays fixed steps, so a changed screen is caught there and can be handed back to the AI.',
+  },
+  {
+    q: 'Can I watch a run and stop it?',
+    a: 'Yes. Every phone streams its screen while it works, and Stop ends a run at once, on one phone or on all of them.',
+  },
+  {
+    q: 'Can I repeat a task without paying for the AI again?',
+    a: 'Yes. Save a finished run as a flow and it replays with no model calls, doing the same steps every time.',
+  },
+  {
+    q: 'Can I put phones behind my own proxies?',
+    a: 'Yes. Group phones into proxy lanes and choose how often the IP rotates, for example after every task.',
+  },
+  {
+    q: 'Can I start a run without opening the dashboard?',
+    a: 'Yes. Link a Telegram chat and send the task there. The result and a picture of the final screen come back in the same chat.',
+  },
+];
+
 const NOTES: [string, string, string][] = [
   ['A', 'Input', 'Plain language. English or any language.'],
   ['B', 'Control', 'Android accessibility service. Real taps, types, swipes.'],
@@ -84,8 +132,15 @@ export default function HomePage() {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap"
         />
+        <script type="application/ld+json">
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'FAQPage',
+            mainEntity: FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+          })}
+        </script>
       </Helmet>
 
       <div className="fl-aurora" aria-hidden="true" />
@@ -396,6 +451,25 @@ export default function HomePage() {
                   </div>
                 </dl>
               </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="faq" id="faq" data-label="FAQ" aria-labelledby="faq-title">
+          <p className="mono faq-eyebrow">FAQ</p>
+          <h2 className="faq-title" id="faq-title">
+            <span className="display">The questions</span>
+            <em>operators actually ask.</em>
+          </h2>
+          <div className="faq-list">
+            {FAQ.map((item) => (
+              <details className="faq-item" key={item.q}>
+                <summary>
+                  <span>{item.q}</span>
+                  <i aria-hidden="true" />
+                </summary>
+                <p>{item.a}</p>
+              </details>
             ))}
           </div>
         </section>

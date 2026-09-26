@@ -93,6 +93,9 @@ export function startFleetLanding(root: HTMLElement): () => void {
     };
     state.covered = (index ? index.getBoundingClientRect().top <= 0 : false) || fills(how) || fills(live);
   };
+  // "Index 03 / NN": NN follows however many labelled sections the page has.
+  const ixTotal = q('.fl-ix-total');
+  if (ixTotal) ixTotal.textContent = String(visibleLabelled().length - 1).padStart(2, '0');
   on('scroll', readScroll, { passive: true });
   on('resize', readScroll);
   readScroll();
