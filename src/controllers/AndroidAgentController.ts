@@ -5,7 +5,7 @@ import { AppDataSource } from '@/loaders/database';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
 import { DispatchAndroidPromptValidation } from '@/validations/AndroidDeviceValidation';
-import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, QueryParam, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post, Put, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
@@ -17,6 +17,18 @@ export class AndroidAgentController {
   private agentTaskRepo = AppDataSource.getRepository(AgentTask);
 
   constructor(private plannerService: AndroidPlannerService) {}
+
+  /** Which agent engine this account's runs use (eko = stable, vector = Vector Brain's own loop). */
+  @Get('/engine')
+  async getEngine(@CurrentUser({ required: true }) user: { userId: number }) {
+    return { data: await this.plannerService.engineSettings(user.userId) };
+  }
+
+  /** engine: 'eko' | 'vector' | null (null = server default); planner: Vector engine's optional planning call. */
+  @Put('/engine')
+  async setEngine(@Body() body: { engine?: string | null; planner?: boolean }, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.plannerService.setEngineSettings(user.userId, { engine: body?.engine, planner: body?.planner });
+  }
 
   /**
    * Run an autonomous AI task on an Android device.

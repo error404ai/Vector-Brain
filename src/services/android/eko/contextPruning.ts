@@ -10,7 +10,7 @@
  * This removes every screen dump except the newest, leaving the rest of each
  * result (what the action did, any NOTE) so the model still sees its history.
  */
-const SCREEN_DUMP = /(?:^|\n\n)(?:UPDATED SCREEN ELEMENTS:|VISIBLE UI ELEMENTS \([^\n]*\):)\n[\s\S]*?(?=\n\nNOTE:|$)/;
+export const SCREEN_DUMP = /(?:^|\n\n)(?:UPDATED SCREEN ELEMENTS:|VISIBLE UI ELEMENTS \([^\n]*\):)\n[\s\S]*?(?=\n\nNOTE:|$)/;
 const STALE = '\n\n(older screen omitted — only the latest screen is current)';
 
 type TextPart = { type: string; text?: string };

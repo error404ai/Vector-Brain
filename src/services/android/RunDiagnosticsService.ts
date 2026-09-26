@@ -160,6 +160,34 @@ export class RunDiagnosticsService {
     }
 
     const succeeded = tasks.filter((t) => t.status === 'SUCCEEDED');
+
+    // Engine comparison: same measures per engine, over runs that reached the phone.
+    const byEngine = new Map<string, AgentTask[]>();
+    for (const task of tasks) {
+      const key = task.provider === 'replay' ? 'replay' : task.engine ?? 'eko';
+      byEngine.set(key, [...(byEngine.get(key) ?? []), task]);
+    }
+    const engines = [...byEngine.entries()].map(([engine, list]) => {
+      const measured = list.filter((t) => (t.diagnostics?.steps ?? 0) > 0);
+      const avg = (pick: (d: RunDiagnostics) => number) =>
+        measured.length ? round(measured.reduce((sum, t) => sum + pick(t.diagnostics as RunDiagnostics), 0) / measured.length) : null;
+      const finished = list.filter((t) => t.status === 'SUCCEEDED' || t.status === 'FAILED');
+      return {
+        engine,
+        runs: list.length,
+        measured_runs: measured.length,
+        success_rate: finished.length ? round(finished.filter((t) => t.status === 'SUCCEEDED').length / finished.length) : null,
+        avg_steps: avg((d) => d.steps),
+        avg_wasted: avg((d) => d.wasted),
+        avg_llm_calls: avg((d) => d.llm_calls),
+        avg_tokens: avg((d) => (d.tokens_reported ? d.prompt_tokens + d.completion_tokens : 0)),
+        avg_think_s: avg((d) => d.think_ms / 1000),
+        verified: list.filter((t) => t.verification?.status === 'verified').length,
+        unverified: list.filter((t) => t.verification?.status === 'unverified').length,
+        failed_verification: list.filter((t) => t.verification?.status === 'failed').length,
+      };
+    });
+
     return {
       data: {
         days,
@@ -168,6 +196,7 @@ export class RunDiagnosticsService {
         succeeded: succeeded.length,
         failed: tasks.filter((t) => t.status === 'FAILED').length,
         replay_runs: tasks.filter((t) => t.provider === 'replay').length,
+        engines,
         avg_steps_succeeded: succeeded.length ? round(succeeded.reduce((s, t) => s + (t.total_steps ?? 0), 0) / succeeded.length) : 0,
         steps,
         wasted,
@@ -219,6 +248,8 @@ export class RunDiagnosticsService {
         total_steps: t.total_steps,
         duration_s: t.total_duration_seconds,
         created_at: t.created_at,
+        engine: t.provider === 'replay' ? 'replay' : t.engine ?? 'eko',
+        verification: t.verification,
         diagnostics: t.diagnostics,
       })),
     };
@@ -227,7 +258,7 @@ export class RunDiagnosticsService {
   async run(taskId: number) {
     const task = await this.taskRepo.findOne({
       where: { id: taskId },
-      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'message', 'diagnostics'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'message', 'diagnostics', 'engine', 'verification'],
     });
     if (!task) throw new AppError('Run not found', 404);
     const steps = await this.logRepo.find({
@@ -276,7 +307,7 @@ export class RunDiagnosticsService {
       .createQueryBuilder('t')
       .select([
         't.id', 't.user_id', 't.device_id', 't.prompt', 't.provider', 't.model', 't.success', 't.status', 't.reason_code',
-        't.started_at', 't.finished_at', 't.created_at', 't.total_steps', 't.total_duration_seconds', 't.diagnostics',
+        't.started_at', 't.finished_at', 't.created_at', 't.total_steps', 't.total_duration_seconds', 't.diagnostics', 't.engine', 't.verification',
       ])
       .where('t.created_at >= :from', { from: await this.toDbClock(from) })
       // Only a closed window (a whole day for the GitHub sync) has an end.
@@ -309,6 +340,7 @@ export class RunDiagnosticsService {
         provider: task.provider, model: task.model, success: Boolean(task.success), status: task.status, reason: task.reason_code,
         started_at: task.started_at, finished_at: task.finished_at, created_at: task.created_at,
         total_steps: task.total_steps, duration_s: task.total_duration_seconds, diagnostics: task.diagnostics,
+        engine: task.engine, verification: task.verification ? { ...task.verification, reason: clean.scrub(task.verification.reason, 200) } : null,
       });
     }
 
@@ -427,7 +459,7 @@ export class RunDiagnosticsService {
     const since = await this.toDbClock(new Date(Date.now() - clampDays(days) * 86_400_000));
     return this.taskRepo.find({
       where: { created_at: MoreThanOrEqual(since) },
-      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification'],
       order: { id: 'DESC' },
       take: limit,
     });

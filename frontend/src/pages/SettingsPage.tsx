@@ -7,6 +7,7 @@ import {
 } from '@/RTKService/aiConfigService/aiConfigService';
 import { AiConfigModal } from '@/components/ai-config/AiConfigModal';
 import StorageCard from '@/components/settings/StorageCard';
+import AgentEngineCard from '@/components/settings/AgentEngineCard';
 import TelegramLinkCard from '@/components/telegram/TelegramLinkCard';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
 import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
@@ -458,6 +459,10 @@ export default function SettingsPage() {
             )}
           </Stack>
         </Paper>
+        </Reveal>
+
+        <Reveal index={1}>
+          <AgentEngineCard />
         </Reveal>
 
         {/* Section 2: Telegram bot */}

@@ -12,12 +12,17 @@ import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfi
 import { ProxyRotationService } from './ProxyRotationService';
 import { TaskQueueService } from './TaskQueueService';
 import { AiProvider } from '@/entities/AiConfig';
-import { Eko, config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
+import { config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent } from './eko/AndroidAgent';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint } from './runDiagnostics';
 import { modelSeesImages } from './eko/modelVision';
+import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
+import { EkoEngine } from './agent/EkoEngine';
+import { VectorEngine } from './agent/VectorEngine';
+import { createLanguageModel } from './agent/aiSdkModel';
+import { User } from '@/entities/User';
 import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
@@ -486,7 +491,7 @@ export class AndroidPlannerService {
   private taskLogRepo = AppDataSource.getRepository(AndroidTaskLog);
   private activeTasks = new Map<
     number,
-    { cancelled: boolean; deviceId: string; deviceDbId?: number; laneExempt?: boolean; eko?: Eko; ekoTaskId?: string }
+    { cancelled: boolean; deviceId: string; deviceDbId?: number; laneExempt?: boolean; engine?: AgentEngine }
   >();
   private activeDeviceTasks = new Map<string, number>();
   private startingDevices = new Set<string>();
@@ -532,7 +537,7 @@ export class AndroidPlannerService {
       running.map(async ([taskId, entry]) => {
         entry.cancelled = true;
         try {
-          if (entry.eko && entry.ekoTaskId) entry.eko.abortTask(entry.ekoTaskId, 'Server shutting down');
+          entry.engine?.abort('Server shutting down');
         } catch {
           // best effort
         }
@@ -915,13 +920,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     const active = this.activeTasks.get(taskId);
     if (active) {
       active.cancelled = true;
-      if (active.eko && active.ekoTaskId) {
-        try {
-          active.eko.abortTask(active.ekoTaskId, 'Task cancelled by user');
-        } catch (err) {
-          Logger.warn(`[AndroidPlanner] Failed to abort Eko task ${active.ekoTaskId}:`, err);
-        }
-      }
+      active.engine?.abort('Task cancelled by user');
       this.gatewayService.cancelDeviceActions(active.deviceId);
     }
 
@@ -960,6 +959,34 @@ Use the current visible Android screen and UI state as context. Continue from wh
       if (deviceDbId === undefined || entry.deviceDbId === deviceDbId) return taskId;
     }
     return undefined;
+  }
+
+  /**
+   * The engine for this account's runs: the account's own choice, else the
+   * server default (AGENT_ENGINE, 'eko' when unset or invalid).
+   */
+  async engineSettings(userId: number): Promise<{ kind: EngineKind; planner: boolean; source: 'account' | 'server' }> {
+    const fallback: EngineKind = isEngineKind(process.env.AGENT_ENGINE) ? process.env.AGENT_ENGINE : 'eko';
+    const user = await AppDataSource.getRepository(User)
+      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner'] })
+      .catch(() => null);
+    const own = user?.agent_engine;
+    return {
+      kind: isEngineKind(own) ? own : fallback,
+      planner: Boolean(user?.agent_planner),
+      source: isEngineKind(own) ? 'account' : 'server',
+    };
+  }
+
+  async setEngineSettings(userId: number, input: { engine?: string | null; planner?: boolean }): Promise<ApiResponse> {
+    const patch: Partial<User> = {};
+    if (input.engine !== undefined) {
+      if (input.engine !== null && !isEngineKind(input.engine)) throw new AppError('engine must be "eko", "vector" or null', 400);
+      patch.agent_engine = input.engine;
+    }
+    if (input.planner !== undefined) patch.agent_planner = Boolean(input.planner);
+    if (Object.keys(patch).length) await AppDataSource.getRepository(User).update({ id: userId }, patch);
+    return { message: 'Engine settings saved', data: await this.engineSettings(userId) };
   }
 
   private buildEkoLlms(aiConfig: DecryptedAiConfig): LLMs {
@@ -1059,18 +1086,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let round = 1;
     let reachedDeadline = false;
 
-    let eko: Eko | undefined;
+    let engine: AgentEngine | undefined;
     const stopForSafety = (reason: string, code = 'GUARD_STOP') => {
       if (guardStopReason) return;
       guardStopReason = reason;
       guardStopCode = code;
-      if (eko) {
-        try {
-          eko.abortTask(ekoTaskId, reason);
-        } catch (error) {
-          Logger.warn(`[AndroidPlanner] Failed to stop guarded task ${ekoTaskId}:`, error);
-        }
-      }
+      engine?.abort(reason);
       this.gatewayService.cancelDeviceActions(hardwareDeviceId);
     };
 
@@ -1151,12 +1172,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.
-    let handleMessage: (message: AgentStreamMessage) => Promise<void> = async () => undefined;
-    const ekoInstance = new Eko({
-      llms: this.buildEkoLlms(aiConfig),
-      agents: [androidAgent],
-      callback: {
-        onMessage: (handleMessage = async (message: AgentStreamMessage) => {
+    const handleMessage = async (message: AgentStreamMessage): Promise<void> => {
           // Any message means the model is still talking to us. Reset before the
           // cancellation check so a cancelling run is not also reported as stalled.
           noteActivity();
@@ -1351,16 +1367,33 @@ Use the current visible Android screen and UI state as context. Continue from wh
             }
             callSteps = [];
           }
-        }),
-      },
-    });
-    eko = ekoInstance;
+        };
+
+    // Which engine drives the model (see agent/AgentEngine). Both feed the
+    // same handler above, so recording, guards and diagnostics are shared.
+    const engineSettings = await this.engineSettings(userId);
+    engine =
+      engineSettings.kind === 'vector'
+        ? new VectorEngine({
+            model: createLanguageModel({
+              provider: aiConfig.provider,
+              model: aiConfig.model,
+              apiKey: aiConfig.api_key,
+              baseURL: aiConfig.base_url?.trim() || this.aiConfigService.getDefaultBaseUrl(aiConfig.provider) || undefined,
+            }),
+            agent: androidAgent,
+            onMessage: handleMessage,
+            vision,
+            planner: engineSettings.planner,
+          })
+        : new EkoEngine(this.buildEkoLlms(aiConfig), androidAgent, handleMessage);
+    const activeEngine = engine;
+    agentTask.engine = engineSettings.kind;
+    void this.agentTaskRepo.update({ id: agentTask.id }, { engine: engineSettings.kind }).catch(() => undefined);
+    Logger.info(`[AndroidPlanner] Task ${agentTask.id}: engine ${engineSettings.kind}${engineSettings.kind === 'vector' ? ` (planner ${engineSettings.planner ? 'on' : 'off'})` : ''}`);
 
     const activeTaskEntry = this.activeTasks.get(agentTask.id);
-    if (activeTaskEntry) {
-      activeTaskEntry.eko = ekoInstance;
-      activeTaskEntry.ekoTaskId = ekoTaskId;
-    }
+    if (activeTaskEntry) activeTaskEntry.engine = activeEngine;
 
     // The companion app holds a screen wake-lock with a safety timeout. Re-send the
     // session signal periodically so the device never locks mid-task while the
@@ -1474,9 +1507,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
       };
       const runRound = (roundPrompt: string) =>
         Promise.race([
-          AGENT_SIMULATION ? simulate(roundPrompt) : ekoInstance.run(roundPrompt, ekoTaskId),
+          AGENT_SIMULATION && !/\[llm\]/i.test(roundPrompt) ? simulate(roundPrompt) : activeEngine.run(roundPrompt, ekoTaskId),
           timeoutPromise,
-        ]) as Promise<Awaited<ReturnType<typeof ekoInstance.run>>>;
+        ]) as Promise<EngineRunResult>;
 
       // A timed run is cut off at its deadline even mid-round; reaching the
       // deadline is the goal, so it counts as success rather than an abort.
@@ -1484,7 +1517,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         ? setTimeout(() => {
             reachedDeadline = true;
             try {
-              eko?.abortTask(ekoTaskId, 'Time is up');
+              engine?.abort('Time is up');
             } catch {
               /* already finished */
             }
@@ -1507,7 +1540,6 @@ Use the current visible Android screen and UI state as context. Continue from wh
         ekoTaskId = `${baseEkoTaskId}-r${round}`;
         ekoTaskIds.push(ekoTaskId);
         const entry = this.activeTasks.get(agentTask.id);
-        if (entry) entry.ekoTaskId = ekoTaskId;
         finalMessage = '';
         const minutesLeft = Math.max(1, Math.round((runUntil - Date.now()) / 60_000));
         this.gatewayService.broadcastToUser(userId, 'task:round', {
@@ -1522,6 +1554,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
       }
       if (deadlineTimer) clearTimeout(deadlineTimer);
 
+      // A cancel can land while the engine is waiting on the model, so no
+      // message ever flagged it; the registry is the source of truth.
+      if (this.activeTasks.get(agentTask.id)?.cancelled) wasCancelled = true;
       const timedOk = Boolean(runUntil) && reachedDeadline && !wasCancelled && !guardStopReason;
       const terminalAgentResult = timedOk
         ? `Worked for ${Math.round(((runUntil as number) - startTime) / 60_000) || '<1'} min over ${round} round${round === 1 ? '' : 's'}.`
@@ -1559,6 +1594,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
           ? { status: 'CANCELLED', reason: 'USER_CANCELLED' }
           : guardStopReason
             ? { status: 'FAILED', reason: guardStopCode ?? 'GUARD_STOP' }
+            : result.reasonCode
+              ? // The engine knows exactly why (e.g. VERIFICATION_FAILED).
+                { status: 'FAILED', reason: result.reasonCode }
             : /workflow error/i.test(String(terminalAgentResult ?? ''))
               ? // Eko's planning call returned a plan with no agent in it — a
                 // model hiccup before any step ran, not the task being impossible.
@@ -1568,6 +1606,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
                 : { status: 'FAILED', reason: 'AGENT_REPORTED_FAILURE' };
       agentTask.status = terminal.status;
       agentTask.reason_code = terminal.reason;
+      agentTask.verification = result.verification ?? null;
       agentTask.finished_at = new Date();
       agentTask.lease_until = null;
       // Keep just the final frame (one per task) so the card can show each
@@ -1612,12 +1651,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
       watchdogArmed = false;
       if (stallTimer) clearTimeout(stallTimer);
       if (noActionTimer) clearTimeout(noActionTimer);
-      for (const id of ekoTaskIds) {
-        try {
-          ekoInstance.deleteTask(id);
-        } catch (error) {
-          Logger.warn(`[AndroidPlanner] Failed to release Eko task ${id}:`, error);
-        }
+      try {
+        activeEngine.dispose();
+      } catch (error) {
+        Logger.warn(`[AndroidPlanner] Failed to release the engine for task ${agentTask.id}:`, error);
       }
       this.gatewayService.setAutomationSession(hardwareDeviceId, false);
       // Explain where the run's steps went. Not awaited and never throws: the

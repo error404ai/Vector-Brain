@@ -28,6 +28,20 @@ export interface DiagnosticsSummary {
   succeeded: number;
   failed: number;
   replay_runs: number;
+  engines: {
+    engine: string;
+    runs: number;
+    measured_runs: number;
+    success_rate: number | null;
+    avg_steps: number | null;
+    avg_wasted: number | null;
+    avg_llm_calls: number | null;
+    avg_tokens: number | null;
+    avg_think_s: number | null;
+    verified: number;
+    unverified: number;
+    failed_verification: number;
+  }[];
   avg_steps_succeeded: number;
   steps: number;
   wasted: number;
@@ -56,7 +70,16 @@ export interface DiagnosticsRun {
   total_steps: number;
   duration_s: number;
   created_at: string;
+  engine: string;
+  verification: Verification | null;
   diagnostics: RunDiagnostics | null;
+}
+
+export interface Verification {
+  status: 'verified' | 'unverified' | 'failed';
+  method: 'rule' | 'judge' | 'none';
+  reason: string;
+  retries: number;
 }
 
 export interface DiagnosticsStep {
@@ -79,7 +102,8 @@ export interface DiagnosticsStep {
   error_message: string | null;
 }
 
-export interface DiagnosticsRunDetail extends Omit<DiagnosticsRun, 'reason' | 'duration_s'> {
+export interface DiagnosticsRunDetail extends Omit<DiagnosticsRun, 'reason' | 'duration_s' | 'engine'> {
+  engine: string | null;
   reason_code: string | null;
   total_duration_seconds: number;
   message: string | null;

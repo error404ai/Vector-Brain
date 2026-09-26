@@ -37,6 +37,7 @@ export class FakePhone {
     /** When set, every screen observation fails with this phone-side message. */
     this.observeFailMessage = null;
     this.actionsReceived = 0;
+    this.actionLog = []; // action types in the order received
     this.otherEvents = [];
     this.ws = null;
     this.heartbeat = null;
@@ -77,6 +78,7 @@ export class FakePhone {
         }
         if (msg.event === 'server:execute_action') {
           this.actionsReceived += 1;
+          this.actionLog.push(msg.payload?.action?.type);
           if (this.silent) return;
           setTimeout(() => this.answer(msg), this.latencyMs);
           return;

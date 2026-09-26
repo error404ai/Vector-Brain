@@ -8,6 +8,7 @@ import {
   useSyncDiagnosticsNowMutation,
   type DiagnosticsRun,
   type DiagnosticsStep,
+  type DiagnosticsSummary,
 } from '@/RTKService/diagnosticsService/diagnosticsService';
 import CloudSyncIcon from '@mui/icons-material/CloudSync';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -48,6 +49,8 @@ const WASTE_SHORT: Record<string, string> = {
 };
 
 const SOURCE_LABEL: Record<string, string> = { ai: 'AI', replay: 'Replay', direct: 'Direct' };
+const ENGINE_LABEL: Record<string, string> = { eko: 'Eko', vector: 'Vector', replay: 'Replay' };
+const VERIFICATION_LABEL: Record<string, string> = { verified: 'Verified', unverified: 'Not verified', failed: 'Verification failed' };
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('en-IN');
 const fmtSeconds = (ms: number) => {
@@ -189,6 +192,8 @@ export default function DiagnosticsPage() {
               )}
             </Card>
           </Box>
+
+          {summary.engines.length ? <EngineComparison engines={summary.engines} /> : null}
 
           <Card variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
@@ -365,6 +370,7 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
           <TableCell>When</TableCell>
           <TableCell>Instruction</TableCell>
           <TableCell>Phone</TableCell>
+          <TableCell>Engine</TableCell>
           <TableCell>Result</TableCell>
           <TableCell align="right">Steps</TableCell>
           <TableCell align="right">Wasted</TableCell>
@@ -384,6 +390,7 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
                 </Typography>
               </TableCell>
               <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.device ?? '–'}</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{ENGINE_LABEL[r.engine] ?? r.engine}</TableCell>
               <TableCell>
                 <Chip size="small" variant="outlined" color={r.status === 'SUCCEEDED' ? 'success' : r.status === 'FAILED' ? 'error' : 'default'} label={r.status === 'SUCCEEDED' ? 'Done' : r.reason ?? r.status} />
               </TableCell>
@@ -422,8 +429,16 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 {run.device ?? 'Unknown phone'} · {run.status}
-                {run.reason_code ? ` (${run.reason_code})` : ''} · {run.total_steps} steps in {Math.round(run.total_duration_seconds)}s · {run.model ?? ''}
+                {run.reason_code ? ` (${run.reason_code})` : ''} · {run.total_steps} steps in {Math.round(run.total_duration_seconds)}s · {run.model ?? ''} ·{' '}
+                {ENGINE_LABEL[run.engine ?? 'eko'] ?? run.engine} engine
               </Typography>
+              {run.verification ? (
+                <Alert severity={run.verification.status === 'verified' ? 'success' : run.verification.status === 'failed' ? 'error' : 'warning'} sx={{ mt: 1 }}>
+                  <strong>{VERIFICATION_LABEL[run.verification.status]}</strong>
+                  {` (${run.verification.method === 'rule' ? 'checked on the phone' : run.verification.method === 'judge' ? 'checked by a separate AI call' : 'no check applied'}${run.verification.retries ? `, agent sent back ${run.verification.retries}×` : ''}): `}
+                  {run.verification.reason}
+                </Alert>
+              ) : null}
             </Box>
             {d && d.steps > 0 ? (
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -509,5 +524,52 @@ function StepRow({ step, labels }: { step: DiagnosticsStep; labels: Record<strin
         </Typography>
       </TableCell>
     </TableRow>
+  );
+}
+
+function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] }) {
+  const show = (value: number | null, suffix = '') => (value === null ? '–' : `${value}${suffix}`);
+  return (
+    <Card variant="outlined" sx={{ p: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+        Engines compared
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        Averages per run with step data. Switch engines in Settings → Agent engine.
+      </Typography>
+      <ScrollTable>
+        <TableHead>
+          <TableRow>
+            <TableCell>Engine</TableCell>
+            <TableCell align="right">Runs</TableCell>
+            <TableCell align="right">Success</TableCell>
+            <TableCell align="right">Avg steps</TableCell>
+            <TableCell align="right">Avg wasted</TableCell>
+            <TableCell align="right">Avg AI calls</TableCell>
+            <TableCell align="right">Avg tokens</TableCell>
+            <TableCell align="right">Avg AI thinking</TableCell>
+            <TableCell align="right">Verified / not / failed</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {engines.map((e) => (
+            <TableRow key={e.engine}>
+              <TableCell>{ENGINE_LABEL[e.engine] ?? e.engine}</TableCell>
+              <TableCell align="right">
+                {e.runs}
+                {e.measured_runs !== e.runs ? ` (${e.measured_runs} measured)` : ''}
+              </TableCell>
+              <TableCell align="right">{e.success_rate === null ? '–' : `${Math.round(e.success_rate * 100)}%`}</TableCell>
+              <TableCell align="right">{show(e.avg_steps)}</TableCell>
+              <TableCell align="right">{show(e.avg_wasted)}</TableCell>
+              <TableCell align="right">{show(e.avg_llm_calls)}</TableCell>
+              <TableCell align="right">{e.avg_tokens === null ? '–' : fmtInt(e.avg_tokens)}</TableCell>
+              <TableCell align="right">{show(e.avg_think_s, ' s')}</TableCell>
+              <TableCell align="right">{e.engine === 'vector' ? `${e.verified} / ${e.unverified} / ${e.failed_verification}` : '–'}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </ScrollTable>
+    </Card>
   );
 }

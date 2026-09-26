@@ -750,6 +750,32 @@ export class AndroidAgent extends Agent {
     keepOnlyFreshImage(messages as unknown as Parameters<typeof keepOnlyFreshImage>[0], Boolean(this.options.vision));
   }
 
+  /** The prompt this agent runs with; the Vector engine sends the same one. */
+  async systemPrompt(): Promise<string> {
+    return this.buildSystemPrompt();
+  }
+
+  /**
+   * Reads the screen for a system check (verification, an unconfirmed action)
+   * without it counting as an agent step. Returns the element list in the same
+   * format the model sees.
+   */
+  async observeForCheck(): Promise<{ packageName: string | null; tree: string } | null> {
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+    if (res.status !== 'SUCCESS' || !res.uiTree) return null;
+    const tree = this.formatUiTree(res.uiTree.root);
+    const packageName = this.detectPackageName(res.uiTree.root, res.uiTree.packageName || 'unknown');
+    this.lastUiTree = tree;
+    this.lastForegroundApp = packageName;
+    return { packageName: packageName && packageName !== 'unknown' ? packageName : null, tree };
+  }
+
+  /** The phone's launchable apps as "Label | package" text (ListApps). */
+  async launcherAppsText(): Promise<string> {
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ListApps' });
+    return res.status === 'SUCCESS' ? res.summary ?? '' : '';
+  }
+
   protected async buildSystemPrompt(): Promise<string> {
     const vision = this.options.vision
       ? '\n\nSCREENSHOTS: capture_screen shows you the screen as an image. It is expensive; use it only when the element list cannot describe what you need.'

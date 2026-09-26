@@ -180,6 +180,100 @@ const githubServer = http.createServer((req, res) => {
   });
 });
 
+// Fake OpenAI-compatible model for scenarios that run the real engines ([llm]
+// in the prompt skips simulation). Opens YouTube, then finishes: task_done on
+// the Vector engine, a plain answer on Eko.
+const llm = { requests: [], mode: 'normal', limited: false };
+const EKO_PLAN = '<root>\n<name>Open YouTube</name>\n<thought>One app launch.</thought>\n<agents>\n<agent name="AndroidAgent" id="0" dependsOn="">\n<task>Open YouTube</task>\n<nodes>\n<node>open_app com.google.android.youtube</node>\n</nodes>\n</agent>\n</agents>\n</root>';
+const llmServer = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (chunk) => (body += chunk));
+  req.on('end', async () => {
+    const json = JSON.parse(body || '{}');
+    const tools = (json.tools ?? []).map((t) => t.function?.name);
+    const text = JSON.stringify(json.messages ?? []);
+    const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : 'plan';
+    llm.requests.push({ kind, tools, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
+    const reply = (status, payload) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    };
+    if (kind === 'agent' && llm.mode === 'slow') await sleep(8000);
+    const toolMessages = llm.requests.at(-1).toolMessages;
+    if (kind === 'agent' && llm.mode === 'rate-limit-once' && toolMessages >= 1 && !llm.limited) {
+      llm.limited = true;
+      return reply(429, { error: { message: 'Rate limit exceeded', type: 'rate_limit' } });
+    }
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const base = { id: `h${llm.requests.length}`, object: 'chat.completion.chunk', created: 1, model: 'harness-llm' };
+    const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+    const call = (name, args) => send({ role: 'assistant', content: null, tool_calls: [{ index: 0, id: `c${llm.requests.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+    if (kind === 'plan') send({ role: 'assistant', content: EKO_PLAN });
+    else if (kind === 'judge') send({ role: 'assistant', content: '{"verdict":"yes","reason":"YouTube is on screen"}' });
+    else if (toolMessages === 0) call('open_app', { packageName: 'com.google.android.youtube' });
+    else if (tools.includes('task_done')) call('task_done', { success: true, summary: 'YouTube is open' });
+    else send({ role: 'assistant', content: 'YouTube is open.' });
+    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: kind === 'agent' && toolMessages === 0 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 900, completion_tokens: 30, total_tokens: 930 } })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+});
+
+/** An AI config pointing at the fake model (inserted directly: the API refuses local URLs). */
+let llmConfigId = null;
+async function ensureLlmConfig() {
+  if (llmConfigId) return llmConfigId;
+  for (const [key, value] of Object.entries(env)) process.env[key] ??= value;
+  const { CryptoHelper } = await import(path.join(root, 'dist/helpers/CryptoHelper.js'));
+  const [row] = await db.query(
+    "INSERT INTO ai_configs (user_id, provider, model, encrypted_api_key, base_url, is_active, is_chat_default, label, config_type) VALUES (?, 'custom', 'harness-llm', ?, 'http://127.0.0.1:4702/v1', 0, 0, 'harness llm', 'text')",
+    [userId, CryptoHelper.encryptAesGcm('harness-llm-key')],
+  );
+  llmConfigId = row.insertId;
+  return llmConfigId;
+}
+
+/** Earlier scenarios can leave a phone mid-run; wait until nothing runs on it. */
+async function waitIdle(name, timeoutMs = 90_000) {
+  // The planner's in-memory view: a cancelled run can still be unwinding after
+  // its row already says CANCELLED.
+  return waitFor(async () => {
+    const res = await api('GET', `/android/agent/active?deviceId=${phones[name].dbId}`).catch(() => null);
+    return res && !res.data ? true : null;
+  }, timeoutMs, 300);
+}
+
+/** Start a run, waiting out the moment a just-cancelled run on the phone is still unwinding. */
+async function startRun(body) {
+  const started = Date.now();
+  for (;;) {
+    try {
+      return await api('POST', '/android/agent/run', body);
+    } catch (error) {
+      if (!/409/.test(error.message) || Date.now() - started > 20_000) throw error;
+      await sleep(300);
+    }
+  }
+}
+
+async function runWithEngine(engine, name, prompt) {
+  if (!(await waitIdle(name))) throw new Error(`${name} never became idle`);
+  await api('PUT', '/android/agent/engine', { engine });
+  const configId = await ensureLlmConfig();
+  llm.requests = [];
+  llm.limited = false;
+  const t0 = Date.now();
+  const before = phones[name].phone.actionLog.length;
+  const started = await startRun({ device_id: phones[name].dbId, prompt, max_steps: 20, ai_config_id: configId });
+  const taskId = started?.data?.taskId;
+  const done = await waitFor(async () => {
+    const [[row]] = await db.query('SELECT id, status, reason_code, message, engine, verification, diagnostics FROM agent_tasks WHERE id = ?', [taskId]);
+    return row && TERMINAL.has(row.status) ? row : null;
+  }, 45_000, 300);
+  await api('PUT', '/android/agent/engine', { engine: null });
+  return { done, taskId, t0, actions: phones[name].phone.actionLog.slice(before) };
+}
+
 const phones = {}; // name -> { phone, dbId, hw }
 async function seed() {
   const [user] = await db.query(
@@ -2096,6 +2190,77 @@ const scenarios = [
       if (!github.auth.every((a) => a === 'Bearer harness-token')) return 'sync did not authenticate with the configured token';
     },
   },
+  {
+    name: 'engines: Eko and Vector both finish a task through the real model loop',
+    async run() {
+      llm.mode = 'normal';
+      const eko = await runWithEngine('eko', 'free2', 'open youtube [llm]');
+      if (!eko.done) return 'eko run never finished';
+      if (eko.done.status !== 'SUCCEEDED') return `eko run ${eko.done.status}/${eko.done.reason_code}: ${String(eko.done.message).slice(0, 120)}`;
+      if (eko.done.engine !== 'eko') return `eko run recorded engine ${eko.done.engine}`;
+      if (!llm.requests.some((r) => r.kind === 'plan')) return 'eko made no planning call';
+      if (eko.actions.filter((a) => a === 'OpenApp').length !== 1) return `eko sent OpenApp ${eko.actions.filter((a) => a === 'OpenApp').length} times`;
+
+      const vector = await runWithEngine('vector', 'free2', 'open youtube [llm]');
+      if (!vector.done) return 'vector run never finished';
+      if (vector.done.status !== 'SUCCEEDED') return `vector run ${vector.done.status}/${vector.done.reason_code}: ${String(vector.done.message).slice(0, 160)}`;
+      if (vector.done.engine !== 'vector') return `vector run recorded engine ${vector.done.engine}`;
+      if (llm.requests.some((r) => r.kind === 'plan')) return 'vector made a planning call with the planner off';
+      if (!llm.requests.some((r) => r.kind === 'agent' && r.tools.includes('task_done'))) return 'vector did not offer task_done';
+      if (vector.actions.filter((a) => a === 'OpenApp').length !== 1) return `vector sent OpenApp ${vector.actions.filter((a) => a === 'OpenApp').length} times`;
+      const verification = typeof vector.done.verification === 'string' ? JSON.parse(vector.done.verification) : vector.done.verification;
+      if (!verification?.status) return 'vector run has no verification recorded';
+      const diagnostics = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT diagnostics FROM agent_tasks WHERE id = ?', [vector.taskId]);
+        const d = typeof row?.diagnostics === 'string' ? JSON.parse(row.diagnostics) : row?.diagnostics;
+        return d?.steps ? d : null;
+      }, 10_000);
+      if (!diagnostics) return 'vector run has no diagnostics';
+      if (!diagnostics.tokens_reported || diagnostics.llm_calls < 2) return `vector usage not recorded: ${JSON.stringify({ llm: diagnostics.llm_calls, tokens: diagnostics.prompt_tokens })}`;
+    },
+  },
+  {
+    name: 'engines: Vector retries a rate-limited model call without repeating the phone action',
+    async run() {
+      llm.mode = 'rate-limit-once';
+      const run = await runWithEngine('vector', 'free2', 'open youtube [llm]');
+      llm.mode = 'normal';
+      if (!run.done) return 'run never finished';
+      if (!llm.limited) return 'the fake model never rate-limited';
+      if (run.done.status !== 'SUCCEEDED') return `run ${run.done.status}/${run.done.reason_code}: ${String(run.done.message).slice(0, 160)}`;
+      const opens = run.actions.filter((a) => a === 'OpenApp').length;
+      if (opens !== 1) return `OpenApp sent ${opens} times after a model retry`;
+    },
+  },
+  {
+    name: 'engines: cancelling a Vector run stops it while the model is thinking',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      llm.mode = 'slow';
+      await api('PUT', '/android/agent/engine', { engine: 'vector' });
+      const configId = await ensureLlmConfig();
+      const started = await startRun({ device_id: phones.free2.dbId, prompt: 'open youtube [llm]', max_steps: 20, ai_config_id: configId });
+      const taskId = started?.data?.taskId;
+      await sleep(1500);
+      const cancelledAt = Date.now();
+      await api('POST', `/android/agent/cancel/${taskId}`);
+      const ended = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT status FROM agent_tasks WHERE id = ?', [taskId]);
+        return row && TERMINAL.has(row.status) ? row : null;
+      }, 15_000, 200);
+      const took = Date.now() - cancelledAt;
+      llm.mode = 'normal';
+      await api('PUT', '/android/agent/engine', { engine: null });
+      // Let the slow response drain so the next scenario starts clean.
+      await sleep(7000);
+      if (!ended) return 'still running 15s after cancel';
+      if (ended.status !== 'CANCELLED') return `ended as ${ended.status}`;
+      // The run's own ending must not overwrite the cancel afterwards.
+      const [[after]] = await db.query('SELECT status, reason_code FROM agent_tasks WHERE id = ?', [taskId]);
+      if (after.status !== 'CANCELLED') return `cancel was overwritten: ${after.status}/${after.reason_code}`;
+      if (took > 6000) return `cancel took ${took}ms — it waited for the model to answer`;
+    },
+  },
 ];
 
 // ---------------------------------------------------------------- main
@@ -2105,6 +2270,7 @@ const selected = scenarios.filter((s) => !filters.length || filters.some((f) => 
 async function main() {
   await new Promise((resolve) => rotationServer.listen(4700, '127.0.0.1', resolve));
   await new Promise((resolve) => githubServer.listen(4701, '127.0.0.1', resolve));
+  await new Promise((resolve) => llmServer.listen(4702, '127.0.0.1', resolve));
   log('resetting database + migrations');
   await resetDatabase();
   log('starting backend');
@@ -2149,6 +2315,7 @@ main()
     await stopBackend('SIGTERM');
     rotationServer.close();
     githubServer.close();
+    llmServer.close();
     await db?.end();
     process.exit(failed ? 1 : 0);
   })

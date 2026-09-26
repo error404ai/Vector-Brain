@@ -39,6 +39,14 @@ export class User {
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
 
+  /** Agent engine for this account's runs: 'eko' | 'vector'; null = server default (AGENT_ENGINE). */
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  agent_engine: string | null;
+
+  /** Vector engine only: make one planning call before acting. */
+  @Column({ type: 'boolean', default: false })
+  agent_planner: boolean;
+
   @Column({ type: 'enum', enum: Role, default: Role.USER })
   role: Role;
 

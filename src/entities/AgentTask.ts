@@ -1,5 +1,6 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
 import type { RunDiagnostics } from '@/services/android/runDiagnostics';
+import type { VerificationOutcome } from '@/services/android/agent/AgentEngine';
 import { User } from './User';
 
 export type AgentTaskStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
@@ -97,6 +98,14 @@ export class AgentTask {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  /** Which engine drove the model: 'eko' or 'vector' (null for runs before engines existed). */
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  engine: string | null;
+
+  /** The system's check of a run the agent reported as done (Vector engine). */
+  @Column({ type: 'json', nullable: true })
+  verification: VerificationOutcome | null;
 
   /** Where the run's steps and time went; written when the run ends (RunDiagnosticsService). */
   @Column({ type: 'json', nullable: true })
