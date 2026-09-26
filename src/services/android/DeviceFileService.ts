@@ -24,6 +24,8 @@ const MAX_INLINE_BYTES = 12 * 1024 * 1024;
 
 /** Largest single chunk of a chunked upload. */
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+/** How often the orphaned-bytes sweep may run (it is triggered by phone polls). */
+const ORPHAN_SWEEP_EVERY_MS = 10 * 60_000;
 
 /** How long a queued file stays available before it is swept. */
 const RETENTION_DAYS = 7;
@@ -646,18 +648,37 @@ export class DeviceFileService {
     }
   }
 
-  /** Drops any blob no transfer row still points at. */
+  private lastOrphanSweep = 0;
+
+  /**
+   * Drops stored bytes no transfer row points at any more.
+   *
+   * Only bytes older than an hour, and never a file being written right now:
+   * a file's transfer rows are created after all of its slices are stored, so
+   * while a large file is being written its slices have no transfer row yet.
+   * This sweep runs on every phone's file poll (every few seconds per phone),
+   * and it used to delete those in-progress slices, which is what "The file
+   * could not be stored (kept 3899008 of 24870528 bytes)" was. It now also
+   * runs at most every ten minutes.
+   */
   private async sweepOrphanBlobs(): Promise<void> {
+    if (Date.now() - this.lastOrphanSweep < ORPHAN_SWEEP_EVERY_MS) return;
+    this.lastOrphanSweep = Date.now();
+    const writing = [...this.blobWrites.keys()];
+    const skip = writing.length ? ` AND b.sha256 NOT IN (${writing.map(() => '?').join(',')})` : '';
+    const skipChunks = writing.length ? ` AND c.sha256 NOT IN (${writing.map(() => '?').join(',')})` : '';
     try {
       await this.blobRepo.query(
         `DELETE b FROM device_file_blobs b
          LEFT JOIN device_file_transfers t ON t.sha256 = b.sha256
-         WHERE t.id IS NULL`,
+         WHERE t.id IS NULL AND b.created_at < NOW() - INTERVAL 1 HOUR${skip}`,
+        writing,
       );
       await this.blobRepo.query(
         `DELETE c FROM device_file_blob_chunks c
          LEFT JOIN device_file_transfers t ON t.sha256 = c.sha256
-         WHERE t.id IS NULL`,
+         WHERE t.id IS NULL AND c.created_at < NOW() - INTERVAL 1 HOUR${skipChunks}`,
+        writing,
       );
     } catch {
       // Best effort.

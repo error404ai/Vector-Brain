@@ -593,6 +593,43 @@ const scenarios = [
     },
   },
   {
+    name: 'phones polling for files while a large file is being stored do not delete its half-written bytes',
+    async run() {
+      const payload = crypto.randomBytes(24_870_528);
+      const sha256 = crypto.createHash('sha256').update(payload).digest('hex');
+      const chunkSize = 8 * 1024 * 1024;
+      const totalChunks = Math.ceil(payload.length / chunkSize);
+      const init = await api('POST', '/android/files/init', {
+        device_ids: [phones.free1.dbId], file_name: 'poll-race.apk', mime_type: 'application/vnd.android.package-archive',
+        size_bytes: payload.length, sha256, total_chunks: totalChunks,
+      });
+      const uploadId = init.data.upload_id;
+      for (let index = 0; index < totalChunks; index += 1) {
+        const slice = payload.subarray(index * chunkSize, Math.min((index + 1) * chunkSize, payload.length));
+        await fetch(`${BASE}/api/android/files/chunk?upload_id=${uploadId}&index=${index}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${userToken}` }, body: slice,
+        });
+      }
+      // Other phones keep polling (the app asks every few seconds) while the bytes are written.
+      let polling = true;
+      const poll = async (name) => {
+        while (polling) await fetch(`${BASE}/api/android/companion/files`, { headers: { Authorization: `Bearer ${phones[name].phone.token}` } }).catch(() => undefined);
+      };
+      const pollers = [poll('free2'), poll('free2'), poll('free2')];
+      const fin = await api('POST', '/android/files/finish', { upload_id: uploadId });
+      polling = false;
+      await Promise.all(pollers);
+      if (!fin?.data?.sha256) return `finish failed: ${JSON.stringify(fin).slice(0, 200)}`;
+      const listed = await fetch(`${BASE}/api/android/companion/files`, { headers: { Authorization: `Bearer ${phones.free1.phone.token}` } }).then((r) => r.json());
+      const entry = (listed.data ?? []).find((x) => x.name === 'poll-race.apk');
+      if (!entry) return 'the phone was not offered the file';
+      const dl = await fetch(`${BASE}/api/android/companion/files/${entry.id}/content`, { headers: { Authorization: `Bearer ${phones.free1.phone.token}` } });
+      if (!dl.ok) return `download refused: ${dl.status}`;
+      const got = Buffer.from(await dl.arrayBuffer());
+      if (crypto.createHash('sha256').update(got).digest('hex') !== sha256) return `got ${got.length} bytes that do not match`;
+    },
+  },
+  {
     name: 'a download the phone never finishes is given up on, not offered forever',
     async run() {
       // A phone that dies mid-download (old APK, low memory) comes back and asks
