@@ -45,7 +45,7 @@ export function startFleetLanding(root: HTMLElement): () => void {
   const chapters = [...root.querySelectorAll<HTMLElement>('[data-ch]')];
   const labelled = [...root.querySelectorAll<HTMLElement>('[data-label]')];
   const rail = q('.fl-rail-label'), railN = q('.fl-rail-n'), ixN = q('.fl-ix-n');
-  const runs = q('#runs'), index = q('#index'), how = q('#how');
+  const runs = q('#runs'), index = q('#index'), how = q('#how'), live = q('#live');
   let active = -1, railTimer = 0;
   const progress = (el: HTMLElement) => {
     const r = el.getBoundingClientRect();
@@ -79,13 +79,19 @@ export function startFleetLanding(root: HTMLElement): () => void {
       if (railN) railN.textContent = n;
       if (ixN) ixN.textContent = n;
     }
-    if (runs) root.classList.toggle('ink', runs.getBoundingClientRect().top < 60);
+    // Light header text over the dark sections (live fleet, example runs and the close).
+    const overDark = [live, runs, q('#close')].some((el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.top < 60 && r.bottom > 60;
+    });
+    root.classList.toggle('ink', overDark);
     const fills = (el: HTMLElement | null) => {
       if (!el) return false;
       const r = el.getBoundingClientRect();
       return r.top <= 0 && r.bottom >= window.innerHeight;
     };
-    state.covered = (index ? index.getBoundingClientRect().top <= 0 : false) || fills(how);
+    state.covered = (index ? index.getBoundingClientRect().top <= 0 : false) || fills(how) || fills(live);
   };
   on('scroll', readScroll, { passive: true });
   on('resize', readScroll);
@@ -171,6 +177,52 @@ export function startFleetLanding(root: HTMLElement): () => void {
   };
   root.addEventListener('click', onAnchor);
   cleanups.push(() => root.removeEventListener('click', onAnchor));
+
+  // Live fleet: videos play only while the section is on screen; the feed rotates.
+  const videos = [...root.querySelectorAll<HTMLVideoElement>('.fl-live-video')];
+  const feed = q('.fl-live-feed');
+  const FEED = [
+    ['PH-04', 'Started playback'],
+    ['PH-06', 'Looped the clip'],
+    ['PH-02', 'Scrolled the feed'],
+    ['PH-01', 'Opened the video app'],
+    ['PH-03', 'Checked the result on screen'],
+    ['PH-05', 'Task done in 41s'],
+  ];
+  let feedTimer = 0, feedAt = 0;
+  const rotateFeed = () => {
+    if (!feed || document.hidden) return;
+    const [id, text] = FEED[feedAt++ % FEED.length];
+    const li = document.createElement('li');
+    li.innerHTML = `<b>${id}</b> ${text}`;
+    li.className = 'in';
+    feed.prepend(li);
+    while (feed.children.length > 4) feed.lastElementChild?.remove();
+  };
+  if (live && !reduceMotion && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          videos.forEach((v) => {
+            if (v.preload === 'none') v.preload = 'auto';
+            v.play().catch(() => undefined);
+          });
+          if (!feedTimer) feedTimer = window.setInterval(rotateFeed, 2600);
+        } else {
+          videos.forEach((v) => v.pause());
+          window.clearInterval(feedTimer);
+          feedTimer = 0;
+        }
+      },
+      { threshold: 0.15 },
+    );
+    io.observe(live);
+    cleanups.push(() => {
+      io.disconnect();
+      window.clearInterval(feedTimer);
+      videos.forEach((v) => v.pause());
+    });
+  }
 
   // WebGL scene, loaded after first paint.
   const canvas = q<HTMLCanvasElement>('.fl-gl');

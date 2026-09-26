@@ -40,6 +40,16 @@ const RUNS: { kind: ScreenKind; title: string; body: string; devices: string; ca
   { kind: 'update', title: 'Rollout check', body: 'Confirm the new build installs and opens.', devices: '500', cadence: 'Per release' },
 ];
 
+/** Live fleet wall: stock footage standing in for phone screens while they work. */
+const LIVE: { id: string; task: string; status: 'Playing' | 'Scrolling' | 'Checking' | 'Done'; tone: 'run' | 'done' }[] = [
+  { id: 'PH-01', task: 'Play', status: 'Playing', tone: 'run' },
+  { id: 'PH-02', task: 'Scroll', status: 'Scrolling', tone: 'run' },
+  { id: 'PH-03', task: 'Check', status: 'Checking', tone: 'run' },
+  { id: 'PH-04', task: 'Play', status: 'Playing', tone: 'run' },
+  { id: 'PH-05', task: 'Open', status: 'Done', tone: 'done' },
+  { id: 'PH-06', task: 'Loop', status: 'Playing', tone: 'run' },
+];
+
 const NOTES: [string, string, string][] = [
   ['A', 'Input', 'Plain language. English or any language.'],
   ['B', 'Control', 'Android accessibility service. Real taps, types, swipes.'],
@@ -242,6 +252,77 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="live" id="live" data-label="Every screen, live" aria-label="Every screen, live">
+          <div className="live-head">
+            <div>
+              <p className="mono live-eyebrow">
+                <i className="live-dot" /> Live fleet
+              </p>
+              <h2 className="display">
+                Every screen,
+                <br />
+                <em>live.</em>
+              </h2>
+            </div>
+            <p>
+              Each phone streams its screen back while it works. Open an app, play a video, scroll a feed and check the
+              result on every device at the same time, and watch all of it from one page.
+            </p>
+          </div>
+          <div className="live-body">
+            <div className="live-row">
+              {LIVE.map((t, i) => (
+                <figure className="live-tile" key={t.id}>
+                  <video
+                    className="fl-live-video"
+                    src={`/landing/live/l${i + 1}.mp4`}
+                    poster={`/landing/live/l${i + 1}.jpg`}
+                    muted
+                    loop
+                    playsInline
+                    preload="none"
+                    aria-hidden="true"
+                  />
+                  <figcaption>
+                    <span className="mono live-top">
+                      <span>{t.id}</span>
+                      <span>{t.task}</span>
+                    </span>
+                    <span className="mono live-bottom">
+                      <i className={`live-state is-${t.tone}`} />
+                      {t.status}
+                    </span>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+            <aside className="live-side" aria-label="Activity">
+              <div className="live-stats mono">
+                <div>
+                  <span>Phones</span>
+                  <b>6</b>
+                </div>
+                <div>
+                  <span>Running</span>
+                  <b>5</b>
+                </div>
+                <div>
+                  <span>Done</span>
+                  <b>1</b>
+                </div>
+              </div>
+              <p className="mono live-feed-h">Activity</p>
+              <ol className="live-feed fl-live-feed" aria-live="off">
+                <li><b>PH-05</b> Task done in 41s</li>
+                <li><b>PH-03</b> Checked the result on screen</li>
+                <li><b>PH-02</b> Scrolled the feed</li>
+                <li><b>PH-01</b> Opened the video app</li>
+              </ol>
+              <p className="mono live-note">Illustrative feed · stock footage</p>
+            </aside>
           </div>
         </section>
 
