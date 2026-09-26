@@ -45,6 +45,7 @@ public/index.html
 public/favicon.svg
 public/vite.svg
 public/fleet/
+public/landing/
 
 # Test harness run logs
 test/harness/logs/
