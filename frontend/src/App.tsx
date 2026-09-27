@@ -1,33 +1,16 @@
 import ErrorModal from '@/components/ui/ErrorModal';
 import { store, useAppSelector } from '@/store';
 import { Toaster } from 'react-hot-toast';
-import { useEffect } from 'react';
+import { useEffect, type ComponentType, type ReactNode } from 'react';
 import { createBrowserRouter, isRouteErrorResponse, Navigate, Outlet, RouterProvider, useRouteError } from 'react-router-dom';
 import { report } from './_helpers/clientDiagnostics';
 import { AuthLayout } from './components/layout/AuthLayout';
 import { GuestLayout } from './components/layout/GuestLayout';
 import GlobalLoader from './components/loaders/GlobalLoader';
 import useAuthRedirect from './hooks/useAuthRedirect';
-import AgentTasksPage from './pages/AgentTasksPage';
-import AiRulesPage from './pages/AiRulesPage';
-import AndroidAgentPage from './pages/AndroidAgentPage';
-import FlowsPage from './pages/FlowsPage';
-import SchedulesPage from './pages/SchedulesPage';
-import MissionControlPage from './pages/MissionControlPage';
-import AndroidDevicesPage from './pages/AndroidDevicesPage';
-import AndroidFleetPage from './pages/AndroidFleetPage';
-import BrowserWorkerErrorsPage from './pages/BrowserWorkerErrorsPage';
-import DashboardPage from './pages/DashboardPage';
-import HomePage from './pages/HomePage';
 import { canManageLandingShots } from './_helpers/landingAccess';
-import LandingShotsPage from './pages/LandingShotsPage';
-import DiagnosticsPage from './pages/DiagnosticsPage';
 import { isOwner } from './_helpers/ownerAccess';
-import LoginPage from './pages/LoginPage';
-import MyRulesPage from './pages/MyRulesPage';
-import SettingsPage from './pages/SettingsPage';
-import SignupPage from './pages/SignupPage';
-import UsersPage from './pages/UsersPage';
+import { loadPage, pages, prefetchAppPages } from './pages/lazyPages';
 
 function RootShell() {
   const loading = useAuthRedirect();
@@ -83,6 +66,9 @@ function GuestShell() {
 }
 
 function ProtectedShell() {
+  // Signed in: fetch the other app pages in the background so moving between
+  // them is instant, without making the first page wait for them.
+  useEffect(() => prefetchAppPages(), []);
   return (
     <AuthLayout>
       <Outlet />
@@ -116,75 +102,53 @@ function AdminOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+type Guard = ComponentType<{ children: ReactNode }>;
+
+/**
+ * Each page is its own chunk, fetched when its route is first opened, so the
+ * landing page and sign-in no longer download the whole app first.
+ */
+const lazy = (load: () => Promise<{ default: ComponentType }>, Guarded?: Guard) => async () => {
+  const { default: Page } = await loadPage(load);
+  return Guarded ? { element: <Guarded><Page /></Guarded> } : { Component: Page };
+};
+
 const router = createBrowserRouter([
   {
     Component: RootShell,
     ErrorBoundary: RootError,
+    // Shown only while the first page's chunk arrives on a cold load.
+    HydrateFallback: GlobalLoader,
     children: [
       // The landing page is full-bleed and dark, so it must not sit inside
       // GuestShell — that wraps its children in the narrow light card the
       // sign-in and sign-up forms are built around.
-      { path: '/', Component: HomePage },
+      { path: '/', lazy: lazy(pages.home) },
       {
         Component: GuestShell,
         children: [
-          { path: '/login', Component: LoginPage },
-          { path: '/signup', Component: SignupPage },
+          { path: '/login', lazy: lazy(pages.login) },
+          { path: '/signup', lazy: lazy(pages.signup) },
         ],
       },
       {
         Component: ProtectedShell,
         children: [
-          { path: '/dashboard', Component: DashboardPage },
-          { path: '/android-agent', Component: AndroidAgentPage },
-          { path: '/android-devices', Component: AndroidDevicesPage },
-          { path: '/android-fleet', Component: AndroidFleetPage },
-          { path: '/agent-tasks', Component: AgentTasksPage },
-          { path: '/my-rules', Component: MyRulesPage },
-          { path: '/schedules', Component: SchedulesPage },
-          { path: '/mission-control', Component: MissionControlPage },
-          { path: '/flows', Component: FlowsPage },
-          { path: '/settings', Component: SettingsPage },
-          {
-            path: '/diagnostics',
-            element: (
-              <OwnerOnly>
-                <DiagnosticsPage />
-              </OwnerOnly>
-            ),
-          },
-          {
-            path: '/landing-shots',
-            element: (
-              <LandingShotsOnly>
-                <LandingShotsPage />
-              </LandingShotsOnly>
-            ),
-          },
-          {
-            path: '/users',
-            element: (
-              <AdminOnly>
-                <UsersPage />
-              </AdminOnly>
-            ),
-          },
-          {
-            path: '/ai-rules',
-            element: (
-              <AdminOnly>
-                <AiRulesPage />
-              </AdminOnly>
-            ),
-          },
-          {
-            path: '/browserworker-errors',
-            element: (
-              <AdminOnly>
-                <BrowserWorkerErrorsPage />
-              </AdminOnly>
-            ),
-          },
+          { path: '/dashboard', lazy: lazy(pages.dashboard) },
+          { path: '/android-agent', lazy: lazy(pages.androidAgent) },
+          { path: '/android-devices', lazy: lazy(pages.androidDevices) },
+          { path: '/android-fleet', lazy: lazy(pages.androidFleet) },
+          { path: '/agent-tasks', lazy: lazy(pages.agentTasks) },
+          { path: '/my-rules', lazy: lazy(pages.myRules) },
+          { path: '/schedules', lazy: lazy(pages.schedules) },
+          { path: '/mission-control', lazy: lazy(pages.missionControl) },
+          { path: '/flows', lazy: lazy(pages.flows) },
+          { path: '/settings', lazy: lazy(pages.settings) },
+          { path: '/diagnostics', lazy: lazy(pages.diagnostics, OwnerOnly) },
+          { path: '/landing-shots', lazy: lazy(pages.landingShots, LandingShotsOnly) },
+          { path: '/users', lazy: lazy(pages.users, AdminOnly) },
+          { path: '/ai-rules', lazy: lazy(pages.aiRules, AdminOnly) },
+          { path: '/browserworker-errors', lazy: lazy(pages.browserWorkerErrors, AdminOnly) },
         ],
       },
       { path: '*', element: <Navigate to="/dashboard" replace /> },

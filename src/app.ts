@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import 'reflect-metadata';
@@ -161,7 +162,34 @@ useExpressServer(app, {
   currentUserChecker,
 });
 
-app.use(express.static(join(__dirname, '..', 'public')));
+const PUBLIC_DIR = join(__dirname, '..', 'public');
+const ASSET_TYPES: Record<string, string> = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+
+/**
+ * Built JS/CSS: names carry a content hash, so they are cached for a year, and
+ * the brotli/gzip copies written at build time (frontend/scripts/compress-assets)
+ * are sent when the browser accepts them. The app bundle is ~1 MB raw.
+ */
+app.use('/assets', (req, res, next) => {
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  const ext = req.path.slice(req.path.lastIndexOf('.'));
+  const type = ASSET_TYPES[ext];
+  if (!type || req.path.includes('..')) return next();
+  const accept = String(req.headers['accept-encoding'] || '');
+  const file = join(PUBLIC_DIR, 'assets', req.path);
+  for (const [enc, suffix] of [['br', '.br'], ['gzip', '.gz']] as const) {
+    if (accept.includes(enc) && existsSync(file + suffix)) {
+      res.setHeader('Content-Encoding', enc);
+      res.setHeader('Content-Type', type);
+      res.setHeader('Vary', 'Accept-Encoding');
+      return res.sendFile(file + suffix, { headers: { 'Content-Type': type } });
+    }
+  }
+  return next();
+});
+
+// index.html is never cached, so a deploy is picked up on the next load.
+app.use(express.static(PUBLIC_DIR, { setHeaders: (res, path) => path.endsWith('.html') && res.setHeader('Cache-Control', 'no-cache') }));
 
 app.get('*', (req, res, next) => {
   if (res.headersSent) {
@@ -170,7 +198,8 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API endpoint not found' });
   }
-  res.sendFile(join(__dirname, '..', 'public', 'index.html'));
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(join(PUBLIC_DIR, 'index.html'));
 });
 
 /** Minimal escaping for values placed inside meta tag attributes. */

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/check-production-build.mjs",
+    "build": "tsc -b && vite build && node scripts/check-production-build.mjs && node scripts/compress-assets.mjs",
     "generate": "tsr generate",
     "watch": "tsr watch",
     "lint": "eslint .",

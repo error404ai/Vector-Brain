@@ -8,6 +8,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 const publicRoutes = ['/login', '/signup', '/'];
 
+/** How long the loader stays after loading ends; bridges back-to-back states. */
+const HIDE_DELAY_MS = 150;
+
 /**
  * Routes that must render for everyone and never bounce anywhere: a shared run
  * link has to open for a stranger with no session, and for a signed-in owner
@@ -38,7 +41,9 @@ export default function useAuthRedirect(skip: boolean = false) {
 
   // const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Debounced loading state to prevent flickering (1 second debounce)
+  // Loader state: shown at once, hidden a moment after loading ends so a quick
+  // hand-off between two loading states does not flicker. It used to wait a
+  // full second, which every reload paid after the page was already ready.
   const [debouncedLoading, setDebouncedLoading] = useState(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -105,7 +110,7 @@ export default function useAuthRedirect(skip: boolean = false) {
     } else if (!currentLoadingState && debouncedLoading) {
       debounceTimerRef.current = setTimeout(() => {
         setDebouncedLoading(false);
-      }, 1000);
+      }, HIDE_DELAY_MS);
     }
   }, [currentLoadingState, debouncedLoading]);
 

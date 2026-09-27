@@ -29,7 +29,15 @@
     />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Painted before any script loads; React replaces it when the app starts. -->
+    <style>
+      .vb-boot{position:fixed;inset:0;display:grid;place-items:center;background:#f8fafc}
+      .vb-boot i{display:inline-block;width:10px;height:10px;margin:0 4px;border-radius:50%;background:#2563eb;animation:vb-boot 1s ease-in-out infinite}
+      .vb-boot i:nth-child(2){animation-delay:.15s}.vb-boot i:nth-child(3){animation-delay:.3s}
+      @keyframes vb-boot{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+      @media (prefers-reduced-motion:reduce){.vb-boot i{animation:none;opacity:.6}}
+    </style>
+    <div id="root"><div class="vb-boot" role="status" aria-label="Loading"><span><i></i><i></i><i></i></span></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
