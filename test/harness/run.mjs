@@ -2248,6 +2248,41 @@ const scenarios = [
     },
   },
   {
+    name: 'chat: an AI provider limit reads as what to do, never as the raw provider error',
+    async run() {
+      const raw = '429 Rate limit exceeded: free-models-per-day-high-balance.\n\nTroubleshooting URL: https://js.langchain.com/docs/troubleshooting/errors/MODEL_RATE_LIMIT/';
+      const res = await api('POST', '/android/chat', { message: `how many phones are online? [agent:${JSON.stringify({ turns: [{ error: raw }] })}]` });
+      const reply = res.data;
+      if (reply.notice?.code !== 'daily_limit') return `notice: ${JSON.stringify(reply.notice)}`;
+      const shown = `${reply.text} ${reply.notice.title} ${reply.notice.hint}`;
+      if (/langchain|troubleshooting|free-models|429/i.test(shown)) return `raw provider text shown: ${shown.slice(0, 200)}`;
+      if (!/online/i.test(reply.text)) return `basic-mode answer missing: ${reply.text.slice(0, 120)}`;
+      // Stored replies come back the same way after a reload.
+      const history = await api('GET', `/android/chat/history?limit=5&conversation_id=${reply.conversation_id}`);
+      const last = history.data.turns.at(-1);
+      if (last?.reply?.notice?.code !== 'daily_limit') return 'the notice was not kept in the history';
+    },
+  },
+  {
+    name: 'browser reports: Chrome crash reports (Reporting API) are stored with their reason',
+    async run() {
+      const page = await fetch(`${BASE}/mission-control`);
+      const header = page.headers.get('reporting-endpoints') ?? '';
+      if (!/default="http:\/\/127\.0\.0\.1:\d+\/api\/client-reports\/reporting"/.test(header)) return `Reporting-Endpoints header: ${header || 'missing'}`;
+      if (!/include-js-call-stacks-in-crash-reports/.test(page.headers.get('document-policy') ?? '')) return 'Document-Policy header missing';
+      const reports = [
+        { type: 'crash', age: 120, url: `${BASE}/mission-control`, user_agent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0', body: { reason: 'oom', is_top_level: true, visibility_state: 'visible' } },
+        { type: 'deprecation', age: 5, url: `${BASE}/`, body: { id: 'x' } },
+      ];
+      const res = await fetch(`${BASE}/api/client-reports/reporting`, { method: 'POST', headers: { 'Content-Type': 'application/reports+json', 'X-Forwarded-For': '10.7.7.7' }, body: JSON.stringify(reports) });
+      if (res.status !== 204) return `reporting endpoint answered ${res.status}`;
+      const [rows] = await db.query("SELECT kind, page, user_agent, payload FROM client_reports WHERE kind = 'browser_crash'");
+      if (rows.length !== 1) return `${rows.length} crash rows stored (deprecation must be ignored)`;
+      const payload = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+      if (payload.reason !== 'oom' || rows[0].page !== '/mission-control' || !/Chrome\/141/.test(rows[0].user_agent)) return `stored ${JSON.stringify(rows[0]).slice(0, 200)}`;
+    },
+  },
+  {
     name: 'engines: Eko and Vector both finish a task through the real model loop',
     async run() {
       llm.mode = 'normal';

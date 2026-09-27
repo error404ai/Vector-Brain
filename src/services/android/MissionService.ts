@@ -58,6 +58,7 @@ const PLAIN_REASON: Record<string, string> = {
   TIMEOUT: 'phone did not answer in time',
   LLM_RATE_LIMIT: 'AI provider rate limit',
   LLM_SLOW: 'AI model was too slow to answer',
+  LLM_QUOTA: 'AI model used up its daily limit',
   LLM_AUTH_OR_CREDIT: 'AI key or credit problem',
   SERVER_RESTART: 'server restarted mid-run',
   INTERRUPTED: 'run was interrupted',

@@ -23,6 +23,8 @@ export interface ChatReply {
   action?: unknown;
   /** Tap-to-send answers under a question. */
   quick_replies?: string[];
+  /** The AI model could not be used (daily limit, key, outage): what happened and what to do. */
+  notice?: { code: string; title: string; hint: string };
   /** The thread this reply belongs to. */
   conversation_id?: number;
   /** What a Confirm will do, for the plan card. */

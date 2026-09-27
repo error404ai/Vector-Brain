@@ -12,6 +12,7 @@ import { requestContextMiddleware } from './middleware/requestContext';
 import type { IocAdapter } from 'routing-controllers';
 import { useContainer, useExpressServer } from 'routing-controllers';
 import Container from 'typedi';
+import { ClientReportService } from './services/ClientReportService';
 import { AppDataSource } from './loaders/database';
 import Logger from './logger/index';
 import { GlobalErrorHandler } from './middleware/errorHandler.middleware';
@@ -74,6 +75,29 @@ app.use(
   '/api/android/files/chunk',
   express.raw({ type: 'application/octet-stream', limit: '12mb' }),
 );
+
+// Chrome sends its own crash reports (Reporting API) here, as
+// application/reports+json. Every page names this endpoint in its headers.
+app.post('/api/client-reports/reporting', express.json({ type: ['application/reports+json', 'application/json'], limit: '256kb' }), async (req, res) => {
+  try {
+    const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+    const ip = forwarded[forwarded.length - 1] ?? req.socket?.remoteAddress ?? '';
+    await Container.get(ClientReportService).recordBrowserReports(req.body, { ip, userAgent: String(req.headers['user-agent'] ?? '') });
+    res.status(204).end();
+  } catch (error) {
+    res.status(Number((error as { statusCode?: number })?.statusCode) || 400).end();
+  }
+});
+// Pages ask Chrome to report a crash of the tab (reason: out of memory or
+// unresponsive, with the JS stack when it hung) to the endpoint above.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) {
+    const proto = String(req.headers['x-forwarded-proto'] ?? req.protocol).split(',')[0].trim();
+    res.setHeader('Reporting-Endpoints', `default="${proto}://${req.headers.host}/api/client-reports/reporting"`);
+    res.setHeader('Document-Policy', 'include-js-call-stacks-in-crash-reports');
+  }
+  next();
+});
 
 // Small-file base64 uploads legitimately post large JSON, so that route keeps a
 // high ceiling; every other route (parsed before auth) is capped low so an

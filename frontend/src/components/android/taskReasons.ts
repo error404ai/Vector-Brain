@@ -13,6 +13,7 @@ const REASON_LABELS: Record<string, string> = {
   DEVICE_ACTION_FAILURES: 'Phone actions kept failing',
   LLM_RATE_LIMIT: 'AI provider rate limit hit',
   LLM_SLOW: 'AI model too slow to answer (asked twice)',
+  LLM_QUOTA: 'AI model used up its daily limit',
   LLM_AUTH_OR_CREDIT: 'AI provider key or credit problem',
   DEVICE_OFFLINE: 'Phone went offline',
   TIMEOUT: 'Timed out',

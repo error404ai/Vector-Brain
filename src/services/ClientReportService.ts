@@ -4,7 +4,7 @@ import { AppDataSource } from '@/loaders/database';
 import { Service } from 'typedi';
 import { MoreThanOrEqual } from 'typeorm';
 
-export const CLIENT_REPORT_KINDS = new Set(['unclean_exit', 'stuck_loader', 'js_error', 'unhandled_rejection', 'render_error', 'main_thread_stall', 'manual']);
+export const CLIENT_REPORT_KINDS = new Set(['unclean_exit', 'stuck_loader', 'js_error', 'unhandled_rejection', 'render_error', 'main_thread_stall', 'browser_crash', 'manual']);
 
 /** A report is diagnostic context, not a data dump. */
 const MAX_PAYLOAD_BYTES = 48 * 1024;
@@ -51,6 +51,47 @@ export class ClientReportService {
     );
     void this.prune();
     return { id: saved.id };
+  }
+
+  /**
+   * Reports Chrome itself sends (Reporting API, see the Reporting-Endpoints
+   * header in app.ts). A "crash" report arrives after the tab died, with the
+   * reason (`oom` = out of memory, `unresponsive` = hung, and with it the JS
+   * stack when the page asked for one) — what the page's own code cannot tell,
+   * because it died with the tab. Other report types are ignored.
+   */
+  async recordBrowserReports(body: unknown, context: { ip: string; userAgent: string }): Promise<number> {
+    const reports = (Array.isArray(body) ? body : [body]).slice(0, 10) as { type?: unknown; url?: unknown; age?: unknown; user_agent?: unknown; body?: Record<string, unknown> }[];
+    let saved = 0;
+    for (const r of reports) {
+      if (!r || r.type !== 'crash') continue;
+      const url = typeof r.url === 'string' ? r.url : '';
+      const page = (() => {
+        try {
+          return new URL(url).pathname;
+        } catch {
+          return null;
+        }
+      })();
+      const b = (r.body ?? {}) as Record<string, unknown>;
+      await this.record(
+        {
+          kind: 'browser_crash',
+          page,
+          payload: {
+            reason: typeof b.reason === 'string' ? b.reason : null,
+            is_top_level: b.is_top_level ?? null,
+            visibility_state: b.visibility_state ?? null,
+            stack: typeof b.stack === 'string' ? b.stack.slice(0, 4000) : null,
+            report_age_ms: typeof r.age === 'number' ? r.age : null,
+            from: 'chrome',
+          },
+        },
+        { userId: null, ip: context.ip, userAgent: typeof r.user_agent === 'string' ? r.user_agent : context.userAgent },
+      );
+      saved += 1;
+    }
+    return saved;
   }
 
   async list(days: number, limit = 200) {

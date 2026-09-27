@@ -1,3 +1,4 @@
+import { modelErrorText } from '@/services/ai/modelErrors';
 import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
 import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
@@ -370,10 +371,12 @@ export class VectorAgentService {
   }
 
   /** A scripted brain for the harness: plays back the given turns in order. */
-  static scriptedBrain(script: { turns: { text?: string; delay_ms?: number; calls?: { name: string; args?: Record<string, unknown> }[] }[] }): Brain {
+  static scriptedBrain(script: { turns: { text?: string; delay_ms?: number; error?: string; calls?: { name: string; args?: Record<string, unknown> }[] }[] }): Brain {
     let index = 0;
     return async () => {
       const turn = script.turns[index++] ?? { text: '' };
+      // Stands in for a provider failure (rate limit, bad key…).
+      if (turn.error) throw new Error(turn.error);
       // Stands in for a slow model answer, so Stop can be tested mid-think.
       if (turn.delay_ms) await new Promise((resolve) => setTimeout(resolve, Math.min(turn.delay_ms ?? 0, 20_000)));
       return {
@@ -428,7 +431,8 @@ export class VectorAgentService {
       } catch (error) {
         if (error instanceof ChatStopped) throw error;
         Logger.warn('[VectorAgent] model call failed:', error);
-        throw new AppError(`The AI model did not answer (${(error as Error)?.message ?? 'error'}). Try again in a moment.`, 502);
+        // The user sees what to do; the raw provider text stays in the log above.
+        throw Object.assign(new AppError(modelErrorText(error), 502), { cause: error });
       }
       if (!turn.calls.length) {
         // Guard: the model must not tell the user to press Confirm unless a

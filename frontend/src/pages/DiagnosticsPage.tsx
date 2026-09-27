@@ -582,6 +582,7 @@ const REPORT_LABEL: Record<string, { label: string; color: 'error' | 'warning' |
   unclean_exit: { label: 'Page crashed / killed', color: 'error' },
   stuck_loader: { label: 'Stuck loader', color: 'warning' },
   main_thread_stall: { label: 'Page froze', color: 'error' },
+  browser_crash: { label: 'Chrome crash report', color: 'error' },
   render_error: { label: 'Render error', color: 'error' },
   js_error: { label: 'JS error', color: 'warning' },
   unhandled_rejection: { label: 'Promise error', color: 'warning' },
@@ -628,6 +629,12 @@ function reportFacts(r: ClientReport): string {
   if (r.kind === 'stuck_loader') {
     if (typeof p.after_s === 'number') bits.push(`loader up ${p.after_s}s`);
     if (typeof p.recovered_after_s === 'number') bits.push(`went away after ${p.recovered_after_s}s`);
+  }
+  if (r.kind === 'browser_crash') {
+    const reason = p.reason === 'oom' ? 'out of memory' : p.reason === 'unresponsive' ? 'page hung (unresponsive)' : p.reason ? String(p.reason) : 'no reason given';
+    bits.push(`Chrome: ${reason}`);
+    if (p.visibility_state) bits.push(`tab ${p.visibility_state}`);
+    if (typeof p.stack === 'string' && p.stack) bits.push('JS stack included');
   }
   if (r.kind === 'main_thread_stall') {
     if (p.recovered === false) bits.push(`frozen ${p.frozen_for_s ?? '?'}s and counting (seen by watchdog)`);

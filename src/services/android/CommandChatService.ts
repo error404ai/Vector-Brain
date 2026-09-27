@@ -1,3 +1,4 @@
+import { describeModelError } from '@/services/ai/modelErrors';
 import { ChatMessage } from '@/entities/ChatMessage';
 import { ChatScreenShot } from '@/entities/ChatScreenShot';
 import { Conversation } from '@/entities/Conversation';
@@ -58,6 +59,8 @@ export interface ChatReply {
   action?: PendingAction;
   /** Tap-to-send answers shown under a question. */
   quick_replies?: string[];
+  /** Shown above the answer when the AI model could not be used (limit, key, outage). */
+  notice?: { code: string; title: string; hint: string };
   /** Further missions started by the same message (different phone sets). */
   extra_missions?: unknown[];
   /** What a Confirm will do, for the plan card. */
@@ -184,7 +187,10 @@ export class CommandChatService {
         const context = await this.recentContext(userId, conversation.id);
         const intent = classifyLocally(await this.joinWithPending(userId, text, context.pending));
         const reply = await this.act(userId, text, intent, context.lastMissionDevices, conversation.id);
-        reply.text = `(AI model unavailable — ${(error as Error)?.message ?? 'error'}. Used the basic mode.) ${reply.text}`;
+        // Say plainly what happened and what to do; never the provider's raw
+        // error text (URLs, codes). The chat still answered, in basic mode.
+        const problem = describeModelError((error as { cause?: unknown })?.cause ?? error);
+        reply.notice = { code: problem.code, title: problem.title, hint: `${problem.hint} Meanwhile Vector answered in basic mode.` };
         await this.record(userId, 'assistant', reply.text, reply, conversation.id);
         return { message: 'Chat reply', data: { ...reply, conversation_id: conversation.id } };
       }
@@ -369,6 +375,13 @@ export class CommandChatService {
         if (row.reply) reply = JSON.parse(row.reply) as ChatReply;
       } catch {
         /* keep the plain text */
+      }
+      // Replies saved before AI errors were described carry the provider's raw
+      // text in front ("(AI model unavailable — 429 …. Used the basic mode.)").
+      const legacy = /^\(AI model unavailable — ([\s\S]*?)\. Used the basic mode\.\) ?/.exec(reply.text ?? '');
+      if (legacy && !reply.notice) {
+        const problem = describeModelError(legacy[1]);
+        reply = { ...reply, text: reply.text.slice(legacy[0].length), notice: { code: problem.code, title: problem.title, hint: `${problem.hint} Meanwhile Vector answered in basic mode.` } };
       }
       // A confirm from an earlier visit can't be applied any more; show it as text.
       if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };

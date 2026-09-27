@@ -52,7 +52,9 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
+import { Link as RouterLink } from 'react-router-dom';
 import AddIcon from '@mui/icons-material/Add';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -1318,9 +1320,11 @@ function AssistantBubble({
   showLive?: boolean;
 }) {
   const { reply } = turn;
+  const notice = reply.notice ? <ModelNotice notice={reply.notice} /> : null;
   if (reply.kind === 'mission' && reply.mission) {
     return (
       <AssistantRow>
+        {notice}
         {reply.text && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
             {richText(reply.text)}
@@ -1333,6 +1337,7 @@ function AssistantBubble({
   if (reply.kind === 'screens' && reply.screens && reply.screens.length > 0) {
     return (
       <AssistantRow>
+        {notice}
         {reply.text && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 0.25 }}>
             {richText(reply.text)}
@@ -1345,6 +1350,7 @@ function AssistantBubble({
   if (reply.kind === 'confirm' && reply.plan && reply.confirm_token) {
     return (
       <AssistantRow>
+        {notice}
         <PlanCard
           plan={reply.plan}
           text={reply.text}
@@ -1358,6 +1364,7 @@ function AssistantBubble({
   const error = reply.kind === 'error';
   return (
     <AssistantRow>
+      {notice}
       <Paper
         variant="outlined"
         sx={{
@@ -1399,6 +1406,45 @@ function AssistantBubble({
         )}
       </Paper>
     </AssistantRow>
+  );
+}
+
+/**
+ * The AI model could not be used for this reply (daily limit, key, outage):
+ * what happened and what to do, in place of the provider's raw error.
+ */
+function ModelNotice({ notice }: { notice: { code: string; title: string; hint: string } }) {
+  const needsSettings = ['daily_limit', 'credits', 'auth', 'model_missing'].includes(notice.code);
+  return (
+    <Box
+      role="status"
+      sx={{
+        alignSelf: 'flex-start',
+        maxWidth: { xs: '100%', sm: '85%' },
+        mb: 0.75,
+        display: 'flex',
+        gap: 1.25,
+        alignItems: 'flex-start',
+        px: 1.75,
+        py: 1.25,
+        borderRadius: 2.5,
+        border: '1px solid #fcd34d',
+        bgcolor: '#fffbeb',
+        animation: `${riseIn} 260ms ${ease}`,
+        ...reducedMotion,
+      }}
+    >
+      <WarningAmberRoundedIcon sx={{ color: '#b45309', fontSize: 22, mt: '1px', flexShrink: 0 }} />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ fontSize: 14.5, fontWeight: 700, color: '#78350f' }}>{notice.title}</Typography>
+        <Typography sx={{ fontSize: 13.5, lineHeight: 1.5, color: '#92400e', mt: 0.25 }}>{notice.hint}</Typography>
+        {needsSettings && (
+          <Button component={RouterLink} to="/settings" size="small" variant="outlined" sx={{ mt: 1, textTransform: 'none', borderColor: '#f59e0b', color: '#92400e', fontWeight: 700 }}>
+            Open AI settings
+          </Button>
+        )}
+      </Box>
+    </Box>
   );
 }
 

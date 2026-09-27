@@ -1,3 +1,4 @@
+import { modelErrorText } from '@/services/ai/modelErrors';
 import { AgentTask, type AgentTaskStatus } from '@/entities/AgentTask';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { AndroidStepStatus, AndroidTaskLog } from '@/entities/AndroidTaskLog';
@@ -1633,18 +1634,21 @@ Use the current visible Android screen and UI state as context. Continue from wh
       } else {
         Logger.error(`[AndroidPlanner] Error during Eko task loop:`, err);
         agentTask.success = false;
-        agentTask.message = guardStopReason || err.message || 'Task failed with internal error';
+        agentTask.reason_code = guardStopReason ? (guardStopCode ?? 'GUARD_STOP') : classifyFailure(err?.message);
+        // An AI provider failure reads as what to do, not as the provider's raw
+        // text (status codes, troubleshooting URLs); the raw text is logged above.
+        const aiFailure = !guardStopReason && (agentTask.reason_code.startsWith('LLM_') || /troubleshooting url|openrouter|langchain/i.test(String(err?.message ?? '')));
+        agentTask.message = guardStopReason || (aiFailure ? modelErrorText(err) : err.message) || 'Task failed with internal error';
         agentTask.total_steps = stepCount;
         agentTask.total_duration_seconds = (Date.now() - startTime) / 1000;
         agentTask.status = 'FAILED';
-        agentTask.reason_code = guardStopReason ? (guardStopCode ?? 'GUARD_STOP') : classifyFailure(err?.message);
         agentTask.finished_at = new Date();
         agentTask.lease_until = null;
         await this.agentTaskRepo.save(agentTask);
         this.gatewayService.broadcastToUser(userId, 'task:error', {
           taskId: agentTask.id,
           deviceId: deviceDbId,
-          error: err.message,
+          error: agentTask.message,
           reasonCode: agentTask.reason_code,
         });
       }
