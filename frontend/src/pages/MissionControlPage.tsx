@@ -58,6 +58,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
+import { StepFeed } from '@/components/mission/StepFeed';
+import { stepSummary, useRunSteps } from '@/components/mission/steps';
 import { contentKey, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
 
 // -----------------------------------------------------------------------------
@@ -71,6 +73,8 @@ interface LiveStep {
   index: number;
   thought: string;
   action: string;
+  /** The action as sent: its type plus params (URL, text, target). */
+  raw: Record<string, unknown> | null;
   at: number;
 }
 interface LiveFeed {
@@ -84,6 +88,7 @@ interface LiveFeed {
 }
 
 const MAX_STEPS_KEPT = 40;
+const NO_STEPS: LiveStep[] = [];
 
 function describeAction(action: unknown): string {
   const type = (action as { type?: string })?.type ?? '';
@@ -149,8 +154,9 @@ function useLiveFeed(): LiveFeed {
             if (typeof id !== 'number') break;
             const step: LiveStep = {
               index: Number(p.stepIndex) || 0,
-              thought: String(p.thought ?? '').slice(0, 220),
+              thought: String(p.thought ?? '').slice(0, 800),
               action: describeAction(p.action),
+              raw: p.action && typeof p.action === 'object' ? (p.action as Record<string, unknown>) : null,
               at: Date.now(),
             };
             setFeed((prev) => ({
@@ -423,15 +429,19 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
     },
   });
 
-  if (live.length === 0) return null;
   const pinnedItem = pinned !== null ? live.find((item) => item.id === pinned) : undefined;
-  const current = pinnedItem ?? live[tick % live.length];
+  const current: MissionItem | undefined = pinnedItem ?? live[tick % Math.max(live.length, 1)];
+  const liveSteps = current?.agent_task_id ? feed.steps[current.agent_task_id] : undefined;
+  // The phone on the big screen gets its whole run beside it: what the server
+  // recorded (after a reload) plus what streams in live.
+  const run = useRunSteps(current?.agent_task_id ?? null, liveSteps ?? NO_STEPS);
+
+  if (live.length === 0 || !current) return null;
   const frame = current.device_hw_id ? feed.frames[current.device_hw_id] : undefined;
-  const latest = (current.agent_task_id ? feed.steps[current.agent_task_id] ?? [] : []).slice(-1)[0];
 
   return (
-    <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mt: 1.5, mb: 1.5, flexWrap: { xs: 'wrap', sm: 'nowrap' }, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
-      <Box sx={{ width: 170, flexShrink: 0, mx: { xs: 'auto', sm: 0 } }}>
+    <Box sx={{ display: 'flex', gap: 2.5, alignItems: 'flex-start', mt: 1.5, mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
+      <Box sx={{ width: 170, flexShrink: 0, mx: { xs: 'auto', sm: 0 }, display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Tooltip title={frame ? 'Double-click to zoom' : ''} disableHoverListener={!frame}>
         <Box
           {...(frame ? dblTap({ name: current.device_name, hwId: current.device_hw_id ?? undefined }) : {})}
@@ -471,14 +481,8 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
           {current.device_name}
           {pinnedItem ? ' · pinned' : live.length > 1 ? ` · ${live.indexOf(current) + 1}/${live.length}` : ''}
         </Typography>
-        {latest && (
-          <Typography key={latest.index} variant="caption" color="text.secondary" component="p" sx={{ textAlign: 'center', lineHeight: 1.35, mt: 0.25, animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}>
-            {latest.thought || latest.action}
-          </Typography>
-        )}
-      </Box>
       {live.length > 1 && (
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignContent: 'flex-start' }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignContent: 'flex-start', justifyContent: 'center' }}>
           {live.map((item) => {
             const thumb = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
             const active = item.id === current.id;
@@ -513,6 +517,19 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
           })}
         </Box>
       )}
+      </Box>
+      {/* What this phone is doing, step by step, newest on top. */}
+      <Box sx={{ flex: 1, minWidth: 0, width: { xs: '100%', sm: 'auto' }, display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
+          <Typography sx={{ fontSize: 15.5, fontWeight: 800 }}>What {live.length > 1 ? current.device_name : 'the agent'} is doing</Typography>
+          <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>{run.steps.length ? stepSummary(run.steps) : ''}</Typography>
+        </Box>
+        {run.loading && run.steps.length === 0 ? (
+          <CircularProgress size={18} sx={{ alignSelf: 'flex-start', mt: 1 }} />
+        ) : (
+          <StepFeed key={current.id} steps={run.steps} order="live" working maxHeight={{ xs: 340, sm: 420 }} />
+        )}
+      </Box>
       <PhoneZoom target={zoom} feed={feed} onClose={() => setZoom(null)} />
     </Box>
   );
@@ -595,6 +612,8 @@ function FailureGroups({ items }: { items: MissionItem[] }) {
 /** A small tile for one phone: name, status, and its latest step or result. */
 function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number } }) {
   const latest = steps[steps.length - 1];
+  const finished = item.status === 'SUCCEEDED' || item.status === 'FAILED' || item.status === 'CANCELLED';
+  const [open, setOpen] = useState(false);
   const line =
     item.status === 'RUNNING'
       ? latest
@@ -606,17 +625,58 @@ function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[
           ? item.reason_text ?? 'Failed'
           : ITEM_TONE[item.status].label;
   return (
-    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1.25, py: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1.5, py: 1.25, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75, gridColumn: open ? '1 / -1' : 'auto' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
+        <Typography sx={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }} noWrap>
           {item.device_name}
         </Typography>
         <StatusChip item={item} />
       </Box>
-      <Typography key={latest?.index} variant="caption" color="text.secondary" noWrap sx={{ animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}>
+      <Typography
+        key={latest?.index}
+        sx={{ fontSize: 14, lineHeight: 1.45, color: 'text.secondary', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}
+      >
         {item.status === 'RUNNING' && round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}
         {line}
       </Typography>
+      {finished && item.agent_task_id && (
+        <Button size="small" onClick={() => setOpen((v) => !v)} endIcon={open ? <ExpandLessIcon /> : <ExpandMoreIcon />} sx={{ alignSelf: 'flex-start', textTransform: 'none', px: 0.5 }}>
+          {open ? 'Hide steps' : 'Show steps'}
+        </Button>
+      )}
+      {open && <RunSteps taskId={item.agent_task_id} live={steps} />}
+    </Box>
+  );
+}
+
+/** A finished run's steps, in order, fetched when opened. */
+function RunSteps({ taskId, live }: { taskId: number | null; live: LiveStep[] }) {
+  const run = useRunSteps(taskId, live);
+  if (run.loading) return <CircularProgress size={18} sx={{ my: 1 }} />;
+  if (!run.steps.length) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        No steps were recorded for this run.
+      </Typography>
+    );
+  }
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, animation: `${riseIn} 220ms ${ease}`, ...reducedMotion }}>
+      <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>{stepSummary(run.steps)}</Typography>
+      <StepFeed steps={run.steps} order="story" maxHeight={520} compact />
+    </Box>
+  );
+}
+
+/** One phone's outcome in plain words: what it found or why it stopped. */
+function RunResult({ item }: { item: MissionItem }) {
+  const ok = item.status === 'SUCCEEDED';
+  const text = ok ? item.last_message : [item.reason_text, item.last_message].filter(Boolean).join(' — ');
+  if (!text) return null;
+  return (
+    <Box sx={{ borderRadius: 2.5, px: 1.75, py: 1.25, border: '1px solid', borderColor: ok ? '#bbf7d0' : '#fecaca', bgcolor: ok ? '#f0fdf4' : '#fef2f2' }}>
+      <Typography sx={{ fontSize: 11, fontWeight: 800, letterSpacing: '.06em', color: ok ? '#15803d' : '#b91c1c', mb: 0.5 }}>{ok ? 'RESULT' : 'WHY IT STOPPED'}</Typography>
+      <Typography sx={{ fontSize: 15, lineHeight: 1.5, color: ok ? '#14532d' : '#7f1d1d', whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{text}</Typography>
     </Box>
   );
 }
@@ -896,6 +956,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
       <Box sx={{ px: 2.5, pb: 2, pt: 0.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {running && showLive && <LiveScreens items={items} feed={feed} />}
         {!running && <FinalScreens items={items} feed={feed} />}
+        {!running && items.length === 1 && items[0].agent_task_id && <SinglePhoneRecord item={items[0]} steps={stepsFor(items[0])} />}
 
         {running && runningItems.length > 0 && !showAll && (
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1 }}>
@@ -946,6 +1007,26 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
         </Box>
       </Box>
     </Paper>
+  );
+}
+
+/** A one-phone mission, finished: the result up front, every step one tap away. */
+function SinglePhoneRecord({ item, steps }: { item: MissionItem; steps: LiveStep[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      <RunResult item={item} />
+      <Button
+        size="small"
+        variant="text"
+        onClick={() => setOpen((v) => !v)}
+        endIcon={open ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+        sx={{ alignSelf: 'flex-start', textTransform: 'none', fontWeight: 700, bgcolor: 'rgba(37,99,235,0.08)', px: 1.5, borderRadius: 2, minHeight: 36 }}
+      >
+        {open ? 'Hide steps' : 'Show every step the agent took'}
+      </Button>
+      {open && <RunSteps taskId={item.agent_task_id} live={steps} />}
+    </Box>
   );
 }
 

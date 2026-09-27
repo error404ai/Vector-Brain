@@ -2170,6 +2170,12 @@ const scenarios = [
       const reread = summary.waste.find((w) => w.tag === 'reread')?.count ?? 0;
       if (summary.measured_runs < 1 || reread < 1) return `summary did not count the run: ${JSON.stringify(summary).slice(0, 200)}`;
 
+      // The chat's step feed: every step, light (no screenshot, no UI tree).
+      const feedRes = await api('GET', `/android/agent/logs/${done.id}/steps`);
+      const feedSteps = feedRes.data?.steps ?? [];
+      if (feedSteps.length !== 8) return `step feed returned ${feedSteps.length} steps`;
+      if (feedSteps.some((st) => Object.keys(st).some((k) => /screenshot|ui_tree/.test(k)))) return 'step feed carries screenshots or UI trees';
+      if (!feedSteps.every((st, i, all) => i === 0 || all[i - 1].step_index <= st.step_index)) return 'step feed is not in step order';
       const detail = (await (await asOwner(`/diagnostics/runs/${done.id}`)).json()).data;
       if (detail.steps?.length !== 8 || detail.steps[1].waste !== 'reread') return 'run detail is missing steps or tags';
 

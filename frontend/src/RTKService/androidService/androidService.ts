@@ -23,6 +23,19 @@ export interface AndroidDevice {
   updated_at: string;
 }
 
+/** One step as the step feed endpoint returns it (no screenshot, no UI tree). */
+export interface TaskStepRow {
+  id: number;
+  step_index: number;
+  action_type: string;
+  action_payload: Record<string, string | number | boolean | null> | null;
+  thought: string;
+  status: 'PENDING' | 'EXECUTING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  duration_ms: number;
+  error: string | null;
+  at: string;
+}
+
 export interface AndroidTaskLog {
   id: number;
   agent_task_id: number;
@@ -272,6 +285,12 @@ const androidApi = baseApi.injectEndpoints({
       }),
     }),
 
+    /** A run's steps without screenshots, for the Mission Control step feed. */
+    getTaskSteps: builder.query<{ message: string; data: { task: { id: number; status: string; message: string | null; total_steps: number }; steps: TaskStepRow[] } }, number>({
+      query: (taskId) => ({ url: `/android/agent/logs/${taskId}/steps`, method: 'GET' }),
+      keepUnusedDataFor: 120,
+    }),
+
     getAndroidTasks: builder.query<{ message: string; data: AndroidAgentTask[] }, ListAndroidTasksParams | void>({
       query: (params) => {
         const search = new URLSearchParams();
@@ -312,6 +331,7 @@ const androidApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetTaskStepsQuery,
   useGetAndroidDevicesQuery,
   useRequestPairingCodeMutation,
   useRenameDeviceMutation,

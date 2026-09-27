@@ -9,6 +9,9 @@ import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Post
 import { Service } from 'typedi';
 import z from 'zod';
 
+/** The step feed shows the latest steps of a run; older ones are summed up. */
+const STEP_FEED_LIMIT = 300;
+
 @Service()
 @Authorized()
 @JsonController('/android/agent')
@@ -178,6 +181,46 @@ export class AndroidAgentController {
     await this.agentTaskRepo.delete({ id: task.id });
 
     return { message: 'Run deleted successfully', data: { id: task.id } };
+  }
+
+  /**
+   * The steps of a run without screenshots or UI trees: what the chat's step
+   * feed shows. The full logs endpoint carries a screenshot per step, which is
+   * far too heavy to load for every card on Mission Control.
+   */
+  @Get('/logs/:taskId/steps')
+  async getTaskSteps(@Param('taskId') taskId: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId }, select: ['id', 'status', 'message', 'total_steps'] });
+    if (!task) throw new AppError('Task not found', 404);
+    const rows = await this.taskLogRepo
+      .createQueryBuilder('l')
+      .select(['l.id', 'l.step_index', 'l.action_type', 'l.action_payload', 'l.thought_reasoning', 'l.status', 'l.duration_ms', 'l.error_message', 'l.created_at'])
+      .where('l.agent_task_id = :taskId', { taskId })
+      .orderBy('l.step_index', 'DESC')
+      .addOrderBy('l.id', 'DESC')
+      .limit(STEP_FEED_LIMIT)
+      .getMany();
+    const clip = (value: unknown, max: number) => (typeof value === 'string' && value.length > max ? `${value.slice(0, max)}…` : value);
+    return {
+      message: 'Task steps',
+      data: {
+        task: { id: task.id, status: task.status, message: task.message, total_steps: task.total_steps },
+        steps: rows.reverse().map((l) => ({
+          id: l.id,
+          step_index: l.step_index,
+          action_type: l.action_type,
+          // Only the fields the feed names (URL, text, target); never bulk data.
+          action_payload: l.action_payload && typeof l.action_payload === 'object'
+            ? Object.fromEntries(Object.entries(l.action_payload as Record<string, unknown>).filter(([, v]) => typeof v !== 'object').map(([k, v]) => [k, clip(v, 300)]))
+            : null,
+          thought: clip(l.thought_reasoning ?? '', 800),
+          status: l.status,
+          duration_ms: l.duration_ms,
+          error: clip(l.error_message ?? null, 300),
+          at: l.created_at,
+        })),
+      },
+    };
   }
 
   /**
