@@ -61,6 +61,8 @@ import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
 import { StepFeed } from '@/components/mission/StepFeed';
+import MissionBoardReply from '@/components/mission/MissionBoardReply';
+import { isStructured } from '@/components/mission/chatText';
 import { stepSummary, useRunSteps } from '@/components/mission/steps';
 import { contentKey, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
 
@@ -1362,6 +1364,7 @@ function AssistantBubble({
     );
   }
   const error = reply.kind === 'error';
+  const structured = !error && isStructured(reply.text);
   return (
     <AssistantRow>
       {notice}
@@ -1369,7 +1372,8 @@ function AssistantBubble({
         variant="outlined"
         sx={{
           alignSelf: 'flex-start',
-          maxWidth: '85%',
+          maxWidth: structured ? '100%' : '85%',
+          width: structured ? '100%' : undefined,
           px: 2,
           py: 1.25,
           borderRadius: 3,
@@ -1377,11 +1381,16 @@ function AssistantBubble({
           borderColor: error ? 'error.light' : reply.kind === 'confirm' ? 'warning.light' : 'divider',
           animation: error ? `${shake} 380ms ease` : undefined,
           ...reducedMotion,
+          ...(structured ? { p: 0, border: 0, bgcolor: 'transparent', borderRadius: 0, overflow: 'visible' } : {}),
         }}
       >
-        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: error ? 'error.main' : 'text.primary' }}>
-          {richText(reply.text)}
-        </Typography>
+        {structured ? (
+          <MissionBoardReply text={reply.text} animate={isLatest} />
+        ) : (
+          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', color: error ? 'error.main' : 'text.primary' }}>
+            {richText(reply.text)}
+          </Typography>
+        )}
         {isLatest && reply.quick_replies && reply.quick_replies.length > 0 && (
           <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1 }}>
             {reply.quick_replies.map((option, index) => (
