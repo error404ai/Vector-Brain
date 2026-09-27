@@ -593,6 +593,8 @@ type Snap = {
   memory?: { used_mb: number; limit_mb: number } | null;
   data_images?: number;
   data_image_mb?: number;
+  images?: number;
+  decoded_image_mb?: number;
   dom_nodes?: number;
   ws?: { frames?: number; frame_mb?: number; last_frame_s_ago?: number | null; opened?: number; closed?: number };
   long_tasks?: { count: number; total_ms: number };
@@ -629,7 +631,8 @@ function reportFacts(r: ClientReport): string {
   if (typeof p.message === 'string') bits.push(p.message.slice(0, 120));
   if (snap?.memory) bits.push(`heap ${snap.memory.used_mb}/${snap.memory.limit_mb} MB`);
   if (snap?.ws?.frames) bits.push(`${snap.ws.frames} frames (${snap.ws.frame_mb ?? 0} MB)`);
-  if (snap?.data_images) bits.push(`${snap.data_images} inline images (${snap.data_image_mb ?? 0} MB)`);
+  if (typeof snap?.decoded_image_mb === 'number') bits.push(`${snap.images ?? 0} images ≈ ${snap.decoded_image_mb} MB decoded`);
+  else if (snap?.data_images) bits.push(`${snap.data_images} inline images (${snap.data_image_mb ?? 0} MB)`);
   if (snap?.long_tasks?.count) bits.push(`${snap.long_tasks.count} long tasks`);
   if (snap?.pending?.length) bits.push(`${snap.pending.length} requests pending`);
   if (snap?.auth && snap.auth.auth_initialized === false) bits.push('auth not initialized');

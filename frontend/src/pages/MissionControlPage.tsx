@@ -57,6 +57,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
+import { contentKey, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
 
 // -----------------------------------------------------------------------------
 // Live feed: one page socket carrying screens, steps, rounds and mission pushes
@@ -189,7 +190,7 @@ function useLiveFeed(): LiveFeed {
 }
 
 function frameSrc(data: string): string {
-  return data.startsWith('data:') ? data : `data:image/jpeg;base64,${data}`;
+  return data.startsWith('data:') || data.startsWith('blob:') ? data : `data:image/jpeg;base64,${data}`;
 }
 
 function minutesLeft(endsAt: number): string {
@@ -452,7 +453,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
         >
           {frame ? (
             <Box
-              key={`${current.id}-${frame.at}`}
+              key={current.id}
               component="img"
               src={frameSrc(frame.data)}
               alt={`${current.device_name} screen`}
@@ -621,34 +622,24 @@ function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[
 
 const RUNNING_SHOWN = 6;
 
-/** Fetch a thumbnail only once it is near the viewport. */
-function useInView<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [inView, setInView] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || inView) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setInView(true);
-      },
-      { rootMargin: '250px' },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [inView]);
-  return { ref, inView };
-}
 
 /** One target phone's final screen: live last frame if we have it, else lazy-fetched. Renders nothing when there is no screen. */
 function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionItem; feed: LiveFeed; onOpen: (target: PhoneZoomTarget) => void; onResolved: (id: number, hasImage: boolean) => void }) {
-  const liveFrame = item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
-  const { ref, inView } = useInView<HTMLDivElement>();
-  const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !inView });
-  const src = liveFrame ? frameSrc(liveFrame.data) : data?.data?.base64 ? frameSrc(data.data.base64) : null;
-  const settled = !!liveFrame || isSuccess;
-  // A live phone keeps updating in the zoom; a settled still just shows its last frame.
-  const tap = useDoubleTap(() => src && onOpen({ name: item.device_name, src, hwId: liveFrame ? item.device_hw_id ?? undefined : undefined }));
+  // Only a phone still on this run shows its live screen. A finished run shows
+  // its stored last screen: the phone's live frames belong to whatever it is
+  // doing now, and every old card showing them was one more full-size image.
+  const liveFrame = item.status === 'RUNNING' && item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
+  const { ref, near, seen } = useNearViewport<HTMLDivElement>();
+  const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !seen });
+  const stored = data?.data?.base64 ?? null;
+  const thumb = useThumbnail(liveFrame || !stored ? null : `final:${item.id}`, stored);
+  const src = liveFrame ? frameSrc(liveFrame.data) : thumb;
+  const settled = !!liveFrame || (isSuccess && (!stored || !!thumb));
+  // A live phone keeps updating in the zoom; a settled still opens full size.
+  const tap = useDoubleTap(() => {
+    if (liveFrame) onOpen({ name: item.device_name, src: frameSrc(liveFrame.data), hwId: item.device_hw_id ?? undefined });
+    else if (stored) onOpen({ name: item.device_name, src: frameSrc(stored) });
+  });
 
   useEffect(() => {
     if (settled) onResolved(item.id, !!src);
@@ -677,9 +668,9 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
         }}
       >
         <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'divider', bgcolor: 'action.hover', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {src ? (
+          {src && near ? (
             <Box component="img" src={src} alt={`${item.device_name} final screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
-          ) : (
+          ) : src ? null : (
             <CircularProgress size={16} thickness={5} />
           )}
         </Box>
@@ -731,17 +722,20 @@ function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed })
  * it was then, not whatever the phone shows now.
  */
 function ScreenTile({ shot, feed, onZoom }: { shot: PhoneShot; feed: LiveFeed; onZoom: (target: PhoneZoomTarget) => void }) {
-  const { ref, inView } = useInView<HTMLDivElement>();
-  const stored = useGetChatScreenQuery(shot.shot_id ?? 0, { skip: !shot.shot_id || !!shot.base64 || !inView });
+  const { ref, near, seen } = useNearViewport<HTMLDivElement>();
+  const stored = useGetChatScreenQuery(shot.shot_id ?? 0, { skip: !shot.shot_id || !!shot.base64 || !seen });
   const lastTap = useRef(0);
   const live = shot.base64 && shot.hw_id ? feed.frames[shot.hw_id] : undefined;
-  const savedSrc = stored.data?.data?.base64 ? frameSrc(stored.data.data.base64) : null;
-  const src = live ? frameSrc(live.data) : shot.base64 ? frameSrc(shot.base64) : savedSrc;
+  const savedBase64 = stored.data?.data?.base64 ?? null;
+  const still = shot.base64 ?? savedBase64;
+  const stillKey = shot.base64 ? contentKey(`shot:${shot.device_name}`, shot.base64) : shot.shot_id ? `shot:${shot.shot_id}` : null;
+  const thumb = useThumbnail(live || !still ? null : stillKey, still);
+  const src = live ? frameSrc(live.data) : thumb;
   const expired = !!shot.shot_id && stored.isError;
-  const loading = !!shot.shot_id && !shot.base64 && !savedSrc && !expired;
+  const loading = !src && !expired && (!!shot.base64 || !!shot.shot_id);
   const target: PhoneZoomTarget = shot.base64
     ? { name: shot.device_name, src: frameSrc(shot.base64), hwId: shot.hw_id ?? undefined }
-    : { name: shot.device_name, src: savedSrc ?? undefined };
+    : { name: shot.device_name, src: savedBase64 ? frameSrc(savedBase64) : undefined };
   const tap = src
     ? {
         onDoubleClick: () => onZoom(target),
@@ -778,7 +772,7 @@ function ScreenTile({ shot, feed, onZoom }: { shot: PhoneShot; feed: LiveFeed; o
             ...reducedMotion,
           }}
         >
-          {src ? (
+          {src && !near ? null : src ? (
             <Box component="img" src={src} alt={`${shot.device_name} screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
           ) : loading ? (
             <CircularProgress size={16} thickness={5} sx={{ color: 'grey.600' }} />

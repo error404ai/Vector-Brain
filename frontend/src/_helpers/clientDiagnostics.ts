@@ -89,6 +89,9 @@ export function snapshot(): Snapshot {
     images: images.length,
     data_images: dataImages.length,
     data_image_mb: Math.round((dataImages.reduce((sum, img) => sum + img.src.length, 0) / 1048576) * 10) / 10,
+    blob_images: images.filter((img) => img.src.startsWith('blob:')).length,
+    // Decoded size is what runs a tab out of memory: width × height × 4 bytes each.
+    decoded_image_mb: Math.round(images.reduce((sum, img) => sum + img.naturalWidth * img.naturalHeight * 4, 0) / 1048576),
     ws: { ...ws, frame_mb: Math.round((ws.frameBytes / 1048576) * 10) / 10, last_frame_s_ago: ws.lastFrameAt ? Math.round((now - ws.lastFrameAt) / 1000) : null },
     long_tasks: { count: longTasks, total_ms: Math.round(longTaskMs) },
     loader_visible_s: loaderShownAt ? Math.round((now - loaderShownAt) / 1000) : null,
