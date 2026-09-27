@@ -277,3 +277,85 @@
 .fl .auth .ctl.cta-alt{font-size:12.5px;color:var(--bone)}
 .fl .close-row p.auth-note{font:500 11px/1.5 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--bone);max-width:none}
 @media (max-width:560px){.fl .ctl.cta,.fl .hctl .ctl.cta,.fl .auth .ctl.cta{padding:15px 22px}}
+
+/* Clarity pass: a nav that reads over any section, and the setup flow in the hero. */
+.fl .nav{background:rgba(246,248,251,.72);-webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4);border-bottom:1px solid var(--rule);padding-block:12px}
+.fl.ink .nav{background:rgba(9,13,24,.72);border-bottom-color:#1E293B}
+.fl .navr{gap:10px}
+.fl .navr .ctl{font-size:12px;font-weight:500}
+.fl .navr .ctl:not(.solid):not(.ghost):hover{text-decoration:underline;text-underline-offset:5px}
+.fl .navr .ctl.ghost{border:1px solid currentColor;padding:9px 12px}
+.fl .navr .ctl.ghost::before,.fl .navr .ctl.ghost::after{content:""}
+.fl .navr .ctl.solid{font-size:12px;padding:10px 16px}
+.fl .kicker{color:var(--ink);background:rgba(255,255,255,.7);border:1px solid var(--rule);padding:7px 12px;font-size:11px}
+.fl .setup-strip{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;justify-content:center;gap:0;border:1px solid var(--ink);background:rgba(255,255,255,.72);animation:rise 1.4s cubic-bezier(.2,.7,.1,1) both .8s}
+.fl .setup-strip li{padding:10px 16px;font-size:11px;color:var(--ink)}
+.fl .setup-strip li+li{border-left:1px solid var(--rule)}
+.fl .setup-strip b{color:var(--clay);margin-right:6px}
+@media (max-width:560px){.fl .setup-strip{flex-direction:column;width:100%}.fl .setup-strip li+li{border-left:0;border-top:1px solid var(--rule)}}
+@media (prefers-reduced-motion:reduce){.fl .setup-strip{animation:none}}
+/* Keep the whole hero, setup strip included, above the fold and clear of the nav. */
+.fl .stage.hero{padding-top:64px}
+.fl .h-word{font-size:min(10.5vw,12.6vh)}
+.fl .hero-in{gap:14px}
+@media (max-width:900px){.fl .h-word{font-size:13.5vw}}
+
+/* Phone farm control: the dashboard as the product, with the A–E note style. */
+.fl .farm{position:relative;z-index:2;background:var(--paper);padding-inline:calc(var(--g) + 44px) var(--g);padding-block:clamp(90px,14vh,150px);border-top:1px solid var(--rule)}
+.fl .farm-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:24px 40px;align-items:end;margin-bottom:44px}
+.fl .farm-eyebrow{grid-column:1/-1;color:var(--graphite);margin:0}
+.fl .farm-head h2{font-size:clamp(52px,8vw,128px);margin:0}
+.fl .farm-head h2 em{font-style:normal;color:var(--clay)}
+.fl .farm-head p{margin:0;max-width:44ch;color:var(--graphite);font-size:17px}
+.fl .farm-body{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(260px,1fr);gap:40px;align-items:start}
+.fl .farm-shot{margin:0;border:1px solid var(--ink);background:#fff;box-shadow:0 40px 60px -40px rgba(17,24,39,.35)}
+.fl .farm-bar{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--rule);background:var(--paper)}
+.fl .farm-bar i{width:9px;height:9px;border-radius:50%;background:var(--rule)}
+.fl .farm-bar span{margin-left:10px;color:var(--graphite);font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fl .farm-img{aspect-ratio:16/10;display:grid;place-items:center;overflow:hidden;background:repeating-linear-gradient(135deg,#F1F4F9 0 14px,#E9EDF4 14px 28px)}
+.fl .farm-img img{width:100%;height:100%;object-fit:cover;object-position:top left;display:block}
+.fl .farm-ph{display:grid;gap:8px;text-align:center;color:var(--ink);font-size:12px;padding:18px}
+.fl .farm-ph small{color:var(--graphite);font-size:10px;letter-spacing:.08em}
+.fl .farm-notes{list-style:none;margin:0;padding:0;display:grid}
+.fl .farm-notes li{display:grid;grid-template-columns:30px 1fr;gap:8px;padding:16px 0;border-top:1px solid var(--rule);font-size:15px;line-height:1.5;color:var(--graphite)}
+.fl .farm-notes li:last-child{border-bottom:1px solid var(--rule)}
+.fl .farm-notes b{color:var(--clay);font-size:12px}
+.fl .farm-notes strong{display:block;color:var(--ink);font-size:12px;margin-bottom:4px}
+.fl .farm-foot{margin:36px 0 0;color:var(--ink);font-size:11px;border-top:1px solid var(--ink);padding-top:14px}
+@media (max-width:900px){.fl .farm{padding-inline:var(--g)}.fl .farm-head,.fl .farm-body{grid-template-columns:1fr}}
+.fl .farm-head{grid-template-columns:minmax(0,1.45fr) minmax(0,.8fr)}
+.fl .farm-head h2{font-size:clamp(48px,6.6vw,108px);text-wrap:wrap}
+@media (max-width:900px){.fl .farm-head{grid-template-columns:1fr}}
+
+/* Mobile browser: dark band, copy left, an instruction → actions → result demo right. */
+.fl .web{position:relative;z-index:2;background:var(--black);color:var(--bone);padding-inline:calc(var(--g) + 44px) var(--g);padding-block:clamp(90px,14vh,150px);border-top:1px solid #1E293B}
+.fl .web-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:56px;align-items:center}
+.fl .web-eyebrow{color:#60A5FA;margin:0 0 18px}
+.fl .web h2{font-size:clamp(48px,6.4vw,104px);margin:0;color:var(--paper);text-wrap:wrap}
+.fl .web h2 em{font-style:normal;color:#60A5FA}
+.fl .web-lede{margin:24px 0 30px;max-width:48ch;color:#94A3B8;font-size:17px}
+.fl .web-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#1E293B;border:1px solid #1E293B}
+.fl .web-list li{background:var(--black);padding:16px;display:grid;gap:6px}
+.fl .web-list strong{font-size:11px;color:var(--paper);font-weight:500}
+.fl .web-list span{font-size:14px;line-height:1.5;color:#94A3B8}
+.fl .web-demo{margin:0;display:grid;gap:14px;justify-items:center}
+.fl .web-ask{width:100%;max-width:340px;background:var(--paper);color:var(--ink);padding:12px 14px;font-size:12px;letter-spacing:.04em;text-transform:none;display:grid;gap:6px}
+.fl .web-ask span{color:var(--clay);font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+.fl .web-phone{width:220px;aspect-ratio:.5;border-radius:30px;border:8px solid #1F2937;background:#fff;overflow:hidden;box-shadow:0 40px 60px -30px rgba(0,0,0,.7);display:grid;grid-template-rows:auto 1fr}
+.fl .web-url{margin:12px 10px 8px;background:#F1F3F4;border-radius:999px;padding:7px 10px;font-size:9px;color:#374151;letter-spacing:.02em;text-transform:none;display:flex;gap:6px;align-items:center}
+.fl .web-url i{width:7px;height:7px;border-radius:50%;background:#059669}
+.fl .web-page{padding:4px 12px;display:grid;gap:10px;align-content:start}
+.fl .web-page b{display:block;height:34px;border-radius:6px;background:#EEF2F7}
+.fl .web-page b.hit{background:#DBEAFE;box-shadow:inset 0 0 0 2px var(--clay);position:relative}
+.fl .web-page b.hit::after{content:"";position:absolute;right:16px;top:50%;width:18px;height:18px;margin-top:-9px;border-radius:50%;background:rgba(37,99,235,.35);animation:tap 1.8s ease-out infinite}
+@keyframes tap{0%{transform:scale(.4);opacity:1}100%{transform:scale(2.2);opacity:0}}
+.fl .web-log{list-style:none;margin:0;padding:0;width:100%;max-width:340px;display:grid;gap:1px;background:#1E293B;border:1px solid #1E293B}
+.fl .web-log li{background:var(--black);padding:9px 12px;font-size:11px;letter-spacing:.03em;text-transform:none;color:#CBD5E1;display:grid;grid-template-columns:52px 1fr;gap:8px;opacity:0}
+.fl .web.in .web-log li{animation:logIn .5s ease-out forwards}
+.fl .web-log b{color:#60A5FA;font-weight:500;text-transform:uppercase;letter-spacing:.1em;font-size:10px}
+.fl .web-log li:last-child b{color:#34D399}
+@keyframes logIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.fl .web-demo figcaption{color:#64748B}
+@media (max-width:900px){.fl .web{padding-inline:var(--g)}.fl .web-grid{grid-template-columns:1fr}}
+@media (max-width:560px){.fl .web-list{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.fl .web-log li{animation:none;opacity:1}.fl .web-page b.hit::after{animation:none}}

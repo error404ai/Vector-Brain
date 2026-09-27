@@ -8,13 +8,13 @@ import '@/components/landing/fleet.css';
 const STEPS: { kind: ScreenKind; title: string; body: string }[] = [
   {
     kind: 'status',
-    title: 'Connect your phones',
-    body: 'Install the companion app on each phone, turn on accessibility and enter the pairing code. Any Android 10 or newer, as many as you own.',
+    title: 'Install the app',
+    body: 'Put the FLEET app on each phone, turn on accessibility and enter the pairing code. No ADB, no USB cable, no root. Any Android 10 or newer.',
   },
   {
     kind: 'command',
-    title: 'Type the task',
-    body: 'Write what you want done in plain words, in English or any language. Choose one phone, a group, or every phone.',
+    title: 'Add your key, type the task',
+    body: 'Add your own AI key (OpenAI, Anthropic, Google and more), then write what you want done in plain words. Choose one phone, a group, or every phone.',
   },
   {
     kind: 'checkout',
@@ -65,6 +65,10 @@ const FAQ: { q: string; a: string }[] = [
     a: 'Any Android phone on Android 10 or newer, from any brand. Install the companion app, turn on accessibility, enter the pairing code and the phone joins your fleet.',
   },
   {
+    q: 'Do I need ADB, USB debugging or a computer next to the phones?',
+    a: 'No. The FLEET app on each phone connects to the cloud over Wi-Fi or mobile data. There is no ADB, no USB cable and no PC to keep plugged in; the phones can sit anywhere with a connection.',
+  },
+  {
     q: 'Which apps can it use?',
     a: 'Any app installed on the phone. FLEET works through the screen the way a person does, so there is no SDK to add and nothing to change in the app.',
   },
@@ -104,6 +108,31 @@ const FAQ: { q: string; a: string }[] = [
     q: 'Can I start a run without opening the dashboard?',
     a: 'Yes. Link a Telegram chat and send the task there. The result and a picture of the final screen come back in the same chat.',
   },
+];
+
+/** Mobile browser section: what the agent does in the phone's own Chrome (see eko/AndroidAgent open_url). */
+const BROWSER: [string, string][] = [
+  ['Real Chrome', 'Pages open in the Chrome already on the phone, with the logins and cookies that are on it.'],
+  ['Any web task', 'Search, sign in, fill a form, compare prices, download a file. Written in plain words.'],
+  ['Reads the page', 'The AI reads the page like a screen reader, and looks at a screenshot when a site hides its content.'],
+  ['Every phone', 'Send one browser task to one phone, a group, or the whole farm at the same time.'],
+];
+
+const BROWSER_LOG: [string, string][] = [
+  ['Open', 'google.com/search?q=wireless+earbuds+under+50'],
+  ['Read', '10 results on screen'],
+  ['Tap', 'Shopping'],
+  ['Read', 'Prices from 4 stores'],
+  ['Done', 'Cheapest: £34.99 · 12s'],
+];
+
+/** Dashboard controls, each backed by a real page or fleet-chat tool. */
+const FARM: [string, string, string][] = [
+  ['A', 'Fleet', 'Every phone in the farm with its state, battery and app version. See at a glance which ones need setup.'],
+  ['B', 'AI chat', 'Type "run the sign-in check on every Samsung". The AI picks the phones and plans the run; you press Confirm.'],
+  ['C', 'Live screens', 'Watch every phone while it works and stop one, a group or the whole farm at once.'],
+  ['D', 'Flows & schedules', 'Save a run and replay it with no AI cost, or set it to run on a schedule.'],
+  ['E', 'Proxy lanes', 'Group phones behind your proxies, rotate the IP and choose how many run at the same time.'],
 ];
 
 const NOTES: [string, string, string][] = [
@@ -161,9 +190,10 @@ export default function HomePage() {
         </a>
         <nav className="navr" aria-label="Primary">
           <a className="ctl" href="#how">How it works</a>
+          <a className="ctl" href="#dashboard">Dashboard</a>
           <a className="ctl" href="#c3">Scale</a>
-          <a className="ctl" href="#runs">Runs</a>
-          <Link className="ctl" to="/login">Sign in</Link>
+          <a className="ctl" href="#faq">FAQ</a>
+          <Link className="ctl ghost" to="/login">Sign in</Link>
           <Link className="ctl solid" to="/signup">Get started</Link>
         </nav>
       </header>
@@ -190,18 +220,23 @@ export default function HomePage() {
         <section className="ch" id="c0" data-ch="0" data-label="AI automation" aria-label="FLEET">
           <div className="stage hero">
             <div className="hero-in">
-              <p className="mono kicker">FLEET · AI automation for Android phones</p>
+              <p className="mono kicker">No ADB · No USB cable · No root</p>
               <h1 className="display h-word">
                 AI that automates <em>unlimited</em> Android phones.
               </h1>
               <p className="h-sub">
-                Type one instruction in plain words. The AI opens apps, taps, types and swipes on every phone you
-                connect, the way a person would. One phone or 10,000, all at the same time.
+                Install our app on any Android phone, add your own AI key and type what you want done. The AI opens
+                apps, taps, types and swipes on every connected phone, the way a person would. One phone or 10,000.
               </p>
               <div className="hctl">
                 <Link className="ctl solid cta" to="/signup">Start automating</Link>
                 <button className="ctl fl-watch" type="button">Watch 12s</button>
               </div>
+              <ol className="mono setup-strip" aria-label="Setup in three steps">
+                <li><b>01</b> Install the app</li>
+                <li><b>02</b> Add your AI key</li>
+                <li><b>03</b> Type the task</li>
+              </ol>
             </div>
           </div>
         </section>
@@ -386,6 +421,102 @@ export default function HomePage() {
               </ol>
               <p className="mono live-note">Illustrative feed · stock footage</p>
             </aside>
+          </div>
+        </section>
+
+        <section className="farm" id="dashboard" data-label="Phone farm control" aria-labelledby="farm-title">
+          <div className="farm-head">
+            <p className="mono farm-eyebrow">Phone farm control</p>
+            <h2 className="display" id="farm-title">
+              Your phone farm.
+              <br />
+              <em>One dashboard.</em>
+            </h2>
+            <p>
+              Install the FLEET app on every phone in your farm and pair it with a code. It shows up in your dashboard,
+              and from there the AI runs them: you type what you want, it plans the run, you confirm.
+            </p>
+          </div>
+          <div className="farm-body">
+            <figure className="farm-shot">
+              <div className="farm-bar" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <span className="mono">app.vectoragent.in / mission-control</span>
+              </div>
+              <div className="farm-img fl-farm-img">
+                <div className="farm-ph mono" aria-hidden="true">
+                  <span>Dashboard screenshot</span>
+                  <small>Preview · the real screen appears here once approved</small>
+                </div>
+              </div>
+            </figure>
+            <ol className="farm-notes">
+              {FARM.map(([k, title, body]) => (
+                <li key={k}>
+                  <b className="mono">{k}</b>
+                  <span>
+                    <strong className="mono">{title}</strong>
+                    {body}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <p className="mono farm-foot">Install the app · Pair with a code · No ADB, no cable, no root</p>
+        </section>
+
+        <section className="web" id="browser" data-label="Mobile browser" aria-labelledby="web-title">
+          <div className="web-grid">
+            <div className="web-txt">
+              <p className="mono web-eyebrow">Mobile browser</p>
+              <h2 className="display" id="web-title">
+                Control your mobile browser
+                <br />
+                <em>with AI.</em>
+              </h2>
+              <p className="web-lede">
+                Any browser task, typed the way you would ask a person. The AI opens the site in the phone&apos;s own
+                Chrome, reads the page and does the taps, on one phone or every phone in the farm.
+              </p>
+              <ul className="web-list">
+                {BROWSER.map(([title, body]) => (
+                  <li key={title}>
+                    <strong className="mono">{title}</strong>
+                    <span>{body}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <figure className="web-demo" aria-label="Example browser task">
+              <div className="web-ask mono">
+                <span>Task</span>
+                Find the cheapest wireless earbuds under £50
+              </div>
+              <div className="web-phone" aria-hidden="true">
+                <div className="web-url mono">
+                  <i />
+                  google.com/search
+                </div>
+                <div className="web-page">
+                  <b />
+                  <b />
+                  <b className="hit" />
+                  <b />
+                  <b />
+                </div>
+              </div>
+              <ol className="web-log mono">
+                {BROWSER_LOG.map(([verb, text], i) => (
+                  <li key={verb + i} style={{ animationDelay: `${0.4 + i * 0.45}s` }}>
+                    <b>{verb}</b>
+                    {text}
+                  </li>
+                ))}
+              </ol>
+              <figcaption className="mono">Illustrative run</figcaption>
+            </figure>
           </div>
         </section>
 

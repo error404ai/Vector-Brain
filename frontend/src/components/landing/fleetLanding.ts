@@ -45,7 +45,7 @@ export function startFleetLanding(root: HTMLElement): () => void {
   const chapters = [...root.querySelectorAll<HTMLElement>('[data-ch]')];
   const labelled = [...root.querySelectorAll<HTMLElement>('[data-label]')];
   const rail = q('.fl-rail-label'), railN = q('.fl-rail-n'), ixN = q('.fl-ix-n');
-  const runs = q('#runs'), index = q('#index'), how = q('#how'), live = q('#live');
+  const runs = q('#runs'), index = q('#index'), how = q('#how'), live = q('#live'), farm = q('#dashboard'), web = q('#browser');
   let active = -1, railTimer = 0;
   const progress = (el: HTMLElement) => {
     const r = el.getBoundingClientRect();
@@ -79,8 +79,8 @@ export function startFleetLanding(root: HTMLElement): () => void {
       if (railN) railN.textContent = n;
       if (ixN) ixN.textContent = n;
     }
-    // Light header text over the dark sections (live fleet, example runs and the close).
-    const overDark = [live, runs, q('#close')].some((el) => {
+    // Light header text over the dark sections (live fleet, mobile browser, example runs and the close).
+    const overDark = [live, web, runs, q('#close')].some((el) => {
       if (!el) return false;
       const r = el.getBoundingClientRect();
       return r.top < 60 && r.bottom > 60;
@@ -91,7 +91,7 @@ export function startFleetLanding(root: HTMLElement): () => void {
       const r = el.getBoundingClientRect();
       return r.top <= 0 && r.bottom >= window.innerHeight;
     };
-    state.covered = (index ? index.getBoundingClientRect().top <= 0 : false) || fills(how) || fills(live);
+    state.covered = (index ? index.getBoundingClientRect().top <= 0 : false) || fills(how) || fills(live) || fills(farm) || fills(web);
   };
   // "Index 03 / NN": NN follows however many labelled sections the page has.
   const ixTotal = q('.fl-ix-total');
@@ -227,6 +227,17 @@ export function startFleetLanding(root: HTMLElement): () => void {
     });
   }
 
+  // Mobile browser demo: play the action log once, when the section comes into view.
+  if (web && 'IntersectionObserver' in window) {
+    const webIo = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      web.classList.add('in');
+      webIo.disconnect();
+    }, { threshold: 0.3 });
+    webIo.observe(web);
+    cleanups.push(() => webIo.disconnect());
+  } else web?.classList.add('in');
+
   // WebGL scene, loaded after first paint.
   const canvas = q<HTMLCanvasElement>('.fl-gl');
   let scene: FleetScene | null = null;
@@ -247,6 +258,15 @@ export function startFleetLanding(root: HTMLElement): () => void {
   const applyShots = (shots: PublicLandingShot[]) => {
     const one = new Map<string, PublicLandingShot>();
     for (const s of shots) if (!one.has(s.slot)) one.set(s.slot, s);
+    const dash = one.get('dashboard'), farmImg = q('.fl-farm-img');
+    if (dash && farmImg) {
+      const img = document.createElement('img');
+      img.src = publicShotUrl(dash);
+      img.alt = dash.label;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      farmImg.replaceChildren(img);
+    }
     root.querySelectorAll<HTMLCanvasElement>('canvas[data-slot]').forEach((cv) => {
       const shot = one.get(cv.dataset.slot ?? '');
       if (!shot) return;
