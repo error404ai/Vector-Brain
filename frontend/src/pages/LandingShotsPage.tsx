@@ -41,8 +41,8 @@ const SLOT_LABELS: Record<string, string> = {
   'hero-3': 'Hero · phone 3',
   'hero-4': 'Hero · phone 4',
   'hero-5': 'Hero · phone 5',
-  'step-1': 'How it works · 1 Connect',
-  'step-2': 'How it works · 2 Type the task',
+  'step-1': 'How it works · 1 Install the app',
+  'step-2': 'How it works · 2 Add key, type the task',
   'step-3': 'How it works · 3 Watch it run',
   'run-1': 'Example run 1 · Checkout',
   'run-2': 'Example run 2 · Onboarding',
@@ -52,6 +52,8 @@ const SLOT_LABELS: Record<string, string> = {
   'run-6': 'Example run 6 · Rollout',
   fleet: 'Real fleet wall (many)',
   app: 'App pages (many)',
+  dashboard: 'Phone farm · dashboard (wide desktop shot)',
+  browser: 'Mobile browser · phone in Chrome',
 };
 
 type Filter = 'all' | 'phone' | 'page' | 'live' | 'unused';

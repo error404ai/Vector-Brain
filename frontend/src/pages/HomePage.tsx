@@ -494,7 +494,7 @@ export default function HomePage() {
                 <span>Task</span>
                 Find the cheapest wireless earbuds under £50
               </div>
-              <div className="web-phone" aria-hidden="true">
+              <div className="web-phone fl-web-phone" aria-hidden="true">
                 <div className="web-url mono">
                   <i />
                   google.com/search

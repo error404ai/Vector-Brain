@@ -267,6 +267,16 @@ export function startFleetLanding(root: HTMLElement): () => void {
       img.decoding = 'async';
       farmImg.replaceChildren(img);
     }
+    const browserShot = one.get('browser'), webPhone = q('.fl-web-phone');
+    if (browserShot && webPhone) {
+      const img = document.createElement('img');
+      img.src = publicShotUrl(browserShot);
+      img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      webPhone.classList.add('has-shot');
+      webPhone.replaceChildren(img);
+    }
     root.querySelectorAll<HTMLCanvasElement>('canvas[data-slot]').forEach((cv) => {
       const shot = one.get(cv.dataset.slot ?? '');
       if (!shot) return;

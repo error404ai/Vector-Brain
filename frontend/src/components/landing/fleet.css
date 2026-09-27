@@ -359,3 +359,5 @@
 @media (max-width:900px){.fl .web{padding-inline:var(--g)}.fl .web-grid{grid-template-columns:1fr}}
 @media (max-width:560px){.fl .web-list{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.fl .web-log li{animation:none;opacity:1}.fl .web-page b.hit::after{animation:none}}
+.fl .web-phone.has-shot{display:block;background:#000}
+.fl .web-phone.has-shot img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}

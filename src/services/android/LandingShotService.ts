@@ -17,6 +17,7 @@ export const LANDING_SLOTS = [
   'step-1', 'step-2', 'step-3',
   'run-1', 'run-2', 'run-3', 'run-4', 'run-5', 'run-6',
   'fleet', 'app',
+  'dashboard', 'browser',
 ] as const;
 export type LandingSlot = (typeof LANDING_SLOTS)[number];
 const MULTI_SLOTS = new Set<string>(['fleet', 'app']);
