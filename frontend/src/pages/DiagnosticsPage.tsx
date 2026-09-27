@@ -1,11 +1,13 @@
 import PageHeader, { HeaderActions } from '@/components/ui/PageHeader';
 import {
   downloadDiagnosticsExport,
+  useGetClientReportsQuery,
   useGetDiagnosticsRunQuery,
   useGetDiagnosticsRunsQuery,
   useGetDiagnosticsSummaryQuery,
   useGetDiagnosticsSyncQuery,
   useSyncDiagnosticsNowMutation,
+  type ClientReport,
   type DiagnosticsRun,
   type DiagnosticsStep,
   type DiagnosticsSummary,
@@ -265,6 +267,8 @@ export default function DiagnosticsPage() {
               </ScrollTable>
             </Card>
           ) : null}
+
+          <BrowserReports days={days} />
 
           <Card variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
@@ -570,6 +574,135 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
           ))}
         </TableBody>
       </ScrollTable>
+    </Card>
+  );
+}
+
+const REPORT_LABEL: Record<string, { label: string; color: 'error' | 'warning' | 'default' | 'info' }> = {
+  unclean_exit: { label: 'Page crashed / killed', color: 'error' },
+  stuck_loader: { label: 'Stuck loader', color: 'warning' },
+  render_error: { label: 'Render error', color: 'error' },
+  js_error: { label: 'JS error', color: 'warning' },
+  unhandled_rejection: { label: 'Promise error', color: 'warning' },
+  manual: { label: 'Manual', color: 'info' },
+};
+
+type Snap = {
+  page?: string;
+  since_boot_s?: number;
+  memory?: { used_mb: number; limit_mb: number } | null;
+  data_images?: number;
+  data_image_mb?: number;
+  dom_nodes?: number;
+  ws?: { frames?: number; frame_mb?: number; last_frame_s_ago?: number | null; opened?: number; closed?: number };
+  long_tasks?: { count: number; total_ms: number };
+  pending?: { method: string; path: string; age_s: number }[];
+  auth?: Record<string, unknown> | null;
+};
+
+function browserName(ua: string | null): string {
+  if (!ua) return '–';
+  const edge = /Edg\/(\d+)/.exec(ua);
+  if (edge) return `Edge ${edge[1]}`;
+  const chrome = /Chrome\/(\d+)/.exec(ua);
+  if (chrome) return `Chrome ${chrome[1]}${/Mobile/.test(ua) ? ' mobile' : ''}`;
+  const firefox = /Firefox\/(\d+)/.exec(ua);
+  if (firefox) return `Firefox ${firefox[1]}`;
+  if (/Safari\//.test(ua)) return `Safari${/Mobile/.test(ua) ? ' mobile' : ''}`;
+  return ua.slice(0, 24);
+}
+
+/** The few facts that usually explain a report, in one line. */
+function reportFacts(r: ClientReport): string {
+  const p = (r.payload ?? {}) as Record<string, unknown>;
+  const snap = ((r.kind === 'unclean_exit' ? p.last_snapshot : p.snapshot) ?? null) as Snap | null;
+  const bits: string[] = [];
+  if (r.kind === 'unclean_exit') {
+    if (p.was_discarded) bits.push('Chrome discarded the tab (memory)');
+    if (p.was_hidden) bits.push('tab was in background');
+    if (typeof p.previous_lifetime_s === 'number') bits.push(`died after ${p.previous_lifetime_s}s`);
+  }
+  if (r.kind === 'stuck_loader') {
+    if (typeof p.after_s === 'number') bits.push(`loader up ${p.after_s}s`);
+    if (typeof p.recovered_after_s === 'number') bits.push(`went away after ${p.recovered_after_s}s`);
+  }
+  if (typeof p.message === 'string') bits.push(p.message.slice(0, 120));
+  if (snap?.memory) bits.push(`heap ${snap.memory.used_mb}/${snap.memory.limit_mb} MB`);
+  if (snap?.ws?.frames) bits.push(`${snap.ws.frames} frames (${snap.ws.frame_mb ?? 0} MB)`);
+  if (snap?.data_images) bits.push(`${snap.data_images} inline images (${snap.data_image_mb ?? 0} MB)`);
+  if (snap?.long_tasks?.count) bits.push(`${snap.long_tasks.count} long tasks`);
+  if (snap?.pending?.length) bits.push(`${snap.pending.length} requests pending`);
+  if (snap?.auth && snap.auth.auth_initialized === false) bits.push('auth not initialized');
+  if (snap?.auth && snap.auth.has_token === false) bits.push('no token');
+  return bits.join(' · ') || '–';
+}
+
+function BrowserReports({ days }: { days: number }) {
+  const { data, isLoading } = useGetClientReportsQuery(days, { pollingInterval: 60_000 });
+  const [open, setOpen] = useState<ClientReport | null>(null);
+  const reports = data?.data ?? [];
+  return (
+    <Card variant="outlined" sx={{ p: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+        Browser reports
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        Page crashes, stuck loaders and errors caught in users' browsers, with what the page was doing at that moment. Open one for the full snapshot.
+      </Typography>
+      {isLoading ? (
+        <Skeleton variant="rounded" height={80} />
+      ) : !reports.length ? (
+        <Typography variant="body2" color="text.secondary">
+          No browser problems recorded in this period.
+        </Typography>
+      ) : (
+        <ScrollTable>
+          <TableHead>
+            <TableRow>
+              <TableCell>When</TableCell>
+              <TableCell>Problem</TableCell>
+              <TableCell>Page</TableCell>
+              <TableCell>Browser</TableCell>
+              <TableCell>What we know</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {reports.map((r) => {
+              const meta = REPORT_LABEL[r.kind] ?? { label: r.kind, color: 'default' as const };
+              return (
+                <TableRow key={r.id} hover onClick={() => setOpen(r)} sx={{ cursor: 'pointer' }}>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{new Date(r.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}</TableCell>
+                  <TableCell>
+                    <Chip size="small" variant="outlined" color={meta.color} label={meta.label} />
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.page ?? '–'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{browserName(r.user_agent)}</TableCell>
+                  <TableCell sx={{ maxWidth: 420 }}>
+                    <Typography variant="body2" noWrap title={reportFacts(r)}>
+                      {reportFacts(r)}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </ScrollTable>
+      )}
+      <Dialog open={open !== null} onClose={() => setOpen(null)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ pr: 6 }}>
+          {open ? `${REPORT_LABEL[open.kind]?.label ?? open.kind} · #${open.id}` : ''}
+          <IconButton onClick={() => setOpen(null)} sx={{ position: 'absolute', right: 12, top: 12 }} aria-label="Close">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {open ? (
+            <Box component="pre" sx={{ m: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, monospace' }}>
+              {JSON.stringify({ page: open.page, user_agent: open.user_agent, app_version: open.app_version, tab_id: open.tab_id, user_id: open.user_id, ...open.payload }, null, 2)}
+            </Box>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

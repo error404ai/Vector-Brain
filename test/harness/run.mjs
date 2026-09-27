@@ -2191,6 +2191,50 @@ const scenarios = [
     },
   },
   {
+    name: 'browser reports: the web app can report a crash, only the owner reads them, and they are in the export',
+    async run() {
+      const post = (body, headers = {}) =>
+        fetch(`${BASE}/api/client-reports`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '10.9.9.9', ...headers }, body: JSON.stringify(body) });
+      const blob = 'A'.repeat(5000);
+      const anon = await post({ kind: 'unclean_exit', page: '/mission-control', tab_id: 'tab1', payload: { gap_since_last_heartbeat_s: 4, last_snapshot: { ws: { frames: 120 }, img: `data:image/jpeg;base64,${blob}` } } });
+      if (!anon.ok) return `anonymous report refused: ${anon.status}`;
+      const signed = await post({ kind: 'stuck_loader', page: '/mission-control', payload: { after_s: 10 } }, { Authorization: `Bearer ${userToken}` });
+      if (!signed.ok) return `signed-in report refused: ${signed.status}`;
+      const expired = await post({ kind: 'js_error', payload: { message: 'x' } }, { Authorization: 'Bearer not-a-real-token' });
+      if (!expired.ok) return `report with a stale token refused: ${expired.status}`;
+      if ((await post({ kind: 'drop_table', payload: {} })).status !== 400) return 'unknown report kind was accepted';
+
+      let blocked = false;
+      try {
+        await api('GET', '/diagnostics/client-reports?days=1');
+      } catch (error) {
+        blocked = /403/.test(error.message);
+      }
+      if (!blocked) return 'a normal account could read browser reports';
+
+      const ownerToken = jwt.sign({ userId, email: 'harness@test.local', role: 'admin' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const asOwner = (url) => fetch(`${BASE}/api${url}`, { headers: { Authorization: `Bearer ${ownerToken}` } });
+      const list = (await (await asOwner('/diagnostics/client-reports?days=1')).json()).data;
+      const crash = list.find((r) => r.kind === 'unclean_exit');
+      if (!crash || crash.page !== '/mission-control' || crash.user_id !== null) return `crash report not listed right: ${JSON.stringify(list).slice(0, 200)}`;
+      if (JSON.stringify(crash.payload).includes(blob)) return 'an image blob was stored';
+      if (crash.payload?.last_snapshot?.ws?.frames !== 120) return 'report payload lost its facts';
+      if (list.find((r) => r.kind === 'stuck_loader')?.user_id !== userId) return 'signed-in report not tied to its user';
+
+      const gz = Buffer.from(await (await asOwner('/diagnostics/export?days=1')).arrayBuffer());
+      const lines = zlib.gunzipSync(gz).toString('utf8').trim().split('\n').map((l) => JSON.parse(l));
+      if (!lines.some((l) => l.t === 'client_report' && l.kind === 'unclean_exit')) return 'export has no browser reports';
+
+      // A spoofed X-Forwarded-For does not get around the per-IP limit.
+      let limited = false;
+      for (let i = 0; i < 70 && !limited; i += 1) {
+        const res = await post({ kind: 'manual', payload: { i } }, { 'X-Forwarded-For': `1.2.3.${i}, 10.9.9.9` });
+        limited = res.status === 429;
+      }
+      if (!limited) return 'reports were never rate limited';
+    },
+  },
+  {
     name: 'engines: Eko and Vector both finish a task through the real model loop',
     async run() {
       llm.mode = 'normal';

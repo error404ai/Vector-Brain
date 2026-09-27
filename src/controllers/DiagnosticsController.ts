@@ -1,5 +1,6 @@
 import { assertOwner, AuthUser } from '@/helpers/ownerAccess';
 import { DiagnosticsSyncService } from '@/services/android/DiagnosticsSyncService';
+import { ClientReportService } from '@/services/ClientReportService';
 import { clampDays, RunDiagnosticsService } from '@/services/android/RunDiagnosticsService';
 import { Response } from 'express';
 import { Authorized, CurrentUser, Get, JsonController, Param, Post, QueryParam, Res } from 'routing-controllers';
@@ -18,7 +19,15 @@ export class DiagnosticsController {
   constructor(
     private diagnostics: RunDiagnosticsService,
     private sync: DiagnosticsSyncService,
+    private clientReports: ClientReportService,
   ) {}
+
+  /** What browsers reported about themselves: unclean exits, stuck loaders, JS/render errors. */
+  @Get('/client-reports')
+  async listClientReports(@QueryParam('days') days: number, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.clientReports.list(clampDays(days)) };
+  }
 
   @Get('/summary')
   async summary(@QueryParam('days') days: number, @CurrentUser({ required: true }) user: AuthUser) {

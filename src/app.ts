@@ -34,6 +34,7 @@ import { BrowserWorkerErrorController } from './controllers/BrowserWorkerErrorCo
 import { DashboardController } from './controllers/DashboardController';
 import { LandingShotController, PublicLandingShotController } from './controllers/LandingShotController';
 import { DiagnosticsController } from './controllers/DiagnosticsController';
+import { ClientReportController } from './controllers/ClientReportController';
 import { HealthController } from './controllers/HealthController';
 import { PromptController } from './controllers/PromptController';
 import { FlowController } from './controllers/FlowController';
@@ -105,6 +106,7 @@ useExpressServer(app, {
     BrowserWorkerErrorController,
     DashboardController,
     DiagnosticsController,
+    ClientReportController,
     HealthController,
     LandingShotController,
     PublicLandingShotController,

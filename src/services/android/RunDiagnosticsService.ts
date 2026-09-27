@@ -1,6 +1,7 @@
 import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
+import { ClientReport } from '@/entities/ClientReport';
 import { Mission } from '@/entities/Mission';
 import { MissionItem } from '@/entities/MissionItem';
 import { SavedFlow } from '@/entities/SavedFlow';
@@ -431,6 +432,20 @@ export class RunDiagnosticsService {
       }
     }
 
+    // Browser-side failures in the same window (see ClientReport).
+    const reportQuery = AppDataSource.getRepository(ClientReport)
+      .createQueryBuilder('r')
+      .where('r.created_at >= :from', { from: await this.toDbClock(from) });
+    if (to) reportQuery.andWhere('r.created_at < :to', { to: await this.toDbClock(to) });
+    const reports = await reportQuery.orderBy('r.id', 'ASC').limit(2000).getMany();
+    for (const r of reports) {
+      await write({
+        t: 'client_report', id: r.id, user: r.user_id ? clean.hash(r.user_id) : null, kind: r.kind, page: r.page, tab: r.tab_id,
+        user_agent: r.user_agent, app_version: r.app_version, at: r.created_at,
+        payload: r.payload ? scrubbedJson(clean, r.payload) : null,
+      });
+    }
+
     out.off('error', onError);
     return { tasks: tasks.length, steps: stepCount };
   }
@@ -486,6 +501,17 @@ export function normalisePrompt(prompt: unknown): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
+}
+
+/** Scrubs every string inside a stored JSON value; numbers (timestamps, sizes) stay numbers. */
+function scrubbedJson(clean: DiagnosticsSanitizer, value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[deep]';
+  if (typeof value === 'string') return clean.scrub(value, 2000);
+  if (Array.isArray(value)) return value.slice(0, 200).map((v) => scrubbedJson(clean, v, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, scrubbedJson(clean, v, depth + 1)]));
+  }
+  return value;
 }
 
 function round(value: number): number {

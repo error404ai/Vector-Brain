@@ -120,6 +120,18 @@ export interface SyncState {
   last_error: string | null;
 }
 
+export interface ClientReport {
+  id: number;
+  user_id: number | null;
+  kind: string;
+  page: string | null;
+  tab_id: string | null;
+  user_agent: string | null;
+  app_version: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tag types are not declared centrally (same as the other services)
 const TAG = 'DIAGNOSTICS' as any;
 
@@ -141,6 +153,10 @@ export const diagnosticsService = baseApi.injectEndpoints({
       query: () => ({ url: '/diagnostics/sync', method: 'GET' }),
       providesTags: [TAG],
     }),
+    getClientReports: builder.query<{ data: ClientReport[] }, number>({
+      query: (days) => ({ url: `/diagnostics/client-reports?days=${days}`, method: 'GET' }),
+      providesTags: [TAG],
+    }),
     syncDiagnosticsNow: builder.mutation<{ data: SyncState }, void>({
       query: () => ({ url: '/diagnostics/sync', method: 'POST' }),
       invalidatesTags: [TAG],
@@ -154,6 +170,7 @@ export const {
   useGetDiagnosticsRunQuery,
   useGetDiagnosticsSyncQuery,
   useSyncDiagnosticsNowMutation,
+  useGetClientReportsQuery,
 } = diagnosticsService;
 
 /** The export needs the bearer token, so it is fetched as a blob and saved. */
