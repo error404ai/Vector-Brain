@@ -4,7 +4,8 @@ import type { AndroidAgent } from '../eko/AndroidAgent';
 import { VectorEngine } from './VectorEngine';
 
 type Chunk = Record<string, unknown>;
-type Response = Chunk[] | Error;
+type Slow = { chunks: Chunk[]; initialDelayInMs?: number; chunkDelayInMs?: number };
+type Response = Chunk[] | Error | Slow;
 
 const usage = { inputTokens: 1200, outputTokens: 40, totalTokens: 1240 };
 const toolCall = (toolName: string, input: unknown, id = 'call_0'): Chunk[] => [
@@ -23,6 +24,27 @@ function scriptedModel(responses: Response[]) {
       const next = responses.shift();
       if (!next) throw new Error('script exhausted');
       if (next instanceof Error) throw next;
+      if (!Array.isArray(next)) {
+        const stream = simulateReadableStream({ chunks: next.chunks as never[], initialDelayInMs: next.initialDelayInMs, chunkDelayInMs: next.chunkDelayInMs });
+        // Like a real HTTP stream: stops when the request is aborted.
+        const reader = stream.getReader();
+        const signal = options.abortSignal;
+        return {
+          stream: new ReadableStream({
+            async pull(controller) {
+              if (signal?.aborted) return controller.error(signal.reason);
+              const aborted = new Promise<never>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+              try {
+                const { done: finished, value } = await Promise.race([reader.read(), aborted]);
+                if (finished) controller.close();
+                else controller.enqueue(value);
+              } catch (error) {
+                controller.error(error);
+              }
+            },
+          }),
+        };
+      }
       return { stream: simulateReadableStream({ chunks: next as never[] }) };
     },
     doGenerate: async (options) => {
@@ -182,5 +204,36 @@ describe('VectorEngine', () => {
     const on = new VectorEngine({ model, agent, vision: false, planner: true, verify: false, onMessage: async (m) => void seen.push(m as never) });
     await on.run('open YouTube and search lofi', 'p2');
     expect(seen.find((m) => m.type === 'workflow')?.workflow?.nodes).toEqual(['Open YouTube', 'Search lofi']);
+  });
+
+  it('gives up on a model call that goes silent and asks again, without touching the phone twice', async () => {
+    const silent: Slow = { chunks: toolCall('tap_coordinate', { x: 1, y: 1 }), initialDelayInMs: 400 };
+    const { engine, calls, messages } = engineWith([silent, toolCall('tap_coordinate', { x: 1, y: 1 }), done(true, 'ok')], undefined, {
+      verify: false,
+      callIdleMs: 60,
+      callMaxMs: 5000,
+    });
+    const result = await engine.run('tap', 't1');
+    expect(result.success).toBe(true);
+    expect(calls.tap_coordinate).toBe(1);
+    expect(messages.some((m) => m.type === 'thinking' && String(m.text).includes('sent nothing'))).toBe(true);
+  });
+
+  it('cuts off a call that keeps streaming past the limit, and fails clearly when it happens twice', async () => {
+    const rambling = (): Slow => ({
+      chunks: [{ type: 'stream-start', warnings: [] }, { type: 'reasoning-start', id: 'r' }, ...Array.from({ length: 40 }, () => ({ type: 'reasoning-delta', id: 'r', delta: 'hmm ' })), ...done(true, 'x').slice(1)],
+      chunkDelayInMs: 20,
+    });
+    const { engine, calls } = engineWith([rambling(), rambling()], undefined, { verify: false, callIdleMs: 1000, callMaxMs: 150 });
+    await expect(engine.run('tap', 't2')).rejects.toThrow(/did not finish answering within .*twice in a row/);
+    expect(calls.tap_coordinate).toBeUndefined();
+  });
+
+  it('a user abort during a slow call still reads as an abort, not a timeout', async () => {
+    const slow: Slow = { chunks: done(true, 'x'), initialDelayInMs: 500 };
+    const { engine } = engineWith([slow], undefined, { verify: false, callIdleMs: 5000, callMaxMs: 5000 });
+    const running = engine.run('tap', 't3');
+    setTimeout(() => engine.abort('Task cancelled by user'), 50);
+    await expect(running).resolves.toMatchObject({ stopReason: 'abort' });
   });
 });

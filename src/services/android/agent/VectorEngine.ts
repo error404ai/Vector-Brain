@@ -21,6 +21,10 @@ export interface VectorEngineOptions {
   temperature?: number;
   /** Model calls allowed for one round; the planner's step limit usually stops a run first. */
   maxModelCalls?: number;
+  /** Abandon a model call that sends nothing for this long (ms). */
+  callIdleMs?: number;
+  /** Abandon a model call that has not finished after this long (ms), even while it streams. */
+  callMaxMs?: number;
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
@@ -28,6 +32,30 @@ const MIN_RECENT_STEPS = 3;
 /** Attempts per model call; only the model request is retried, never a phone action. */
 const MODEL_ATTEMPTS = 3;
 const MAX_VERIFICATION_RETRIES = 1;
+/**
+ * Model call limits. Recorded runs: a call usually takes ~6 s, 1 in 10 over
+ * 23 s, and single calls hung for minutes until the planner's 4-minute
+ * no-action watchdog failed the whole task. A call past these limits is
+ * abandoned and asked again once; two slow attempts plus backoff stay under
+ * that watchdog, so the task gets a clear reason instead of NO_ACTION.
+ */
+export const DEFAULT_CALL_IDLE_MS = 45_000;
+export const DEFAULT_CALL_MAX_MS = 90_000;
+const TIMEOUT_ATTEMPTS = 2;
+/** Planning and the completion judge are short calls. */
+const SIDE_CALL_MAX_MS = 60_000;
+
+/** A model call abandoned for taking too long. Nothing on the phone was touched. */
+export class ModelCallTimeout extends Error {
+  constructor(readonly kind: 'idle' | 'total', readonly afterMs: number) {
+    super(
+      kind === 'idle'
+        ? `The AI model sent nothing for ${Math.round(afterMs / 1000)} s`
+        : `The AI model did not finish answering within ${Math.round(afterMs / 1000)} s`,
+    );
+    this.name = 'ModelCallTimeout';
+  }
+}
 
 /**
  * Actions that change something on the phone. If the phone does not confirm
@@ -271,13 +299,24 @@ export class VectorEngine implements AgentEngine {
     emit: (message: Record<string, unknown>) => Promise<void>,
   ): Promise<ModelTurn> {
     let lastError: unknown;
+    let timeouts = 0;
     for (let attempt = 1; attempt <= MODEL_ATTEMPTS; attempt += 1) {
       if (signal.aborted) throw new Error('aborted');
       try {
         return await this.streamOnce(system, messages, signal, emit);
       } catch (error) {
         lastError = error;
-        if (signal.aborted || !isRetryable(error) || attempt === MODEL_ATTEMPTS) throw error;
+        if (signal.aborted) throw error;
+        if (error instanceof ModelCallTimeout) {
+          timeouts += 1;
+          if (timeouts >= TIMEOUT_ATTEMPTS) {
+            throw new Error(`${error.message}, twice in a row. The model is too slow right now; try again or switch to a faster model.`);
+          }
+          Logger.warn(`[VectorEngine] ${error.message}; asking again (nothing was sent to the phone).`);
+          await emit({ type: 'thinking', text: `${error.message}. Asking again…` });
+          continue;
+        }
+        if (!isRetryable(error) || attempt === MODEL_ATTEMPTS) throw error;
         const wait = 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 500);
         Logger.warn(`[VectorEngine] Model call failed (attempt ${attempt}/${MODEL_ATTEMPTS}), retrying in ${wait}ms: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
         await new Promise((resolve) => setTimeout(resolve, wait));
@@ -291,6 +330,45 @@ export class VectorEngine implements AgentEngine {
     messages: ReturnType<typeof buildContext>['messages'],
     signal: AbortSignal,
     emit: (message: Record<string, unknown>) => Promise<void>,
+  ): Promise<ModelTurn> {
+    const idleMs = this.options.callIdleMs ?? DEFAULT_CALL_IDLE_MS;
+    const maxMs = this.options.callMaxMs ?? DEFAULT_CALL_MAX_MS;
+    // This attempt's own switch: the run's abort still reaches it, and a slow
+    // attempt can be cut off without aborting the run.
+    const attempt = new AbortController();
+    let timedOut: ModelCallTimeout | null = null;
+    const cutOff = (kind: 'idle' | 'total', afterMs: number) => {
+      if (timedOut || attempt.signal.aborted) return;
+      timedOut = new ModelCallTimeout(kind, afterMs);
+      attempt.abort(timedOut);
+    };
+    const onRunAbort = () => attempt.abort(signal.reason);
+    if (signal.aborted) attempt.abort(signal.reason);
+    else signal.addEventListener('abort', onRunAbort, { once: true });
+    const totalTimer = setTimeout(() => cutOff('total', maxMs), maxMs);
+    let idleTimer = setTimeout(() => cutOff('idle', idleMs), idleMs);
+    const alive = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => cutOff('idle', idleMs), idleMs);
+    };
+    try {
+      return await this.readStream(system, messages, attempt.signal, emit, alive);
+    } catch (error) {
+      if (timedOut) throw timedOut;
+      throw error;
+    } finally {
+      clearTimeout(totalTimer);
+      clearTimeout(idleTimer);
+      signal.removeEventListener('abort', onRunAbort);
+    }
+  }
+
+  private async readStream(
+    system: string,
+    messages: ReturnType<typeof buildContext>['messages'],
+    signal: AbortSignal,
+    emit: (message: Record<string, unknown>) => Promise<void>,
+    alive: () => void,
   ): Promise<ModelTurn> {
     const result = streamText({
       model: this.options.model,
@@ -314,6 +392,7 @@ export class VectorEngine implements AgentEngine {
       if (turn.text) await emit({ type: 'text', text: turn.text });
     };
     for await (const part of result.fullStream) {
+      alive();
       switch (part.type) {
         case 'reasoning-delta':
           turn.reasoning += part.text;
@@ -388,7 +467,7 @@ export class VectorEngine implements AgentEngine {
         maxOutputTokens: 600,
         temperature: 0.1,
         maxRetries: 2,
-        abortSignal: signal,
+        abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
       });
       await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0 } });
       const nodes = text
@@ -427,7 +506,7 @@ export class VectorEngine implements AgentEngine {
             maxOutputTokens: 300,
             temperature: 0,
             maxRetries: 2,
-            abortSignal: signal,
+            abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
           });
           // The check's own model call counts in the run's totals.
           await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0 } });

@@ -92,6 +92,8 @@ async function startBackend() {
   backendRuns += 1;
   const out = fs.openSync(path.join(logDir, `backend-${backendRuns}.log`), 'w');
   // Run-diagnostics sync points at the fake GitHub below.
+  // Short model-call limits so the Vector timeout scenarios finish in seconds.
+  Object.assign(env, { VECTOR_CALL_IDLE_MS: '3000', VECTOR_CALL_MAX_MS: '6000' });
   const diag = { DIAG_GITHUB_REPO: 'harness/diagnostics', DIAG_GITHUB_TOKEN: 'harness-token', DIAG_GITHUB_API: 'http://127.0.0.1:4701' };
   backend = spawn(process.execPath, ['dist/app.js'], { cwd: root, env: { ...process.env, ...env, ...diag }, stdio: ['ignore', out, out] });
   const started = Date.now();
@@ -183,7 +185,7 @@ const githubServer = http.createServer((req, res) => {
 // Fake OpenAI-compatible model for scenarios that run the real engines ([llm]
 // in the prompt skips simulation). Opens YouTube, then finishes: task_done on
 // the Vector engine, a plain answer on Eko.
-const llm = { requests: [], mode: 'normal', limited: false };
+const llm = { requests: [], mode: 'normal', limited: false, hung: false };
 const EKO_PLAN = '<root>\n<name>Open YouTube</name>\n<thought>One app launch.</thought>\n<agents>\n<agent name="AndroidAgent" id="0" dependsOn="">\n<task>Open YouTube</task>\n<nodes>\n<node>open_app com.google.android.youtube</node>\n</nodes>\n</agent>\n</agents>\n</root>';
 const llmServer = http.createServer((req, res) => {
   let body = '';
@@ -199,6 +201,11 @@ const llmServer = http.createServer((req, res) => {
       res.end(JSON.stringify(payload));
     };
     if (kind === 'agent' && llm.mode === 'slow') await sleep(8000);
+    // Never answers (the client gives up and closes the request).
+    if (kind === 'agent' && (llm.mode === 'hang' || (llm.mode === 'hang-once' && !llm.hung))) {
+      llm.hung = true;
+      return;
+    }
     const toolMessages = llm.requests.at(-1).toolMessages;
     if (kind === 'agent' && llm.mode === 'rate-limit-once' && toolMessages >= 1 && !llm.limited) {
       llm.limited = true;
@@ -2274,6 +2281,35 @@ const scenarios = [
       if (run.done.status !== 'SUCCEEDED') return `run ${run.done.status}/${run.done.reason_code}: ${String(run.done.message).slice(0, 160)}`;
       const opens = run.actions.filter((a) => a === 'OpenApp').length;
       if (opens !== 1) return `OpenApp sent ${opens} times after a model retry`;
+    },
+  },
+  {
+    name: 'engines: Vector gives up on a model call that never answers and asks again, phone action sent once',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      llm.mode = 'hang-once';
+      llm.hung = false;
+      const run = await runWithEngine('vector', 'free2', 'open youtube [llm]');
+      llm.mode = 'normal';
+      if (!run.done) return 'run never finished';
+      if (!llm.hung) return 'the fake model never hung';
+      if (run.done.status !== 'SUCCEEDED') return `run ${run.done.status}/${run.done.reason_code}: ${String(run.done.message).slice(0, 160)}`;
+      const opens = run.actions.filter((a) => a === 'OpenApp').length;
+      if (opens !== 1) return `OpenApp sent ${opens} times`;
+    },
+  },
+  {
+    name: 'engines: a model that never answers fails the Vector run as LLM_SLOW, well before the 4-minute watchdog',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      llm.mode = 'hang';
+      const startedAt = Date.now();
+      const run = await runWithEngine('vector', 'free2', 'open youtube [llm]');
+      llm.mode = 'normal';
+      if (!run.done) return 'run never finished';
+      if (run.done.status !== 'FAILED' || run.done.reason_code !== 'LLM_SLOW') return `ended ${run.done.status}/${run.done.reason_code}: ${String(run.done.message).slice(0, 160)}`;
+      if (Date.now() - startedAt > 30_000) return `took ${Math.round((Date.now() - startedAt) / 1000)}s to give up`;
+      if (run.actions.includes('OpenApp')) return 'a phone action was sent without a model answer';
     },
   },
   {

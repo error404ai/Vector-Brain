@@ -1385,6 +1385,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
             onMessage: handleMessage,
             vision,
             planner: engineSettings.planner,
+            // Unset in production (engine defaults apply); the harness shortens them.
+            callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
+            callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
           })
         : new EkoEngine(this.buildEkoLlms(aiConfig), androidAgent, handleMessage);
     const activeEngine = engine;
