@@ -4,7 +4,7 @@ import { AppDataSource } from '@/loaders/database';
 import { Service } from 'typedi';
 import { MoreThanOrEqual } from 'typeorm';
 
-export const CLIENT_REPORT_KINDS = new Set(['unclean_exit', 'stuck_loader', 'js_error', 'unhandled_rejection', 'render_error', 'manual']);
+export const CLIENT_REPORT_KINDS = new Set(['unclean_exit', 'stuck_loader', 'js_error', 'unhandled_rejection', 'render_error', 'main_thread_stall', 'manual']);
 
 /** A report is diagnostic context, not a data dump. */
 const MAX_PAYLOAD_BYTES = 48 * 1024;

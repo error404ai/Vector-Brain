@@ -6,6 +6,8 @@
  *   finds its last heartbeat never marked clean). A normal reload, navigation
  *   or close fires `pagehide` and is not reported.
  * - stuck_loader: the full-screen loader stayed up for more than 10 s.
+ * - main_thread_stall: the page froze. Reported by a worker while it is still
+ *   frozen (8 s+), and by the page itself once it runs again (10 s+ late beat).
  * - js_error / unhandled_rejection / render_error.
  *
  * Every report carries a snapshot: page, time since boot, memory where the
@@ -152,52 +154,171 @@ async function flush(): Promise<void> {
   }
 }
 
+/** This page load. The live record is keyed by tab and load, so two tabs that
+ * share a tab id (Chrome copies sessionStorage into a duplicated tab) never
+ * overwrite each other's record. */
+const instanceId = `${bootAt.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const liveKey = () => `${LIVE_PREFIX}${tabId}:${instanceId}`;
+/** A visible page's heartbeat that comes this late means its main thread was stuck. */
+const STALL_REPORT_MS = 10_000;
+let lastBeatAt = 0;
+let lastBeatPerf = 0;
+let hiddenSinceLastBeat = false;
+let longestStallMs = 0;
+
+type LiveRecord = { clean: boolean; lastBeat: number; bootAt: number; app_version?: string; hidden?: boolean; snapshot?: Snapshot | null; longest_stall_s?: number };
+
 function heartbeat(clean = false): void {
   // On navigation `visibilitychange` fires after `pagehide`; without this it
   // would overwrite the clean mark and every reload would look like a crash.
   if (leaving && !clean) return;
+  const now = Date.now();
+  const perfNow = performance.now();
+  if (lastBeatAt && !clean) {
+    const gap = now - lastBeatAt;
+    // A beat is due every 3 s. Much later while the page stayed visible: the
+    // main thread was blocked (a hang), unless the whole machine slept — then
+    // the monotonic clock usually shows a much smaller gap, so both are sent.
+    if (!hiddenSinceLastBeat && gap > STALL_REPORT_MS) {
+      longestStallMs = Math.max(longestStallMs, gap);
+      report('main_thread_stall', { from: 'page', recovered: true, stalled_s: Math.round(gap / 1000), monotonic_s: Math.round((perfNow - lastBeatPerf) / 1000) });
+    }
+  }
+  lastBeatAt = now;
+  lastBeatPerf = perfNow;
+  hiddenSinceLastBeat = document.visibilityState === 'hidden';
+  const snap = clean ? null : snapshot();
   safe(
     () =>
       localStorage.setItem(
-        `${LIVE_PREFIX}${tabId}`,
-        JSON.stringify({ clean, lastBeat: Date.now(), bootAt, app_version: appVersion(), hidden: document.visibilityState === 'hidden', snapshot: clean ? null : snapshot() }),
+        liveKey(),
+        JSON.stringify({
+          clean,
+          lastBeat: now,
+          bootAt,
+          app_version: appVersion(),
+          hidden: document.visibilityState === 'hidden',
+          longest_stall_s: Math.round(longestStallMs / 1000),
+          snapshot: snap,
+        } satisfies LiveRecord),
       ),
     undefined,
   );
+  watchdog?.postMessage({ type: 'beat', hidden: document.visibilityState === 'hidden', snapshot: snap, leaving: clean });
+}
+
+/** Longer than one heartbeat, so a live sibling tab is seen beating. */
+const CHECK_PREVIOUS_AFTER_MS = 4000;
+
+/** How long a page must be silent before it counts as dead, by what it last said. */
+function deadAfterMs(rec: LiveRecord): number {
+  // Hidden tabs can be throttled to one timer a minute.
+  return rec.hidden ? 180_000 : 15_000;
 }
 
 function checkPreviousLife(): void {
-  const key = `${LIVE_PREFIX}${tabId}`;
-  type LiveRecord = { clean: boolean; lastBeat: number; bootAt: number; app_version?: string; hidden?: boolean; snapshot?: Snapshot };
   const navigation = safe(() => (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type ?? null, null);
   // Chrome sets this when it threw the tab away to free memory and is now reloading it.
   const discarded = safe(() => Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded), false);
+  const sameTabPrefix = `${LIVE_PREFIX}${tabId}`;
   const describe = (previous: LiveRecord, sameTab: boolean) => ({
     same_tab: sameTab,
     was_discarded: sameTab ? discarded : null,
     was_hidden: previous.hidden ?? null,
     previous_lifetime_s: Math.round((previous.lastBeat - previous.bootAt) / 1000),
     gap_since_last_heartbeat_s: Math.round((Date.now() - previous.lastBeat) / 1000),
+    previous_longest_stall_s: previous.longest_stall_s ?? null,
     previous_app_version: previous.app_version ?? null,
     navigation_type: sameTab ? navigation : null,
     last_snapshot: previous.snapshot ?? null,
   });
-  const previous = safe(() => JSON.parse(localStorage.getItem(key) ?? 'null') as LiveRecord | null, null);
-  if (previous && !previous.clean) report('unclean_exit', describe(previous, true));
-  else if (discarded) report('unclean_exit', { same_tab: true, was_discarded: true, navigation_type: navigation, last_snapshot: null });
-  // Other tabs: one that stopped beating without closing cleanly died too (for
-  // example the crashed tab was closed instead of reloaded). Hidden tabs can be
-  // throttled to one timer a minute, so only a long silence counts.
-  safe(() => {
-    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+  const read = (k: string) => safe(() => JSON.parse(localStorage.getItem(k) ?? 'null') as LiveRecord | null, null);
+  const keys = safe(() => {
+    const found: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
       const k = localStorage.key(i);
-      if (!k?.startsWith(LIVE_PREFIX) || k === key) continue;
-      const rec = JSON.parse(localStorage.getItem(k) ?? 'null') as LiveRecord | null;
-      const silentFor = rec?.lastBeat ? Date.now() - rec.lastBeat : Infinity;
-      if (rec && !rec.clean && silentFor > 180_000 && silentFor < 86_400_000) report('unclean_exit', describe(rec, false));
-      if (!rec || rec.clean || silentFor > 180_000) localStorage.removeItem(k);
+      if (k?.startsWith(LIVE_PREFIX) && k !== liveKey()) found.push(k);
     }
+    return found;
+  }, [] as string[]);
+  const first = new Map(keys.map((k) => [k, read(k)?.lastBeat ?? 0]));
+  // Decide a little later. The previous page's last write ("closed cleanly")
+  // can reach this page's storage after it has booted when the browser
+  // switched processes, and a sibling tab that is alive keeps beating.
+  setTimeout(() => {
+    let reportedSameTab = false;
+    for (const k of keys) {
+      const rec = read(k);
+      if (!rec) continue;
+      if (rec.clean) {
+        safe(() => localStorage.removeItem(k), undefined);
+        continue;
+      }
+      // Still beating: a live sibling tab (maybe a duplicate sharing our tab id).
+      if (rec.lastBeat !== first.get(k)) continue;
+      const sameTab = k.startsWith(sameTabPrefix);
+      const silentFor = Date.now() - rec.lastBeat;
+      // This tab's previous load cannot still be running, unless it is a hidden
+      // duplicate whose timers are throttled; other tabs must be silent a while.
+      const dead = sameTab && !rec.hidden ? true : silentFor > deadAfterMs(rec);
+      if (!dead) continue;
+      if (silentFor < 86_400_000) {
+        reportedSameTab ||= sameTab;
+        report('unclean_exit', describe(rec, sameTab));
+      }
+      safe(() => localStorage.removeItem(k), undefined);
+    }
+    if (discarded && !reportedSameTab) report('unclean_exit', { same_tab: true, was_discarded: true, navigation_type: navigation, last_snapshot: null });
+  }, CHECK_PREVIOUS_AFTER_MS);
+}
+
+/**
+ * A worker that keeps time while the page cannot: if the page's beats stop
+ * for 8 s while it is visible, the main thread is stuck (an endless loop, a
+ * huge render), and the page itself can report nothing. The worker reports it
+ * directly, with the page's last snapshot.
+ */
+let watchdog: Worker | null = null;
+const WATCHDOG_SOURCE = `
+let last = Date.now(), hidden = false, leaving = false, snapshot = null, reported = false, ctx = null;
+onmessage = (e) => {
+  const m = e.data || {};
+  if (m.type === 'init') { ctx = m; return; }
+  if (m.type === 'beat') {
+    last = Date.now(); hidden = !!m.hidden; leaving = !!m.leaving; reported = false;
+    if (m.snapshot) snapshot = m.snapshot;
+  }
+};
+function send(extra) {
+  fetch(ctx.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true, body: JSON.stringify({
+    kind: 'main_thread_stall', page: ctx.page, tab_id: ctx.tab_id, app_version: ctx.app_version,
+    payload: Object.assign({ snapshot: snapshot, reported_at: new Date().toISOString(), user_agent: ctx.user_agent }, extra),
+  }) }).catch(() => {});
+}
+setInterval(() => {
+  if (!ctx || hidden || leaving || reported) return;
+  const silent = Date.now() - last;
+  if (silent > ${8_000}) { reported = true; send({ from: 'watchdog', recovered: false, frozen_for_s: Math.round(silent / 1000) }); }
+}, 1000);
+`;
+
+function startWatchdog(): void {
+  safe(() => {
+    if (typeof Worker === 'undefined') return;
+    const url = URL.createObjectURL(new Blob([WATCHDOG_SOURCE], { type: 'text/javascript' }));
+    watchdog = new Worker(url);
+    URL.revokeObjectURL(url);
+    watchdog.postMessage({
+      type: 'init',
+      url: new URL('/api/client-reports', window.location.origin).href,
+      page: window.location.pathname,
+      tab_id: tabId,
+      app_version: appVersion(),
+      user_agent: navigator.userAgent,
+    });
   }, undefined);
+  // The page answers every second; the heartbeat carries the snapshot every 3 s.
+  setInterval(() => watchdog?.postMessage({ type: 'beat', hidden: document.visibilityState === 'hidden' }), 1000);
 }
 
 function trackErrors(): void {
@@ -327,6 +448,7 @@ export function startClientDiagnostics(): void {
   trackErrors();
   trackLongTasks();
   checkPreviousLife();
+  startWatchdog();
   heartbeat();
   setInterval(() => heartbeat(), HEARTBEAT_MS);
   setInterval(() => void flush(), 15_000);
@@ -334,7 +456,10 @@ export function startClientDiagnostics(): void {
     leaving = true;
     heartbeat(true);
   });
-  document.addEventListener('visibilitychange', () => heartbeat());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenSinceLastBeat = true;
+    heartbeat();
+  });
   // Back/forward cache restores the page without a new boot: it is alive again.
   window.addEventListener('pageshow', (event) => {
     if ((event as PageTransitionEvent).persisted) {

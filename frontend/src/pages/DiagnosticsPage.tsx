@@ -581,6 +581,7 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
 const REPORT_LABEL: Record<string, { label: string; color: 'error' | 'warning' | 'default' | 'info' }> = {
   unclean_exit: { label: 'Page crashed / killed', color: 'error' },
   stuck_loader: { label: 'Stuck loader', color: 'warning' },
+  main_thread_stall: { label: 'Page froze', color: 'error' },
   render_error: { label: 'Render error', color: 'error' },
   js_error: { label: 'JS error', color: 'warning' },
   unhandled_rejection: { label: 'Promise error', color: 'warning' },
@@ -628,6 +629,11 @@ function reportFacts(r: ClientReport): string {
     if (typeof p.after_s === 'number') bits.push(`loader up ${p.after_s}s`);
     if (typeof p.recovered_after_s === 'number') bits.push(`went away after ${p.recovered_after_s}s`);
   }
+  if (r.kind === 'main_thread_stall') {
+    if (p.recovered === false) bits.push(`frozen ${p.frozen_for_s ?? '?'}s and counting (seen by watchdog)`);
+    else bits.push(`froze ${p.stalled_s ?? '?'}s, then recovered${typeof p.monotonic_s === 'number' && p.monotonic_s < Number(p.stalled_s) / 2 ? ' (likely the computer slept)' : ''}`);
+  }
+  if (r.kind === 'unclean_exit' && typeof p.previous_longest_stall_s === 'number' && p.previous_longest_stall_s > 0) bits.push(`longest freeze before it ${p.previous_longest_stall_s}s`);
   if (typeof p.message === 'string') bits.push(p.message.slice(0, 120));
   if (snap?.memory) bits.push(`heap ${snap.memory.used_mb}/${snap.memory.limit_mb} MB`);
   if (snap?.ws?.frames) bits.push(`${snap.ws.frames} frames (${snap.ws.frame_mb ?? 0} MB)`);

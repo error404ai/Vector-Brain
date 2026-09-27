@@ -53,6 +53,7 @@ import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, 
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import AddIcon from '@mui/icons-material/Add';
+import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
@@ -1618,6 +1619,14 @@ export default function MissionControlPage() {
   // content when they haven't scrolled up to read something. A ref, not state,
   // so a running task's frequent growth doesn't re-render the whole page.
   const stickRef = useRef(true);
+  // Last time the reader scrolled themselves (wheel, touch, keys, scrollbar).
+  // Only their scrolling may unpin the thread: scroll events that come from our
+  // own scrollTo, a smooth scroll still under way, or content loading in must
+  // not, or a reload can stop following half-way and be left high up the chat.
+  const userScrollAtRef = useRef(0);
+  // History just replaced the turns: land on the latest at once, not smoothly.
+  const jumpRef = useRef(true);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
 
@@ -1743,6 +1752,8 @@ export default function MissionControlPage() {
   if (historyData && !fetchingHistory && matches && loadedFor !== wantKey) {
     setLoadedFor(wantKey);
     if (conversationId === null && gotId) setConversationId(gotId);
+    jumpRef.current = true;
+    stickRef.current = true;
     setTurns(
       historyData.data.turns.map((t): ChatTurn =>
         t.role === 'user' ? { id: `h${t.id}`, role: 'user', text: t.text } : { id: `h${t.id}`, role: 'assistant', reply: t.reply },
@@ -1769,6 +1780,7 @@ export default function MissionControlPage() {
     setConversationId(id);
     setTurns([]);
     setLoadedFor(null);
+    jumpRef.current = true;
   };
 
   const removeConversation = async (id: number) => {
@@ -1794,7 +1806,18 @@ export default function MissionControlPage() {
   const onThreadScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (atBottom) stickRef.current = true;
+    else if (Date.now() - userScrollAtRef.current < 1500) stickRef.current = false;
+    setAwayFromBottom(!stickRef.current && !atBottom);
+  };
+  const noteUserScroll = () => {
+    userScrollAtRef.current = Date.now();
+  };
+  const jumpToLatest = () => {
+    stickRef.current = true;
+    setAwayFromBottom(false);
+    scrollToBottom(true);
   };
   // Follow the conversation as it grows — a running task keeps adding screens,
   // steps and phone tiles without a new turn, and ChatGPT-style we stay at the
@@ -1810,8 +1833,15 @@ export default function MissionControlPage() {
     ro.observe(content);
     return () => ro.disconnect();
   }, []);
-  // A new turn (yours or Vector's) always follows to the bottom, smoothly.
+  // A new turn (yours or Vector's) follows to the bottom, smoothly; a loaded
+  // history (open, reload, switching chats) lands on the latest turn at once.
   useEffect(() => {
+    if (jumpRef.current && turns.length) {
+      jumpRef.current = false;
+      stickRef.current = true;
+      scrollToBottom(false);
+      return;
+    }
     if (stickRef.current) scrollToBottom(true);
   }, [turns.length, sending]);
 
@@ -1966,7 +1996,16 @@ export default function MissionControlPage() {
         </Box>
       </Box>
 
-      <Box ref={scrollRef} onScroll={onThreadScroll} sx={{ flex: 1, overflowY: 'auto', pr: 0.5 }}>
+      <Box sx={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+      <Box
+        ref={scrollRef}
+        onScroll={onThreadScroll}
+        onWheel={noteUserScroll}
+        onTouchMove={noteUserScroll}
+        onKeyDown={noteUserScroll}
+        onPointerDown={noteUserScroll}
+        sx={{ flex: 1, overflowY: 'auto', pr: 0.5 }}
+      >
       <Box ref={contentRef} sx={{ display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
         {loadingHistory && turns.length === 0 && <CircularProgress size={22} sx={{ alignSelf: 'center', mt: 4 }} />}
         {!loadingHistory && turns.length === 0 && (
@@ -2014,6 +2053,18 @@ export default function MissionControlPage() {
         {(sending || rerunning) && <TypingIndicator />}
         <div ref={bottomRef} />
       </Box>
+      </Box>
+      {awayFromBottom && (
+        <Button
+          size="small"
+          variant="contained"
+          onClick={jumpToLatest}
+          startIcon={<KeyboardArrowDownRoundedIcon />}
+          sx={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', borderRadius: 99, boxShadow: 4, textTransform: 'none', animation: `${riseIn} 180ms ${ease}`, ...reducedMotion }}
+        >
+          Latest
+        </Button>
+      )}
       </Box>
 
       {suggestions.length > 0 && (
