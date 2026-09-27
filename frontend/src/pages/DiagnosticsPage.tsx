@@ -11,6 +11,8 @@ import {
   type DiagnosticsRun,
   type DiagnosticsStep,
   type DiagnosticsSummary,
+  type OutcomeBreakdown,
+  type RunOutcome,
 } from '@/RTKService/diagnosticsService/diagnosticsService';
 import CloudSyncIcon from '@mui/icons-material/CloudSync';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -52,6 +54,14 @@ const WASTE_SHORT: Record<string, string> = {
 
 const SOURCE_LABEL: Record<string, string> = { ai: 'AI', replay: 'Replay', direct: 'Direct' };
 const ENGINE_LABEL: Record<string, string> = { eko: 'Eko', vector: 'Vector', replay: 'Replay' };
+const OUTCOME: Record<RunOutcome, { label: string; short: string; color: string; chip: 'success' | 'info' | 'warning' | 'error' | 'default' }> = {
+  first_try: { label: 'Done first try', short: 'First try', color: 'success.main', chip: 'success' },
+  recovered: { label: 'Done after recovery', short: 'Recovered', color: 'info.main', chip: 'info' },
+  human_assisted: { label: 'Done with your help', short: 'Human-assisted', color: 'warning.main', chip: 'warning' },
+  failed: { label: 'Failed', short: 'Failed', color: 'error.main', chip: 'error' },
+  cancelled: { label: 'Cancelled', short: 'Cancelled', color: 'text.disabled', chip: 'default' },
+};
+const ENDED_OUTCOMES: RunOutcome[] = ['first_try', 'recovered', 'human_assisted', 'failed'];
 const VERIFICATION_LABEL: Record<string, string> = { verified: 'Verified', unverified: 'Not verified', failed: 'Verification failed' };
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('en-IN');
@@ -136,6 +146,8 @@ export default function DiagnosticsPage() {
               Recording is on. No run in this period has step-level data yet; new runs appear here as soon as they finish.
             </Alert>
           ) : null}
+
+          {summary.outcomes ? <OutcomeCard outcomes={summary.outcomes} recoveries={summary.recoveries ?? []} /> : null}
 
           <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(5, minmax(0, 1fr))' } }}>
             <Stat label="Runs" value={fmtInt(summary.runs)} note={`${pct(summary.succeeded, summary.runs)} succeeded · ${fmtInt(summary.replay_runs)} replays`} />
@@ -310,6 +322,100 @@ export default function DiagnosticsPage() {
   );
 }
 
+/**
+ * The reliability numbers (docs/RELIABILITY.md): how every run that ended
+ * ended. Human-assisted runs sit apart and never inflate "first try".
+ */
+function OutcomeCard({ outcomes, recoveries }: { outcomes: OutcomeBreakdown; recoveries: { kind: string; label: string; count: number }[] }) {
+  const ended = outcomes.ended;
+  return (
+    <Card variant="outlined" sx={{ p: 2 }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 1.5, md: 3 }} alignItems={{ md: 'center' }}>
+        <Box sx={{ minWidth: 170 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Task completion
+          </Typography>
+          <Typography variant="h3" sx={{ fontWeight: 900, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
+            {outcomes.completion_pct === null ? '–' : `${Math.round(outcomes.completion_pct)}%`}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            of {fmtInt(ended)} finished runs · {fmtInt(outcomes.verified)} checked on the phone
+            {outcomes.cancelled ? ` · ${fmtInt(outcomes.cancelled)} cancelled not counted` : ''}
+          </Typography>
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box
+            role="img"
+            aria-label={ENDED_OUTCOMES.map((o) => `${OUTCOME[o].label} ${outcomes[o]}`).join(', ')}
+            sx={{ display: 'flex', height: 12, borderRadius: 1, overflow: 'hidden', bgcolor: 'action.hover', gap: '2px' }}
+          >
+            {ended > 0
+              ? ENDED_OUTCOMES.filter((o) => outcomes[o] > 0).map((o) => (
+                  <Tooltip key={o} title={`${OUTCOME[o].label}: ${outcomes[o]} (${pct(outcomes[o], ended)})`}>
+                    <Box sx={{ width: `${(outcomes[o] / ended) * 100}%`, bgcolor: OUTCOME[o].color, minWidth: 4 }} />
+                  </Tooltip>
+                ))
+              : null}
+          </Box>
+          <Box sx={{ mt: 1.25, display: 'grid', gap: 1, gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' } }}>
+            {ENDED_OUTCOMES.map((o) => (
+              <Stack key={o} direction="row" spacing={1} alignItems="flex-start" sx={{ minWidth: 0 }}>
+                <Box sx={{ mt: 0.6, width: 10, height: 10, borderRadius: '3px', bgcolor: OUTCOME[o].color, flexShrink: 0 }} />
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtInt(outcomes[o])} <Typography component="span" variant="caption" color="text.secondary">{pct(outcomes[o], ended)}</Typography>
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                    {OUTCOME[o].label}
+                  </Typography>
+                </Box>
+              </Stack>
+            ))}
+          </Box>
+        </Box>
+      </Stack>
+      {outcomes.failure_reasons.length || recoveries.length ? (
+        <Box sx={{ mt: 2, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" sx={{ fontWeight: 800, mb: 0.75 }}>
+              Why runs failed
+            </Typography>
+            {outcomes.failure_reasons.length ? (
+              <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75}>
+                {outcomes.failure_reasons.map((r) => (
+                  <Chip key={r.reason} size="small" variant="outlined" color="error" label={`${r.reason} · ${r.count}`} />
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No failures in this period.
+              </Typography>
+            )}
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" sx={{ fontWeight: 800, mb: 0.75 }}>
+              What the engine recovered from
+            </Typography>
+            {recoveries.length ? (
+              <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75}>
+                {recoveries.map((r) => (
+                  <Tooltip key={r.kind} title={r.label}>
+                    <Chip size="small" variant="outlined" color="info" label={`${r.label} · ${r.count}`} />
+                  </Tooltip>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Nothing recorded yet (counted for runs from this release on).
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      ) : null}
+    </Card>
+  );
+}
+
 function Stat({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <Card variant="outlined" sx={{ p: 1.75, minWidth: 0 }}>
@@ -396,7 +502,16 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
               <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.device ?? '–'}</TableCell>
               <TableCell sx={{ whiteSpace: 'nowrap' }}>{ENGINE_LABEL[r.engine] ?? r.engine}</TableCell>
               <TableCell>
-                <Chip size="small" variant="outlined" color={r.status === 'SUCCEEDED' ? 'success' : r.status === 'FAILED' ? 'error' : 'default'} label={r.status === 'SUCCEEDED' ? 'Done' : r.reason ?? r.status} />
+                {r.outcome ? (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={OUTCOME[r.outcome].chip}
+                    label={r.outcome === 'failed' ? r.reason ?? 'Failed' : OUTCOME[r.outcome].short}
+                  />
+                ) : (
+                  <Chip size="small" variant="outlined" label={r.status} />
+                )}
               </TableCell>
               <TableCell align="right">{r.total_steps}</TableCell>
               <TableCell align="right">{d ? `${d.wasted} (${pct(d.wasted, d.steps)})` : '–'}</TableCell>
@@ -546,7 +661,8 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
           <TableRow>
             <TableCell>Engine</TableCell>
             <TableCell align="right">Runs</TableCell>
-            <TableCell align="right">Success</TableCell>
+            <TableCell align="right">Completion</TableCell>
+            <TableCell align="right">First try / recovered / failed</TableCell>
             <TableCell align="right">Avg steps</TableCell>
             <TableCell align="right">Avg wasted</TableCell>
             <TableCell align="right">Avg AI calls</TableCell>
@@ -563,7 +679,8 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
                 {e.runs}
                 {e.measured_runs !== e.runs ? ` (${e.measured_runs} measured)` : ''}
               </TableCell>
-              <TableCell align="right">{e.success_rate === null ? '–' : `${Math.round(e.success_rate * 100)}%`}</TableCell>
+              <TableCell align="right">{e.outcomes?.completion_pct == null ? '–' : `${Math.round(e.outcomes.completion_pct)}%`}</TableCell>
+              <TableCell align="right">{e.outcomes ? `${e.outcomes.first_try} / ${e.outcomes.recovered} / ${e.outcomes.failed}` : '–'}</TableCell>
               <TableCell align="right">{show(e.avg_steps)}</TableCell>
               <TableCell align="right">{show(e.avg_wasted)}</TableCell>
               <TableCell align="right">{show(e.avg_llm_calls)}</TableCell>

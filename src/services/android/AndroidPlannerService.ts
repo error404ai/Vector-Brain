@@ -1730,6 +1730,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         promptTokens,
         completionTokens,
         tokensReported,
+        recoveries: activeEngine.usedBackupModel ? ['backup_model'] : [],
       });
       this.activeTasks.delete(agentTask.id);
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {

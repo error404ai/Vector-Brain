@@ -13,7 +13,20 @@ import { Writable } from 'stream';
 import { Service } from 'typedi';
 import { In, MoreThanOrEqual } from 'typeorm';
 import { DiagnosticsSanitizer, TreeRow } from './diagnosticsSanitizer';
-import { RunDiagnostics, RunTotals, StepLite, WASTE_LABELS, WasteTag, summarizeRun, tagWaste } from './runDiagnostics';
+import {
+  RECOVERY_LABELS,
+  RecoveryKind,
+  RunDiagnostics,
+  RunTotals,
+  StepLite,
+  WASTE_LABELS,
+  WasteTag,
+  classifyOutcome,
+  outcomeBreakdown,
+  outcomeOf,
+  summarizeRun,
+  tagWaste,
+} from './runDiagnostics';
 
 /** Columns a diagnostics pass reads; never the screenshot. */
 const STEP_COLUMNS: (keyof AndroidTaskLog)[] = [
@@ -55,7 +68,7 @@ export class RunDiagnosticsService {
    */
   async finalize(taskId: number, totals: RunTotals): Promise<RunDiagnostics | null> {
     try {
-      const task = await this.taskRepo.findOne({ where: { id: taskId }, select: ['id', 'diagnostics'] });
+      const task = await this.taskRepo.findOne({ where: { id: taskId }, select: ['id', 'diagnostics', 'status', 'verification'] });
       if (!task) return null;
       const steps = await this.logRepo.find({
         where: { agent_task_id: taskId },
@@ -79,16 +92,23 @@ export class RunDiagnosticsService {
       }
 
       const previous = task.diagnostics;
+      // Engine-level recoveries: this run's, what earlier runs of a continued
+      // task recorded, and the completion check sending the agent back.
+      const engineRecoveries: RecoveryKind[] = [...(totals.recoveries ?? [])];
+      for (let i = 0; i < (previous?.recoveries?.backup_model ?? 0); i += 1) engineRecoveries.push('backup_model');
+      for (let i = 0; i < (task.verification?.retries ?? 0); i += 1) engineRecoveries.push('verify_retry');
       const merged: RunTotals = previous
         ? {
             llmCalls: (previous.llm_calls ?? 0) + totals.llmCalls,
             promptTokens: (previous.prompt_tokens ?? 0) + totals.promptTokens,
             completionTokens: (previous.completion_tokens ?? 0) + totals.completionTokens,
             tokensReported: Boolean(previous.tokens_reported) || totals.tokensReported,
+            recoveries: engineRecoveries,
           }
-        : totals;
+        : { ...totals, recoveries: engineRecoveries };
       const diagnostics = summarizeRun(steps as StepLite[], tags, merged);
-      await this.taskRepo.update({ id: taskId }, { diagnostics });
+      const outcome = classifyOutcome({ status: task.status, recoveries: diagnostics.recoveries, verification: task.verification });
+      await this.taskRepo.update({ id: taskId }, { diagnostics, outcome });
       return diagnostics;
     } catch (error) {
       Logger.warn(`[RunDiagnostics] Could not finalize task ${taskId}:`, error);
@@ -161,6 +181,13 @@ export class RunDiagnosticsService {
     }
 
     const succeeded = tasks.filter((t) => t.status === 'SUCCEEDED');
+    const outcomes = outcomeBreakdown(tasks);
+    const recoveries: Partial<Record<RecoveryKind, number>> = {};
+    for (const task of tasks) {
+      for (const [kind, n] of Object.entries(task.diagnostics?.recoveries ?? {})) {
+        recoveries[kind as RecoveryKind] = (recoveries[kind as RecoveryKind] ?? 0) + (n ?? 0);
+      }
+    }
 
     // Engine comparison: same measures per engine, over runs that reached the phone.
     const byEngine = new Map<string, AgentTask[]>();
@@ -186,6 +213,7 @@ export class RunDiagnosticsService {
         verified: list.filter((t) => t.verification?.status === 'verified').length,
         unverified: list.filter((t) => t.verification?.status === 'unverified').length,
         failed_verification: list.filter((t) => t.verification?.status === 'failed').length,
+        outcomes: outcomeBreakdown(list),
       };
     });
 
@@ -197,6 +225,10 @@ export class RunDiagnosticsService {
         succeeded: succeeded.length,
         failed: tasks.filter((t) => t.status === 'FAILED').length,
         replay_runs: tasks.filter((t) => t.provider === 'replay').length,
+        outcomes,
+        recoveries: Object.entries(recoveries)
+          .map(([kind, count]) => ({ kind, label: RECOVERY_LABELS[kind as RecoveryKind] ?? kind, count }))
+          .sort((a, b) => b.count - a.count),
         engines,
         avg_steps_succeeded: succeeded.length ? round(succeeded.reduce((s, t) => s + (t.total_steps ?? 0), 0) / succeeded.length) : 0,
         steps,
@@ -251,6 +283,7 @@ export class RunDiagnosticsService {
         created_at: t.created_at,
         engine: t.provider === 'replay' ? 'replay' : t.engine ?? 'eko',
         verification: t.verification,
+        outcome: outcomeOf(t),
         diagnostics: t.diagnostics,
       })),
     };
@@ -259,7 +292,7 @@ export class RunDiagnosticsService {
   async run(taskId: number) {
     const task = await this.taskRepo.findOne({
       where: { id: taskId },
-      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'message', 'diagnostics', 'engine', 'verification'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'message', 'diagnostics', 'engine', 'verification', 'outcome'],
     });
     if (!task) throw new AppError('Run not found', 404);
     const steps = await this.logRepo.find({
@@ -308,7 +341,7 @@ export class RunDiagnosticsService {
       .createQueryBuilder('t')
       .select([
         't.id', 't.user_id', 't.device_id', 't.prompt', 't.provider', 't.model', 't.success', 't.status', 't.reason_code',
-        't.started_at', 't.finished_at', 't.created_at', 't.total_steps', 't.total_duration_seconds', 't.diagnostics', 't.engine', 't.verification',
+        't.started_at', 't.finished_at', 't.created_at', 't.total_steps', 't.total_duration_seconds', 't.diagnostics', 't.engine', 't.verification', 't.outcome',
       ])
       .where('t.created_at >= :from', { from: await this.toDbClock(from) })
       // Only a closed window (a whole day for the GitHub sync) has an end.
@@ -342,6 +375,7 @@ export class RunDiagnosticsService {
         started_at: task.started_at, finished_at: task.finished_at, created_at: task.created_at,
         total_steps: task.total_steps, duration_s: task.total_duration_seconds, diagnostics: task.diagnostics,
         engine: task.engine, verification: task.verification ? { ...task.verification, reason: clean.scrub(task.verification.reason, 200) } : null,
+        outcome: outcomeOf(task),
       });
     }
 
@@ -474,7 +508,7 @@ export class RunDiagnosticsService {
     const since = await this.toDbClock(new Date(Date.now() - clampDays(days) * 86_400_000));
     return this.taskRepo.find({
       where: { created_at: MoreThanOrEqual(since) },
-      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification', 'outcome'],
       order: { id: 'DESC' },
       take: limit,
     });

@@ -107,6 +107,13 @@ export class AgentTask {
   @Column({ type: 'json', nullable: true })
   verification: VerificationOutcome | null;
 
+  /**
+   * How the run ended, for the reliability KPIs (docs/RELIABILITY.md):
+   * first_try | recovered | human_assisted | failed | cancelled. Null while running.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  outcome: string | null;
+
   /** Where the run's steps and time went; written when the run ends (RunDiagnosticsService). */
   @Column({ type: 'json', nullable: true })
   diagnostics: RunDiagnostics | null;

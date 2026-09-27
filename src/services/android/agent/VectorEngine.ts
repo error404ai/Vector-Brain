@@ -150,6 +150,11 @@ export class VectorEngine implements AgentEngine {
   private model: LanguageModel;
   private onFallback = false;
 
+  /** True once the run switched to the backup model (counted as a recovery in the run's outcome). */
+  get usedBackupModel(): boolean {
+    return this.onFallback;
+  }
+
   constructor(private readonly options: VectorEngineOptions) {
     this.model = options.model;
     this.tools = options.agent.Tools;

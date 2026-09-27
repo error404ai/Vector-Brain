@@ -48,4 +48,6 @@ export interface AgentEngine {
   abort(reason: string): void;
   /** Release anything held for the task. Called once when the task ends. */
   dispose(): void;
+  /** True when the run had to switch to the backup model. */
+  readonly usedBackupModel?: boolean;
 }

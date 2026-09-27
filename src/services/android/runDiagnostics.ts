@@ -40,6 +40,12 @@ export interface RunDiagnostics {
   /** Screenshots the model asked for (vision is the expensive observation). */
   vision: number;
   packages: string[];
+  /**
+   * What the engine had to recover from before the run ended (absent on runs
+   * recorded before outcomes existed). Keys: step_failed, no_effect, repeat,
+   * verify_retry, backup_model.
+   */
+  recoveries?: Partial<Record<RecoveryKind, number>>;
 }
 
 /** The subset of a step row these functions need. */
@@ -149,6 +155,8 @@ export interface RunTotals {
   promptTokens: number;
   completionTokens: number;
   tokensReported: boolean;
+  /** Recoveries only the engine knows about (e.g. 'backup_model'). */
+  recoveries?: RecoveryKind[];
 }
 
 export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], totals: RunTotals): RunDiagnostics {
@@ -194,5 +202,131 @@ export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], total
     actions,
     vision,
     packages: [...packages].filter((p) => p && p !== 'unknown').slice(0, 20),
+    recoveries: countRecoveries(tags, totals.recoveries),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Outcome (docs/RELIABILITY.md → Measuring)
+// ---------------------------------------------------------------------------
+
+export type RecoveryKind = 'step_failed' | 'no_effect' | 'repeat' | 'verify_retry' | 'backup_model';
+
+export const RECOVERY_LABELS: Record<RecoveryKind, string> = {
+  step_failed: 'An action failed and the run went on',
+  no_effect: 'A tap or key changed nothing',
+  repeat: 'The same action was sent again',
+  verify_retry: 'The completion check sent the agent back',
+  backup_model: 'Switched to the backup model',
+};
+
+export type RunOutcome = 'first_try' | 'recovered' | 'human_assisted' | 'failed' | 'cancelled';
+
+export const OUTCOMES: RunOutcome[] = ['first_try', 'recovered', 'human_assisted', 'failed', 'cancelled'];
+
+/** Step-level recoveries come from the waste tags; engine-level ones are passed in. */
+export function countRecoveries(tags: (WasteTag | null)[], engine: RecoveryKind[] = []): Partial<Record<RecoveryKind, number>> {
+  const out: Partial<Record<RecoveryKind, number>> = {};
+  const add = (kind: RecoveryKind, n = 1) => {
+    if (n > 0) out[kind] = (out[kind] ?? 0) + n;
+  };
+  for (const tag of tags) {
+    if (tag === 'failed') add('step_failed');
+    else if (tag === 'no_effect') add('no_effect');
+    else if (tag === 'repeat') add('repeat');
+  }
+  for (const kind of engine) add(kind);
+  return out;
+}
+
+export interface OutcomeInput {
+  status: string;
+  /** Recoveries recorded for the run (diagnostics.recoveries). */
+  recoveries?: Partial<Record<RecoveryKind, number>> | null;
+  /** The completion check (Vector engine); its retries count as recoveries. */
+  verification?: { status?: string; retries?: number } | null;
+  /** Set once handoff exists: the user completed a step the run handed to them. */
+  humanAssisted?: boolean;
+  /** Fallback for runs without recorded recoveries: failed steps in diagnostics. */
+  failedSteps?: number;
+}
+
+/**
+ * The single honest label for how a run ended. Only SUCCEEDED can be a
+ * success; a run the completion check rejected is already FAILED by then.
+ * Returns null while a run is still queued or running.
+ */
+export function classifyOutcome(input: OutcomeInput): RunOutcome | null {
+  switch (input.status) {
+    case 'SUCCEEDED': {
+      if (input.humanAssisted) return 'human_assisted';
+      const recovered =
+        Object.values(input.recoveries ?? {}).some((n) => (n ?? 0) > 0) ||
+        (input.verification?.retries ?? 0) > 0 ||
+        (!input.recoveries && (input.failedSteps ?? 0) > 0);
+      return recovered ? 'recovered' : 'first_try';
+    }
+    case 'FAILED':
+    case 'INTERRUPTED':
+      return 'failed';
+    case 'CANCELLED':
+      return 'cancelled';
+    default:
+      return null;
+  }
+}
+
+/** The run fields outcome reporting needs (an AgentTask row fits). */
+export interface OutcomeTask {
+  status: string;
+  outcome?: string | null;
+  reason_code?: string | null;
+  verification?: { status?: string; retries?: number } | null;
+  diagnostics?: Pick<RunDiagnostics, 'failed' | 'recoveries'> | null;
+}
+
+/** The stored outcome, or one derived for runs that ended before outcomes were recorded. */
+export function outcomeOf(task: OutcomeTask): RunOutcome | null {
+  if (task.outcome && (OUTCOMES as string[]).includes(task.outcome)) return task.outcome as RunOutcome;
+  return classifyOutcome({
+    status: task.status,
+    recoveries: task.diagnostics?.recoveries ?? null,
+    verification: task.verification,
+    failedSteps: task.diagnostics?.failed ?? 0,
+  });
+}
+
+/**
+ * The four reliability numbers (docs/RELIABILITY.md). Completion is over runs
+ * that ended (cancelled runs excluded); human-assisted runs are shown apart and
+ * never folded into first-try or recovered. `verified` counts successes the
+ * system checked on the phone, not only the agent's word.
+ */
+export function outcomeBreakdown(tasks: OutcomeTask[]) {
+  const counts: Record<RunOutcome, number> = { first_try: 0, recovered: 0, human_assisted: 0, failed: 0, cancelled: 0 };
+  const reasons = new Map<string, number>();
+  let verified = 0;
+  for (const task of tasks) {
+    const outcome = outcomeOf(task);
+    if (!outcome) continue;
+    counts[outcome] += 1;
+    if (outcome === 'failed') {
+      const reason = task.reason_code || 'UNKNOWN';
+      reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
+    if (outcome !== 'failed' && outcome !== 'cancelled' && task.verification?.status === 'verified') verified += 1;
+  }
+  const ended = counts.first_try + counts.recovered + counts.human_assisted + counts.failed;
+  const done = counts.first_try + counts.recovered + counts.human_assisted;
+  return {
+    ...counts,
+    ended,
+    completion_pct: ended ? roundTenth((done / ended) * 100) : null,
+    verified,
+    failure_reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 10),
+  };
+}
+
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
 }

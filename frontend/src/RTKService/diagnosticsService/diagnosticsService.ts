@@ -19,6 +19,23 @@ export interface RunDiagnostics {
   actions: Record<string, number>;
   vision: number;
   packages: string[];
+  recoveries?: Record<string, number>;
+}
+
+export type RunOutcome = 'first_try' | 'recovered' | 'human_assisted' | 'failed' | 'cancelled';
+
+export interface OutcomeBreakdown {
+  first_try: number;
+  recovered: number;
+  human_assisted: number;
+  failed: number;
+  cancelled: number;
+  /** Runs that ended (cancelled excluded). */
+  ended: number;
+  completion_pct: number | null;
+  /** Successes the system checked on the phone. */
+  verified: number;
+  failure_reasons: { reason: string; count: number }[];
 }
 
 export interface DiagnosticsSummary {
@@ -28,6 +45,8 @@ export interface DiagnosticsSummary {
   succeeded: number;
   failed: number;
   replay_runs: number;
+  outcomes: OutcomeBreakdown;
+  recoveries: { kind: string; label: string; count: number }[];
   engines: {
     engine: string;
     runs: number;
@@ -41,6 +60,7 @@ export interface DiagnosticsSummary {
     verified: number;
     unverified: number;
     failed_verification: number;
+    outcomes: OutcomeBreakdown;
   }[];
   avg_steps_succeeded: number;
   steps: number;
@@ -72,6 +92,7 @@ export interface DiagnosticsRun {
   created_at: string;
   engine: string;
   verification: Verification | null;
+  outcome: RunOutcome | null;
   diagnostics: RunDiagnostics | null;
 }
 

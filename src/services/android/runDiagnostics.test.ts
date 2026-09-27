@@ -1,5 +1,5 @@
 import { DiagnosticsSanitizer, scrubUrl } from './diagnosticsSanitizer';
-import { StepLite, screenFingerprint, summarizeRun, tagWaste } from './runDiagnostics';
+import { StepLite, classifyOutcome, countRecoveries, outcomeBreakdown, screenFingerprint, summarizeRun, tagWaste } from './runDiagnostics';
 
 const tree = (buttons: string[], clock = '12:00') =>
   ['idx|type|label|flags|tap_at', `0|text|${clock}||40,20`, ...buttons.map((b, i) => `${i + 1}|btn|${b}|t|100,${200 + i * 50}`)].join('\n');
@@ -106,5 +106,48 @@ describe('DiagnosticsSanitizer', () => {
     const hashed = clean.payload({ text: 'a long message that someone typed into the app' }) as { text: { h: string } };
     expect(hashed.text.h).toHaveLength(12);
     expect(clean.payload({ packageName: 'com.whatsapp', x: 3 })).toEqual({ packageName: 'com.whatsapp', x: 3 });
+  });
+});
+
+describe('run outcome', () => {
+  it('counts step-level and engine-level recoveries', () => {
+    expect(countRecoveries(['failed', null, 'no_effect', 'reread', 'repeat', 'backtrack'], ['backup_model'])).toEqual({
+      step_failed: 1,
+      no_effect: 1,
+      repeat: 1,
+      backup_model: 1,
+    });
+    expect(countRecoveries([null, 'reread'])).toEqual({});
+  });
+
+  it('labels a clean success first_try and a success after any recovery recovered', () => {
+    expect(classifyOutcome({ status: 'SUCCEEDED', recoveries: {} })).toBe('first_try');
+    expect(classifyOutcome({ status: 'SUCCEEDED', recoveries: { no_effect: 1 } })).toBe('recovered');
+    expect(classifyOutcome({ status: 'SUCCEEDED', recoveries: {}, verification: { status: 'verified', retries: 1 } })).toBe('recovered');
+    expect(classifyOutcome({ status: 'SUCCEEDED', recoveries: {}, humanAssisted: true })).toBe('human_assisted');
+  });
+
+  it('derives older runs from failed steps, and never calls a failure a success', () => {
+    expect(classifyOutcome({ status: 'SUCCEEDED', failedSteps: 2 })).toBe('recovered');
+    expect(classifyOutcome({ status: 'SUCCEEDED', failedSteps: 0 })).toBe('first_try');
+    expect(classifyOutcome({ status: 'FAILED', recoveries: {} })).toBe('failed');
+    expect(classifyOutcome({ status: 'INTERRUPTED' })).toBe('failed');
+    expect(classifyOutcome({ status: 'CANCELLED' })).toBe('cancelled');
+    expect(classifyOutcome({ status: 'RUNNING' })).toBeNull();
+  });
+
+  it('computes completion over ended runs, without cancelled ones', () => {
+    const run = (status: string, extra: Record<string, unknown> = {}) =>
+      ({ status, outcome: null, verification: null, diagnostics: null, reason_code: null, ...extra }) as never;
+    const b = outcomeBreakdown([
+      run('SUCCEEDED', { outcome: 'first_try', verification: { status: 'verified', retries: 0 } }),
+      run('SUCCEEDED', { outcome: 'recovered' }),
+      run('SUCCEEDED', { diagnostics: { failed: 1 } }),
+      run('FAILED', { reason_code: 'LLM_QUOTA' }),
+      run('CANCELLED'),
+      run('RUNNING'),
+    ]);
+    expect(b).toMatchObject({ first_try: 1, recovered: 2, failed: 1, cancelled: 1, ended: 4, completion_pct: 75, verified: 1 });
+    expect(b.failure_reasons).toEqual([{ reason: 'LLM_QUOTA', count: 1 }]);
   });
 });
