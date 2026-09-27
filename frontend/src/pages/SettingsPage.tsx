@@ -11,7 +11,7 @@ import AgentEngineCard from '@/components/settings/AgentEngineCard';
 import TelegramLinkCard from '@/components/telegram/TelegramLinkCard';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
 import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
-import { getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
+import { FREE_MODEL_NOTE, getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import Reveal from '@/components/ui/Reveal';
 import PageHeader from '@/components/ui/PageHeader';
 import AddIcon from '@mui/icons-material/Add';
@@ -124,7 +124,7 @@ export default function SettingsPage() {
   }, [aiConfigs]);
 
   const activeConfig = aiConfigs.find((config) => config.is_active);
-  // Recommended models first, free models second — cheap to try — then the rest.
+  // Recommended models first, then paid, free models last (daily caps).
   const otherConfigs = sortModelsForDisplay(aiConfigs.filter((config) => !config.is_active));
 
   const getProviderColor = (provider: string) => {
@@ -328,17 +328,19 @@ export default function SettingsPage() {
                                       </Typography>
 
                                       {isFreeModel(config.model) && (
-                                        <Chip
-                                          label="FREE"
-                                          size="small"
-                                          sx={{
-                                            bgcolor: alpha(theme.palette.success.main, 0.14),
-                                            color: 'success.dark',
-                                            fontWeight: 700,
-                                            height: 20,
-                                            fontSize: '0.65rem',
-                                          }}
-                                        />
+                                        <Tooltip title={FREE_MODEL_NOTE}>
+                <Chip
+                  label="FREE · DAILY CAP"
+                  size="small"
+                  sx={{
+                    bgcolor: alpha(theme.palette.warning.main, 0.16),
+                    color: 'warning.dark',
+                    fontWeight: 700,
+                    height: 20,
+                    fontSize: '0.65rem',
+                  }}
+                />
+              </Tooltip>
                                       )}
 
                                       {meta && (

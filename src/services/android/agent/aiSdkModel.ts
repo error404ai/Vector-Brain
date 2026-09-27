@@ -5,6 +5,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { LanguageModel } from 'ai';
+import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 
 export interface ModelConfig {
   provider: AiProvider | string;
@@ -21,22 +22,24 @@ export interface ModelConfig {
 export function createLanguageModel(config: ModelConfig): LanguageModel {
   const { model, apiKey } = config;
   const baseURL = config.baseURL?.trim() || undefined;
+  // Short rate limits are waited out at the HTTP level (see rateLimitFetch).
+  const fetch = withRateLimitRetry();
   switch (config.provider) {
     case AiProvider.ANTHROPIC:
-      return createAnthropic({ apiKey, baseURL }).languageModel(model);
+      return createAnthropic({ apiKey, baseURL, fetch }).languageModel(model);
     case AiProvider.GOOGLE:
-      return createGoogleGenerativeAI({ apiKey, baseURL }).languageModel(model);
+      return createGoogleGenerativeAI({ apiKey, baseURL, fetch }).languageModel(model);
     case AiProvider.OPENROUTER:
-      return createOpenRouter({ apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1' }).languageModel(model);
+      return createOpenRouter({ apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1', fetch }).languageModel(model);
     case AiProvider.DEEPSEEK:
     case AiProvider.GROQ:
     case AiProvider.CUSTOM:
-      return createOpenAICompatible({ name: model.split('/')[0] || 'custom', apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1' }).languageModel(model);
+      return createOpenAICompatible({ name: model.split('/')[0] || 'custom', apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1', fetch }).languageModel(model);
     case AiProvider.OPENAI:
     default:
       // Eko uses the OpenAI client only for api.openai.com; any other host is
       // treated as OpenAI-compatible.
-      if (!baseURL || baseURL.includes('openai.com')) return createOpenAI({ apiKey, baseURL }).languageModel(model);
-      return createOpenAICompatible({ name: model, apiKey, baseURL }).languageModel(model);
+      if (!baseURL || baseURL.includes('openai.com')) return createOpenAI({ apiKey, baseURL, fetch }).languageModel(model);
+      return createOpenAICompatible({ name: model, apiKey, baseURL, fetch }).languageModel(model);
   }
 }

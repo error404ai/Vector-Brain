@@ -27,10 +27,21 @@ export class AndroidAgentController {
     return { data: await this.plannerService.engineSettings(user.userId) };
   }
 
-  /** engine: 'eko' | 'vector' | null (null = server default); planner: Vector engine's optional planning call. */
+  /**
+   * engine: 'eko' | 'vector' | null (null = server default); planner: Vector engine's optional planning call;
+   * vision_config_id / fallback_config_id: one of the account's AI configs, or null.
+   */
   @Put('/engine')
-  async setEngine(@Body() body: { engine?: string | null; planner?: boolean }, @CurrentUser({ required: true }) user: { userId: number }) {
-    return this.plannerService.setEngineSettings(user.userId, { engine: body?.engine, planner: body?.planner });
+  async setEngine(
+    @Body() body: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null },
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    return this.plannerService.setEngineSettings(user.userId, {
+      engine: body?.engine,
+      planner: body?.planner,
+      vision_config_id: body?.vision_config_id,
+      fallback_config_id: body?.fallback_config_id,
+    });
   }
 
   /**

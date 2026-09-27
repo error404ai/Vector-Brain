@@ -20,6 +20,7 @@ const REPLAYABLE = new Set([
   'open_app',
   'open_url',
   'tap_coordinate',
+  'tap_element',
   'type_text',
   'swipe',
   'global_action',
@@ -102,7 +103,7 @@ export class FlowReplayService {
       source_task_id: task.id,
       steps_json: JSON.stringify(steps),
       step_count: steps.length,
-      coordinate_step_count: steps.filter((step) => step.action_type === 'tap_coordinate').length,
+      coordinate_step_count: steps.filter((step) => step.action_type === 'tap_coordinate' || step.action_type === 'tap_element').length,
     });
     await this.flowRepo.save(flow);
 
@@ -329,7 +330,11 @@ function toAutomationAction(step: FlowStep): AutomationAction | null {
     case 'open_url':
       return payload.url ? { type: 'OpenUrl', url: String(payload.url) } : null;
     case 'tap_coordinate':
-      return typeof payload.x === 'number' && typeof payload.y === 'number'
+    case 'tap_element':
+      // Recorded since taps moved to the 0–1000 grid: where the tap landed, in pixels.
+      if (typeof payload.px_x === 'number' && typeof payload.px_y === 'number') return { type: 'Tap', x: payload.px_x, y: payload.px_y };
+      // Older recordings stored pixels directly.
+      return step.action_type === 'tap_coordinate' && typeof payload.x === 'number' && typeof payload.y === 'number'
         ? { type: 'Tap', x: payload.x, y: payload.y }
         : null;
     case 'type_text':
@@ -365,7 +370,9 @@ function describeStep(actionType: string, payload: Record<string, unknown>): str
     case 'open_url':
       return `Open ${String(value.url ?? 'page').slice(0, 60)}`;
     case 'tap_coordinate':
-      return `Tap (${value.x}, ${value.y})`;
+      return `Tap (${value.px_x ?? value.x}, ${value.px_y ?? value.y})`;
+    case 'tap_element':
+      return `Tap element ${value.idx ?? ''}`.trim();
     case 'type_text':
       return value.text && value.text !== '[REDACTED]' ? `Type "${value.text}"` : 'Type into the field';
     case 'swipe':

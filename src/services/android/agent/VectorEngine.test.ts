@@ -236,4 +236,24 @@ describe('VectorEngine', () => {
     setTimeout(() => engine.abort('Task cancelled by user'), 50);
     await expect(running).resolves.toMatchObject({ stopReason: 'abort' });
   });
+
+  it('switches to the backup model when the main one is out of its daily quota, and does not retry the main one', async () => {
+    const quota = Object.assign(new Error('Rate limit exceeded: free-models-per-day-high-balance'), { statusCode: 429 });
+    const main = scriptedModel([quota]);
+    const backup = scriptedModel([done(true, 'ok')]);
+    const { agent } = fakeAgent();
+    const seen: { type: string; text?: string }[] = [];
+    const engine = new VectorEngine({ model: main.model, agent, vision: false, planner: false, verify: false, fallback: { model: backup.model, label: 'backup-x' }, onMessage: async (m) => void seen.push(m as never) });
+    const result = await engine.run('tap', 'fb1');
+    expect(result.success).toBe(true);
+    expect(main.prompts).toHaveLength(1);
+    expect(backup.prompts).toHaveLength(1);
+    expect(seen.some((m) => m.type === 'thinking' && String(m.text).includes('backup-x'))).toBe(true);
+  });
+
+  it('fails plainly on a daily quota when there is no backup model', async () => {
+    const quota = Object.assign(new Error('Rate limit exceeded: free-models-per-day-high-balance'), { statusCode: 429 });
+    const { engine } = engineWith([quota, done(true, 'x')], undefined, { verify: false });
+    await expect(engine.run('tap', 'fb2')).rejects.toThrow(/per-day/);
+  });
 });

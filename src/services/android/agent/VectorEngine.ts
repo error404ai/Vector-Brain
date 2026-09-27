@@ -25,6 +25,8 @@ export interface VectorEngineOptions {
   callIdleMs?: number;
   /** Abandon a model call that has not finished after this long (ms), even while it streams. */
   callMaxMs?: number;
+  /** Used for the rest of the run when the main model is rate-limited or out of quota. */
+  fallback?: { model: LanguageModel; label: string };
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
@@ -64,6 +66,7 @@ export class ModelCallTimeout extends Error {
  */
 const NOT_IDEMPOTENT = new Set([
   'tap_coordinate',
+  'tap_element',
   'click_node',
   'type_text',
   'long_press',
@@ -93,9 +96,22 @@ Prefer open_url or a deep link over navigating menus when a URL exists.`;
 
 class RetryableModelError extends Error {}
 
+/** A limit that will not lift within this run: a daily cap, or no credit left. */
+function isQuota(error: unknown): boolean {
+  const e = error as { message?: string; responseBody?: string; statusCode?: number };
+  const text = `${e?.message ?? ''} ${e?.responseBody ?? ''}`;
+  return Number(e?.statusCode) === 402 || /per-day|per day|daily (?:limit|quota)|quota exceeded|insufficient credits?/i.test(text);
+}
+
+function isRateLimited(error: unknown): boolean {
+  const e = error as { statusCode?: number; status?: number; message?: string };
+  return Number(e?.statusCode ?? e?.status) === 429 || /\b429\b|rate limit|too many requests/i.test(String(e?.message ?? ''));
+}
+
 function isRetryable(error: unknown): boolean {
   const e = error as { statusCode?: number; status?: number; message?: string; name?: string; cause?: unknown };
   if (e?.name === 'AbortError') return false;
+  if (isQuota(error)) return false;
   const status = Number(e?.statusCode ?? e?.status);
   if (status === 429 || (status >= 500 && status < 600)) return true;
   if (status >= 400 && status < 500) return false;
@@ -131,8 +147,11 @@ export class VectorEngine implements AgentEngine {
   private readonly tools: Tool[];
   private readonly toolSet: ToolSet;
   private callCounter = 0;
+  private model: LanguageModel;
+  private onFallback = false;
 
   constructor(private readonly options: VectorEngineOptions) {
+    this.model = options.model;
     this.tools = options.agent.Tools;
     const set: ToolSet = {};
     for (const t of this.tools) {
@@ -316,6 +335,17 @@ export class VectorEngine implements AgentEngine {
           await emit({ type: 'thinking', text: `${error.message}. Asking again…` });
           continue;
         }
+        // Rate-limited even after waiting (the fetch layer already waited out
+        // short limits), or out of daily quota: carry on with the backup model.
+        if ((isQuota(error) || isRateLimited(error)) && this.options.fallback && !this.onFallback) {
+          this.onFallback = true;
+          this.model = this.options.fallback.model;
+          const why = isQuota(error) ? 'has used up its limit' : 'is rate-limited';
+          Logger.warn(`[VectorEngine] Main model ${why}; switching to ${this.options.fallback.label}`);
+          await emit({ type: 'thinking', text: `The main AI model ${why} — continuing with the backup model (${this.options.fallback.label}).` });
+          attempt -= 1; // the switch itself is not a failed attempt
+          continue;
+        }
         if (!isRetryable(error) || attempt === MODEL_ATTEMPTS) throw error;
         const wait = 1000 * 2 ** (attempt - 1) + Math.floor(Math.random() * 500);
         Logger.warn(`[VectorEngine] Model call failed (attempt ${attempt}/${MODEL_ATTEMPTS}), retrying in ${wait}ms: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
@@ -371,7 +401,7 @@ export class VectorEngine implements AgentEngine {
     alive: () => void,
   ): Promise<ModelTurn> {
     const result = streamText({
-      model: this.options.model,
+      model: this.model,
       system,
       messages,
       tools: this.toolSet,
@@ -461,7 +491,7 @@ export class VectorEngine implements AgentEngine {
   private async makePlan(prompt: string, signal: AbortSignal, emit: (message: Record<string, unknown>) => Promise<void>): Promise<string | null> {
     try {
       const { text, usage } = await generateText({
-        model: this.options.model,
+        model: this.model,
         system: PLANNER_PROMPT,
         prompt,
         maxOutputTokens: 600,
@@ -501,7 +531,7 @@ export class VectorEngine implements AgentEngine {
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {
           const { text: answer, usage } = await generateText({
-            model: this.options.model,
+            model: this.model,
             prompt: text,
             maxOutputTokens: 300,
             temperature: 0,

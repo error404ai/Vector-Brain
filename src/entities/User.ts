@@ -47,6 +47,14 @@ export class User {
   @Column({ type: 'boolean', default: false })
   agent_planner: boolean;
 
+  /** A vision model (one of this account's AI configs) that reads screens for a text-only agent model. */
+  @Column({ type: 'int', nullable: true })
+  agent_vision_config_id: number | null;
+
+  /** Used when the main model is rate-limited or out of quota (one of this account's AI configs). */
+  @Column({ type: 'int', nullable: true })
+  agent_fallback_config_id: number | null;
+
   @Column({ type: 'enum', enum: Role, default: Role.USER })
   role: Role;
 

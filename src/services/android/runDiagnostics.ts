@@ -59,6 +59,7 @@ export interface StepLite {
 /** Actions that are supposed to change the screen. */
 const INTERACTIVE = new Set([
   'tap_coordinate',
+  'tap_element',
   'click_node',
   'long_press',
   'swipe',

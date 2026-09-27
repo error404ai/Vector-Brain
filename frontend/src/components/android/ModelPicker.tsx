@@ -1,5 +1,5 @@
 import type { AiConfig } from '@/RTKService/aiConfigService/aiConfigService';
-import { getModelMeta, isFreeModel, modelDisplayName, providerAccent, sortModelsForDisplay } from '@/utils/modelMeta';
+import { FREE_MODEL_NOTE, getModelMeta, isFreeModel, modelDisplayName, providerAccent, sortModelsForDisplay } from '@/utils/modelMeta';
 import CheckIcon from '@mui/icons-material/Check';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import SearchIcon from '@mui/icons-material/Search';
@@ -246,17 +246,19 @@ function Row({
             </Tooltip>
           )}
           {free && (
-            <Chip
-              label="FREE"
-              size="small"
-              sx={{
-                height: 16,
-                fontSize: 9,
-                fontWeight: 800,
-                bgcolor: alpha(theme.palette.success.main, 0.14),
-                color: 'success.dark',
-              }}
-            />
+            <Tooltip title={FREE_MODEL_NOTE}>
+              <Chip
+                label="FREE · DAILY CAP"
+                size="small"
+                sx={{
+                  height: 16,
+                  fontSize: 9,
+                  fontWeight: 800,
+                  bgcolor: alpha(theme.palette.warning.main, 0.16),
+                  color: 'warning.dark',
+                }}
+              />
+            </Tooltip>
           )}
         </Stack>
         <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>

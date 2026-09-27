@@ -4,6 +4,30 @@ import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
+import {
+  GRID,
+  buildScreenModel,
+  elementAt,
+  formatScreen,
+  isThin,
+  screenKey,
+  toPixels,
+  withSeenElements,
+  type ScreenElement,
+  type ScreenModel,
+} from './screenModel';
+
+/** Elements a vision model read off a screenshot, positions on the 0–1000 grid. */
+export type SeenElement = { label: string; x: number; y: number; kind?: string };
+/** Reads a screenshot for a model that cannot see images (see AndroidPlannerService). */
+export type ScreenGrounder = (screenshotBase64: string) => Promise<SeenElement[]>;
+
+/** Vision-helper reads per run: each is one small image call. */
+const GROUNDING_BUDGET = 25;
+/** A button that turns into its opposite right after a tap (Install → Cancel). */
+const STARTS_SOMETHING = /\b(install|update|download|get|buy|enable|turn on|start|subscribe)\b/i;
+const UNDOES_IT = /^(cancel|stop|uninstall|remove|delete|disable|turn off|unsubscribe)\b/i;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Which browser open_url uses.
@@ -102,6 +126,8 @@ export interface AndroidAgentCallbacks {
     screenshotBase64?: string;
     foregroundApp?: string;
     uiTree?: string;
+    /** Where a tap actually landed, in device pixels (kept so a recorded flow can replay it). */
+    tapPx?: { x: number; y: number };
   }) => void;
 }
 
@@ -109,6 +135,17 @@ export class AndroidAgent extends Agent {
   private lastUiTree: string | null = null;
   private lastForegroundApp: string | null = null;
   private lastScreenshotBase64: string | null = null;
+  /** The latest screen as elements, for tap_element and "what is at this point". */
+  private screen: ScreenModel | null = null;
+  /** The last tap: what it hit, so a button that turns into Cancel is not tapped again. */
+  private lastTap: { grid: { x: number; y: number }; label: string; at: number } | null = null;
+  /** A tap that changed nothing, on the screen it left behind. */
+  private noEffect: { grid: { x: number; y: number }; key: string } | null = null;
+  private groundingUsed = 0;
+  private groundedKey = '';
+  private groundedSeen: SeenElement[] = [];
+  /** The element list as the phone reported it, before any rows read from a screenshot. */
+  private baseTable: string | null = null;
 
   // Loop prevention tracking
   private actionHistory: string[] = [];
@@ -138,12 +175,12 @@ export class AndroidAgent extends Agent {
      * is never offered a screenshot — a text-only model cannot read one, and
      * each capture cost ~80k tokens of base64 on every later call.
      */
-    private readonly options: { vision?: boolean } = {},
+    private readonly options: { vision?: boolean; grounder?: ScreenGrounder } = {},
   ) {
     const tools: Tool[] = [
       {
         name: 'read_ui_tree',
-        description: 'Inspect the current screen to read the visible UI elements with their center coordinates for tapping.',
+        description: 'Read the current screen: every visible element with its idx (for tap_element) and position on the 0–1000 grid.',
         parameters: {
           type: 'object',
           properties: {},
@@ -156,62 +193,21 @@ export class AndroidAgent extends Agent {
             return { content: [{ type: 'text', text: `Failed to read UI tree: ${errorMsg}` }], isError: true };
           }
 
-          const tree = res.uiTree as UiTreeSnapshot | undefined;
-          const formatted = this.formatUiTree(tree?.root);
-          const pkg = this.detectPackageName(tree?.root, tree?.packageName || 'unknown');
-          this.lastUiTree = formatted;
-          this.lastForegroundApp = pkg;
-          this.lastScreenshotBase64 = res.screenCapture?.base64Data || this.lastScreenshotBase64;
+          this.absorb(res);
+          const pkg = this.lastForegroundApp || 'unknown';
+          const extra = await this.screenExtras(res.screenCapture?.base64Data);
 
           this.callbacks?.onStepExecuted?.({
             toolName: 'read_ui_tree',
             args: {},
             result: `Inspected UI for ${pkg}`,
             foregroundApp: pkg,
-            uiTree: formatted,
+            uiTree: this.lastUiTree ?? undefined,
             screenshotBase64: this.lastScreenshotBase64 || undefined,
           });
 
-          const textContent = {
-            type: 'text' as const,
-            text: `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is the x,y to pass to tap_coordinate):\n${formatted}`,
-          };
-
-          // Normally the tree describes everything and an image would just burn
-          // tokens. But web views and canvas-drawn apps expose almost nothing to
-          // accessibility — there the model is blind without a picture, so fall
-          // back to vision exactly in that case.
-          const rowCount = formatted.split('\n').length - 1;
-          const treeIsThin = rowCount < MIN_INFORMATIVE_ROWS;
-          const freshShot = res.screenCapture?.base64Data;
-
-          if (treeIsThin && !this.options.vision) {
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `${textContent.text}\n\nNOTE: this screen exposes very little to the accessibility tree (typical for web pages and games), and screenshots are not available with this model. Prefer open_url or a deep link, wait_for_element for the text you expect, or scroll_element — do not keep waiting for the list to fill in.`,
-                },
-              ],
-            };
-          }
-
-          if (treeIsThin && freshShot && this.autoVisionUsed < this.autoVisionBudget) {
-            this.autoVisionUsed += 1;
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `${textContent.text}\n\nNOTE: this screen exposes very little to the accessibility tree (typical for web pages and games). A screenshot is attached — read the screen from the image and tap using coordinates.`,
-                },
-                { type: 'image', data: freshShot, mimeType: 'image/jpeg' },
-              ],
-            };
-          }
-
-          return {
-            content: [textContent],
-          };
+          const text = `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
+          return { content: extra.image ? [{ type: 'text', text }, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }] : [{ type: 'text', text }] };
         },
       },
       {
@@ -263,45 +259,59 @@ export class AndroidAgent extends Agent {
         },
       },
       {
-        name: 'tap_coordinate',
-        description: 'Tap directly on screen coordinates. PREFERRED method - use center coordinates from read_ui_tree output.',
+        name: 'tap_element',
+        description:
+          'Tap an element from the latest screen list by its idx (the first column: 12, or v3 for one read from a screenshot). The PREFERRED way to tap: it always hits the element as it is on this phone.',
         parameters: {
           type: 'object',
           properties: {
-            x: { type: 'number', description: 'X pixel coordinate (center X from UI tree)' },
-            y: { type: 'number', description: 'Y pixel coordinate (center Y from UI tree)' },
+            idx: { type: 'string', description: 'The idx of the element in the latest screen list, e.g. "12" or "v3"' },
+          },
+          required: ['idx'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const idx = String(args.idx ?? '').trim();
+          const target = this.screen?.elements.find((e) => e.idx === idx) ?? null;
+          if (!target) {
+            return {
+              content: [{ type: 'text', text: `There is no element ${idx || '(none)'} on the current screen. Use an idx from the latest screen list, or click_node with the element's visible text.` }],
+              isError: true,
+            };
+          }
+          return this.tapAt(target.grid, target, 'tap_element', args);
+        },
+      },
+      {
+        name: 'tap_coordinate',
+        description:
+          'Tap a point on the screen. x and y are on a 0–1000 grid over the CURRENT screen (0,0 top-left, 1000,1000 bottom-right, 500,500 the middle) — the same numbers as tap_at in the screen list. Prefer tap_element or click_node; use this for a point the list does not name (on a screenshot, a map, a game).',
+        parameters: {
+          type: 'object',
+          properties: {
+            x: { type: 'number', description: 'Horizontal position, 0–1000 across the screen' },
+            y: { type: 'number', description: 'Vertical position, 0–1000 down the screen' },
             description: { type: 'string', description: 'What you are tapping (e.g. "search box", "Google search button")' },
           },
           required: ['x', 'y'],
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
-          // Loop prevention - check if same coordinates tapped 3 times
-          const actionKey = `tap_${args.x}_${args.y}`;
-          const recentSame = this.actionHistory.filter(a => a === actionKey).length;
-          if (recentSame >= 3) {
+          const x = Number(args.x);
+          const y = Number(args.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > GRID || y > GRID) {
             return {
-              content: [{ type: 'text', text: `Blocked: Same coordinate tapped ${recentSame} times. Try a different approach - scroll, go back, or tap a different element.` }],
+              content: [{ type: 'text', text: `x and y must be on the 0–1000 grid (got ${args.x}, ${args.y}). Use the tap_at numbers from the latest screen list, or tap_element with its idx.` }],
               isError: true,
             };
           }
-          this.actionHistory.push(actionKey);
-          if (this.actionHistory.length > 10) this.actionHistory.shift();
-
-          return this.runDeviceAction(
-            {
-              type: 'Tap',
-              x: Number(args.x),
-              y: Number(args.y),
-            },
-            'tap_coordinate',
-            args,
-          );
+          const grid = { x: Math.round(x), y: Math.round(y) };
+          return this.tapAt(grid, elementAt(this.screen, grid.x, grid.y), 'tap_coordinate', args);
         },
       },
       {
         name: 'click_node',
-        description: 'Click an element by its exact visible text or viewId. Use this when tap_coordinate is not working.',
+        description: 'Click an element by its exact visible text or viewId. A good first choice when you know the text on the button; also the fallback when a tap did not change the screen.',
         parameters: {
           type: 'object',
           properties: {
@@ -550,8 +560,8 @@ export class AndroidAgent extends Agent {
             nodePath: { type: 'string', description: 'Optional node path from the latest UI snapshot' },
             viewId: { type: 'string', description: 'Optional stable resource ID' },
             text: { type: 'string', description: 'Optional visible text or content description' },
-            x: { type: 'number', description: 'Optional screen x, used when no selector is given' },
-            y: { type: 'number', description: 'Optional screen y, used when no selector is given' },
+            x: { type: 'number', description: 'Optional x on the 0–1000 grid, used when no selector is given' },
+            y: { type: 'number', description: 'Optional y on the 0–1000 grid, used when no selector is given' },
             durationMillis: { type: 'number', description: 'Hold time, 400 to 3000 ms (default 700)' },
           },
           additionalProperties: false,
@@ -563,8 +573,8 @@ export class AndroidAgent extends Agent {
               nodePath: args.nodePath as string | undefined,
               viewId: args.viewId as string | undefined,
               text: args.text as string | undefined,
-              x: typeof args.x === 'number' ? args.x : undefined,
-              y: typeof args.y === 'number' ? args.y : undefined,
+              x: typeof args.x === 'number' ? toPixels(args.x, this.screen?.size.width ?? 1080) : undefined,
+              y: typeof args.y === 'number' ? toPixels(args.y, this.screen?.size.height ?? 2400) : undefined,
               durationMillis: typeof args.durationMillis === 'number' ? args.durationMillis : undefined,
             },
             'long_press',
@@ -691,26 +701,37 @@ export class AndroidAgent extends Agent {
               isError: true,
             };
           }
-          return this.runDeviceAction(
-            {
-              type: 'WaitForNode',
-              nodePath: args.nodePath as string | undefined,
-              viewId: args.viewId as string | undefined,
-              text: args.text as string | undefined,
-              timeoutMillis: args.timeoutMillis ? Number(args.timeoutMillis) : 8000,
-            },
-            'wait_for_element',
-            args,
-          );
+          // Long waits (an app download, a slow page) go to the phone in 10 s
+          // pieces, so one wait can cover a whole install without the phone
+          // holding a single request open for minutes.
+          const total = Math.min(Math.max(Number(args.timeoutMillis) || 8000, 1000), 120_000);
+          const started = Date.now();
+          let result: ToolResult | null = null;
+          do {
+            const slice = Math.min(10_000, total - (Date.now() - started));
+            result = await this.runDeviceAction(
+              {
+                type: 'WaitForNode',
+                nodePath: args.nodePath as string | undefined,
+                viewId: args.viewId as string | undefined,
+                text: args.text as string | undefined,
+                timeoutMillis: Math.max(slice, 1000),
+              },
+              'wait_for_element',
+              args,
+            );
+          } while (result.isError && Date.now() - started < total - 1000);
+          return result;
         },
       },
       {
         name: 'wait',
-        description: 'Wait for animations or page loads to complete.',
+        description:
+          'Wait until the screen stops changing (a page or app still loading), up to durationMillis, and get the settled screen back. It returns as soon as the screen is still, so there is no need to guess a length. To wait for something specific (a download finishing, a button appearing) use wait_for_element with that text instead.',
         parameters: {
           type: 'object',
           properties: {
-            durationMillis: { type: 'number', description: 'Wait duration in milliseconds (default: 2000)' },
+            durationMillis: { type: 'number', description: 'Longest to wait in milliseconds (default 4000, max 15000)' },
           },
           additionalProperties: false,
         },
@@ -718,7 +739,7 @@ export class AndroidAgent extends Agent {
           return this.runDeviceAction(
             {
               type: 'Wait',
-              durationMillis: args.durationMillis ? Number(args.durationMillis) : 2000,
+              durationMillis: args.durationMillis ? Number(args.durationMillis) : 4000,
             },
             'wait',
             args,
@@ -732,6 +753,8 @@ export class AndroidAgent extends Agent {
       description: 'An expert AI agent that inspects and interacts with an Android mobile device to accomplish user tasks step-by-step.',
       // A model that cannot see images gets no screenshot tool at all.
       tools: options.vision ? tools : tools.filter((tool) => tool.name !== 'capture_screen'),
+      // The backup model (when the account set one) takes over if the main one fails.
+      llms: ['default', 'fallback'],
     });
   }
 
@@ -763,11 +786,9 @@ export class AndroidAgent extends Agent {
   async observeForCheck(): Promise<{ packageName: string | null; tree: string } | null> {
     const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
     if (res.status !== 'SUCCESS' || !res.uiTree) return null;
-    const tree = this.formatUiTree(res.uiTree.root);
-    const packageName = this.detectPackageName(res.uiTree.root, res.uiTree.packageName || 'unknown');
-    this.lastUiTree = tree;
-    this.lastForegroundApp = packageName;
-    return { packageName: packageName && packageName !== 'unknown' ? packageName : null, tree };
+    this.absorb(res);
+    const packageName = this.lastForegroundApp;
+    return { packageName: packageName && packageName !== 'unknown' ? packageName : null, tree: this.lastUiTree ?? '' };
   }
 
   /** The phone's launchable apps as "Label | package" text (ListApps). */
@@ -792,25 +813,30 @@ WORKFLOW:
    Every other action's result already includes "UPDATED SCREEN ELEMENTS" — use that
    directly instead of calling read_ui_tree again. Redundant read_ui_tree calls waste
    time and steps.
-2. Use tap_coordinate with the center X,Y coordinates shown in the UI tree to tap elements.
-3. For text input: first tap the input field using tap_coordinate, then use type_text.
+2. To tap, use tap_element with the element's idx from the latest screen list (or
+   click_node with its exact visible text). Use tap_coordinate only for a point the
+   list does not name.
+3. For text input: tap the input field (tap_element), then type_text.
 4. Use open_app to launch apps, open_url to open websites directly.
 5. To scroll, use scroll_element with direction FORWARD to move down a list and
-   BACKWARD to move back up. It scrolls the actual list rather than dragging the
-   whole display, so it works on pages that hold a list inside them, and a refusal
-   tells you the list has reached its end. Fall back to swipe only when
-   scroll_element says nothing is scrollable, or for horizontal carousels.
+   BACKWARD to move back up. Fall back to swipe only when scroll_element says
+   nothing is scrollable, or for horizontal carousels.
 6. Use global_action BACK to go back to previous screen.
-7. Use wait_for_element or wait after actions that need loading time.
+7. When something is loading, use wait (it returns as soon as the screen is still)
+   or wait_for_element with the text you expect.
 
 CRITICAL RULES:
-- ALWAYS use tap_coordinate with center coordinates from read_ui_tree - this is the PRIMARY way to click.
-- NEVER repeat the same tap coordinate more than 2 times - try a different approach.
+- Only tap what is on the CURRENT screen list. Never reuse coordinates from memory,
+  an earlier screen or another phone; positions change between screens and phones.
+- After every action, check its result. If it says the screen did not change, do NOT
+  repeat the same tap — try click_node, another element, scroll_element or BACK.
+- A button can change after you tap it (Install becomes Cancel, Follow becomes
+  Unfollow). Never tap the same spot again to "confirm"; wait for the next state
+  instead (for an app install: wait_for_element "Open", timeoutMillis 120000).
 - Avoid scrolling in the same direction more than 7 times in a row, counting
-  scroll_element and swipe together - if content
-  still isn't found, try a different approach instead of scrolling further.
-- If tap_coordinate fails, try click_node with the element's visible text as fallback.
-- After typing text, always tap the search/submit button to execute.
+  scroll_element and swipe together - if content still isn't found, try a
+  different approach instead of scrolling further.
+- After typing text, submit it (press_key ENTER, or tap the Search/Go button).
 - open_url reuses the current browser tab by default. Only pass newTab: true when
   the user explicitly asked for separate tabs or to compare pages side by side;
   visiting many sites "one by one" should stay in a single tab.
@@ -820,18 +846,28 @@ CRITICAL RULES:
   for, answer it briefly and move on; never call it yourself as a checkpoint.
 - If you already have enough information to answer the user's question, STOP
   and give the answer immediately instead of gathering more.
-UI TREE FORMAT:
-Each element shows: [index] type "text" [actions] center:(X,Y)
-Example: [5] input "Search Google" [tap,edit] center:(540,450)
-Use the center:(X,Y) values directly in tap_coordinate.`;
+SCREEN LIST FORMAT:
+idx|type|label|flags|tap_at — one row per element. flags: t=tappable, e=editable,
+d=disabled. tap_at is x,y on a 0–1000 grid over the current screen (500,500 is the
+middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|500,190
+→ tap_element idx "5". A tappable row's label includes the text shown inside it.`;
   }
 
   private async runDeviceAction(
     action: AutomationAction,
     toolName: string,
     args: Record<string, unknown>,
+    tap?: { grid: { x: number; y: number }; px: { x: number; y: number }; label: string },
   ): Promise<ToolResult> {
-    let res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+    const keyBefore = this.currentKey();
+    let res: Awaited<ReturnType<AndroidGatewayService['executeAction']>>;
+    if (action.type === 'Wait') {
+      // Not a blind pause: watch the screen and return once it is still.
+      const settled = await this.waitUntilSettled(Number(action.durationMillis) || 4000);
+      res = { status: 'SUCCESS', summary: settled.settled ? `Screen settled after ${(settled.ms / 1000).toFixed(1)}s` : `Screen was still changing after ${(settled.ms / 1000).toFixed(1)}s (something is loading or downloading)` } as typeof res;
+    } else {
+      res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+    }
 
     // The model guessed a package name that does not exist on this build. Try
     // the known equivalents before handing back a failure — three wasted steps
@@ -916,23 +952,32 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     // Waits normally skip observation to save a round-trip. But once the model
     // waits twice in a row it has stopped being able to tell what is on screen,
     // so refresh properly instead of handing back the same stale tree.
-    const skipObservation = action.type === 'Wait' && this.consecutiveWaits < 2;
+    // A wait has already watched the screen until it settled.
+    const skipObservation = action.type === 'Wait';
+    let freshShot: string | undefined;
     try {
       if (skipObservation) throw new Error('skip');
       const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
-      if (observation.status === 'SUCCESS' && observation.screenCapture?.base64Data) {
-        this.lastScreenshotBase64 = observation.screenCapture.base64Data;
-      }
-      if (observation.status === 'SUCCESS' && observation.uiTree) {
-        this.lastUiTree = this.formatUiTree(observation.uiTree.root);
-        this.lastForegroundApp = this.detectPackageName(
-          observation.uiTree.root,
-          observation.uiTree.packageName || 'unknown',
-        );
-      }
+      this.absorb(observation);
+      freshShot = observation.status === 'SUCCESS' ? observation.screenCapture?.base64Data : undefined;
     } catch {
       // Best-effort post-action snapshot
     }
+
+    // Did the action do anything? Checked against the phone, not the model's word.
+    const keyAfter = this.currentKey();
+    const meantToChange = ['Tap', 'ClickNode', 'LongPress'].includes(action.type);
+    let checkNote = '';
+    if (!isError && meantToChange && keyAfter === keyBefore) {
+      if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
+      checkNote =
+        '\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.';
+    } else if (keyAfter !== keyBefore) {
+      this.noEffect = null;
+    }
+    if (tap && !isError) this.lastTap = { grid: tap.grid, label: tap.label, at: Date.now() };
+
+    const extra = isError || skipObservation ? { note: '' } : await this.screenExtras(freshShot);
 
     this.callbacks?.onStepExecuted?.({
       toolName,
@@ -941,19 +986,23 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
       foregroundApp: this.lastForegroundApp || undefined,
       uiTree: this.lastUiTree || undefined,
       screenshotBase64: this.lastScreenshotBase64 || undefined,
+      tapPx: tap && !isError ? tap.px : undefined,
     });
 
     // Add failure hint if stuck
     const stuckHint = this.consecutiveFailures >= 3
-      ? `\n\nWARNING: ${this.consecutiveFailures} consecutive failures. Try a completely different approach - use global_action BACK, try tap_coordinate with different coordinates, or use open_url to navigate directly.`
+      ? `\n\nWARNING: ${this.consecutiveFailures} consecutive failures. Try a completely different approach - use global_action BACK, click_node with the visible text, a different element, or open_url to navigate directly.`
       : '';
 
     const textPart = {
       type: 'text' as const,
       text: isError
         ? `Action failed: ${summary}${stuckHint}`
-        : `Action succeeded: ${summary}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`,
+        : `Action succeeded: ${summary}${checkNote}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
     };
+    if (extra.image) {
+      return { content: [textPart, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError };
+    }
 
     // Screenshot is intentionally NOT attached to regular action results.
     // The text UI tree already contains everything needed (elements + center
@@ -1006,16 +1055,7 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
           type: 'ObserveScreen',
         });
         if (observation.status !== 'SUCCESS') continue;
-        if (observation.screenCapture?.base64Data) {
-          this.lastScreenshotBase64 = observation.screenCapture.base64Data;
-        }
-        if (observation.uiTree) {
-          this.lastUiTree = this.formatUiTree(observation.uiTree.root);
-          this.lastForegroundApp = this.detectPackageName(
-            observation.uiTree.root,
-            observation.uiTree.packageName || 'unknown',
-          );
-        }
+        this.absorb(observation);
         if (!wantedPackage) return true;
         if (this.lastForegroundApp && wantedPackage.startsWith(this.lastForegroundApp)) return true;
         if (this.lastForegroundApp && this.lastForegroundApp.startsWith(wantedPackage)) return true;
@@ -1048,60 +1088,112 @@ Use the center:(X,Y) values directly in tap_coordinate.`;
     return detected;
   }
 
+  /** "Has the screen changed": the app in front plus the list as the phone reported it. */
+  private currentKey(): string {
+    return screenKey(this.lastForegroundApp, this.baseTable ?? this.lastUiTree);
+  }
+
+  /** Takes in an observation: the element list, the app in front and the latest frame. */
+  private absorb(observation: Awaited<ReturnType<AndroidGatewayService['executeAction']>>): void {
+    if (observation.status !== 'SUCCESS') return;
+    if (observation.screenCapture?.base64Data) this.lastScreenshotBase64 = observation.screenCapture.base64Data;
+    const tree = observation.uiTree as UiTreeSnapshot | undefined;
+    if (!tree) return;
+    const capture = observation.screenCapture as { width?: number; height?: number } | undefined;
+    this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height });
+    this.lastUiTree = formatScreen(this.screen);
+    this.baseTable = this.lastUiTree;
+    this.lastForegroundApp = this.detectPackageName(tree.root, tree.packageName || 'unknown');
+  }
+
   /**
-   * Compact, table-shaped view of the screen.
-   *
-   * Container nodes with no text, no description and no interactivity are
-   * dropped entirely (their children are still walked) — they used to be
-   * emitted as bare "view" rows and made up most of the payload. One row per
-   * useful element keeps a busy screen near 1k characters instead of ~3k.
+   * On a screen the element list does not describe (canvas, web view, many
+   * unlabelled buttons): a model that sees images gets the screenshot; a
+   * text-only model gets the elements a vision helper read off it, as rows
+   * v1, v2… it can tap. Without either it is told so plainly.
    */
-  private formatUiTree(node?: UiNodeSnapshot): string {
-    if (!node) return 'No visible UI elements found.';
-    const rows: string[] = [];
-    let index = 0;
-
-    const traverse = (current: UiNodeSnapshot) => {
-      const text = current.text?.trim() || '';
-      const desc = current.contentDescription?.trim() || '';
-      const isInteractive = current.clickable || current.editable;
-      const informative = text.length > 0 || desc.length > 0 || isInteractive;
-
-      if (informative && rows.length < 80) {
-        // Simplify class name
-        let type = (current.className || 'View').split('.').pop() || 'View';
-        if (type === 'TextView') type = 'text';
-        else if (type === 'Button') type = 'btn';
-        else if (type === 'EditText') type = 'input';
-        else if (type === 'ImageView') type = 'img';
-        else if (type === 'ImageButton') type = 'imgbtn';
-        else if (type.includes('Layout') || type.includes('View')) type = 'view';
-        else type = type.toLowerCase();
-
-        let label = text || desc;
-        if (label.length > 60) label = `${label.substring(0, 60)}...`;
-
-        // Single-character flags: t=tappable, e=editable, d=disabled
-        let flags = '';
-        if (current.clickable) flags += 't';
-        if (current.editable) flags += 'e';
-        if (!current.enabled) flags += 'd';
-
-        const centerX = Math.round((current.bounds.left + current.bounds.right) / 2);
-        const centerY = Math.round((current.bounds.top + current.bounds.bottom) / 2);
-
-        rows.push(`${index}|${type}|${label}|${flags}|${centerX},${centerY}`);
-        index++;
+  private async screenExtras(shot?: string): Promise<{ note: string; image?: string }> {
+    if (!this.screen || !isThin(this.screen)) return { note: '' };
+    const image = shot ?? this.lastScreenshotBase64 ?? undefined;
+    if (this.options.vision && image && this.autoVisionUsed < this.autoVisionBudget) {
+      this.autoVisionUsed += 1;
+      return {
+        note: '\n\nNOTE: this screen exposes little to the element list, so a screenshot is attached. Read it, and tap with tap_coordinate on the 0–1000 grid (500,500 is the middle of the screen).',
+        image,
+      };
+    }
+    if (this.options.grounder && image) {
+      const key = this.currentKey();
+      if (key !== this.groundedKey && this.groundingUsed < GROUNDING_BUDGET) {
+        this.groundedKey = key;
+        this.groundingUsed += 1;
+        this.groundedSeen = [];
+        try {
+          this.groundedSeen = await this.options.grounder(image);
+        } catch {
+          // The helper is a bonus; the list alone still works.
+        }
       }
-
-      if (current.children) {
-        for (const child of current.children) traverse(child);
+      // Same screen as the last reading: reuse it rather than paying again.
+      if (key === this.groundedKey && this.groundedSeen.length) {
+        this.screen = withSeenElements(this.screen, this.groundedSeen);
+        this.lastUiTree = formatScreen(this.screen);
       }
+      if (this.screen.elements.some((e) => e.seen)) {
+        return { note: '\n\nNOTE: this screen exposes little to the element list. Rows v1, v2… were read from a screenshot by a vision model — tap them with tap_element (e.g. idx "v2").' };
+      }
+    }
+    return {
+      note: '\n\nNOTE: this screen exposes very little to the element list (web pages, games), and no screenshot reader is available. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element.',
     };
+  }
 
-    traverse(node);
+  /** Every tap goes through here: guards first, then the phone, then the check. */
+  private async tapAt(grid: { x: number; y: number }, target: ScreenElement | null, toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const refuse = (text: string): ToolResult => ({ content: [{ type: 'text', text }], isError: true });
+    const label = target?.label ?? '';
+    const now = Date.now();
+    // A button that turned into its opposite under the finger (Install → Cancel).
+    if (
+      this.lastTap &&
+      now - this.lastTap.at < 120_000 &&
+      Math.hypot(this.lastTap.grid.x - grid.x, this.lastTap.grid.y - grid.y) < 60 &&
+      STARTS_SOMETHING.test(this.lastTap.label) &&
+      UNDOES_IT.test(label)
+    ) {
+      return refuse(
+        `Not tapped: this spot was "${this.lastTap.label}" and is now "${label}" — your last tap worked and it is in progress. Tapping it would undo it. Wait for it to finish: wait_for_element with the text you expect next (for an app install, "Open") and timeoutMillis up to 120000.`,
+      );
+    }
+    // The same spot again on a screen that did not react last time.
+    if (this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {
+      return refuse('Not tapped: you tapped here a moment ago and the screen did not change. Try a different way — click_node with the visible text, a different element, scroll_element, or global_action BACK.');
+    }
+    const width = this.screen?.size.width ?? 1080;
+    const height = this.screen?.size.height ?? 2400;
+    const px = target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
+    const actionKey = `tap_${grid.x}_${grid.y}`;
+    this.actionHistory.push(actionKey);
+    if (this.actionHistory.length > 10) this.actionHistory.shift();
+    return this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
+  }
 
-    if (rows.length === 0) return 'No visible UI elements found.';
-    return ['idx|type|label|flags|tap_at', ...rows].join('\n');
+  /** Watches the screen until two looks in a row match, up to maxMs (15 s at most). */
+  private async waitUntilSettled(maxMs: number): Promise<{ settled: boolean; ms: number }> {
+    const started = Date.now();
+    const deadline = started + Math.min(Math.max(maxMs, 1000), 15_000);
+    let previous = this.currentKey();
+    while (Date.now() < deadline) {
+      await sleep(700);
+      try {
+        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+      } catch {
+        continue;
+      }
+      const key = this.currentKey();
+      if (key === previous && Date.now() - started >= 1200) return { settled: true, ms: Date.now() - started };
+      previous = key;
+    }
+    return { settled: false, ms: Date.now() - started };
   }
 }

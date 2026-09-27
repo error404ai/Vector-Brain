@@ -1,6 +1,8 @@
+import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind } from '@/RTKService/androidService/engineService';
+import { isFreeModel } from '@/utils/modelMeta';
 import MemoryIcon from '@mui/icons-material/Memory';
-import { Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, Stack, Switch, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
+import { Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import toast from 'react-hot-toast';
 
 /**
@@ -11,8 +13,12 @@ export default function AgentEngineCard() {
   const { data, isLoading } = useGetAgentEngineQuery();
   const [save, { isLoading: saving }] = useSetAgentEngineMutation();
   const settings = data?.data;
+  const { data: configsData } = useGetAiConfigsQuery();
+  const configs = configsData?.data ?? [];
+  const active = configs.find((c) => c.is_active);
+  const others = configs.filter((c) => !c.is_active);
 
-  const update = async (body: { engine?: EngineKind | null; planner?: boolean }) => {
+  const update = async (body: { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null }) => {
     try {
       await save(body).unwrap();
       toast.success('Saved — applies to the next run');
@@ -69,6 +75,41 @@ export default function AgentEngineCard() {
                 }
               />
             ) : null}
+
+            <TextField
+              select
+              size="small"
+              label="Backup model"
+              value={settings.fallback_config_id ?? ''}
+              disabled={saving}
+              onChange={(e) => void update({ fallback_config_id: e.target.value === '' ? null : Number(e.target.value) })}
+              helperText="Takes over for the rest of a run when the main model is rate-limited or has used up its daily limit, instead of the run failing."
+            >
+              <MenuItem value="">None</MenuItem>
+              {others.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.label || c.model}
+                  {isFreeModel(c.model) ? ' — free, has a daily cap' : ''}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              select
+              size="small"
+              label="Screen reader (vision model)"
+              value={settings.vision_config_id ?? ''}
+              disabled={saving}
+              onChange={(e) => void update({ vision_config_id: e.target.value === '' ? null : Number(e.target.value) })}
+              helperText={`For a main model that cannot see images${active ? ` (like ${active.model})` : ''}: on screens the element list cannot describe — web pages, Play Store, apps with unlabelled buttons — this model reads a screenshot so the agent taps real buttons instead of guessing. Pick a small, cheap vision model (e.g. a Gemini Flash or GPT-4o-mini class model). Ignored when the main model already sees images.`}
+            >
+              <MenuItem value="">None</MenuItem>
+              {configs.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.label || c.model}
+                </MenuItem>
+              ))}
+            </TextField>
           </Stack>
         )}
       </CardContent>

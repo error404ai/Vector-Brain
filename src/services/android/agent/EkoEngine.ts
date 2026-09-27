@@ -11,7 +11,8 @@ export class EkoEngine implements AgentEngine {
   private currentRunId: string | null = null;
 
   constructor(llms: LLMs, agent: AndroidAgent, onMessage: EngineMessageHandler) {
-    this.eko = new Eko({ llms, agents: [agent], callback: { onMessage } });
+    // "fallback", when configured, is tried after "default" fails (Eko walks the names in order).
+    this.eko = new Eko({ llms, planLlms: ['default', 'fallback'], agents: [agent], callback: { onMessage } });
   }
 
   async run(prompt: string, runId: string): Promise<EngineRunResult> {

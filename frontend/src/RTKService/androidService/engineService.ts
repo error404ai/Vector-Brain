@@ -7,6 +7,10 @@ export interface EngineSettings {
   planner: boolean;
   /** 'account' when this account chose; 'server' when it follows the server default. */
   source: 'account' | 'server';
+  /** One of the account's AI configs: reads screens for a text-only model. */
+  vision_config_id: number | null;
+  /** One of the account's AI configs: takes over when the main model is rate-limited or out of quota. */
+  fallback_config_id: number | null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tag types are not declared centrally (same as the other services)
@@ -19,7 +23,7 @@ export const engineService = baseApi.injectEndpoints({
       query: () => ({ url: '/android/agent/engine', method: 'GET' }),
       providesTags: [TAG],
     }),
-    setAgentEngine: builder.mutation<{ data: EngineSettings }, { engine?: EngineKind | null; planner?: boolean }>({
+    setAgentEngine: builder.mutation<{ data: EngineSettings }, { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null }>({
       query: (body) => ({ url: '/android/agent/engine', method: 'PUT', body }),
       invalidatesTags: [TAG],
     }),

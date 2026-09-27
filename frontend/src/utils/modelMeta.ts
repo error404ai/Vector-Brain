@@ -37,6 +37,9 @@ const RULES: MetaRule[] = [
   },
 ];
 
+/** Why a free model is fine to try but not to run a fleet on. */
+export const FREE_MODEL_NOTE = 'Free models stop after a daily number of requests (and are often rate-limited), so a fleet runs out mid-day. Fine for trying things; for phones running every day use a paid model, or set a backup model under Agent engine.';
+
 export function isFreeModel(model: string): boolean {
   return model.toLowerCase().includes(':free');
 }
@@ -53,14 +56,14 @@ export function getModelMeta(model: string | null | undefined): ModelMeta | null
 }
 
 /**
- * Display order: recommended models first, then free models (cheap to try),
- * then everything else. Stable within each group.
+ * Display order: recommended models first, then paid ones, then free models
+ * last — their daily caps make them a poor fit for a fleet. Stable within each group.
  */
 export function sortModelsForDisplay<T extends { model: string }>(items: T[]): T[] {
   const rank = (item: T): number => {
     if (getModelMeta(item.model)?.tag === 'recommended') return 0;
-    if (isFreeModel(item.model)) return 1;
-    return 2;
+    if (isFreeModel(item.model)) return 2;
+    return 1;
   };
   return [...items].sort((a, b) => rank(a) - rank(b));
 }

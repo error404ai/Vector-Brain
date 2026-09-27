@@ -22,6 +22,8 @@ import { modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
+import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
+import { createScreenGrounder } from './agent/screenGrounder';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
 import crypto from 'node:crypto';
@@ -966,35 +968,56 @@ Use the current visible Android screen and UI state as context. Continue from wh
    * The engine for this account's runs: the account's own choice, else the
    * server default (AGENT_ENGINE, 'eko' when unset or invalid).
    */
-  async engineSettings(userId: number): Promise<{ kind: EngineKind; planner: boolean; source: 'account' | 'server' }> {
+  async engineSettings(userId: number): Promise<{
+    kind: EngineKind;
+    planner: boolean;
+    source: 'account' | 'server';
+    vision_config_id: number | null;
+    fallback_config_id: number | null;
+  }> {
     const fallback: EngineKind = isEngineKind(process.env.AGENT_ENGINE) ? process.env.AGENT_ENGINE : 'eko';
     const user = await AppDataSource.getRepository(User)
-      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner'] })
+      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner', 'agent_vision_config_id', 'agent_fallback_config_id'] })
       .catch(() => null);
     const own = user?.agent_engine;
     return {
       kind: isEngineKind(own) ? own : fallback,
       planner: Boolean(user?.agent_planner),
       source: isEngineKind(own) ? 'account' : 'server',
+      vision_config_id: user?.agent_vision_config_id ?? null,
+      fallback_config_id: user?.agent_fallback_config_id ?? null,
     };
   }
 
-  async setEngineSettings(userId: number, input: { engine?: string | null; planner?: boolean }): Promise<ApiResponse> {
+  async setEngineSettings(
+    userId: number,
+    input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null },
+  ): Promise<ApiResponse> {
     const patch: Partial<User> = {};
     if (input.engine !== undefined) {
       if (input.engine !== null && !isEngineKind(input.engine)) throw new AppError('engine must be "eko", "vector" or null', 400);
       patch.agent_engine = input.engine;
     }
     if (input.planner !== undefined) patch.agent_planner = Boolean(input.planner);
+    // A helper model must be one of this account's own AI configs.
+    for (const [key, column] of [
+      ['vision_config_id', 'agent_vision_config_id'],
+      ['fallback_config_id', 'agent_fallback_config_id'],
+    ] as const) {
+      const value = input[key];
+      if (value === undefined) continue;
+      if (value !== null && !(await this.aiConfigService.resolveConfigById(userId, Number(value)))) throw new AppError('That AI model is not one of yours', 400);
+      patch[column] = value === null ? null : Number(value);
+    }
     if (Object.keys(patch).length) await AppDataSource.getRepository(User).update({ id: userId }, patch);
     return { message: 'Engine settings saved', data: await this.engineSettings(userId) };
   }
 
-  private buildEkoLlms(aiConfig: DecryptedAiConfig): LLMs {
-    let provider: any = aiConfig.provider;
+  /** One model in Eko's shape. Short rate limits are waited out at the HTTP level. */
+  private ekoLlm(aiConfig: DecryptedAiConfig): LLMs[string] {
     const defaultBaseUrl = this.aiConfigService.getDefaultBaseUrl(aiConfig.provider);
     const baseURL = aiConfig.base_url?.trim() || defaultBaseUrl || undefined;
-
+    let provider: any;
     switch (aiConfig.provider) {
       case AiProvider.DEEPSEEK:
       case AiProvider.GROQ:
@@ -1015,18 +1038,24 @@ Use the current visible Android screen and UI state as context. Continue from wh
         provider = 'openai';
         break;
     }
-
     return {
-      default: {
-        provider,
-        model: aiConfig.model,
-        apiKey: aiConfig.api_key,
-        config: {
-          baseURL,
-          temperature: 0.1,
-        },
+      provider,
+      model: aiConfig.model,
+      apiKey: aiConfig.api_key,
+      // Stays under Eko's 45 s wait for the first streamed token.
+      fetch: withRateLimitRetry(fetch, { maxTotalMs: 30_000 }),
+      config: {
+        baseURL,
+        temperature: 0.1,
       },
-    };
+    } as LLMs[string];
+  }
+
+  /** "default" is the account's model; "fallback", when set, is tried when it fails (Eko walks the names in order). */
+  private buildEkoLlms(aiConfig: DecryptedAiConfig, fallback?: DecryptedAiConfig | null): LLMs {
+    const llms: LLMs = { default: this.ekoLlm(aiConfig) };
+    if (fallback) llms.fallback = this.ekoLlm(fallback);
+    return llms;
   }
 
   private async executeLoop(
@@ -1067,6 +1096,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let lastToolStateSignature: string | undefined;
     let identicalToolStateCount = 0;
     let lastObservationFingerprint: string | undefined;
+    let pendingTapPx: { x: number; y: number } | null = null;
     let unchangedObservationCount = 0;
 
     // Run diagnostics: where this run's time and model usage go (RunDiagnosticsService).
@@ -1132,6 +1162,34 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // Screenshots only for models that can read them (see modelVision).
     const vision = await modelSeesImages(aiConfig.provider, aiConfig.model);
     Logger.info(`[AndroidPlanner] Task ${agentTask.id}: ${aiConfig.provider}/${aiConfig.model} ${vision ? 'can' : 'cannot'} read screenshots`);
+    const engineSettings = await this.engineSettings(userId);
+    const modelFor = (config: DecryptedAiConfig) =>
+      createLanguageModel({
+        provider: config.provider,
+        model: config.model,
+        apiKey: config.api_key,
+        baseURL: config.base_url?.trim() || this.aiConfigService.getDefaultBaseUrl(config.provider) || undefined,
+      });
+    // A text-only model gets a small vision model to read the screens its
+    // element list cannot describe, instead of tapping blind.
+    const helperConfig =
+      !vision && engineSettings.vision_config_id ? await this.aiConfigService.resolveConfigById(userId, engineSettings.vision_config_id).catch(() => null) : null;
+    const grounder =
+      helperConfig && (await modelSeesImages(helperConfig.provider, helperConfig.model))
+        ? createScreenGrounder(modelFor(helperConfig), (usage) => {
+            // Its calls cost tokens like any other; they count in the run's totals.
+            llmCalls += 1;
+            promptTokens += usage.inputTokens;
+            completionTokens += usage.outputTokens;
+            if (usage.inputTokens || usage.outputTokens) tokensReported = true;
+          })
+        : undefined;
+    if (grounder) Logger.info(`[AndroidPlanner] Task ${agentTask.id}: screens the element list cannot describe are read by ${helperConfig?.model}`);
+    // The backup model, for when the main one is rate-limited or out of quota.
+    const fallbackConfig =
+      engineSettings.fallback_config_id && engineSettings.fallback_config_id !== aiConfig.id
+        ? await this.aiConfigService.resolveConfigById(userId, engineSettings.fallback_config_id).catch(() => null)
+        : null;
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
       onStepExecuted: (info) => {
         // A device action came back, including waits. Proof the phone is alive.
@@ -1146,6 +1204,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
         }
         if (info.uiTree) lastUiTree = info.uiTree;
         if (info.foregroundApp) lastForegroundApp = info.foregroundApp;
+        // Where a tap landed in pixels, stored on the step so a saved flow can replay it.
+        if (info.tapPx) pendingTapPx = info.tapPx;
 
         // Waits deliberately skip re-observation, so they always report the
         // previous screen. Counting them here killed legitimate runs that were
@@ -1169,7 +1229,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
           }
         }
       },
-    }, { vision });
+    }, { vision, grounder });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.
@@ -1322,6 +1382,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
             if (currentTaskLog) {
               currentTaskLog.status = isError ? AndroidStepStatus.FAILED : AndroidStepStatus.SUCCESS;
+              if (pendingTapPx && !isError) {
+                currentTaskLog.action_payload = { ...(currentTaskLog.action_payload ?? {}), px_x: pendingTapPx.x, px_y: pendingTapPx.y };
+              }
+              pendingTapPx = null;
               currentTaskLog.result_message = stripScreenDump(textContent);
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
@@ -1372,16 +1436,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
     // Which engine drives the model (see agent/AgentEngine). Both feed the
     // same handler above, so recording, guards and diagnostics are shared.
-    const engineSettings = await this.engineSettings(userId);
     engine =
       engineSettings.kind === 'vector'
         ? new VectorEngine({
-            model: createLanguageModel({
-              provider: aiConfig.provider,
-              model: aiConfig.model,
-              apiKey: aiConfig.api_key,
-              baseURL: aiConfig.base_url?.trim() || this.aiConfigService.getDefaultBaseUrl(aiConfig.provider) || undefined,
-            }),
+            model: modelFor(aiConfig),
+            fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,
             agent: androidAgent,
             onMessage: handleMessage,
             vision,
@@ -1390,7 +1449,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
             callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
             callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
           })
-        : new EkoEngine(this.buildEkoLlms(aiConfig), androidAgent, handleMessage);
+        : new EkoEngine(this.buildEkoLlms(aiConfig, fallbackConfig), androidAgent, handleMessage);
     const activeEngine = engine;
     agentTask.engine = engineSettings.kind;
     void this.agentTaskRepo.update({ id: agentTask.id }, { engine: engineSettings.kind }).catch(() => undefined);

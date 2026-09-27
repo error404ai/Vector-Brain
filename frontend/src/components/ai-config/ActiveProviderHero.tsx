@@ -1,5 +1,5 @@
 import type { AiConfig } from '@/RTKService/aiConfigService/aiConfigService';
-import { getModelMeta } from '@/utils/modelMeta';
+import { FREE_MODEL_NOTE, getModelMeta } from '@/utils/modelMeta';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -182,17 +182,19 @@ export default function ActiveProviderHero({
               }}
             />
             {free && (
-              <Chip
-                label="FREE"
-                size="small"
-                sx={{
-                  bgcolor: alpha(theme.palette.success.main, 0.14),
-                  color: 'success.dark',
-                  fontWeight: 700,
-                  height: 22,
-                  fontSize: '0.7rem',
-                }}
-              />
+              <Tooltip title={FREE_MODEL_NOTE}>
+                <Chip
+                  label="FREE · DAILY CAP"
+                  size="small"
+                  sx={{
+                    bgcolor: alpha(theme.palette.warning.main, 0.16),
+                    color: 'warning.dark',
+                    fontWeight: 700,
+                    height: 22,
+                    fontSize: '0.7rem',
+                  }}
+                />
+              </Tooltip>
             )}
             {meta && (
               <Tooltip title={meta.note}>
