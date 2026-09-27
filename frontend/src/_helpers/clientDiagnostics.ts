@@ -94,6 +94,8 @@ export function snapshot(): Snapshot {
     decoded_image_mb: Math.round(images.reduce((sum, img) => sum + img.naturalWidth * img.naturalHeight * 4, 0) / 1048576),
     ws: { ...ws, frame_mb: Math.round((ws.frameBytes / 1048576) * 10) / 10, last_frame_s_ago: ws.lastFrameAt ? Math.round((now - ws.lastFrameAt) / 1000) : null },
     long_tasks: { count: longTasks, total_ms: Math.round(longTaskMs) },
+    // React's development build logs a measure per render; a production build none.
+    perf_measures: safe(() => performance.getEntriesByType('measure').length, -1),
     loader_visible_s: loaderShownAt ? Math.round((now - loaderShownAt) / 1000) : null,
     pending: requests.filter((r) => r.status === 'pending').map((r) => ({ method: r.method, path: r.path, age_s: Math.round((now - r.at) / 1000) })),
     requests: requests.slice(-MAX_REQUESTS).map((r) => ({ ...r, at: Math.round((r.at - bootAt) / 1000) })),

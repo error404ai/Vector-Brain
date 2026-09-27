@@ -16,7 +16,11 @@ RUN cd frontend && pnpm install --frozen-lockfile
 COPY . .
 
 RUN pnpm run build
-RUN cd frontend && pnpm run build
+# Always a production React build, whatever NODE_ENV the host injects as a
+# build variable: a development build records every render's props (base64
+# screenshots included) in the performance timeline and ran browsers out of
+# memory on Mission Control.
+RUN cd frontend && NODE_ENV=production pnpm run build
 
 # -- Stage 2: Production ----------------------------------------------------
 FROM node:24-alpine AS production
