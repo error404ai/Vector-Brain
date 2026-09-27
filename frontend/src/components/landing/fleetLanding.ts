@@ -6,7 +6,7 @@ import { clamp, doneFrac, fleetCount, lerp, type FleetState } from './fleetState
 /**
  * Wires the FLEET landing page's scroll story to the markup under `root`:
  * per-chapter progress (`--p` on each pinned chapter), the running side label
- * and index, the London clock, the 1 → ∞ counter, the "Watch 12s" guided
+ * and index, the UTC clock, the 1 → ∞ counter, the "Watch 12s" guided
  * scroll, the canvas screens in the cards, and — loaded on demand so the
  * three.js bundle never blocks first paint — the WebGL scene.
  *
@@ -105,10 +105,10 @@ export function startFleetLanding(root: HTMLElement): () => void {
     state.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
   }, { passive: true });
 
-  // London clock.
+  // UTC clock (no office location is claimed).
   const clock = q('.fl-clock');
   const tick = () => {
-    if (clock) clock.textContent = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour12: false });
+    if (clock) clock.textContent = new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour12: false });
   };
   tick();
   const clockTimer = window.setInterval(tick, 1000);

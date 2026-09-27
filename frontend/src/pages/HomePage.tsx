@@ -69,6 +69,10 @@ const FAQ: { q: string; a: string }[] = [
     a: 'Any app installed on the phone. FLEET works through the screen the way a person does, so there is no SDK to add and nothing to change in the app.',
   },
   {
+    q: 'Does it need root or device-owner access?',
+    a: 'No. The companion app works through Android accessibility, so an ordinary phone that is not rooted and not enrolled as a managed device works as it is. Root or device-owner access may unlock optional advanced features later, but nothing requires them.',
+  },
+  {
     q: 'How many phones can I run?',
     a: 'As many as you pair. There is no per-device limit; the ceiling is the number of phones you have connected.',
   },
@@ -83,6 +87,10 @@ const FAQ: { q: string; a: string }[] = [
   {
     q: 'Can I watch a run and stop it?',
     a: 'Yes. Every phone streams its screen while it works, and Stop ends a run at once, on one phone or on all of them.',
+  },
+  {
+    q: 'What happens if a task gets stuck?',
+    a: 'The run stops itself instead of tapping forever. If the screen stops changing after repeated actions, the same action keeps repeating on an unchanged screen, or the phone or the AI provider goes silent for a few minutes, the task ends and the reason is written in the results. You can also press Stop at any time.',
   },
   {
     q: 'Can I repeat a task without paying for the AI again?',
@@ -170,7 +178,7 @@ export default function HomePage() {
         <span>SKU</span> VB-FLT-001
       </div>
       <div className="hud corner c-bl" aria-hidden="true">
-        <span>London, UK</span> · <b className="fl-clock">00:00:00</b> GMT
+        <span>Worldwide</span> · <b className="fl-clock">00:00:00</b> UTC
         <br />
         <span>Frame</span> <b className="fl-frame">0000</b>
       </div>
@@ -191,7 +199,7 @@ export default function HomePage() {
                 connect, the way a person would. One phone or 10,000, all at the same time.
               </p>
               <div className="hctl">
-                <Link className="ctl solid" to="/signup">Start automating</Link>
+                <Link className="ctl solid cta" to="/signup">Start automating</Link>
                 <button className="ctl fl-watch" type="button">Watch 12s</button>
               </div>
             </div>
@@ -237,8 +245,8 @@ export default function HomePage() {
                 <dd>Accessibility · Live link · Cloud runtime · AI pilot</dd>
                 <dt>Keys</dt>
                 <dd>Bring your own (BYOK)</dd>
-                <dt>Origin</dt>
-                <dd>London, UK</dd>
+                <dt>Runs</dt>
+                <dd>Worldwide</dd>
               </dl>
             </div>
             <ul className="notes" aria-label="Unit notes">
@@ -279,7 +287,7 @@ export default function HomePage() {
               <div className="facts mono">
                 <span><b>BYOK</b> · your own model keys</span>
                 <span><b>Multilingual</b> · commands in any language</span>
-                <span><b>Worldwide</b> · run from London, UK</span>
+                <span><b>Worldwide</b> · run from anywhere</span>
               </div>
             </div>
           </div>
@@ -424,14 +432,18 @@ export default function HomePage() {
               <br />
               runs
             </h2>
-            <p>Illustrative jobs, written the way operators type them. Each one is a single instruction sent to the whole fleet.</p>
+            <p>
+              <span className="mono runs-flag">Illustrative examples</span>
+              Jobs written the way operators type them. Each one is a single instruction sent to the whole fleet; device
+              counts and cadence show the shape of a run, not results from a customer.
+            </p>
           </div>
           <div className="grid">
             {RUNS.map((r, i) => (
               <article className="run" key={r.title}>
                 <div className="run-top mono">
                   <span>Run {String(i + 1).padStart(2, '0')}</span>
-                  <span>Example</span>
+                  <span className="run-flag">Illustrative</span>
                 </div>
                 <div className="shot">
                   <canvas width={280} height={603} data-kind={r.kind} data-slot={`run-${i + 1}`} aria-hidden="true" />
@@ -487,16 +499,19 @@ export default function HomePage() {
               to all of them.
             </p>
             <div className="auth">
-              <Link className="ctl solid" to="/signup">Sign up with Google</Link>
-              <Link className="ctl" to="/signup">Sign up with email</Link>
+              <div className="auth-row">
+                <Link className="ctl solid cta" to="/signup">Get started</Link>
+                <a className="ctl cta-alt" href="#how">See how it works</a>
+              </div>
+              <p className="mono auth-note">Connect one phone first. Scale when it works.</p>
               <span className="mono">
-                <small>Have an account?</small> <Link className="ctl" to="/login">Sign in</Link>
+                <small>Google or email · Have an account?</small> <Link className="ctl" to="/login">Sign in</Link>
               </span>
             </div>
           </div>
           <div className="foot mono">
             <span>FLEET · by Vector Brain</span>
-            <span>London, UK · Worldwide</span>
+            <span>Worldwide</span>
             <span>English + multilingual</span>
             <span>© {new Date().getFullYear()}</span>
           </div>

@@ -261,3 +261,19 @@
 .fl .faq-item[open] summary i::after{transform:rotate(0deg)}
 .fl .faq-item p{margin:0;padding:0 40px 26px 0;max-width:68ch;color:var(--graphite);line-height:1.65}
 @media (prefers-reduced-motion:reduce){.fl .faq-item summary i::before,.fl .faq-item summary i::after{transition:none}}
+
+/* Conversion + readability pass: bigger primary CTAs, clearer example labels,
+   readable spec-sheet notes. Same palette and type; only weight and size change. */
+.fl .ctl.cta,.fl .hctl .ctl.cta{font-size:13px;letter-spacing:.12em;padding:16px 26px}
+.fl .hctl{align-items:center}
+.fl .notes{width:min(300px,31vw)}
+.fl .notes li{font-size:11px;line-height:1.55;letter-spacing:.04em;padding:12px 0}
+.fl .notes strong{font-size:12px;letter-spacing:.08em}
+.fl .runs-flag{display:block;margin-bottom:10px;color:#60A5FA}
+.fl .run-flag{color:#60A5FA}
+.fl .auth{gap:14px}
+.fl .auth-row{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:center}
+.fl .auth .ctl.cta{font-size:14px;padding:18px 32px}
+.fl .auth .ctl.cta-alt{font-size:12.5px;color:var(--bone)}
+.fl .close-row p.auth-note{font:500 11px/1.5 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--bone);max-width:none}
+@media (max-width:560px){.fl .ctl.cta,.fl .hctl .ctl.cta,.fl .auth .ctl.cta{padding:15px 22px}}
