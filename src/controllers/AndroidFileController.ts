@@ -57,6 +57,19 @@ export class AndroidFileController {
     return this.fileService.listForDashboard(user.userId, Number(deviceId));
   }
 
+  /**
+   * Status of several transfers at once: ?ids=12,13,14 (up to 1000).
+   * Mission Control polls this for a send to a whole fleet.
+   */
+  @Authorized()
+  @Get('/status')
+  async fileStatus(@QueryParam('ids') ids: string, @CurrentUser({ required: true }) user: { userId: number }) {
+    const list = String(ids || '')
+      .split(',')
+      .map((part) => Number(part.trim()));
+    return this.fileService.statusForDashboard(user.userId, list);
+  }
+
   /** Small-file upload: base64 in a JSON body. */
   @Authorized()
   @Post('/')

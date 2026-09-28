@@ -9,6 +9,8 @@ import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
 import { DeviceFileService } from '@/services/android/DeviceFileService';
 import { Response } from 'express';
+import fs from 'fs';
+import { pipeline } from 'stream/promises';
 import { Body, Controller, Get, Param, Post, Req, Res, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 
@@ -246,10 +248,20 @@ export class AndroidCompanionController {
     res.setHeader('X-File-Sha256', file.sha256);
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
 
-    // Sent in slices rather than as one buffer, so a fleet collecting the same
-    // APK does not put a copy per phone in memory at once.
+    // A fleet collecting the same file reads it from a verified disk copy, so
+    // MySQL is read once per file instead of once per phone.
+    const cached = await this.fileService.cachedCopy(file, Number(id));
+    if (cached) {
+      await this.fileService.countDownloadStart(Number(id));
+      // A phone that hangs up mid-download rejects this; nothing more to send.
+      await pipeline(fs.createReadStream(cached), res).catch(() => undefined);
+      return res;
+    }
+
+    // Fallback: slices straight from the database, never a whole copy in memory.
     for await (const chunk of this.fileService.streamForDelivery(req.deviceToken.deviceId, Number(id))) {
-      if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve));
+      if (res.destroyed) break;
+      if (!res.write(chunk) && !(await drainedOrClosed(res))) break;
     }
     return res.end();
   }
@@ -285,4 +297,22 @@ export class AndroidCompanionController {
   async postReceiptAlias(@Param('id') id: string, @Body({ required: false }) body: any, @Req() req: any) {
     return this.postReceipt(id, body, req);
   }
+}
+
+/**
+ * Waits for the socket to take more data. Resolves false if the phone hung up
+ * first; waiting only for 'drain' would hang this request forever in that case.
+ */
+function drainedOrClosed(res: Response): Promise<boolean> {
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      res.off('drain', onDrain);
+      res.off('close', onClose);
+      resolve(ok);
+    };
+    const onDrain = () => done(true);
+    const onClose = () => done(false);
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+  });
 }

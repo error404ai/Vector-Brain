@@ -7,6 +7,7 @@ import { ApiResponse } from '@/types/ApiResponse';
 import crypto from 'crypto';
 import { In, LessThan } from 'typeorm';
 import { Service } from 'typedi';
+import { FileDiskCache } from './fileDiskCache';
 import { acceptsInstallStage, normalizeInstallReport } from './installStatus';
 
 /**
@@ -31,8 +32,20 @@ const ORPHAN_SWEEP_EVERY_MS = 10 * 60_000;
 /** How long a queued file stays available before it is swept. */
 const RETENTION_DAYS = 7;
 
-/** Devices one upload may be queued for at a time. */
-const MAX_DEVICES_PER_QUEUE = 100;
+/**
+ * Devices one upload may be queued for at a time.
+ *
+ * The bytes are stored once whatever the count (see storeForDevices), so this
+ * only bounds the per-device rows. Raised from 100 for Mission Control sends to
+ * a whole fleet.
+ */
+const MAX_DEVICES_PER_QUEUE = 1000;
+
+/** Longest a phone's download waits for the disk copy before streaming from MySQL instead. */
+const CACHE_WAIT_MS = 4000;
+
+/** Transfer rows one status request may ask about. */
+const MAX_STATUS_IDS = 1000;
 
 /** How long an unfinished chunked upload lingers before it is dropped. */
 const UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -73,6 +86,7 @@ export class DeviceFileService {
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
 
   private uploads = new Map<string, UploadSession>();
+  private diskCache = new FileDiskCache();
 
   // ---------------------------------------------------------------------------
   // Small-file path (base64 in a JSON body) - unchanged interface, blob-backed.
@@ -305,6 +319,37 @@ export class DeviceFileService {
     };
   }
 
+  /**
+   * Where each of several transfers stands, in one request.
+   *
+   * Mission Control follows a send to hundreds of phones; asking per device
+   * would be hundreds of requests every poll. Rows that are gone (expired,
+   * removed) are simply absent from the answer.
+   */
+  async statusForDashboard(userId: number, ids: number[]): Promise<ApiResponse> {
+    const wanted = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+    if (wanted.length === 0) throw new AppError('Pass at least one file id', 400);
+    if (wanted.length > MAX_STATUS_IDS) {
+      throw new AppError(`Ask about at most ${MAX_STATUS_IDS} files at once.`, 400);
+    }
+
+    const files = await this.fileRepo.find({ where: { id: In(wanted), user_id: userId } });
+    return {
+      message: 'File status retrieved successfully',
+      data: files.map((file) => ({
+        id: file.id,
+        device_id: file.device_id,
+        status: file.status,
+        download_attempts: file.download_attempts,
+        failure_message: file.failure_message,
+        delivered_at: file.delivered_at,
+        install_status: file.install_status,
+        install_message: file.install_message,
+        expires_at: file.expires_at,
+      })),
+    };
+  }
+
   async deleteForDashboard(userId: number, fileId: number): Promise<ApiResponse> {
     const file = await this.fileRepo.findOne({ where: { id: fileId, user_id: userId } });
     if (!file) throw new AppError('File not found', 404);
@@ -368,12 +413,51 @@ export class DeviceFileService {
    */
   async *streamForDelivery(deviceIdString: string, fileId: number, chunkBytes = 4 * 1024 * 1024) {
     const meta = await this.describeForDelivery(deviceIdString, fileId);
-    // One count per started download; the receipt is what settles the row.
+    await this.countDownloadStart(fileId);
+    yield* this.readStored(meta, fileId, chunkBytes);
+  }
+
+  /** One count per started download; the receipt is what settles the row. */
+  async countDownloadStart(fileId: number): Promise<void> {
     await this.fileRepo.query(
       'UPDATE device_file_transfers SET download_attempts = download_attempts + 1 WHERE id = ? AND status = ?',
       [fileId, DeviceFileStatus.PENDING],
     );
+  }
 
+  /**
+   * A verified copy of the file on local disk, or null to stream from MySQL.
+   *
+   * Shared bytes (chunks or blob) are keyed by SHA-256, so the first phone to
+   * ask fills the copy and every other phone reads it from disk instead of
+   * pulling the whole file out of the database again. Legacy inline rows are
+   * one-off, so they keep streaming from their row.
+   */
+  async cachedCopy(
+    meta: { source: 'inline' | 'chunks' | 'blob'; sha256: string; size_bytes: number },
+    fileId: number,
+  ): Promise<string | null> {
+    if (meta.source === 'inline') return null;
+    const copy = this.diskCache.get(meta.sha256, meta.size_bytes, () => this.readStored(meta, fileId));
+    // The phone is waiting on this request with its own read timeout. If the
+    // copy is still being made after a few seconds, this phone streams from the
+    // database as before and the copy finishes in the background for the rest.
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), CACHE_WAIT_MS);
+    });
+    try {
+      return await Promise.race([copy, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async *readStored(
+    meta: { source: 'inline' | 'chunks' | 'blob'; sha256: string; size_bytes: number },
+    fileId: number,
+    chunkBytes = 4 * 1024 * 1024,
+  ) {
     if (meta.source === 'chunks') {
       const rows: { chunk_index: number }[] = await this.blobRepo.query(
         'SELECT chunk_index FROM device_file_blob_chunks WHERE sha256 = ? ORDER BY chunk_index ASC',
