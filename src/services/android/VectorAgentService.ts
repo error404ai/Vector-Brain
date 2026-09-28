@@ -12,6 +12,7 @@ import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { In } from 'typeorm';
 import { PLAIN_YES } from './plainYes';
+import { answerPrompt, parseAnswer, type AnswerPhone, type PhoneReport } from './taskAnswer';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { FleetStateService } from './FleetStateService';
@@ -390,6 +391,29 @@ export class VectorAgentService {
       const calls = (response.tool_calls ?? []).map((c, i) => ({ id: c.id ?? `call_${i}`, name: c.name, args: (c.args ?? {}) as Record<string, unknown> }));
       return { text: text.trim(), calls };
     };
+  }
+
+  /**
+   * One short model call (no tools) that answers the user's question from what
+   * each phone reported. null when there is no chat model or the reply is not
+   * usable; the caller then posts the plain fallback.
+   */
+  async writeTaskAnswer(
+    userId: number,
+    input: { question: string; task: string; phones: PhoneReport[] },
+  ): Promise<{ answer: string; phones: AnswerPhone[] } | null> {
+    const config = await this.aiConfigService.resolveChatConfig(userId);
+    if (!config) return null;
+    const model = this.aiConfigService.createChatModel({ provider: config.provider, model: config.model, api_key: config.api_key, base_url: config.base_url, temperature: 0 });
+    const { system, user } = answerPrompt({ ...input, language: replyLanguage(input.question) });
+    try {
+      const response = await model.invoke([new SystemMessage(system), new HumanMessage(user)], { signal: AbortSignal.timeout(30_000) });
+      const text = typeof response.content === 'string' ? response.content : '';
+      return parseAnswer(text, input.phones);
+    } catch (error) {
+      Logger.warn('[VectorAgent] could not write the task answer:', error);
+      return null;
+    }
   }
 
   /** A scripted brain for the harness: plays back the given turns in order. */

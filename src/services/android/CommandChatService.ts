@@ -1,4 +1,7 @@
 import { historyEntry } from './chatClaims';
+import { fallbackAnswer, type TaskAnswer } from './taskAnswer';
+import { AndroidGatewayService } from './AndroidGatewayService';
+import { LessThan } from 'typeorm';
 import { describeModelError } from '@/services/ai/modelErrors';
 import { ChatMessage } from '@/entities/ChatMessage';
 import { ChatScreenShot } from '@/entities/ChatScreenShot';
@@ -50,7 +53,7 @@ interface Pending {
 
 export interface ChatReply {
   /** answer: plain text · mission: a mission started · confirm: awaiting yes · clarify: a question back · screens: live phone screens · error */
-  kind: 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error';
+  kind: 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error' | 'result';
   text: string;
   mission?: unknown;
   /** kind 'screens': one live screenshot per phone (base64 stripped before storage). */
@@ -72,6 +75,8 @@ export interface ChatReply {
    * named. Stored with the reply, which is how the chat "remembers" it.
    */
   pending?: { awaiting: 'phones'; request: string } | { awaiting: 'action'; target: string };
+  /** kind 'result': the answer to the user's question once a task from the chat finished. */
+  result?: TaskAnswer;
 }
 
 /**
@@ -103,7 +108,45 @@ export class CommandChatService {
     private missionService: MissionService,
     private proxyService: ProxyRotationService,
     private agent: VectorAgentService,
-  ) {}
+    private gatewayService: AndroidGatewayService,
+  ) {
+    // A task started from the chat ends with the answer to what was asked.
+    this.missionService.onFinished((mission) => {
+      void this.postTaskAnswer(mission).catch((error) => Logger.warn(`[CommandChat] answer for mission #${mission.id} failed:`, error));
+    });
+  }
+
+  /**
+   * Posts the answer card for a finished mission that the chat started: the
+   * user's question, a one-line answer written from the phones' own reports,
+   * and one row per phone. Missions not started from the chat, and stopped
+   * ones, get nothing.
+   */
+  private async postTaskAnswer(mission: { id: number; user_id: number; status: string; prompt: string | null; request: string }): Promise<void> {
+    if (mission.status !== 'DONE') return;
+    const started = await this.messageRepo.findOne({ where: { user_id: mission.user_id, mission_id: mission.id, role: 'assistant' } });
+    if (!started) return;
+    const asked = await this.messageRepo.findOne({
+      where: { user_id: mission.user_id, conversation_id: started.conversation_id ?? undefined, role: 'user', id: LessThan(started.id) },
+      order: { id: 'DESC' },
+    });
+    const described = (await this.missionService.get(mission.id, mission.user_id)).data as {
+      items: { id: number; device_name: string; status: string; replaces_item_id: number | null; last_message: string | null; reason_text: string | null }[];
+    };
+    const replaced = new Set(described.items.map((i) => i.replaces_item_id).filter(Boolean));
+    const phones = described.items
+      .filter((i) => !replaced.has(i.id) || i.status === 'SUCCEEDED')
+      .map((i) => ({ name: i.device_name, ok: i.status === 'SUCCEEDED', report: (i.status === 'SUCCEEDED' ? i.last_message : i.reason_text ?? i.last_message) ?? '' }));
+    if (!phones.length) return;
+
+    const question = (asked?.text ?? mission.request).slice(0, 500);
+    const written = SIMULATION ? null : await this.agent.writeTaskAnswer(mission.user_id, { question, task: mission.prompt ?? mission.request, phones });
+    const body = written ?? fallbackAnswer(phones);
+    const reply: ChatReply = { kind: 'result', text: body.answer, result: { mission_id: mission.id, question, answer: body.answer, phones: body.phones } };
+    const conversationId = started.conversation_id ?? undefined;
+    await this.record(mission.user_id, 'assistant', body.answer, reply, conversationId);
+    this.gatewayService.broadcastToUser(mission.user_id, 'chat:result', { conversation_id: conversationId ?? null, reply });
+  }
 
   /**
    * The user pressed Stop on a message still being worked on. Nothing further

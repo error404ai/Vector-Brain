@@ -67,6 +67,7 @@ import { StepFeed } from '@/components/mission/StepFeed';
 import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
 import FileDropCard from '@/components/mission/FileDropCard';
+import AnswerCard from '@/components/mission/AnswerCard';
 import { MentionHighlighter, MentionMenu, MentionText } from '@/components/mission/MentionUI';
 import { mentionOptions, typedMention } from '@/components/mission/mentions';
 import { PauseButton, PausedGlyph, PausedProgress, ResumeButton } from '@/components/mission/MissionPause';
@@ -118,7 +119,14 @@ function describeAction(action: unknown): string {
  */
 const FRAME_FLUSH_MS = 1000;
 
-function useLiveFeed(): LiveFeed {
+/** A chat reply the server pushed on its own (a finished task's answer). */
+type PushedReply = { conversation_id: number | null; reply: ChatReply };
+
+function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void): LiveFeed {
+  const pushedRef = useRef(onPushedReply);
+  useEffect(() => {
+    pushedRef.current = onPushedReply;
+  });
   const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
   useEffect(() => {
     let disposed = false;
@@ -151,6 +159,10 @@ function useLiveFeed(): LiveFeed {
         }
         const p = msg.payload ?? {};
         switch (msg.event) {
+          case 'chat:result': {
+            if (p.reply && typeof p.reply === 'object') pushedRef.current?.(p as unknown as PushedReply);
+            break;
+          }
           case 'device:screen_capture': {
             const hw = p.deviceId;
             const data = (p.result as { screenCapture?: { base64Data?: string } })?.screenCapture?.base64Data;
@@ -1434,6 +1446,13 @@ function AssistantBubble({
 }) {
   const { reply } = turn;
   const notice = reply.notice ? <ModelNotice notice={reply.notice} /> : null;
+  if (reply.kind === 'result' && reply.result) {
+    return (
+      <AssistantRow>
+        <AnswerCard result={reply.result} onRetryFailed={(id) => onRerun(id, { scope: 'failed' })} />
+      </AssistantRow>
+    );
+  }
   if (reply.kind === 'mission' && reply.mission) {
     return (
       <AssistantRow>
@@ -1876,7 +1895,12 @@ export default function MissionControlPage() {
   const jumpRef = useRef(true);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const feed = useLiveFeed();
+  // A finished task's answer arrives on its own; show it in the chat it belongs to.
+  const feed = useLiveFeed((pushed) => {
+    if (pushed.conversation_id !== conversationId) return;
+    stickRef.current = true;
+    setTurns((prev) => [...prev, { id: nextId('a'), role: 'assistant', reply: pushed.reply }]);
+  });
   // When a phone last reported a step: keeps the docked robot "working".
   const lastStepAt = useMemo(() => {
     let latest = 0;

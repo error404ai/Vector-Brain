@@ -137,6 +137,12 @@ export class MissionService {
   private deviceRepo = AppDataSource.getRepository(AndroidDevice);
 
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Told when a mission finishes (the chat posts its answer card). */
+  private finishListeners: ((mission: Mission) => void)[] = [];
+
+  onFinished(listener: (mission: Mission) => void): void {
+    this.finishListeners.push(listener);
+  }
   private ticking = false;
   /** Missions being advanced right now — the first dispatch and a tick must not overlap. */
   private inFlight = new Set<number>();
@@ -751,6 +757,13 @@ export class MissionService {
     await this.missionRepo.save(mission);
     Logger.info(`[Mission] #${mission.id} ${status}: ${mission.summary.split('\n')[0]}`);
     this.gatewayService.broadcastToUser(mission.user_id, 'mission:update', { id: mission.id });
+    for (const listener of this.finishListeners) {
+      try {
+        listener(mission);
+      } catch (error) {
+        Logger.warn(`[Mission] #${mission.id} finish listener failed:`, error);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

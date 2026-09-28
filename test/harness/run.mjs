@@ -1608,6 +1608,26 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: a task from the chat ends with an answer card in the same chat',
+    async run() {
+      const script = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'Checking on free1.' }] };
+      const question = `what is on free1 ${Date.now()}`;
+      const res = await api('POST', '/android/chat', { message: `${question} [agent:${JSON.stringify(script)}]` });
+      const mission = res?.data?.mission;
+      if (!mission) return `no mission: ${res?.data?.kind} ${res?.data?.text}`;
+      await waitForMission(mission.id, 30_000);
+      const card = await waitFor(async () => {
+        const history = await api('GET', `/android/chat/history${res.data.conversation_id ? `?conversation_id=${res.data.conversation_id}` : ''}`);
+        return (history?.data?.turns ?? []).find((t) => t.reply?.kind === 'result' && t.reply.result?.mission_id === mission.id) ?? null;
+      }, 15_000, 500);
+      if (!card) return 'no answer card after the task finished';
+      const result = card.reply.result;
+      if (!result.question.startsWith('what is on free1')) return `card question is "${result.question}"`;
+      if (result.phones.length !== 1 || !result.phones[0].ok) return `card phones ${JSON.stringify(result.phones)}`;
+      if (!result.answer) return 'card has no answer line';
+    },
+  },
+  {
     name: 'agent: a reply that claims a task started, with no task behind it, never reaches the user',
     async run() {
       const missionCount = async () => (await db.query('SELECT COUNT(*) AS n FROM missions WHERE user_id = ?', [userId]))[0][0].n;

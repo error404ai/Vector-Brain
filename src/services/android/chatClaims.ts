@@ -79,7 +79,9 @@ export function historyEntry(row: { role: string; text: string; mission_id?: num
     }
     return { role: 'assistant', text, mission: { id: row.mission_id, instruction: instruction || text.slice(0, 200), phones: phones || 'last' } };
   }
-  if (claimsStart(row.text) || claimsActivity(text)) {
+  // A finished task's answer card reports what happened; it is not a claim.
+  const isResult = typeof row.reply === 'string' && row.reply.startsWith('{"kind":"result"');
+  if (!isResult && (claimsStart(row.text) || claimsActivity(text))) {
     return { role: 'assistant', text: 'Nothing was started by this reply — no tool was called, so no task ran.' };
   }
   return { role: 'assistant', text };

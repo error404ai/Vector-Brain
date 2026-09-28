@@ -1,7 +1,24 @@
 import { baseApi } from '../baseApi';
 import type { Mission } from '../missionService/missionService';
 
-export type ChatReplyKind = 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error';
+export type ChatReplyKind = 'answer' | 'mission' | 'confirm' | 'clarify' | 'screens' | 'error' | 'result';
+
+/** One phone's row on an answer card. */
+export interface AnswerPhone {
+  name: string;
+  ok: boolean;
+  /** The key fact for this phone ("31.94.38.82"), or "" when there is none. */
+  value: string;
+  detail: string;
+}
+
+/** kind 'result': the answer to the user's question once a task from the chat finished. */
+export interface TaskAnswer {
+  mission_id: number;
+  question: string;
+  answer: string;
+  phones: AnswerPhone[];
+}
 
 /** One phone's current screen for the chat: the image, or why there isn't one. */
 export interface PhoneShot {
@@ -17,6 +34,8 @@ export interface ChatReply {
   kind: ChatReplyKind;
   text: string;
   mission?: Mission;
+  /** kind 'result': the answer card. */
+  result?: TaskAnswer;
   /** kind 'screens': one live screenshot per phone the user asked to see. */
   screens?: PhoneShot[];
   confirm_token?: string;
