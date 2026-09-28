@@ -10,6 +10,10 @@ export interface DeviceFile {
   status: 'PENDING' | 'DELIVERED' | 'FAILED';
   failure_message?: string | null;
   delivered_at?: string | null;
+  /** Companion APKs only: where the update stands on the phone. */
+  install_status?: string | null;
+  install_message?: string | null;
+  install_updated_at?: string | null;
   expires_at: string;
   created_at: string;
 }

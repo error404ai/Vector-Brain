@@ -818,6 +818,50 @@ const scenarios = [
     },
   },
   {
+    name: 'a pushed update reports each install stage, and a late report cannot undo "installed"',
+    async run() {
+      // The phone posts its install progress after the receipt. The dashboard's
+      // file list and the fleet card must show it, and once the new build says
+      // it is installed, a stale "waiting for a tap" from the old build must not
+      // put the card back into "needs you".
+      const content = crypto.randomBytes(2048);
+      const queued = await api('POST', '/android/files', {
+        device_id: phones.free2.dbId,
+        file_name: 'Vector-9.9.apk',
+        mime_type: 'application/vnd.android.package-archive',
+        content_base64: content.toString('base64'),
+      });
+      const fileId = queued?.data?.id;
+      if (!fileId) return 'upload returned no file id';
+
+      const auth = { Authorization: `Bearer ${phones.free2.phone.token}`, 'Content-Type': 'application/json' };
+      const post = (path, body) => fetch(`${BASE}/api/android/companion/${path}`, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+
+      if (!(await post(`files/${fileId}/receipt`, { success: true, message: 'Saved' })).ok) return 'receipt refused';
+      const tap = await post(`files/${fileId}/install-status`, { stage: 'waiting_tap', message: 'Waiting for one tap on the phone' });
+      if (!tap.ok) return `waiting_tap refused: ${tap.status}`;
+
+      const listed = await api('GET', `/android/files?device_id=${phones.free2.dbId}`);
+      const row = (listed?.data ?? []).find((f) => f.id === fileId);
+      if (row?.install_status !== 'waiting_tap') return `file list shows ${row?.install_status}, expected waiting_tap`;
+
+      const fleet = await api('GET', '/android/devices/fleet-state');
+      const card = (fleet?.data?.devices ?? []).find((d) => d.id === phones.free2.dbId);
+      if (card?.update?.status !== 'waiting_tap') return `fleet card shows ${card?.update?.status}, expected waiting_tap`;
+
+      await post(`files/${fileId}/install-status`, { stage: 'installed', message: 'Now running 9.9' });
+      await post(`files/${fileId}/install-status`, { stage: 'waiting_tap', message: 'late report from the old build' });
+      const [[stored]] = await db.query('SELECT install_status FROM device_file_transfers WHERE id = ?', [fileId]);
+      if (stored?.install_status !== 'installed') return `late report overwrote installed with ${stored?.install_status}`;
+
+      const bogus = await post(`files/${fileId}/install-status`, { stage: 'exploded' });
+      if (bogus.status !== 400) return `unknown stage answered ${bogus.status}, expected 400`;
+      const missing = await post('files/99999999/install-status', { stage: 'failed' });
+      const missingBody = await missing.json().catch(() => ({}));
+      if (missing.status !== 404 || missingBody.message !== 'File not found') return `unknown file answered ${missing.status} "${missingBody.message}"`;
+    },
+  },
+  {
     name: 'fleet state shows the battery level the phone reports',
     async run() {
       phones.free2.phone.batteryLevel = 37;

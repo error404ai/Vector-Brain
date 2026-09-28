@@ -93,6 +93,14 @@ export interface FleetStateDevice {
   last_seen_at?: string | null;
   state: FleetDeviceState;
   queue_position: number | null;
+  /** A companion update pushed from the dashboard, while it needs attention or just finished. */
+  update?: {
+    file_id: number;
+    file_name: string;
+    status: string;
+    message: string | null;
+    updated_at: string | null;
+  } | null;
   task: {
     id: number;
     status: string;

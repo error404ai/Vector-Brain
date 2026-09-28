@@ -1,5 +1,6 @@
 import { AgentTask } from '@/entities/AgentTask';
 import { AndroidDevice, AndroidDeviceStatus } from '@/entities/AndroidDevice';
+import { DeviceFileTransfer } from '@/entities/DeviceFileTransfer';
 import { DeviceProxy } from '@/entities/DeviceProxy';
 import { QueuedTask } from '@/entities/QueuedTask';
 import { AppDataSource } from '@/loaders/database';
@@ -12,6 +13,13 @@ import { ProxyRotationService } from './ProxyRotationService';
  * goes back to Ready — a result from this morning is history, not status.
  */
 const RECENT_OUTCOME_MS = 30 * 60_000;
+
+/**
+ * How long a pushed update keeps a chip on its card. An update still waiting for
+ * a tap or a permission stays visible for a day, because someone has to act; a
+ * finished one only as long as a finished run does.
+ */
+const UPDATE_WINDOW_MS = 24 * 60 * 60_000;
 
 export type FleetDeviceState =
   | 'offline'
@@ -45,6 +53,7 @@ export class FleetStateService {
   private taskRepo = AppDataSource.getRepository(AgentTask);
   private queueRepo = AppDataSource.getRepository(QueuedTask);
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
+  private fileRepo = AppDataSource.getRepository(DeviceFileTransfer);
 
   async getState(userId: number) {
     const now = Date.now();
@@ -84,6 +93,22 @@ export class FleetStateService {
       }
     }
 
+    // The newest companion update per device that the phone has reported on.
+    const lastUpdate = new Map<number, DeviceFileTransfer>();
+    if (deviceIds.length) {
+      const updates = await this.fileRepo
+        .createQueryBuilder('file')
+        .where('file.user_id = :userId', { userId })
+        .andWhere('file.device_id IN (:...deviceIds)', { deviceIds })
+        .andWhere('file.install_status IS NOT NULL')
+        .andWhere('file.install_updated_at > :cutoff', { cutoff: new Date(now - UPDATE_WINDOW_MS) })
+        .orderBy('file.install_updated_at', 'DESC')
+        .getMany();
+      for (const file of updates) {
+        if (!lastUpdate.has(file.device_id)) lastUpdate.set(file.device_id, file);
+      }
+    }
+
     const runningByDevice = new Map(running.filter((t) => t.device_id != null).map((t) => [t.device_id, t]));
     const queuePositions = new Map<number, number>();
     const queueByDevice = new Map<number, QueuedTask>();
@@ -117,6 +142,18 @@ export class FleetStateService {
       else state = 'idle';
 
       const task = live ?? finished ?? null;
+      const pushed = lastUpdate.get(device.id);
+      const settled = pushed && (pushed.install_status === 'installed' || pushed.install_status === 'not_newer');
+      const update =
+        pushed && !(settled && pushed.install_updated_at && now - new Date(pushed.install_updated_at).getTime() > RECENT_OUTCOME_MS)
+          ? {
+              file_id: pushed.id,
+              file_name: pushed.file_name,
+              status: pushed.install_status,
+              message: pushed.install_message,
+              updated_at: pushed.install_updated_at,
+            }
+          : null;
       return {
         id: device.id,
         device_id: device.device_id,
@@ -133,6 +170,8 @@ export class FleetStateService {
         last_seen_at: device.last_seen_at,
         state,
         queue_position: queuePositions.get(device.id) ?? null,
+        /** Companion update pushed from the dashboard, while it needs attention or just finished. */
+        update,
         task: task
           ? {
               id: task.id,

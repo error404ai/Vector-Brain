@@ -67,6 +67,19 @@ export class DeviceFileTransfer {
   @Column({ type: 'datetime', nullable: true })
   delivered_at: Date | null;
 
+  /**
+   * For a companion APK: where the update stands on the phone (see
+   * services/android/installStatus.ts). Null for ordinary files.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  install_status: string | null;
+
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  install_message: string | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  install_updated_at: Date | null;
+
   @Column({ type: 'datetime' })
   expires_at: Date;
 

@@ -32,6 +32,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useRef, useState } from 'react';
+import { describeInstallStage } from './installStage';
 import toast from 'react-hot-toast';
 
 /** Matches MAX_FILE_BYTES in DeviceFileService so the error arrives before the upload does. */
@@ -66,6 +67,22 @@ function readAsBase64(file: File): Promise<string> {
 }
 
 function statusChip(file: DeviceFile) {
+  // For a companion APK the install outcome is what matters, not that the bytes
+  // arrived: "On device" for an update that never installed was the old lie.
+  const install = describeInstallStage(file.install_status);
+  if (install) {
+    return (
+      <Tooltip title={file.install_message ?? install.label}>
+        <Chip
+          size="small"
+          color={install.tone}
+          variant={install.needsYou ? 'filled' : 'outlined'}
+          icon={install.tone === 'success' ? <CheckCircleIcon /> : install.tone === 'error' ? <ErrorOutlineIcon /> : <HourglassEmptyIcon />}
+          label={install.label}
+        />
+      </Tooltip>
+    );
+  }
   if (file.status === 'DELIVERED') {
     return <Chip size="small" color="success" variant="outlined" icon={<CheckCircleIcon />} label="On device" />;
   }
@@ -233,6 +250,7 @@ export default function SendFileDialog({ open, deviceId, deviceName, isOnline, o
                   <Typography variant="caption" color="text.secondary">
                     {formatSize(file.size_bytes)}
                     {file.status === 'FAILED' && file.failure_message ? ` · ${file.failure_message}` : ''}
+                    {file.install_message && file.install_status !== 'installed' ? ` · ${file.install_message}` : ''}
                   </Typography>
                 </Box>
                 {statusChip(file)}

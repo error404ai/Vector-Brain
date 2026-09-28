@@ -267,6 +267,15 @@ export class AndroidCompanionController {
   }
 
   /**
+   * Install progress for a pushed companion APK. See DeviceFileService.recordInstallStatus.
+   * Declared before the /files/:id receipt alias so that route cannot swallow it.
+   */
+  @Post('/files/:id/install-status')
+  async postInstallStatus(@Param('id') id: string, @Body({ required: false }) body: any, @Req() req: any) {
+    return this.fileService.recordInstallStatus(req.deviceToken.deviceId, Number(id), body);
+  }
+
+  /**
    * Fallback for a receipt posted without the /receipt suffix.
    *
    * The exact shape of that one call could not be read with certainty out of the

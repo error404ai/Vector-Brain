@@ -25,6 +25,7 @@ import FleetStatusSpine from '@/components/android/FleetStatusSpine';
 import { isInterruption, reasonLabel } from '@/components/android/taskReasons';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
+import { describeInstallStage } from '@/components/android/installStage';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -787,6 +788,34 @@ export default function AndroidFleetPage() {
                           }}
                         >
                           {behind ? `v${version} · update` : `v${version}`}
+                        </Box>
+                      </Tooltip>
+                    );
+                  })()}
+                  {(() => {
+                    // A pushed companion update, reported by the phone itself.
+                    // Filled when someone has to do something on the handset.
+                    const update = serverStateByDevice.get(device.id)?.update;
+                    const info = describeInstallStage(update?.status);
+                    if (!update || !info) return null;
+                    const palette = { success: '#059669', warning: '#d97706', error: '#dc2626', info: '#0284c7', default: '#64748b' }[info.tone];
+                    return (
+                      <Tooltip title={update.message ? `${update.file_name}: ${update.message}` : update.file_name}>
+                        <Box
+                          component="span"
+                          sx={{
+                            px: 0.7,
+                            py: '1px',
+                            borderRadius: 1,
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
+                            color: info.needsYou ? '#fff' : palette,
+                            bgcolor: info.needsYou ? palette : alpha(palette, 0.12),
+                          }}
+                        >
+                          {info.label}
                         </Box>
                       </Tooltip>
                     );

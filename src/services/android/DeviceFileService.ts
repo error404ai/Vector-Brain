@@ -7,6 +7,7 @@ import { ApiResponse } from '@/types/ApiResponse';
 import crypto from 'crypto';
 import { In, LessThan } from 'typeorm';
 import { Service } from 'typedi';
+import { acceptsInstallStage, normalizeInstallReport } from './installStatus';
 
 /**
  * Largest single file the dashboard accepts.
@@ -295,6 +296,9 @@ export class DeviceFileService {
         status: file.status,
         failure_message: file.failure_message,
         delivered_at: file.delivered_at,
+        install_status: file.install_status,
+        install_message: file.install_message,
+        install_updated_at: file.install_updated_at,
         expires_at: file.expires_at,
         created_at: file.created_at,
       })),
@@ -613,6 +617,39 @@ export class DeviceFileService {
     }
 
     return { success: true, message: 'Receipt recorded' };
+  }
+
+  /**
+   * Install progress for a pushed companion APK, posted by the phone.
+   *
+   * Separate from the receipt on purpose: the receipt says the bytes were saved,
+   * this says whether the update actually went on. A stage outside the known
+   * list is refused, and a late report cannot undo an update already installed.
+   */
+  async recordInstallStatus(
+    deviceIdString: string,
+    fileId: number,
+    body: unknown,
+  ): Promise<{ success: boolean; message: string }> {
+    const report = normalizeInstallReport(body);
+    if (!report) throw new AppError('Unknown install stage', 400);
+
+    const device = await this.deviceRepo.findOne({ where: { device_id: deviceIdString } });
+    if (!device) throw new AppError('Device not found', 404);
+
+    const file = await this.fileRepo.findOne({ where: { id: fileId, device_id: device.id } });
+    if (!file) throw new AppError('File not found', 404);
+
+    if (!acceptsInstallStage(file.install_status, report.stage)) {
+      return { success: true, message: 'Ignored: this update already finished' };
+    }
+
+    await this.fileRepo.update(file.id, {
+      install_status: report.stage,
+      install_message: report.message,
+      install_updated_at: new Date(),
+    });
+    return { success: true, message: 'Install status recorded' };
   }
 
   // ---------------------------------------------------------------------------
