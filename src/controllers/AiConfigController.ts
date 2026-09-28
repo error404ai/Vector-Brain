@@ -1,7 +1,7 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { CreateAiConfigValidation, TestAiConfigValidation, UpdateAiConfigValidation } from '@/validations/AiConfigValidation';
-import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, Put, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, Put, QueryParam, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import { z } from 'zod';
 
@@ -14,6 +14,12 @@ export class AiConfigController {
   @Get('/list')
   async list(@CurrentUser({ required: true }) user: { userId: number }) {
     return this.aiConfigService.list(user.userId);
+  }
+
+  /** Whether a provider/model pair can read screenshots (for the add/edit form). */
+  @Get('/sees-images')
+  async seesImages(@QueryParam('provider') provider: string, @QueryParam('model') model: string) {
+    return this.aiConfigService.seesImages(String(provider ?? ''), String(model ?? ''));
   }
 
   @Get('/details/:id')

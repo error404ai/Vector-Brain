@@ -14,6 +14,8 @@ export interface AiConfig {
   label: string | null;
   config_type: AiConfigType;
   has_api_key: boolean;
+  /** From the server: can this model really read a screenshot (provider catalog), not the saved type. */
+  sees_images?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -132,6 +134,13 @@ const aiConfigApi = baseApi.injectEndpoints({
       }),
     }),
 
+    seesImages: builder.query<{ message: string; data: { sees_images: boolean } }, { provider: string; model: string }>({
+      query: ({ provider, model }) => ({
+        url: '/ai-configs/sees-images',
+        method: 'GET',
+        params: { provider, model },
+      }),
+    }),
     testSavedAiConfig: builder.mutation<TestResultResponse, number>({
       query: (id) => ({
         url: `/ai-configs/test/${id}`,
@@ -151,4 +160,5 @@ export const {
   useSetChatDefaultAiConfigMutation,
   useTestAiConfigMutation,
   useTestSavedAiConfigMutation,
+  useSeesImagesQuery,
 } = aiConfigApi;

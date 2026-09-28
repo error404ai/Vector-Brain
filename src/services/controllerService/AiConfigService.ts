@@ -1,3 +1,4 @@
+import { modelSeesImages } from '@/services/android/eko/modelVision';
 import { AiConfig, AiConfigType, AiProvider } from '@/entities/AiConfig';
 import AppError from '@/helpers/AppError';
 import { CryptoHelper } from '@/helpers/CryptoHelper';
@@ -23,6 +24,12 @@ export interface AiConfigSafeView {
   label: string | null;
   config_type: AiConfigType;
   has_api_key: boolean;
+  /**
+   * Whether the model can really read a screenshot, from the provider's own
+   * catalog (OpenRouter) or the model family. config_type cannot say: it
+   * defaults to 'vision' for every config, so every model used to show "Vision".
+   */
+  sees_images?: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -102,10 +109,22 @@ export class AiConfigService {
       order: { is_active: 'DESC', updated_at: 'DESC' },
     });
 
+    const data = await Promise.all(
+      configs.map(async (c) => ({
+        ...this.toSafeView(c),
+        sees_images: await modelSeesImages(c.provider, c.model).catch(() => false),
+      })),
+    );
     return {
       message: 'AI configurations retrieved successfully',
-      data: configs.map((c) => this.toSafeView(c)),
+      data,
     };
+  }
+
+  /** For the add/edit form: can this model read screenshots? */
+  async seesImages(provider: string, model: string): Promise<ApiResponse> {
+    const sees = await modelSeesImages(provider, model).catch(() => false);
+    return { message: sees ? 'This model can see screenshots' : 'This model cannot see screenshots', data: { sees_images: sees } };
   }
 
   async getOne(id: number, userId: number): Promise<ApiResponse> {

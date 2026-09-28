@@ -6,6 +6,7 @@ import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../Androi
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
+import type { ScreenshotMode } from './screenshotMode';
 import {
   GRID,
   buildScreenModel,
@@ -226,7 +227,7 @@ export class AndroidAgent extends Agent {
      * is never offered a screenshot — a text-only model cannot read one, and
      * each capture cost ~80k tokens of base64 on every later call.
      */
-    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string } = {},
+    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string; screenshots?: ScreenshotMode } = {},
   ) {
     const tools: Tool[] = [
       {
@@ -1111,6 +1112,14 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       return { content: [textPart, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError };
     }
 
+    // "Every step" in settings: the frame the phone already sent with this
+    // observation goes to the model too. Only the newest image stays in the
+    // context, so the cost is one image per call, not a growing pile.
+    const everyStepShot = freshShot ?? this.lastScreenshotBase64 ?? undefined;
+    if (this.options.vision && this.options.screenshots === 'every_step' && !skipObservation && everyStepShot) {
+      return { content: [textPart, { type: 'image', data: everyStepShot, mimeType: 'image/jpeg' }], isError };
+    }
+
     // Screenshot is intentionally NOT attached to regular action results.
     // The text UI tree already contains everything needed (elements + center
     // coordinates). Images on every step multiply tokens/latency/cost.
@@ -1229,6 +1238,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         : stuck === 'no_effect'
         ? '\n\nSTUCK: your last actions changed nothing on the screen. Do not repeat them. Take a completely different route, or finish and report the reason.'
         : '';
+    // "Off" in settings: say it is stuck, but show nothing beyond thin screens.
+    if (stuck && !thin && this.options.screenshots === 'off') return { note: stuckNote };
     // Stuck on a screen the list does describe: one look per screen, not per step.
     if (stuck && !thin) {
       const key = this.currentKey();

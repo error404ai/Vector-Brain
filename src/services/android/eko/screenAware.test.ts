@@ -157,3 +157,50 @@ describe('AndroidAgent taps', () => {
     expect(grounder).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('screenshots to the model', () => {
+  const tapButton = async (agent: AndroidAgent, label: string) => {
+    const listing = text(await tool(agent, 'read_ui_tree').execute({}, {}, {}));
+    const idx = listing.split('\n').find((row) => row.includes(`|${label}|`))!.split('|')[0];
+    return tool(agent, 'tap_element').execute({ idx }, {}, {});
+  };
+  const hasImage = (r: { content: { type: string }[] }) => r.content.some((c) => c.type === 'image');
+
+  it('sends the frame after every action when set to every step', async () => {
+    const phone = fakePhone([playStore('Open'), playStore('Next')]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'every_step' });
+    expect(hasImage(await tapButton(agent, 'Open'))).toBe(true);
+  });
+
+  it('sends none on a normal step when set to "when stuck"', async () => {
+    const phone = fakePhone([playStore('Open'), playStore('Next')]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'stuck' });
+    expect(hasImage(await tapButton(agent, 'Open'))).toBe(false);
+  });
+
+  it('notices going back and forth between two screens and shows the screen once', async () => {
+    const a = playStore('Open');
+    const b = playStore('Next');
+    const phone = fakePhone([a, b, a, b, a, b]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'stuck' });
+    await tapButton(agent, 'Open');
+    await tapButton(agent, 'Next');
+    await tapButton(agent, 'Open');
+    const fourth = await tapButton(agent, 'Next');
+    expect(text(fourth)).toMatch(/STUCK: you are going back and forth/);
+    expect(hasImage(fourth)).toBe(true);
+  });
+
+  it('says it is stuck but sends no screenshot when screenshots are off', async () => {
+    const a = playStore('Open');
+    const b = playStore('Next');
+    const phone = fakePhone([a, b, a, b, a, b]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'off' });
+    await tapButton(agent, 'Open');
+    await tapButton(agent, 'Next');
+    await tapButton(agent, 'Open');
+    const fourth = await tapButton(agent, 'Next');
+    expect(text(fourth)).toMatch(/STUCK/);
+    expect(hasImage(fourth)).toBe(false);
+  });
+});

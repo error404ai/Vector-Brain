@@ -11,6 +11,7 @@ import AgentEngineCard from '@/components/settings/AgentEngineCard';
 import TelegramLinkCard from '@/components/telegram/TelegramLinkCard';
 import type { TestOutcome } from '@/components/ai-config/ActiveProviderHero';
 import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActiveProviderHero';
+import ScreenshotCapabilityChip from '@/components/ai-config/ScreenshotCapabilityChip';
 import { FREE_MODEL_NOTE, getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import Reveal from '@/components/ui/Reveal';
 import PageHeader from '@/components/ui/PageHeader';
@@ -20,8 +21,6 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import VisibilityIcon from '@mui/icons-material/Visibility';
 
 import {
   Alert,
@@ -388,13 +387,7 @@ export default function SettingsPage() {
                                         }}
                                       />
 
-                                      <Chip
-                                        icon={config.config_type === 'vision' ? <VisibilityIcon fontSize="inherit" /> : <SmartToyIcon fontSize="inherit" />}
-                                        label={config.config_type === 'vision' ? 'Vision' : 'Text-Only'}
-                                        size="small"
-                                        variant="outlined"
-                                        sx={{ height: 20, fontSize: '0.65rem' }}
-                                      />
+                                      <ScreenshotCapabilityChip seesImages={config.sees_images} />
                                     </Stack>
 
                                     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 0.25 }}>

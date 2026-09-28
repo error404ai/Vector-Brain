@@ -5,6 +5,7 @@ import type {
 } from '@/RTKService/aiConfigService/aiConfigService';
 import {
   useCreateAiConfigMutation,
+  useSeesImagesQuery,
   useTestAiConfigMutation,
   useUpdateAiConfigMutation,
 } from '@/RTKService/aiConfigService/aiConfigService';
@@ -32,7 +33,6 @@ import {
   Divider,
   FormControl,
   FormControlLabel,
-  FormHelperText,
   IconButton,
   InputAdornment,
   InputLabel,
@@ -143,6 +143,19 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
+
+  // Can this model read screenshots? Asked of the server (the provider's own
+  // catalog), a moment after typing stops, instead of trusting a preset list.
+  const [checkModel, setCheckModel] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => setCheckModel(model.trim()), 500);
+    return () => window.clearTimeout(t);
+  }, [model]);
+  const { data: seesData, isFetching: checkingSees } = useSeesImagesQuery({ provider, model: checkModel }, { skip: !checkModel });
+  const seesImages = checkModel && checkModel === model.trim() ? seesData?.data?.sees_images : undefined;
+  useEffect(() => {
+    if (seesImages !== undefined) setConfigType(seesImages ? 'vision' : 'text');
+  }, [seesImages]);
 
   useEffect(() => {
     if (configToEdit) {
@@ -306,7 +319,8 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
               >
                 <RemoveRedEyeIcon fontSize="small" color="primary" sx={{ mt: 0.2 }} />
                 <Typography variant="caption" color="primary.dark" sx={{ lineHeight: 1.5 }}>
-                  Pick a <strong>vision</strong> model — the agent reads phone screenshots, so a text-only model can't drive the phone.
+                  For the best results pick a model that <strong>sees screenshots</strong>: it can look at the phone screen when the element list is
+                  not enough. Text-only models still work, from the element list alone.
                 </Typography>
               </Box>
 
@@ -350,24 +364,25 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
                 sx={{ mt: 1.5 }}
               />
 
-              {/* Live capability line + warning for text-only picks. */}
-              {(() => {
-                const known = PROVIDER_PRESETS[provider].models.find((m) => m.id === model);
-                const isVision = known ? known.isVision : configType === 'vision';
-                return isVision ? (
-                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.75, color: 'success.main' }}>
-                    <RemoveRedEyeIcon sx={{ fontSize: 16 }} />
-                    <Typography variant="caption">Vision — can read the phone screen</Typography>
-                  </Stack>
-                ) : (
-                  <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ mt: 1, p: 1, borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.warning.main, 0.12) }}>
-                    <WarningAmberIcon sx={{ fontSize: 16, color: 'warning.dark', mt: 0.2 }} />
-                    <Typography variant="caption" color="warning.dark" sx={{ lineHeight: 1.5 }}>
-                      Heads up: <code>{model || 'this model'}</code> is text-only. It won't be able to see the screen.
-                    </Typography>
-                  </Stack>
-                );
-              })()}
+              {/* Live capability line, from the server's check of this exact model. */}
+              {checkModel && checkingSees && seesImages === undefined ? (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                  Checking whether this model can read screenshots…
+                </Typography>
+              ) : seesImages === true ? (
+                <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.75, color: 'success.main' }}>
+                  <RemoveRedEyeIcon sx={{ fontSize: 16 }} />
+                  <Typography variant="caption">Sees screenshots — this model can read the phone screen.</Typography>
+                </Stack>
+              ) : seesImages === false ? (
+                <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ mt: 1, p: 1, borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.warning.main, 0.12) }}>
+                  <WarningAmberIcon sx={{ fontSize: 16, color: 'warning.dark', mt: 0.2 }} />
+                  <Typography variant="caption" color="warning.dark" sx={{ lineHeight: 1.5 }}>
+                    Text only: <code>{model}</code> cannot read screenshots. Vector will work from the on-screen element list, which misses unlabelled
+                    icons and some web pages. Choose a model that sees screenshots, or add a Screen reader under Agent engine.
+                  </Typography>
+                </Stack>
+              ) : null}
             </Box>
 
             <Divider />
@@ -414,7 +429,7 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
                 endIcon={<ExpandMoreIcon sx={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />}
                 sx={{ textTransform: 'none', color: 'text.secondary', px: 0 }}
               >
-                Advanced — custom URL, capability
+                Advanced — custom URL
               </Button>
               <Collapse in={showAdvanced}>
                 <Stack spacing={2} sx={{ mt: 1 }}>
@@ -427,18 +442,6 @@ export function AiConfigModal({ open, onClose, configToEdit }: AiConfigModalProp
                     placeholder="https://api.openai.com/v1"
                     helperText="Leave empty for official endpoints. For OpenRouter, DeepSeek, or self-hosted proxies."
                   />
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Capability type</InputLabel>
-                    <Select value={configType} label="Capability type" onChange={(e) => setConfigType(e.target.value as AiConfigType)}>
-                      <MenuItem value="vision">Vision / multimodal (screenshots + UI hierarchy)</MenuItem>
-                      <MenuItem value="text">Text-only (UI hierarchy only — faster, cheaper)</MenuItem>
-                    </Select>
-                    <FormHelperText>
-                      {configType === 'vision'
-                        ? 'Sends live screen captures and UI trees to the agent.'
-                        : 'Sends only the UI tree (best for DeepSeek, Groq, or text-only models).'}
-                    </FormHelperText>
-                  </FormControl>
                 </Stack>
               </Collapse>
             </Box>

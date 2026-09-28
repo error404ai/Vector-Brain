@@ -1,11 +1,10 @@
 import type { AiConfig } from '@/RTKService/aiConfigService/aiConfigService';
+import ScreenshotCapabilityChip from './ScreenshotCapabilityChip';
 import { FREE_MODEL_NOTE, getModelMeta } from '@/utils/modelMeta';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import VisibilityIcon from '@mui/icons-material/Visibility';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import {
   alpha,
@@ -207,13 +206,7 @@ export default function ActiveProviderHero({
                 />
               </Tooltip>
             )}
-            <Chip
-              icon={config.config_type === 'vision' ? <VisibilityIcon fontSize="inherit" /> : <SmartToyIcon fontSize="inherit" />}
-              label={config.config_type === 'vision' ? 'Vision' : 'Text-Only'}
-              size="small"
-              variant="outlined"
-              sx={{ height: 22, fontSize: '0.7rem' }}
-            />
+            <ScreenshotCapabilityChip seesImages={config.sees_images} height={22} />
             {config.label && config.label !== config.model && (
               <Chip
                 label={config.label}

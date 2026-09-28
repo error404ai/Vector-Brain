@@ -1,9 +1,17 @@
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
-import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind } from '@/RTKService/androidService/engineService';
+import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind, type ScreenshotMode } from '@/RTKService/androidService/engineService';
 import { isFreeModel } from '@/utils/modelMeta';
 import MemoryIcon from '@mui/icons-material/Memory';
-import { Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
+import { Alert, Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import toast from 'react-hot-toast';
+
+const SCREENSHOT_HELP: Record<ScreenshotMode, string> = {
+  stuck:
+    'The AI works from the list of on-screen elements, and is shown a screenshot when it gets stuck: going back and forth, or actions that change nothing. Good results at little extra cost.',
+  every_step:
+    'The AI sees a screenshot after every action as well as the element list. Best understanding of icons and web pages; each step costs roughly 10–15% more.',
+  off: 'Screenshots only on screens the element list cannot describe at all. Cheapest; the AI can miss unlabelled icons.',
+};
 
 /**
  * Which engine drives the model on this account's runs. Both use the same
@@ -18,7 +26,7 @@ export default function AgentEngineCard() {
   const active = configs.find((c) => c.is_active);
   const others = configs.filter((c) => !c.is_active);
 
-  const update = async (body: { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null }) => {
+  const update = async (body: { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null }) => {
     try {
       await save(body).unwrap();
       toast.success('Saved — applies to the next run');
@@ -79,6 +87,26 @@ export default function AgentEngineCard() {
             <TextField
               select
               size="small"
+              label="Screenshots to the AI"
+              value={settings.screenshots ?? 'stuck'}
+              disabled={saving}
+              onChange={(e) => void update({ screenshots: e.target.value as ScreenshotMode })}
+              helperText={SCREENSHOT_HELP[settings.screenshots ?? 'stuck']}
+            >
+              <MenuItem value="stuck">When it gets stuck (recommended)</MenuItem>
+              <MenuItem value="every_step">Every step</MenuItem>
+              <MenuItem value="off">Off</MenuItem>
+            </TextField>
+            {active && active.sees_images === false ? (
+              <Alert severity="info" variant="outlined" sx={{ py: 0 }}>
+                Your main model, {active.label || active.model}, cannot read screenshots itself. Choose a model marked “Sees screenshots”, or set a
+                Screen reader below to read them for it.
+              </Alert>
+            ) : null}
+
+            <TextField
+              select
+              size="small"
               label="Backup model"
               value={settings.fallback_config_id ?? ''}
               disabled={saving}
@@ -101,12 +129,13 @@ export default function AgentEngineCard() {
               value={settings.vision_config_id ?? ''}
               disabled={saving}
               onChange={(e) => void update({ vision_config_id: e.target.value === '' ? null : Number(e.target.value) })}
-              helperText={`For a main model that cannot see images${active ? ` (like ${active.model})` : ''}: on screens the element list cannot describe — web pages, Play Store, apps with unlabelled buttons — this model reads a screenshot so the agent taps real buttons instead of guessing. Pick a small, cheap vision model (e.g. a Gemini Flash or GPT-4o-mini class model). Ignored when the main model already sees images.`}
+              helperText="For a main model marked “Text only”: on screens the element list cannot describe — web pages, Play Store, apps with unlabelled buttons — and when the AI gets stuck, this model reads a screenshot so the agent taps real buttons instead of guessing. Pick a small, cheap model marked “Sees screenshots”. Not used when the main model sees screenshots itself."
             >
               <MenuItem value="">None</MenuItem>
               {configs.map((c) => (
-                <MenuItem key={c.id} value={c.id}>
+                <MenuItem key={c.id} value={c.id} disabled={c.sees_images === false}>
                   {c.label || c.model}
+                  {c.sees_images === false ? ' — cannot read screenshots' : ''}
                 </MenuItem>
               ))}
             </TextField>

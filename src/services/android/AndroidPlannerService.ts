@@ -25,6 +25,7 @@ import { VectorEngine } from './agent/VectorEngine';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
+import { isScreenshotMode, type ScreenshotMode } from './eko/screenshotMode';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
 import crypto from 'node:crypto';
@@ -982,24 +983,27 @@ Use the current visible Android screen and UI state as context. Continue from wh
     source: 'account' | 'server';
     vision_config_id: number | null;
     fallback_config_id: number | null;
+    screenshots: ScreenshotMode;
   }> {
     const fallback: EngineKind = isEngineKind(process.env.AGENT_ENGINE) ? process.env.AGENT_ENGINE : 'eko';
     const user = await AppDataSource.getRepository(User)
-      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner', 'agent_vision_config_id', 'agent_fallback_config_id'] })
+      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner', 'agent_vision_config_id', 'agent_fallback_config_id', 'agent_screenshots'] })
       .catch(() => null);
     const own = user?.agent_engine;
+    const shots = user?.agent_screenshots;
     return {
       kind: isEngineKind(own) ? own : fallback,
       planner: Boolean(user?.agent_planner),
       source: isEngineKind(own) ? 'account' : 'server',
       vision_config_id: user?.agent_vision_config_id ?? null,
       fallback_config_id: user?.agent_fallback_config_id ?? null,
+      screenshots: isScreenshotMode(shots) ? shots : 'stuck',
     };
   }
 
   async setEngineSettings(
     userId: number,
-    input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null },
+    input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null },
   ): Promise<ApiResponse> {
     const patch: Partial<User> = {};
     if (input.engine !== undefined) {
@@ -1007,6 +1011,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
       patch.agent_engine = input.engine;
     }
     if (input.planner !== undefined) patch.agent_planner = Boolean(input.planner);
+    if (input.screenshots !== undefined) {
+      if (input.screenshots !== null && !isScreenshotMode(input.screenshots)) throw new AppError('screenshots must be "off", "stuck" or "every_step"', 400);
+      patch.agent_screenshots = input.screenshots;
+    }
     // A helper model must be one of this account's own AI configs.
     for (const [key, column] of [
       ['vision_config_id', 'agent_vision_config_id'],
@@ -1247,7 +1255,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
-    }, { vision, grounder, task: prompt });
+    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.

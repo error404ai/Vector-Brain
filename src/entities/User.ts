@@ -55,6 +55,10 @@ export class User {
   @Column({ type: 'int', nullable: true })
   agent_fallback_config_id: number | null;
 
+  /** When the agent model is shown a screenshot: 'off' | 'stuck' | 'every_step'; null = 'stuck'. */
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  agent_screenshots: string | null;
+
   @Column({ type: 'enum', enum: Role, default: Role.USER })
   role: Role;
 
