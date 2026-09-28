@@ -30,6 +30,17 @@ const MAX_MISSION_DEVICES = 50;
 const TICK_MS = Number(process.env.MISSION_TICK_MS) || 3000;
 /** Wait before a retry, multiplied by the attempt number (15s, 30s, ...). */
 const RETRY_DELAY_MS = Number(process.env.MISSION_RETRY_DELAY_MS) || 15_000;
+/**
+ * How long a mission waits for an offline phone to reconnect before calling it
+ * failed. Waiting does not use up retries: a phone that dropped for a minute
+ * (a restart, "Connecting…") used to fail after ~45 s of quick retries.
+ */
+const OFFLINE_WAIT_MS = Number(process.env.MISSION_OFFLINE_WAIT_MS) || 10 * 60_000;
+/** "Any N phones" hands an offline phone's share to a spare soon instead of waiting long. */
+const COUNT_OFFLINE_WAIT_MS = Math.min(OFFLINE_WAIT_MS, 60_000);
+const offlineWaitFor = (mission: Pick<Mission, 'target_mode'>) => (mission.target_mode === 'count' ? COUNT_OFFLINE_WAIT_MS : OFFLINE_WAIT_MS);
+/** How often a waiting item checks whether its phone is back. */
+const OFFLINE_POLL_MS = Number(process.env.MISSION_OFFLINE_POLL_MS) || 10_000;
 /** Same switch the planner uses: the harness plans without a model. */
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
 
@@ -180,8 +191,8 @@ export class MissionService {
       const owned = fleet.filter((d) => wanted.has(d.id));
       if (owned.length === 0) throw new AppError('None of those phones belong to you', 404);
       chosen = owned;
-      const notReady = owned.filter((d) => !READY_STATES.has(d.state));
-      if (notReady.length) notes.push(`${notReady.length} of the chosen phones were not ready and will be retried.`);
+      // Phones that are not ready are not promised anything here: each item shows
+      // live whether it is waiting for its phone, and the result says what happened.
     } else {
       const plan = await this.plan(request, fleet, userId);
       prompt = plan.prompt;
@@ -407,17 +418,25 @@ export class MissionService {
     const items = await this.itemRepo.find({ where: { mission_id: mission.id }, order: { id: 'ASC' } });
     let changed = false;
 
+    const pendingHw = await this.hardwareIds(items.filter((i) => i.status === 'PENDING').map((i) => i.device_id));
     for (const item of items) {
-      const before = `${item.status}:${item.attempts}:${item.agent_task_id}`;
+      const before = `${item.status}:${item.attempts}:${item.agent_task_id}:${item.waiting_since?.getTime() ?? ''}`;
       if (item.status === 'PENDING') {
         if (item.next_attempt_at && item.next_attempt_at.getTime() > Date.now()) continue;
-        await this.dispatch(mission, item);
+        const hw = pendingHw.get(item.device_id);
+        // An offline phone is waited for, not dispatched: starting a run on it
+        // can only fail and would use up a retry.
+        if (hw && !this.gatewayService.isDeviceConnected(hw)) {
+          await this.waitForPhone(mission, item);
+        } else {
+          await this.dispatch(mission, item);
+        }
       } else if (item.status === 'QUEUED') {
         await this.followQueued(mission, item);
       } else if (item.status === 'RUNNING') {
         await this.followRun(mission, item);
       }
-      if (`${item.status}:${item.attempts}:${item.agent_task_id}` !== before) changed = true;
+      if (`${item.status}:${item.attempts}:${item.agent_task_id}:${item.waiting_since?.getTime() ?? ''}` !== before) changed = true;
     }
 
     // A replacement may have been added while settling a failure.
@@ -470,6 +489,7 @@ export class MissionService {
       } else if (data.taskId) {
         item.status = 'RUNNING';
         item.agent_task_id = data.taskId;
+        item.waiting_since = null;
       } else {
         await this.settleFailure(mission, item, 'DISPATCH_ERROR', result?.message ?? 'No run was started');
         return;
@@ -477,8 +497,27 @@ export class MissionService {
       await this.itemRepo.save(item);
     } catch (error: any) {
       const message = String(error?.message ?? error);
-      await this.settleFailure(mission, item, classifyDispatchError(message), message);
+      await this.settleFailure(mission, item, classifyDispatchError(message), message, { neverStarted: true });
     }
+  }
+
+  /**
+   * The item's phone is offline: keep the item waiting (no retry used) and
+   * check again shortly; fail it only after OFFLINE_WAIT_MS without the phone.
+   */
+  private async waitForPhone(mission: Mission, item: MissionItem): Promise<void> {
+    const now = Date.now();
+    if (!item.waiting_since) item.waiting_since = new Date(now);
+    const limit = offlineWaitFor(mission);
+    if (now - item.waiting_since.getTime() >= limit) {
+      const minutes = Math.max(1, Math.round(limit / 60_000));
+      item.waiting_since = null;
+      await this.settleFailure(mission, item, 'DEVICE_OFFLINE', `Stayed offline for ${minutes} min`, { final: true });
+      return;
+    }
+    item.last_reason = 'DEVICE_OFFLINE';
+    item.next_attempt_at = new Date(now + OFFLINE_POLL_MS);
+    await this.itemRepo.save(item);
   }
 
   private async followQueued(mission: Mission, item: MissionItem): Promise<void> {
@@ -499,6 +538,7 @@ export class MissionService {
       item.status = 'RUNNING';
       item.agent_task_id = task.id;
       item.queue_id = null;
+      item.waiting_since = null;
       await this.itemRepo.save(item);
       await this.followRun(mission, item);
       return;
@@ -509,7 +549,7 @@ export class MissionService {
     const dropped = item.queue_id ? this.taskQueueService.dropReason(item.queue_id) : null;
     const reason = dropped ?? entry?.last_error ?? null;
     if (reason) {
-      await this.settleFailure(mission, item, classifyDispatchError(reason), reason);
+      await this.settleFailure(mission, item, classifyDispatchError(reason), reason, { neverStarted: true });
       return;
     }
     await this.settleFailure(mission, item, 'QUEUE_DROPPED', 'The proxy queue entry disappeared');
@@ -541,12 +581,30 @@ export class MissionService {
     await this.settleFailure(mission, item, reason, task.message);
   }
 
-  private async settleFailure(mission: Mission, item: MissionItem, reason: string, message?: string | null): Promise<void> {
+  private async settleFailure(
+    mission: Mission,
+    item: MissionItem,
+    reason: string,
+    message?: string | null,
+    options: { neverStarted?: boolean; final?: boolean } = {},
+  ): Promise<void> {
     item.last_reason = reason.slice(0, 40);
     item.last_message = truncate(message);
     item.agent_task_id = item.status === 'RUNNING' ? item.agent_task_id : null;
 
-    if (RETRYABLE.has(reason) && item.attempts < MAX_ATTEMPTS) {
+    // The phone was offline before anything ran on it: that try did not count.
+    // The item waits for the phone to come back (waitForPhone) instead.
+    if (reason === 'DEVICE_OFFLINE' && options.neverStarted && !options.final) {
+      item.attempts = Math.max(0, item.attempts - 1);
+      item.status = 'PENDING';
+      item.waiting_since = item.waiting_since ?? new Date();
+      item.next_attempt_at = new Date(Date.now() + OFFLINE_POLL_MS);
+      await this.itemRepo.save(item);
+      Logger.info(`[Mission] #${mission.id} item ${item.id} waiting for its phone to come back online`);
+      return;
+    }
+
+    if (!options.final && RETRYABLE.has(reason) && item.attempts < MAX_ATTEMPTS) {
       item.status = 'PENDING';
       item.next_attempt_at = new Date(Date.now() + RETRY_DELAY_MS * item.attempts);
       await this.itemRepo.save(item);
@@ -655,6 +713,8 @@ export class MissionService {
         reason_text: item.last_reason ? PLAIN_REASON[item.last_reason] ?? 'failed' : null,
         last_message: item.last_message,
         next_attempt_at: item.next_attempt_at,
+        /** While the phone is offline: until when the mission waits for it. */
+        waiting_until: item.status === 'PENDING' && item.waiting_since ? new Date(item.waiting_since.getTime() + offlineWaitFor(mission)) : null,
       })),
     };
   }
@@ -800,7 +860,12 @@ function summarize(mission: Mission, items: MissionItem[], names: Map<number, st
   }
   for (const item of failed) {
     const why = PLAIN_REASON[item.last_reason ?? ''] ?? 'failed';
-    const detail = item.last_message && item.last_reason === 'AGENT_REPORTED_FAILURE' ? ` — ${item.last_message.slice(0, 160)}` : '';
+    const detail =
+      item.last_message && item.last_reason === 'AGENT_REPORTED_FAILURE'
+        ? ` — ${item.last_message.slice(0, 160)}`
+        : item.last_reason === 'DEVICE_OFFLINE' && item.last_message?.startsWith('Stayed offline')
+          ? ` (${item.last_message.toLowerCase()})`
+          : '';
     lines.push(`✗ ${names.get(item.device_id) ?? item.device_id}: ${why}${item.attempts > 1 ? ` after ${item.attempts} tries` : ''}${detail}`);
   }
   return lines.join('\n');

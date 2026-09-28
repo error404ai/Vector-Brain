@@ -700,6 +700,7 @@ const REPORT_LABEL: Record<string, { label: string; color: 'error' | 'warning' |
   stuck_loader: { label: 'Stuck loader', color: 'warning' },
   main_thread_stall: { label: 'Page froze', color: 'error' },
   browser_crash: { label: 'Chrome crash report', color: 'error' },
+  chat_error: { label: 'Chat request failed', color: 'error' },
   render_error: { label: 'Render error', color: 'error' },
   js_error: { label: 'JS error', color: 'warning' },
   unhandled_rejection: { label: 'Promise error', color: 'warning' },

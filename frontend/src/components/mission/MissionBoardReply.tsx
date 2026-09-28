@@ -38,6 +38,11 @@ function toneOf(value?: string): Tone {
   if (/^(online|ready|done|ok|passed|success(ful)?|connected|idle)$/i.test(v)) return 'ok';
   if (/^(offline|failed|error|disconnected|blocked)$/i.test(v)) return 'bad';
   if (/^(needs setup|busy|queued|pending|low battery|stopped|running|in progress)$/i.test(v)) return 'warn';
+  // A sentence: its first words decide ("failed, phone was offline" is a failure,
+  // not a green row). Only clear words count; anything else stays neutral.
+  if (/^(failed|offline|error|disconnected|blocked|not done|could ?n[o']t|can'?t|did ?n[o']t|unable)\b/i.test(v) || /\b(failed|offline|error)\b/i.test(v.split(/[,.;—-]/)[0])) return 'bad';
+  if (/^(done|ok|success(ful)?|completed?|finished|installed|verified)\b/i.test(v)) return 'ok';
+  if (/^(waiting|queued|pending|running|in progress|retrying)\b/i.test(v)) return 'warn';
   return 'text';
 }
 
@@ -64,7 +69,8 @@ const lightUp = (c: string) => keyframes`from{background:#1E293B;border-color:#3
 const LIGHT = { ok: lightUp('#10B981'), bad: lightUp('#EF4444'), warn: lightUp('#F59E0B') };
 
 function Dot({ tone, animate }: { tone: Tone; animate: boolean }) {
-  const c = tone === 'bad' ? TONE_COLOR.bad : tone === 'warn' ? TONE_COLOR.warn : TONE_COLOR.ok;
+  // Plain text says nothing about success, so its dot is neutral — never green by default.
+  const c = tone === 'bad' ? TONE_COLOR.bad : tone === 'warn' ? TONE_COLOR.warn : tone === 'ok' || tone === 'email' ? TONE_COLOR.ok : '#64748B';
   return (
     <Box
       component="span"
@@ -75,7 +81,7 @@ function Dot({ tone, animate }: { tone: Tone; animate: boolean }) {
         borderRadius: '50%',
         bgcolor: c,
         flexShrink: 0,
-        animation: animate && tone !== 'bad' && tone !== 'warn' ? `${pulse} 1.8s ease-out infinite` : undefined,
+        animation: animate && (tone === 'ok' || tone === 'email') ? `${pulse} 1.8s ease-out infinite` : undefined,
       }}
     />
   );

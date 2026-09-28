@@ -849,6 +849,50 @@ const scenarios = [
     },
   },
   {
+    name: 'a mission waits for an offline phone to come back, without using up its retries',
+    async run() {
+      const phone = phones.free2.phone;
+      phone.drop();
+      await sleep(300);
+      const created = await api('POST', '/android/missions', { request: 'check the time [sim steps=2 delay=100]', device_ids: [phones.free2.dbId] });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      if (/will be retried/i.test(created.data.note ?? '')) return `note still promises a retry: ${created.data.note}`;
+      const waiting = await waitFor(async () => {
+        const m = await getMission(id);
+        return m?.items?.[0]?.waiting_until ? m : null;
+      }, 5_000, 200);
+      // Back after 3 s, as after a companion restart.
+      setTimeout(() => void phone.connect().catch(() => undefined), 3_000);
+      if (!waiting) return 'item never showed that it waits for the phone';
+      const done = await waitForMission(id, 40_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `item ended ${item.status}/${item.last_reason}`;
+      if (item.attempts !== 1) return `waiting used up retries: ${item.attempts} attempts`;
+    },
+  },
+  {
+    name: 'a phone that never comes back fails once, honestly, with no promise left behind',
+    async run() {
+      const phone = phones.free2.phone;
+      phone.drop();
+      await sleep(300);
+      const created = await api('POST', '/android/missions', { request: 'check the time [sim steps=2 delay=100]', device_ids: [phones.free2.dbId] });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      const done = await waitForMission(id, 30_000);
+      await phone.connect().catch(() => undefined);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'FAILED' || item.last_reason !== 'DEVICE_OFFLINE') return `item ended ${item.status}/${item.last_reason}`;
+      const text = `${done.note ?? ''}\n${done.summary ?? ''}`;
+      if (/will be retried|retrying|waiting/i.test(text)) return `finished mission still talks about the future: ${text}`;
+      if (!/stayed offline/i.test(done.summary ?? '')) return `summary does not say how long it waited: ${done.summary}`;
+      if (item.waiting_until) return 'finished item still shows a wait';
+    },
+  },
+  {
     name: 'a mission retries a phone that dropped mid-run and still finishes',
     async run() {
       const created = await api('POST', '/android/missions', {
@@ -1432,6 +1476,26 @@ const scenarios = [
       const ids = reply.mission.items.map((i) => i.device_id);
       if (ids.length !== 1 || ids[0] !== phones.free1.dbId) return `targeted ${JSON.stringify(ids)}`;
       await waitForMission(reply.mission.id, 30_000);
+    },
+  },
+  {
+    name: 'agent: a reply that claims a task started, with no task behind it, never reaches the user',
+    async run() {
+      const missionCount = async () => (await db.query('SELECT COUNT(*) AS n FROM missions WHERE user_id = ?', [userId]))[0][0].n;
+      const before = await missionCount();
+      // The model copies "Started — …" from history and calls no tool, even after the correction.
+      const lie = { turns: [{ text: 'Started — installing Prime Video from the Play Store on free1.' }, { text: 'The Prime Video install is still running — I\'ll report once it finishes.' }] };
+      const reply = (await api('POST', '/android/chat', { message: `install prime video on free1 [agent:${JSON.stringify(lie)}]` }))?.data;
+      if (reply?.kind === 'mission') return 'a mission card appeared although nothing was started';
+      if (/installing|still running|report once/i.test(reply?.text ?? '')) return `the false claim reached the user: ${reply?.text}`;
+      if (!/nothing was started/i.test(reply?.text ?? '')) return `reply does not say nothing started: ${reply?.text}`;
+      if ((await missionCount()) !== before) return 'a mission was created';
+
+      // Corrected once, the model does the real thing: the task runs and shows up.
+      const fixed = { turns: [{ text: 'Started — installing Prime Video on free1.' }, { calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'Chalu kar diya free1 pe.' }] };
+      const second = (await api('POST', '/android/chat', { message: `install prime video on free1 [agent:${JSON.stringify(fixed)}]` }))?.data;
+      if (second?.kind !== 'mission') return `after the correction: kind ${second?.kind}: ${second?.text}`;
+      await waitForMission(second.mission.id, 30_000);
     },
   },
   {

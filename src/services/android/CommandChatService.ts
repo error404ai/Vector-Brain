@@ -1,3 +1,4 @@
+import { historyText } from './chatClaims';
 import { describeModelError } from '@/services/ai/modelErrors';
 import { ChatMessage } from '@/entities/ChatMessage';
 import { ChatScreenShot } from '@/entities/ChatScreenShot';
@@ -234,10 +235,12 @@ export class CommandChatService {
       ? await this.messageRepo.find({ where: { user_id: userId, conversation_id: convoId }, order: { id: 'DESC' }, take: 24 })
       : [];
     const context = await this.recentContext(userId, convoId ?? 0);
+    // Each earlier reply carries what really happened, so the model cannot
+    // take its own "Started — …" as proof that a task ran.
     const history = rows
       .slice(1)
       .reverse()
-      .map((r) => ({ role: r.role as 'user' | 'assistant', text: r.text.slice(0, 600) }));
+      .map((r) => ({ role: r.role as 'user' | 'assistant', text: historyText(r) }));
     return { history, lastMissionDevices: context.lastMissionDevices };
   }
 

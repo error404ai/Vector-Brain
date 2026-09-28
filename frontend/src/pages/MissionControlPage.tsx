@@ -1,3 +1,4 @@
+import { report } from '@/_helpers/clientDiagnostics';
 import authManager from '@/_helpers/authManager';
 import {
   useConfirmCommandMutation,
@@ -231,14 +232,42 @@ const ITEM_TONE: Record<MissionItemStatus, { label: string; color: 'default' | '
   CANCELLED: { label: 'Cancelled', color: 'default' },
 };
 
+/**
+ * What went wrong, in words the user can act on. A bare "Something went wrong"
+ * told nobody anything: the request never reached the server, the server was
+ * restarting, or it failed — each needs a different next step.
+ */
 function errorMessage(error: unknown): string {
-  const data = (error as { data?: { message?: string } })?.data;
-  return data?.message || 'Something went wrong';
+  const e = error as { status?: number | string; originalStatus?: number; data?: { message?: string } | string } | undefined;
+  const message = typeof e?.data === 'object' ? e?.data?.message : undefined;
+  if (message) return message;
+  const status = e?.status === 'PARSING_ERROR' ? e.originalStatus : e?.status;
+  if (status === 'FETCH_ERROR') return "Couldn't reach the server — check your internet and send it again.";
+  if (status === 'TIMEOUT_ERROR') return 'The server took too long to answer. Send it again.';
+  if (status === 502 || status === 503 || status === 504) return `The server is restarting or busy (HTTP ${status}). Send it again in a moment.`;
+  if (typeof status === 'number') return `Server error (HTTP ${status}). Send it again; if it keeps happening, it has been reported.`;
+  return 'Something went wrong. Send it again; if it keeps happening, it has been reported.';
+}
+
+/** Chat failures are reported, so the next export shows what actually happened. */
+function reportChatError(error: unknown, where: string, startedAt: number): void {
+  const e = error as { status?: number | string; originalStatus?: number; error?: string; data?: unknown } | undefined;
+  report('chat_error', {
+    where,
+    status: e?.status ?? null,
+    original_status: e?.originalStatus ?? null,
+    error: typeof e?.error === 'string' ? e.error.slice(0, 200) : null,
+    message: typeof e?.data === 'object' && e?.data ? String((e.data as { message?: unknown }).message ?? '').slice(0, 300) : typeof e?.data === 'string' ? e.data.slice(0, 200) : null,
+    elapsed_ms: Date.now() - startedAt,
+    online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+  });
 }
 
 function StatusChip({ item }: { item: MissionItem }) {
   const tone = ITEM_TONE[item.status];
-  const retrying = item.status === 'PENDING' && item.attempts > 0;
+  const waitingForPhone = item.status === 'PENDING' && Boolean(item.waiting_until);
+  const waitUntil = waitingForPhone ? new Date(item.waiting_until as string).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  const retrying = !waitingForPhone && item.status === 'PENDING' && item.attempts > 0;
   // Keyed by status so each change replays its own entrance.
   const motion =
     item.status === 'SUCCEEDED'
@@ -259,8 +288,8 @@ function StatusChip({ item }: { item: MissionItem }) {
           <ErrorRoundedIcon />
         ) : undefined
       }
-      label={retrying ? `Retrying (${item.attempts + 1})` : tone.label}
-      color={retrying ? 'warning' : tone.color}
+      label={waitingForPhone ? `Phone offline — waiting till ${waitUntil}` : retrying ? `Retrying (${item.attempts + 1})` : tone.label}
+      color={waitingForPhone || retrying ? 'warning' : tone.color}
       variant={item.status === 'SUCCEEDED' ? 'filled' : 'outlined'}
       sx={{ ...motion, ...reducedMotion }}
     />
@@ -1992,6 +2021,7 @@ export default function MissionControlPage() {
     pushTurn({ id: nextId('u'), role: 'user', text });
     // Not crypto.randomUUID: it is missing on plain-http origins.
     const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    const sentAt = Date.now();
     const call = sendCommand({ message: text, conversation_id: conversationId ?? undefined, request_id: requestId });
     inFlightRef.current = { id: requestId, abort: call.abort };
     try {
@@ -2005,6 +2035,7 @@ export default function MissionControlPage() {
       void refetchConversations();
     } catch (error) {
       if (stoppedIdsRef.current.has(requestId)) return; // Stop already said so
+      reportChatError(error, 'send', sentAt);
       pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     } finally {
       if (inFlightRef.current?.id === requestId) inFlightRef.current = null;

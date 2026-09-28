@@ -1,3 +1,4 @@
+import { claimsActivity } from './chatClaims';
 import { modelErrorText } from '@/services/ai/modelErrors';
 import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
 import { AgentTask } from '@/entities/AgentTask';
@@ -289,6 +290,9 @@ const READY_STATES = new Set(['idle', 'completed', 'failed', 'cancelled', 'inter
 /** Phrases a declining reply opens with (English and Hinglish). */
 const REFUSAL = /\b(nahi kar sakta|nahin kar sakta|nahi kar sakti|nahi karunga|i can'?t|i cannot|i won'?t|can not help|unable to help|not able to (?:help|do))\b/i;
 
+/** Tools whose results can ground a claim about tasks (what runs, what ran). */
+const GROUNDING_TOOLS = new Set(['fleet_status', 'run_mission', 'rerun_mission', 'stop_mission', 'mission_results', 'phone_history']);
+
 /** True when nothing was done this turn — a pure text reply. */
 function onlyToolless(text: string, result: AgentResult): boolean {
   return !result.calls.length && !result.proposal && !result.mission && REFUSAL.test(text);
@@ -423,6 +427,7 @@ export class VectorAgentService {
     messages.push(new HumanMessage(`${message}\n\n(Reply in ${lang}${lang === 'Hindi' ? ', in Devanagari script' : ''}, whatever language earlier messages used.)`));
 
     let corrected = false;
+    let claimCorrected = false;
     for (let i = 0; i < MAX_MODEL_TURNS; i += 1) {
       let turn: BrainTurn;
       halt();
@@ -447,6 +452,23 @@ export class VectorAgentService {
             ),
           );
           continue;
+        }
+        // Guard: "started / running" only when a mission or proposal really
+        // exists, or a tool said so. One correction, then the claim is dropped.
+        const grounded = result.mission || result.proposal || result.planned?.length || result.calls.some((c) => GROUNDING_TOOLS.has(c.name));
+        if (!grounded && claimsActivity(turn.text)) {
+          if (!claimCorrected) {
+            claimCorrected = true;
+            messages.push(new AIMessage(turn.text));
+            messages.push(
+              new HumanMessage(
+                '(system note, not from the user) Your reply says a task started or is running, but no tool ran in this turn, so nothing was started and you have not checked anything. If the user asked for a task, call run_mission now. If they asked what is running or how a task went, call fleet_status or mission_results and answer only from what they return. Otherwise answer without claiming anything is running.',
+              ),
+            );
+            continue;
+          }
+          result.text = 'Nothing was started — no task is running from this message. Tell me what to run and on which phones.';
+          break;
         }
         result.text = onlyToolless(turn.text, result) ? oneLineRefusal(turn.text) : turn.text;
         break;
@@ -879,6 +901,7 @@ export class VectorAgentService {
       '- A message can hold several requests (e.g. a task plus a rotation change): handle each with its tool.',
       '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission.',
       '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
+      '- Whether a task started, is running or finished comes ONLY from tool results in this turn and from `Fleet now` below (its running missions). Earlier replies are not proof: lines in them marked [record: …] are the system\'s facts about what really happened, and a reply without "[record: … started mission …]" started nothing. When asked what is running or how a task went, call fleet_status or mission_results first.',
       'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',
       '- Ask only when you genuinely cannot tell; otherwise act.',
       '- For results of a task (emails found, what a phone reported) use mission_results; for what was done on one phone use phone_history. Answer from what they return, as a short list or table.',

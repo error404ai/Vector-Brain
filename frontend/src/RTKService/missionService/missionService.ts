@@ -16,6 +16,8 @@ export interface MissionItem {
   reason_text: string | null;
   last_message: string | null;
   next_attempt_at: string | null;
+  /** While the phone is offline: until when the mission waits for it to reconnect. */
+  waiting_until?: string | null;
 }
 
 export interface Mission {

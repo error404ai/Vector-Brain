@@ -50,6 +50,10 @@ export class MissionItem {
   @Column({ type: 'datetime', nullable: true })
   next_attempt_at: Date | null;
 
+  /** Since when the phone has been offline while this item waits for it (null when not waiting). */
+  @Column({ type: 'datetime', nullable: true })
+  waiting_since: Date | null;
+
   @UpdateDateColumn()
   updated_at: Date;
 
