@@ -439,26 +439,14 @@ export class VectorAgentService {
     // on the latest message, where the model weighs instructions most.
     const lang = replyLanguage(message);
     const messages: BaseMessage[] = [new SystemMessage(`${await this.systemPrompt(ctx)}\nReply language for this turn: ${lang}.`)];
-    // A reply that started a mission is replayed as the tool call it was, so
-    // every example the model sees of running a task is a run_mission call.
-    ctx.history.slice(-12).forEach((turn, i) => {
-      if (turn.role === 'user') {
-        messages.push(new HumanMessage(turn.text));
-        return;
-      }
-      if (turn.mission) {
-        // 9 letters/digits: the strictest id format any provider asks for (Mistral).
-        const id = `h${i.toString(36)}x${turn.mission.id.toString(36)}000000000`.slice(0, 9);
-        messages.push(
-          new AIMessage({
-            content: '',
-            tool_calls: [{ id, name: 'run_mission', args: { instruction: turn.mission.instruction, phones: turn.mission.phones }, type: 'tool_call' as const }],
-          }),
-        );
-        messages.push(new ToolMessage({ content: JSON.stringify({ status: 'started', mission_id: turn.mission.id }), tool_call_id: id }));
-      }
-      messages.push(new AIMessage(turn.text || 'Done.'));
-    });
+    // Earlier turns go in as plain text. (Replaying started missions as
+    // run_mission calls made models copy the previous call's instruction and
+    // run the OLD task instead of the new one, so that was reverted.) Made-up
+    // "Running…" replies are already rewritten to "Nothing was started", and
+    // the claim guard below forces a real run_mission call.
+    for (const turn of ctx.history.slice(-12)) {
+      messages.push(turn.role === 'user' ? new HumanMessage(turn.text) : new AIMessage(turn.text || 'Done.'));
+    }
     messages.push(new HumanMessage(`${message}\n\n(Reply in ${lang}${lang === 'Hindi' ? ', in Devanagari script' : ''}, whatever language earlier messages used.)`));
 
     let corrected = false;
