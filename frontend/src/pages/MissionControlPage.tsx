@@ -63,6 +63,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEve
 import toast from 'react-hot-toast';
 import { StepFeed } from '@/components/mission/StepFeed';
 import MissionBoardReply from '@/components/mission/MissionBoardReply';
+import MissionHero from '@/components/mission/MissionHero';
+import VectorBot from '@/components/mission/VectorBot';
 import { isStructured } from '@/components/mission/chatText';
 import { stepSummary, useRunSteps } from '@/components/mission/steps';
 import { contentKey, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
@@ -215,13 +217,6 @@ function minutesLeft(endsAt: number): string {
 // -----------------------------------------------------------------------------
 // Pieces
 // -----------------------------------------------------------------------------
-
-const EXAMPLES = [
-  'Who are you?',
-  'How many phones are online?',
-  'On 5 phones, open Chrome and browse random websites for 30 minutes',
-  'On #PhoneBox phones, open YouTube and play lofi music',
-];
 
 const ITEM_TONE: Record<MissionItemStatus, { label: string; color: 'default' | 'info' | 'warning' | 'success' | 'error' }> = {
   PENDING: { label: 'Waiting', color: 'default' },
@@ -1212,6 +1207,30 @@ function RotationRow({ event }: { event: RotationEvent }) {
   );
 }
 
+/**
+ * The robot docked beside the title once a chat is under way: thinking while
+ * a reply is on its way, working while phones report steps, a happy hop when
+ * a reply lands. Its own timers keep the big page from re-rendering.
+ */
+function HeaderBot({ sending, lastStepAt }: { sending: boolean; lastStepAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  const [doneAt, setDoneAt] = useState(0);
+  const wasSending = useRef(sending);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    const finished = wasSending.current && !sending;
+    wasSending.current = sending;
+    if (!finished) return;
+    const t = setTimeout(() => setDoneAt(Date.now()), 0);
+    return () => clearTimeout(t);
+  }, [sending]);
+  const mood = sending ? 'think' : now - lastStepAt < 15_000 ? 'work' : now - doneAt < 2_500 ? 'done' : 'idle';
+  return <VectorBot compact mood={mood} size={48} label={`Vector is ${mood === 'think' ? 'thinking' : mood === 'work' ? 'working' : mood === 'done' ? 'done' : 'ready'}`} />;
+}
+
 function VectorAvatar() {
   return (
     <Box
@@ -1776,6 +1795,7 @@ function getSpeechRecognition(): SRCtor | undefined {
 
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
+  const [composerFocused, setComposerFocused] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1794,6 +1814,12 @@ export default function MissionControlPage() {
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const feed = useLiveFeed();
+  // When a phone last reported a step: keeps the docked robot "working".
+  const lastStepAt = useMemo(() => {
+    let latest = 0;
+    Object.values(feed.steps).forEach((list) => list.forEach((step) => { if (step.at > latest) latest = step.at; }));
+    return latest;
+  }, [feed.steps]);
 
   // Voice-to-text for the composer: speak, and it types for you. All in the
   // browser — nothing recorded or sent anywhere by us.
@@ -2152,7 +2178,7 @@ export default function MissionControlPage() {
         <IconButton size="small" aria-label={sidebarOpen ? 'Hide chats' : 'Show chats'} onClick={() => setSidebarOpen((v) => !v)}>
           <MenuIcon />
         </IconButton>
-        <VectorAvatar />
+        {turns.length > 0 && !isMobile ? <HeaderBot sending={sending} lastStepAt={lastStepAt} /> : <VectorAvatar />}
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
             Vector
@@ -2176,22 +2202,13 @@ export default function MissionControlPage() {
       <Box ref={contentRef} sx={{ display: 'flex', flexDirection: 'column', gap: 2, pb: 2 }}>
         {loadingHistory && turns.length === 0 && <CircularProgress size={22} sx={{ alignSelf: 'center', mt: 4 }} />}
         {!loadingHistory && turns.length === 0 && (
-          <Box sx={{ mt: 4, ...bubbleIn }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Try one of these:
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-start' }}>
-              {EXAMPLES.map((example) => (
-                <Chip
-                  key={example}
-                  label={example}
-                  onClick={() => void send(example)}
-                  variant="outlined"
-                  sx={{ maxWidth: '100%', height: 'auto', transition: `transform 160ms ${ease}`, '&:hover': { transform: 'translateX(3px)' }, '& .MuiChip-label': { whiteSpace: 'normal', py: 0.75 }, ...reducedMotion }}
-                />
-              ))}
-            </Box>
-          </Box>
+          <MissionHero
+            mood={composerFocused || input.trim() ? 'listen' : 'idle'}
+            onPick={(text) => {
+              setInput(text);
+              inputRef.current?.focus();
+            }}
+          />
         )}
         {turns.map((turn, index) =>
           turn.role === 'rotation' ? (
@@ -2258,6 +2275,8 @@ export default function MissionControlPage() {
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={onKeyDown}
+          onFocus={() => setComposerFocused(true)}
+          onBlur={() => setComposerFocused(false)}
           placeholder="Tell Vector what the phones should do…"
           multiline
           minRows={2}
