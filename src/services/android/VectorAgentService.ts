@@ -1,4 +1,4 @@
-import { claimsActivity } from './chatClaims';
+import { claimsActivity, claimsStart, stripRecords, type HistoryEntry } from './chatClaims';
 import { modelErrorText } from '@/services/ai/modelErrors';
 import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
 import { AgentTask } from '@/entities/AgentTask';
@@ -105,7 +105,7 @@ export type PolicyJudge = (instruction: string) => Promise<{ block: boolean; lin
 
 export interface AgentContext {
   userId: number;
-  history: { role: 'user' | 'assistant'; text: string }[];
+  history: HistoryEntry[];
   lastMissionDevices: number[];
   pending: { summary: string; token?: string }[];
   dryRun?: boolean;
@@ -439,9 +439,26 @@ export class VectorAgentService {
     // on the latest message, where the model weighs instructions most.
     const lang = replyLanguage(message);
     const messages: BaseMessage[] = [new SystemMessage(`${await this.systemPrompt(ctx)}\nReply language for this turn: ${lang}.`)];
-    for (const turn of ctx.history.slice(-12)) {
-      messages.push(turn.role === 'user' ? new HumanMessage(turn.text) : new AIMessage(turn.text));
-    }
+    // A reply that started a mission is replayed as the tool call it was, so
+    // every example the model sees of running a task is a run_mission call.
+    ctx.history.slice(-12).forEach((turn, i) => {
+      if (turn.role === 'user') {
+        messages.push(new HumanMessage(turn.text));
+        return;
+      }
+      if (turn.mission) {
+        // 9 letters/digits: the strictest id format any provider asks for (Mistral).
+        const id = `h${i.toString(36)}x${turn.mission.id.toString(36)}000000000`.slice(0, 9);
+        messages.push(
+          new AIMessage({
+            content: '',
+            tool_calls: [{ id, name: 'run_mission', args: { instruction: turn.mission.instruction, phones: turn.mission.phones }, type: 'tool_call' as const }],
+          }),
+        );
+        messages.push(new ToolMessage({ content: JSON.stringify({ status: 'started', mission_id: turn.mission.id }), tool_call_id: id }));
+      }
+      messages.push(new AIMessage(turn.text || 'Done.'));
+    });
     messages.push(new HumanMessage(`${message}\n\n(Reply in ${lang}${lang === 'Hindi' ? ', in Devanagari script' : ''}, whatever language earlier messages used.)`));
 
     let corrected = false;
@@ -474,13 +491,17 @@ export class VectorAgentService {
         // Guard: "started / running" only when a mission or proposal really
         // exists, or a tool said so. One correction, then the claim is dropped.
         const grounded = result.mission || result.proposal || result.planned?.length || result.calls.some((c) => GROUNDING_TOOLS.has(c.name));
-        if (!grounded && claimsActivity(turn.text)) {
+        // "Running "X" on both phones" / a copied "[record: … started mission]"
+        // says a task was started: only a mission or proposal from this turn
+        // backs that, not a status tool.
+        const started = result.mission || result.proposal || result.planned?.length;
+        if ((!grounded && claimsActivity(turn.text)) || (!started && claimsStart(turn.text))) {
           if (!claimCorrected) {
             claimCorrected = true;
             messages.push(new AIMessage(turn.text));
             messages.push(
               new HumanMessage(
-                '(system note, not from the user) Your reply says a task started or is running, but no tool ran in this turn, so nothing was started and you have not checked anything. If the user asked for a task, call run_mission now. If they asked what is running or how a task went, call fleet_status or mission_results and answer only from what they return. Otherwise answer without claiming anything is running.',
+                '(system note, not from the user) Your reply says a task started or is running, but no run_mission call created one in this turn, so nothing was started. Never write [record: …] lines yourself. If the user asked for a task, call run_mission now. If they asked what is running or how a task went, call fleet_status or mission_results and answer only from what they return. Otherwise answer without claiming anything is running.',
               ),
             );
             continue;
@@ -488,7 +509,8 @@ export class VectorAgentService {
           result.text = 'Nothing was started — no task is running from this message. Tell me what to run and on which phones.';
           break;
         }
-        result.text = onlyToolless(turn.text, result) ? oneLineRefusal(turn.text) : turn.text;
+        const clean = stripRecords(turn.text);
+        result.text = onlyToolless(clean, result) ? oneLineRefusal(clean) : clean;
         break;
       }
       messages.push(new AIMessage({ content: turn.text, tool_calls: turn.calls.map((c) => ({ id: c.id, name: c.name, args: c.args, type: 'tool_call' as const })) }));

@@ -696,6 +696,17 @@ export class MissionService {
       return;
     }
 
+    // The phone is busy with another task: that is a wait, not a failure. The
+    // item keeps its place, uses no try, and starts once the phone is free —
+    // without this, a second task on the same phones failed after 3 tries.
+    if (reason === 'DEVICE_BUSY' && options.neverStarted && !options.final) {
+      item.attempts = Math.max(0, item.attempts - 1);
+      item.status = 'PENDING';
+      item.next_attempt_at = new Date(Date.now() + OFFLINE_POLL_MS);
+      await this.itemRepo.save(item);
+      return;
+    }
+
     if (!options.final && RETRYABLE.has(reason) && item.attempts < MAX_ATTEMPTS) {
       item.status = 'PENDING';
       item.next_attempt_at = new Date(Date.now() + RETRY_DELAY_MS * item.attempts);

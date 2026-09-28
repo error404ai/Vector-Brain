@@ -1333,6 +1333,29 @@ const scenarios = [
     },
   },
   {
+    name: 'a mission on a busy phone waits for it instead of failing',
+    async run() {
+      const a = await api('POST', '/android/missions', { request: 'scroll the feed [sim steps=20 delay=200]', device_ids: [phones.free1.dbId] });
+      const aId = a?.data?.id;
+      const aRunning = await waitFor(async () => ((await getMission(aId))?.items[0]?.status === 'RUNNING' ? true : null), 30_000);
+      if (!aRunning) return 'task A never started';
+      const b = await api('POST', '/android/missions', { request: 'open settings [sim steps=2 delay=100]', device_ids: [phones.free1.dbId] });
+      const bId = b?.data?.id;
+      if (!bId) return `task B not created: ${JSON.stringify(b).slice(0, 160)}`;
+      await sleep(3000);
+      const waiting = await getMission(bId);
+      const item = waiting.items[0];
+      if (item.status !== 'PENDING' || item.last_reason !== 'DEVICE_BUSY') return `B while A runs: ${item.status}/${item.last_reason}`;
+      if (item.attempts !== 0) return `waiting for a busy phone used ${item.attempts} try/tries`;
+      const aDone = await waitForMission(aId, 60_000);
+      if (!aDone || aDone.items[0].status !== 'SUCCEEDED') return `task A ended ${aDone?.items[0]?.status}`;
+      const bDone = await waitForMission(bId, 60_000);
+      if (!bDone) return 'B never ran after A finished';
+      if (bDone.items[0].status !== 'SUCCEEDED') return `B ended ${bDone.items[0].status}: ${bDone.items[0].last_message}`;
+      if (bDone.items[0].attempts !== 1) return `B took ${bDone.items[0].attempts} tries`;
+    },
+  },
+  {
     name: 'pause stops a running phone and resume continues the same run',
     async run() {
       const created = await api('POST', '/android/missions', { request: 'scroll the feed [sim steps=60 delay=150]', device_ids: [phones.free1.dbId] });

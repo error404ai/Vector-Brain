@@ -574,9 +574,10 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
 
 type RerunHandler = (missionId: number, options: { scope: 'failed' | 'all'; continue?: boolean }) => void;
 
-const COUNT_TONE: { key: MissionItemStatus | 'PAUSED'; label: string; color: string }[] = [
+const COUNT_TONE: { key: MissionItemStatus | 'PAUSED' | 'BUSY'; label: string; color: string }[] = [
   { key: 'RUNNING', label: 'Running', color: '#0284c7' },
   { key: 'PAUSED', label: 'Paused', color: '#b45309' },
+  { key: 'BUSY', label: 'Phone busy', color: '#7c3aed' },
   { key: 'QUEUED', label: 'In queue', color: '#b45309' },
   { key: 'PENDING', label: 'Waiting', color: '#64748b' },
   { key: 'SUCCEEDED', label: 'Done', color: '#15803d' },
@@ -587,7 +588,8 @@ const COUNT_TONE: { key: MissionItemStatus | 'PAUSED'; label: string; color: str
 /** "20 Running · 3 Failed · 25 Done" — only the counts that are not zero. */
 function SummaryLine({ items }: { items: MissionItem[] }) {
   // A paused phone is PENDING on the server with PAUSED as its reason.
-  const keyOf = (i: MissionItem) => (i.status === 'PENDING' && i.last_reason === 'PAUSED' ? 'PAUSED' : i.status);
+  const keyOf = (i: MissionItem) =>
+    i.status === 'PENDING' && i.last_reason === 'PAUSED' ? 'PAUSED' : i.status === 'PENDING' && i.last_reason === 'DEVICE_BUSY' ? 'BUSY' : i.status;
   const parts = COUNT_TONE.map((tone) => ({ ...tone, n: items.filter((i) => keyOf(i) === tone.key).length })).filter((p) => p.n > 0);
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -926,8 +928,20 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
   const roundFor = (item: MissionItem) => (item.agent_task_id ? feed.rounds[item.agent_task_id] : undefined);
   const runningItems = items.filter((i) => i.status === 'RUNNING');
 
+  // "Running" only once a phone really runs it; before that, say what it waits for.
+  const open = items.filter((i) => i.status === 'PENDING' || i.status === 'QUEUED' || i.status === 'RUNNING');
+  const busyCount = open.filter((i) => i.status === 'PENDING' && i.last_reason === 'DEVICE_BUSY').length;
+  const phonesWord = (n: number) => `${n} ${n === 1 ? 'phone' : 'phones'}`;
   const title = running
-    ? `Running on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'}`
+    ? open.length === 0
+      ? 'Finishing…'
+      : runningItems.length > 0
+      ? `Running on ${phonesWord(runningItems.length)}${open.length > runningItems.length ? ` · ${open.length - runningItems.length} waiting` : ''}`
+      : busyCount > 0 && busyCount === open.length
+        ? `Waiting — ${phonesWord(busyCount)} busy with another task`
+        : open.every((i) => i.status === 'QUEUED')
+          ? `In the lane queue — ${phonesWord(open.length)}`
+          : `Starting on ${phonesWord(open.length)}`
     : paused
       ? `Paused — ${progress.succeeded} of ${progress.total} done`
       : mission.status === 'CANCELLED'
