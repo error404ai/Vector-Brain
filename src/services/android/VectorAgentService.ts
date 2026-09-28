@@ -11,6 +11,7 @@ import Logger from '@/logger/index';
 import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { In } from 'typeorm';
+import { PLAIN_YES } from './plainYes';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { FleetStateService } from './FleetStateService';
@@ -192,7 +193,24 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'stop_mission',
-      description: 'Stop a running mission. Without mission_id, stops every running mission.',
+      description: 'Stop a running or paused mission for good (it cannot be resumed). Without mission_id, stops every running or paused mission.',
+      parameters: { type: 'object', properties: { mission_id: { type: 'number' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'pause_mission',
+      description:
+        'Pause a running mission: phones stop but keep their progress, and Resume continues each one where it stopped (a timed task keeps its remaining time). Without mission_id, pauses every running mission.',
+      parameters: { type: 'object', properties: { mission_id: { type: 'number' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'resume_mission',
+      description: 'Resume a paused mission so each phone continues where it stopped. Without mission_id, resumes every paused mission.',
       parameters: { type: 'object', properties: { mission_id: { type: 'number' } } },
     },
   },
@@ -267,7 +285,8 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'confirm_pending',
-      description: 'Apply what is waiting for Confirm — ONLY when the user plainly says yes (yes, haan, confirm, ok, kar do) with nothing else added.',
+      description:
+        'Apply what is waiting for Confirm — when the user plainly says yes (yes, haan, confirm, ok, kar do), even urged on ("ok start now", "haan chala do bhai"). Not when they also change something ("ok but only 1 phone").',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -291,7 +310,7 @@ const READY_STATES = new Set(['idle', 'completed', 'failed', 'cancelled', 'inter
 const REFUSAL = /\b(nahi kar sakta|nahin kar sakta|nahi kar sakti|nahi karunga|i can'?t|i cannot|i won'?t|can not help|unable to help|not able to (?:help|do))\b/i;
 
 /** Tools whose results can ground a claim about tasks (what runs, what ran). */
-const GROUNDING_TOOLS = new Set(['fleet_status', 'run_mission', 'rerun_mission', 'stop_mission', 'mission_results', 'phone_history']);
+const GROUNDING_TOOLS = new Set(['fleet_status', 'run_mission', 'rerun_mission', 'stop_mission', 'pause_mission', 'resume_mission', 'mission_results', 'phone_history']);
 
 /** True when nothing was done this turn — a pure text reply. */
 function onlyToolless(text: string, result: AgentResult): boolean {
@@ -308,9 +327,8 @@ export function oneLineRefusal(text: string): string {
   const line = firstLine.length > 180 ? `${firstLine.slice(0, 177).replace(/\s+\S*$/, '')}…` : firstLine;
   return line;
 }
-/** A message that is nothing but a yes — the only thing that confirms by typing. */
-/** A bare yes (and nothing else), in English or Hinglish. */
-export const PLAIN_YES = /^(yes|yeah|yep|y|ok|okay|confirm|confirmed|go|go ahead|do it|haan|han|ha|haa|hanji|haan ji|ji|kar do|kardo|karo|chalo|chala do|theek hai|thik hai|sure)[\s.!]*$/i;
+/** A message that is nothing but a yes ("ok", "ok start now") — the only thing that confirms by typing. */
+export { PLAIN_YES };
 
 /**
  * Romanised Hindi words that don't occur in ordinary English. Deliberately
@@ -664,13 +682,30 @@ export class VectorAgentService {
 
         case 'stop_mission': {
           const running = await this.missionRepo.find({
-            where: args.mission_id ? { id: Number(args.mission_id), user_id: ctx.userId } : { user_id: ctx.userId, status: 'RUNNING' },
+            where: args.mission_id ? { id: Number(args.mission_id), user_id: ctx.userId } : { user_id: ctx.userId, status: In(['RUNNING', 'PAUSED']) },
           });
-          const targets = running.filter((m) => m.status === 'RUNNING');
+          const targets = running.filter((m) => m.status === 'RUNNING' || m.status === 'PAUSED');
           if (!targets.length) return JSON.stringify({ status: 'nothing running' });
           if (ctx.dryRun) return JSON.stringify({ status: 'stopped (dry run)', missions: targets.map((m) => m.id) });
           for (const m of targets) await this.missionService.cancel(m.id, ctx.userId);
           return JSON.stringify({ status: 'stopped', missions: targets.map((m) => m.id) });
+        }
+
+        case 'pause_mission':
+        case 'resume_mission': {
+          const pausing = call.name === 'pause_mission';
+          const from = pausing ? 'RUNNING' : 'PAUSED';
+          const found = await this.missionRepo.find({
+            where: args.mission_id ? { id: Number(args.mission_id), user_id: ctx.userId } : { user_id: ctx.userId, status: from },
+          });
+          const targets = found.filter((m) => m.status === from);
+          if (!targets.length) return JSON.stringify({ status: pausing ? 'nothing running' : 'nothing paused' });
+          if (ctx.dryRun) return JSON.stringify({ status: `${pausing ? 'paused' : 'resumed'} (dry run)`, missions: targets.map((m) => m.id) });
+          for (const m of targets) {
+            const res = pausing ? await this.missionService.pause(m.id, ctx.userId) : await this.missionService.resume(m.id, ctx.userId);
+            result.mission = res.data;
+          }
+          return JSON.stringify({ status: pausing ? 'paused' : 'resumed', missions: targets.map((m) => m.id) });
         }
 
         case 'rerun_mission': {
@@ -835,7 +870,7 @@ export class VectorAgentService {
       lanes: { id: number; name: string; running: number; waiting: number }[];
     };
     const proxies = await this.proxyRepo.find({ where: { user_id: userId } });
-    const running = await this.missionRepo.find({ where: { user_id: userId, status: 'RUNNING' }, order: { id: 'DESC' }, take: 5 });
+    const running = await this.missionRepo.find({ where: { user_id: userId, status: In(['RUNNING', 'PAUSED']) }, order: { id: 'DESC' }, take: 5 });
     const laneName = new Map(proxies.map((p) => [p.id, p.name]));
     // Counted here, not by the model: asked "how many are online", it used to
     // count the list itself and get it wrong (said 21 while listing 23 names).
@@ -881,7 +916,7 @@ export class VectorAgentService {
         running: state.lanes.find((l) => l.id === p.id)?.running ?? 0,
         waiting: state.lanes.find((l) => l.id === p.id)?.waiting ?? 0,
       })),
-      running_missions: running.map((m) => ({ id: m.id, instruction: m.prompt })),
+      running_missions: running.map((m) => ({ id: m.id, instruction: m.prompt, ...(m.status === 'PAUSED' ? { paused: true } : {}) })),
     };
   }
 
@@ -899,7 +934,7 @@ export class VectorAgentService {
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',
       '- Settings (proxy rotation, lane concurrency) are only proposed; the user presses Confirm. Rotation 0 means OFF. Propose ON only if the user clearly asked for it.',
       '- A message can hold several requests (e.g. a task plus a rotation change): handle each with its tool.',
-      '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission.',
+      '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission. "pause" / "ruko" / "hold" means pause_mission; "resume" / "continue" / "phir se chalao" on a paused mission means resume_mission.',
       '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
       '- Whether a task started, is running or finished comes ONLY from tool results in this turn and from `Fleet now` below (its running missions). Earlier replies are not proof: lines in them marked [record: …] are the system\'s facts about what really happened, and a reply without "[record: … started mission …]" started nothing. When asked what is running or how a task went, call fleet_status or mission_results first.',
       'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',

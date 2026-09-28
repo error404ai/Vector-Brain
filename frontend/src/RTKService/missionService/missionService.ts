@@ -1,6 +1,6 @@
 import { baseApi, TAGS } from '../baseApi';
 
-export type MissionStatus = 'RUNNING' | 'DONE' | 'CANCELLED';
+export type MissionStatus = 'RUNNING' | 'PAUSED' | 'DONE' | 'CANCELLED';
 export type MissionItemStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 
 export interface MissionItem {
@@ -10,6 +10,8 @@ export interface MissionItem {
   device_hw_id: string | null;
   status: MissionItemStatus;
   attempts: number;
+  /** Seconds this phone already worked on a timed mission, across pauses. */
+  run_seconds?: number;
   agent_task_id: number | null;
   replaces_item_id: number | null;
   last_reason: string | null;
@@ -29,6 +31,8 @@ export interface Mission {
   no_internet: boolean;
   duration_seconds: number | null;
   status: MissionStatus;
+  /** When it was paused (null unless PAUSED). */
+  paused_at?: string | null;
   note: string | null;
   summary: string | null;
   created_at: string;
@@ -71,6 +75,14 @@ export const missionService = baseApi.injectEndpoints({
       query: (id) => ({ url: `/android/missions/${id}/cancel`, method: 'POST' }),
       invalidatesTags: [TAGS.MISSIONS],
     }),
+    pauseMission: builder.mutation<{ message: string; data: Mission }, number>({
+      query: (id) => ({ url: `/android/missions/${id}/pause`, method: 'POST' }),
+      invalidatesTags: [TAGS.MISSIONS],
+    }),
+    resumeMission: builder.mutation<{ message: string; data: Mission }, number>({
+      query: (id) => ({ url: `/android/missions/${id}/resume`, method: 'POST' }),
+      invalidatesTags: [TAGS.MISSIONS],
+    }),
     // The last screen a target phone showed for a finished mission item.
     getFinalScreen: builder.query<{ message: string; data: { base64: string | null } }, number>({
       query: (itemId) => ({ url: `/android/missions/items/${itemId}/final-screen`, method: 'GET' }),
@@ -79,4 +91,4 @@ export const missionService = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetMissionsQuery, useGetMissionQuery, useCreateMissionMutation, useCancelMissionMutation, useGetFinalScreenQuery } = missionService;
+export const { useGetMissionsQuery, useGetMissionQuery, useCreateMissionMutation, useCancelMissionMutation, usePauseMissionMutation, useResumeMissionMutation, useGetFinalScreenQuery } = missionService;

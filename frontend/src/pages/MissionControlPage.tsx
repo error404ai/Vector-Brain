@@ -16,6 +16,8 @@ import {
 } from '@/RTKService/commandChatService/commandChatService';
 import {
   useCancelMissionMutation,
+  usePauseMissionMutation,
+  useResumeMissionMutation,
   useGetMissionQuery, useGetFinalScreenQuery,
   type Mission,
   type MissionItem,
@@ -50,7 +52,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, MenuItem, MenuList, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import { Link as RouterLink } from 'react-router-dom';
@@ -65,6 +67,10 @@ import { StepFeed } from '@/components/mission/StepFeed';
 import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
 import FileDropCard from '@/components/mission/FileDropCard';
+import { MentionHighlighter, MentionMenu, MentionText } from '@/components/mission/MentionUI';
+import { mentionOptions, typedMention } from '@/components/mission/mentions';
+import { PauseButton, PausedGlyph, PausedProgress, ResumeButton } from '@/components/mission/MissionPause';
+import { timeLeft } from '@/components/mission/pauseTime';
 import { AttachChip, AttachedFile } from '@/components/mission/FileAttach';
 import { formatSize, MAX_FILE_BYTES, MAX_SEND_DEVICES, resolveTargets, startDrop } from '@/components/mission/fileDrop';
 import VectorBot from '@/components/mission/VectorBot';
@@ -568,8 +574,9 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
 
 type RerunHandler = (missionId: number, options: { scope: 'failed' | 'all'; continue?: boolean }) => void;
 
-const COUNT_TONE: { key: MissionItemStatus; label: string; color: string }[] = [
+const COUNT_TONE: { key: MissionItemStatus | 'PAUSED'; label: string; color: string }[] = [
   { key: 'RUNNING', label: 'Running', color: '#0284c7' },
+  { key: 'PAUSED', label: 'Paused', color: '#b45309' },
   { key: 'QUEUED', label: 'In queue', color: '#b45309' },
   { key: 'PENDING', label: 'Waiting', color: '#64748b' },
   { key: 'SUCCEEDED', label: 'Done', color: '#15803d' },
@@ -579,7 +586,9 @@ const COUNT_TONE: { key: MissionItemStatus; label: string; color: string }[] = [
 
 /** "20 Running · 3 Failed · 25 Done" — only the counts that are not zero. */
 function SummaryLine({ items }: { items: MissionItem[] }) {
-  const parts = COUNT_TONE.map((tone) => ({ ...tone, n: items.filter((i) => i.status === tone.key).length })).filter((p) => p.n > 0);
+  // A paused phone is PENDING on the server with PAUSED as its reason.
+  const keyOf = (i: MissionItem) => (i.status === 'PENDING' && i.last_reason === 'PAUSED' ? 'PAUSED' : i.status);
+  const parts = COUNT_TONE.map((tone) => ({ ...tone, n: items.filter((i) => keyOf(i) === tone.key).length })).filter((p) => p.n > 0);
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
       {parts.map((p) => (
@@ -903,9 +912,12 @@ function ScreensReply({ screens, feed }: { screens: PhoneShot[]; feed: LiveFeed 
 
 function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
+  const [pauseMission, { isLoading: pausing }] = usePauseMissionMutation();
+  const [resumeMission, { isLoading: resuming }] = useResumeMissionMutation();
   const [showAll, setShowAll] = useState(false);
   const { progress, items } = mission;
   const running = mission.status === 'RUNNING';
+  const paused = mission.status === 'PAUSED';
   const settled = progress.succeeded + progress.failed;
   const percent = progress.total ? Math.round((settled / progress.total) * 100) : 0;
   const finishedClean = mission.status === 'DONE' && progress.failed === 0;
@@ -916,12 +928,32 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
 
   const title = running
     ? `Running on ${progress.total} ${progress.total === 1 ? 'phone' : 'phones'}`
-    : mission.status === 'CANCELLED'
+    : paused
+      ? `Paused — ${progress.succeeded} of ${progress.total} done`
+      : mission.status === 'CANCELLED'
       ? 'Stopped'
       : finishedClean
         ? `Finished — all ${progress.total} done`
         : `Finished — ${progress.succeeded} of ${progress.total} done`;
-  const tone = running ? 'info.main' : finishedClean ? 'success.main' : mission.status === 'CANCELLED' ? 'text.secondary' : 'warning.main';
+  const tone = running ? 'info.main' : paused ? '#F59E0B' : finishedClean ? 'success.main' : mission.status === 'CANCELLED' ? 'text.secondary' : 'warning.main';
+
+  const onPause = async () => {
+    try {
+      await pauseMission(mission.id).unwrap();
+      toast.success('Paused. Each phone keeps its progress.');
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+  const onResume = async () => {
+    try {
+      await resumeMission(mission.id).unwrap();
+      toast.success('Resumed. Each phone continues where it stopped.');
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+  const left = paused ? timeLeft(mission.duration_seconds, items) : null;
 
   const onCancel = async () => {
     try {
@@ -954,6 +986,8 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
           {running ? (
             <CircularProgress size={20} thickness={5} />
+          ) : paused ? (
+            <PausedGlyph />
           ) : finishedClean ? (
             <CheckCircleRoundedIcon color="success" sx={{ animation: `${popIn} 480ms ${ease}`, ...reducedMotion }} />
           ) : (
@@ -962,7 +996,9 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
           <Typography variant="h6" sx={{ fontWeight: 800, flex: 1, lineHeight: 1.2 }}>
             {title}
           </Typography>
-          {running && (
+          {running && <PauseButton onClick={onPause} busy={pausing} />}
+          {paused && <ResumeButton onClick={onResume} busy={resuming} />}
+          {(running || paused) && (
             <Button size="small" color="error" variant="outlined" startIcon={<StopCircleOutlinedIcon />} onClick={onCancel} disabled={cancelling}>
               Stop
             </Button>
@@ -975,6 +1011,14 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
           </Typography>
         )}
         <SummaryLine items={items} />
+        {paused && (
+          <>
+            <PausedProgress percent={percent} />
+            <Typography variant="caption" sx={{ color: '#B45309', fontWeight: 600 }}>
+              Resume continues each phone from where it stopped{left ? ` · ${left}` : ''}.
+            </Typography>
+          </>
+        )}
         {running && (
           <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1 }}>
             <LinearProgress variant="determinate" value={percent} sx={{ height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { transition: `transform 600ms ${ease}` } }} />
@@ -1018,7 +1062,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
             {showAll ? 'Hide phones' : `Show all ${items.length} phones`}
           </Button>
           <Box sx={{ flex: 1 }} />
-          {!running && onRerun && (
+          {!running && !paused && onRerun && (
             <>
               {items.some((i) => i.status === 'FAILED' && (i.last_reason === 'STEP_LIMIT' || i.last_reason === 'UNFINISHED')) && (
                 <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} onClick={() => onRerun(mission.id, { scope: 'failed', continue: true })}>
@@ -1932,6 +1976,13 @@ export default function MissionControlPage() {
   // Names and tags for @ / # suggestions in the input.
   const { data: fleetData } = useGetFleetStateQuery();
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
+  const tagList = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
+  // What the composer and the sent bubbles colour as @phones / #tags.
+  const vocabKey = `${phoneNames.join('\u0001')}\u0002${tagList.join('\u0001')}`;
+  const mentionVocab = useMemo(() => {
+    const [phones = '', tags = ''] = vocabKey.split('\u0002');
+    return { phones: [...new Set(phones.split('\u0001').filter(Boolean))], tags: tags.split('\u0001').filter(Boolean) };
+  }, [vocabKey]);
 
   // A file waiting in the composer, and the phones it would go to right now.
   const [attached, setAttached] = useState<File | null>(null);
@@ -1952,7 +2003,6 @@ export default function MissionControlPage() {
     setAttached(file);
     inputRef.current?.focus();
   };
-  const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
   // The active conversation is stored on the server; a reload picks it back up.
   const { data: historyData, isFetching: fetchingHistory } = useGetChatHistoryQuery(conversationId ?? undefined, {
@@ -2157,17 +2207,14 @@ export default function MissionControlPage() {
   };
 
   // @phone / #tag suggestions for the word being typed.
-  const mention = /(^|\s)([@#])([^\s@#]*)$/.exec(input);
-  const suggestions = mention
-    ? (mention[2] === '@' ? phoneNames : tagNames)
-        .filter((name) => name.toLowerCase().includes(mention[3].toLowerCase()))
-        .slice(0, 6)
-    : [];
+  const mention = typedMention(input);
+  // Every match (the menu scrolls); a name shared by several phones is listed once.
+  const suggestions = mention ? mentionOptions(mention.trigger, mention.query, fleetData?.data?.devices ?? []) : [];
   const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const activeIndex = Math.min(activeSuggestion, Math.max(0, suggestions.length - 1));
   const applySuggestion = (name: string) => {
     if (!mention) return;
-    const start = input.length - mention[3].length - 1;
-    setInput(`${input.slice(0, start)}${mention[2]}${name} `);
+    setInput(`${input.slice(0, mention.start)}${mention.trigger}${name} `);
     setActiveSuggestion(0);
   };
 
@@ -2181,7 +2228,7 @@ export default function MissionControlPage() {
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
-        applySuggestion(suggestions[Math.min(activeSuggestion, suggestions.length - 1)]);
+        applySuggestion(suggestions[activeIndex].name);
         return;
       }
     }
@@ -2275,7 +2322,7 @@ export default function MissionControlPage() {
               sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 3, borderBottomRightRadius: 6, ...bubbleIn }}
             >
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {turn.text}
+                <MentionText text={turn.text} vocab={mentionVocab} />
               </Typography>
             </Box>
           ) : (
@@ -2307,20 +2354,15 @@ export default function MissionControlPage() {
       )}
       </Box>
 
-      {suggestions.length > 0 && (
-        <Paper elevation={6} sx={{ mb: 0.75, borderRadius: 2, overflow: 'hidden', alignSelf: 'flex-start', minWidth: 260, animation: `${riseIn} 180ms ${ease}`, ...reducedMotion }}>
-          <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, pt: 0.75, display: 'block' }}>
-            {mention?.[2] === '@' ? 'Phones' : 'Tags'} · ↑↓ to pick, Enter to insert
-          </Typography>
-          <MenuList dense>
-            {suggestions.map((name, i) => (
-              <MenuItem key={name} selected={i === Math.min(activeSuggestion, suggestions.length - 1)} onMouseDown={(e) => { e.preventDefault(); applySuggestion(name); }}>
-                {mention?.[2]}
-                {name}
-              </MenuItem>
-            ))}
-          </MenuList>
-        </Paper>
+      {mention && suggestions.length > 0 && (
+        <MentionMenu
+          trigger={mention.trigger}
+          query={mention.query}
+          options={suggestions}
+          active={activeIndex}
+          onPick={applySuggestion}
+          onHover={setActiveSuggestion}
+        />
       )}
 
       <Paper
@@ -2337,7 +2379,7 @@ export default function MissionControlPage() {
           setDragOver(false);
           attachFile(event.dataTransfer.files[0]);
         }}
-        sx={{ px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms, border-color 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' }, ...(dragOver ? { borderColor: 'primary.main', borderStyle: 'dashed', boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.14)' } : {}) }}
+        sx={{ position: 'relative', px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms, border-color 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' }, ...(dragOver ? { borderColor: 'primary.main', borderStyle: 'dashed', boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.14)' } : {}) }}
       >
         {attached && (
           <AttachedFile file={attached} targets={attachTargets.targets} picked={attachTargets.picked} onRemove={() => setAttached(null)} />
@@ -2355,9 +2397,12 @@ export default function MissionControlPage() {
           fullWidth
           variant="standard"
           inputRef={inputRef}
-          InputProps={{ disableUnderline: true, sx: { px: 0.75, fontSize: 16 } }}
+          sx={{ position: 'relative', zIndex: 1 }}
+          InputProps={{ disableUnderline: true, sx: { px: 0.75, fontSize: 16, '& textarea::placeholder': { color: 'text.secondary', opacity: 0.8 } } }}
           inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
         />
+        {/* After the field, so the textarea exists when it measures itself against it. */}
+        <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
           <AttachChip onPick={attachFile} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />

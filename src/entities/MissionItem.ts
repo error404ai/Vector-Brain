@@ -35,6 +35,10 @@ export class MissionItem {
   @Column({ type: 'int', nullable: true })
   agent_task_id: number | null;
 
+  /** Seconds this phone has already worked on a timed mission, across pauses. */
+  @Column({ type: 'int', default: 0 })
+  run_seconds: number;
+
   @Column({ type: 'int', nullable: true })
   queue_id: number | null;
 

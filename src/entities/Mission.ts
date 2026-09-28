@@ -1,7 +1,8 @@
 import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, Relation } from 'typeorm';
 import { MissionItem } from './MissionItem';
 
-export type MissionStatus = 'RUNNING' | 'DONE' | 'CANCELLED';
+/** PAUSED: runs stopped with their progress kept; Resume picks each phone back up. */
+export type MissionStatus = 'RUNNING' | 'PAUSED' | 'DONE' | 'CANCELLED';
 /** How the phones were chosen: named ids, a count of ready phones, every ready phone, or a tag. */
 export type MissionTargetMode = 'ids' | 'count' | 'all' | 'tag';
 
@@ -55,6 +56,10 @@ export class Mission {
 
   @Column({ type: 'datetime', nullable: true })
   finished_at: Date | null;
+
+  /** When it was paused (null unless PAUSED). */
+  @Column({ type: 'datetime', nullable: true })
+  paused_at: Date | null;
 
   @OneToMany(() => MissionItem, (item) => item.mission)
   items: Relation<MissionItem[]>;

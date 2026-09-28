@@ -51,6 +51,18 @@ export class MissionController {
   }
 
   @Authorized()
+  @Post('/:id/pause')
+  async pause(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.missionService.pause(Number(id), user.userId);
+  }
+
+  @Authorized()
+  @Post('/:id/resume')
+  async resume(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.missionService.resume(Number(id), user.userId);
+  }
+
+  @Authorized()
   @Post('/:id/cancel')
   async cancel(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.missionService.cancel(id, user.userId);

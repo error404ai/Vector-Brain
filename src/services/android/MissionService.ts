@@ -92,6 +92,7 @@ const PLAIN_REASON: Record<string, string> = {
   FAILED: 'failed',
   CANCELLED: 'cancelled',
   TIME_UP: 'time was up',
+  PAUSED: 'paused',
   CAPTURE_PERMISSION: 'screen capture permission not approved on the phone',
 };
 
@@ -271,7 +272,7 @@ export class MissionService {
   async cancel(id: number, userId: number): Promise<ApiResponse> {
     const mission = await this.missionRepo.findOne({ where: { id, user_id: userId } });
     if (!mission) throw new AppError('Mission not found', 404);
-    if (mission.status !== 'RUNNING') return { message: 'Mission already finished', data: await this.describe(id, userId) };
+    if (mission.status !== 'RUNNING' && mission.status !== 'PAUSED') return { message: 'Mission already finished', data: await this.describe(id, userId) };
 
     // Mark it first so a tick running concurrently does not dispatch anything new.
     mission.status = 'CANCELLED';
@@ -292,6 +293,75 @@ export class MissionService {
     }
     await this.finish(mission, 'CANCELLED');
     return { message: 'Mission cancelled', data: await this.describe(id, userId) };
+  }
+
+  /**
+   * Pause: every running phone stops and keeps its progress, queued phones
+   * leave their lane queue, and nothing new is dispatched until Resume. A
+   * phone's run is continued (same task, its recent steps as context) rather
+   * than restarted, and a timed mission only runs the time it has left.
+   * Pausing does not use up a retry.
+   */
+  async pause(id: number, userId: number): Promise<ApiResponse> {
+    const mission = await this.missionRepo.findOne({ where: { id, user_id: userId } });
+    if (!mission) throw new AppError('Mission not found', 404);
+    if (mission.status === 'PAUSED') return { message: 'Mission already paused', data: await this.describe(id, userId) };
+    if (mission.status !== 'RUNNING') throw new AppError('This mission has already finished', 400);
+
+    // Wait out a tick that is advancing this mission, then hold the lock so no
+    // tick settles a run we are about to stop as a failure.
+    for (let i = 0; i < 50 && this.inFlight.has(id); i += 1) await new Promise((r) => setTimeout(r, 100));
+    this.inFlight.add(id);
+    try {
+      // Marked first: a dispatch still in flight sees PAUSED and puts its item back.
+      mission.status = 'PAUSED';
+      mission.paused_at = new Date();
+      await this.missionRepo.save(mission);
+
+      const now = Date.now();
+      const items = await this.itemRepo.find({ where: { mission_id: id } });
+      for (const item of items) {
+        if (TERMINAL_ITEM.has(item.status)) continue;
+        if (item.status === 'RUNNING' && item.agent_task_id) {
+          const task = await this.taskRepo.findOne({ where: { id: item.agent_task_id }, select: ['id', 'started_at'] });
+          const began = Math.max(item.dispatched_at?.getTime() ?? now, task?.started_at?.getTime() ?? 0);
+          item.run_seconds += Math.max(0, Math.round((now - began) / 1000));
+          await this.plannerService.cancelTask(item.agent_task_id, userId).catch(() => undefined);
+          item.continue_from_task_id = item.agent_task_id;
+          // Resume dispatches it again; that is not a new try.
+          item.attempts = Math.max(0, item.attempts - 1);
+        } else if (item.status === 'QUEUED') {
+          if (item.queue_id) await this.queueRepo.delete({ id: item.queue_id, status: 'QUEUED' }).catch(() => undefined);
+          item.attempts = Math.max(0, item.attempts - 1);
+        }
+        item.status = 'PENDING';
+        item.queue_id = null;
+        item.next_attempt_at = null;
+        item.waiting_since = null; // the offline wait starts over on Resume
+        item.last_reason = 'PAUSED';
+        await this.itemRepo.save(item);
+      }
+    } finally {
+      this.inFlight.delete(id);
+    }
+    this.gatewayService.broadcastToUser(userId, 'mission:update', { id });
+    return { message: 'Mission paused', data: await this.describe(id, userId) };
+  }
+
+  /** Resume a paused mission: each phone continues where it stopped. */
+  async resume(id: number, userId: number): Promise<ApiResponse> {
+    const mission = await this.missionRepo.findOne({ where: { id, user_id: userId } });
+    if (!mission) throw new AppError('Mission not found', 404);
+    if (mission.status === 'RUNNING') return { message: 'Mission already running', data: await this.describe(id, userId) };
+    if (mission.status !== 'PAUSED') throw new AppError('This mission is not paused', 400);
+
+    mission.status = 'RUNNING';
+    mission.paused_at = null;
+    await this.missionRepo.save(mission);
+    await this.itemRepo.update({ mission_id: id, status: 'PENDING', last_reason: 'PAUSED' }, { last_reason: null });
+    this.gatewayService.broadcastToUser(userId, 'mission:update', { id });
+    void this.advanceById(id);
+    return { message: 'Mission resumed', data: await this.describe(id, userId) };
   }
 
   /**
@@ -453,6 +523,16 @@ export class MissionService {
     const fresh = await this.missionRepo.findOne({ where: { id: mission.id } });
     if (fresh?.status !== 'RUNNING') return;
 
+    // A timed mission resumed after a pause only runs the time it has left.
+    const runFor = mission.duration_seconds ? mission.duration_seconds - item.run_seconds : undefined;
+    if (runFor !== undefined && runFor < 15) {
+      item.status = 'SUCCEEDED';
+      item.last_reason = null;
+      item.last_message = 'Its time was used up before the pause.';
+      await this.itemRepo.save(item);
+      return;
+    }
+
     item.attempts += 1;
     item.dispatched_at = new Date();
     item.next_attempt_at = null;
@@ -468,7 +548,7 @@ export class MissionService {
         mission.ai_config_id ?? undefined,
         false,
         mission.no_internet,
-        mission.duration_seconds ?? undefined,
+        runFor,
       );
       const data = (result?.data ?? {}) as { taskId?: number; queued?: boolean; queueId?: number };
       // Stopped while this start was in flight: undo what just began, or a
@@ -477,6 +557,15 @@ export class MissionService {
       if (after?.status !== 'RUNNING') {
         if (data.taskId) await this.plannerService.cancelTask(data.taskId, mission.user_id).catch(() => undefined);
         if (data.queueId) await this.queueRepo.delete({ id: data.queueId, status: 'QUEUED' }).catch(() => undefined);
+        if (after?.status === 'PAUSED') {
+          // Paused while this start was in flight: it barely began, so Resume
+          // simply starts it again. Not a try.
+          item.status = 'PENDING';
+          item.attempts = Math.max(0, item.attempts - 1);
+          item.last_reason = 'PAUSED';
+          await this.itemRepo.save(item);
+          return;
+        }
         item.status = 'CANCELLED';
         item.last_reason = 'USER_CANCELLED';
         item.agent_task_id = data.taskId ?? null;
@@ -686,6 +775,7 @@ export class MissionService {
       no_internet: mission.no_internet,
       duration_seconds: mission.duration_seconds,
       status: mission.status,
+      paused_at: mission.paused_at,
       note: mission.note,
       summary: mission.summary,
       created_at: mission.created_at,
@@ -707,6 +797,7 @@ export class MissionService {
         device_hw_id: hardwareIds.get(item.device_id) ?? null,
         status: item.status,
         attempts: item.attempts,
+        run_seconds: item.run_seconds,
         agent_task_id: item.agent_task_id,
         replaces_item_id: item.replaces_item_id,
         last_reason: item.last_reason,
