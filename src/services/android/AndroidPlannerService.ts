@@ -17,7 +17,7 @@ import { config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } f
 import { AndroidAgent } from './eko/AndroidAgent';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
-import { screenFingerprint } from './runDiagnostics';
+import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
 import { modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
@@ -1190,6 +1190,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       engineSettings.fallback_config_id && engineSettings.fallback_config_id !== aiConfig.id
         ? await this.aiConfigService.resolveConfigById(userId, engineSettings.fallback_config_id).catch(() => null)
         : null;
+    const ruleRecoveries: RecoveryKind[] = [];
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
       onStepExecuted: (info) => {
         // A device action came back, including waits. Proof the phone is alive.
@@ -1229,7 +1230,15 @@ Use the current visible Android screen and UI state as context. Continue from wh
           }
         }
       },
-    }, { vision, grounder });
+      onRecovery: (id) => {
+        ruleRecoveries.push('obstacle');
+        Logger.info(`[AndroidPlanner] Task ${agentTask.id}: cleared ${id} by rule`);
+      },
+      onHeartbeat: () => {
+        noteActivity();
+        noteDeviceAction();
+      },
+    }, { vision, grounder, task: prompt });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.
@@ -1730,7 +1739,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         promptTokens,
         completionTokens,
         tokensReported,
-        recoveries: activeEngine.usedBackupModel ? ['backup_model'] : [],
+        recoveries: [...ruleRecoveries, ...(activeEngine.usedBackupModel ? (['backup_model'] as const) : [])],
       });
       this.activeTasks.delete(agentTask.id);
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {

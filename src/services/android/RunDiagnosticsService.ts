@@ -95,7 +95,9 @@ export class RunDiagnosticsService {
       // Engine-level recoveries: this run's, what earlier runs of a continued
       // task recorded, and the completion check sending the agent back.
       const engineRecoveries: RecoveryKind[] = [...(totals.recoveries ?? [])];
-      for (let i = 0; i < (previous?.recoveries?.backup_model ?? 0); i += 1) engineRecoveries.push('backup_model');
+      for (const kind of ['backup_model', 'obstacle'] as const) {
+        for (let i = 0; i < (previous?.recoveries?.[kind] ?? 0); i += 1) engineRecoveries.push(kind);
+      }
       for (let i = 0; i < (task.verification?.retries ?? 0); i += 1) engineRecoveries.push('verify_retry');
       const merged: RunTotals = previous
         ? {

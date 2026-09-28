@@ -43,7 +43,7 @@ export interface RunDiagnostics {
   /**
    * What the engine had to recover from before the run ended (absent on runs
    * recorded before outcomes existed). Keys: step_failed, no_effect, repeat,
-   * verify_retry, backup_model.
+   * verify_retry, backup_model, obstacle.
    */
   recoveries?: Partial<Record<RecoveryKind, number>>;
 }
@@ -210,7 +210,7 @@ export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], total
 // Outcome (docs/RELIABILITY.md → Measuring)
 // ---------------------------------------------------------------------------
 
-export type RecoveryKind = 'step_failed' | 'no_effect' | 'repeat' | 'verify_retry' | 'backup_model';
+export type RecoveryKind = 'step_failed' | 'no_effect' | 'repeat' | 'verify_retry' | 'backup_model' | 'obstacle';
 
 export const RECOVERY_LABELS: Record<RecoveryKind, string> = {
   step_failed: 'An action failed and the run went on',
@@ -218,6 +218,7 @@ export const RECOVERY_LABELS: Record<RecoveryKind, string> = {
   repeat: 'The same action was sent again',
   verify_retry: 'The completion check sent the agent back',
   backup_model: 'Switched to the backup model',
+  obstacle: 'A popup was cleared by rule',
 };
 
 export type RunOutcome = 'first_try' | 'recovered' | 'human_assisted' | 'failed' | 'cancelled';

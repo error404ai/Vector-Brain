@@ -3,7 +3,9 @@ import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
+import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
+import { findObstacle, type ObstacleId } from './obstacles';
 import {
   GRID,
   buildScreenModel,
@@ -28,6 +30,15 @@ const GROUNDING_BUDGET = 25;
 const STARTS_SOMETHING = /\b(install|update|download|get|buy|enable|turn on|start|subscribe)\b/i;
 const UNDOES_IT = /^(cancel|stop|uninstall|remove|delete|disable|turn off|unsubscribe)\b/i;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Popups cleared by rule per run; past this the model deals with them. */
+const OBSTACLE_BUDGET = 10;
+/** How long install_app waits for the phone to report the app installed. */
+const INSTALL_WAIT_MS = 180_000;
+const PLAY_STORE = 'com.android.vending';
+const PACKAGE_NAME = /^[a-zA-Z][\w]*(\.[\w]+)+$/;
+const PRICE = /^(₹|\$|€|£|rs\.?\s?)\s?\d|^\d+([.,]\d{2})\s?(₹|\$|€|£)?$/i;
+const INSTALL_FAILED = /(can['’]t install|couldn['’]t install|can['’]t download|not enough (storage|space)|insufficient storage|isn['’]t compatible|not compatible with your device|not available (in your country|for your device|in your region)|item not found|this item isn['’]t available)/i;
+const NEEDS_USER = /(complete account setup|add (a )?payment method|verify it['’]s you|sign in to (continue|google play)|choose an account|parental (approval|controls))/i;
 
 /**
  * Which browser open_url uses.
@@ -129,6 +140,10 @@ export interface AndroidAgentCallbacks {
     /** Where a tap actually landed, in device pixels (kept so a recorded flow can replay it). */
     tapPx?: { x: number; y: number };
   }) => void;
+  /** A known obstacle was cleared by rule (counted as a recovery in the run's outcome). */
+  onRecovery?: (id: ObstacleId, detail: string) => void;
+  /** A long tool (install_app) is still working: proof the phone is alive. */
+  onHeartbeat?: () => void;
 }
 
 export class AndroidAgent extends Agent {
@@ -146,6 +161,9 @@ export class AndroidAgent extends Agent {
   private groundedSeen: SeenElement[] = [];
   /** The element list as the phone reported it, before any rows read from a screenshot. */
   private baseTable: string | null = null;
+  private obstaclesCleared = 0;
+  /** rule|screen pairs already tried, so a rule that did not work is not repeated. */
+  private obstacleTried = new Set<string>();
 
   // Loop prevention tracking
   private actionHistory: string[] = [];
@@ -175,7 +193,7 @@ export class AndroidAgent extends Agent {
      * is never offered a screenshot — a text-only model cannot read one, and
      * each capture cost ~80k tokens of base64 on every later call.
      */
-    private readonly options: { vision?: boolean; grounder?: ScreenGrounder } = {},
+    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string } = {},
   ) {
     const tools: Tool[] = [
       {
@@ -194,8 +212,9 @@ export class AndroidAgent extends Agent {
           }
 
           this.absorb(res);
+          const cleared = await this.clearObstacles();
           const pkg = this.lastForegroundApp || 'unknown';
-          const extra = await this.screenExtras(res.screenCapture?.base64Data);
+          const extra = await this.screenExtras(cleared ? undefined : res.screenCapture?.base64Data);
 
           this.callbacks?.onStepExecuted?.({
             toolName: 'read_ui_tree',
@@ -206,7 +225,7 @@ export class AndroidAgent extends Agent {
             screenshotBase64: this.lastScreenshotBase64 || undefined,
           });
 
-          const text = `CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
+          const text = `${cleared}CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
           return { content: extra.image ? [{ type: 'text', text }, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }] : [{ type: 'text', text }] };
         },
       },
@@ -592,6 +611,21 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'install_app',
+        description:
+          'Install an app from the Google Play Store and CHECK that it is really installed. Pass the package name (e.g. "com.whatsapp"; if unsure, find it first with open_url on a web search). Opens the app\'s Play Store page directly, taps Install, and waits until the phone reports the app installed (up to 3 minutes). Always use this for "install X" instead of searching the Play Store by hand. If it says the download is still running, call it again to keep waiting. Paid apps and sign-in or payment screens are handed back to you — never buy anything.',
+        parameters: {
+          type: 'object',
+          properties: {
+            packageName: { type: 'string', description: 'The app\'s package name, e.g. "com.whatsapp"' },
+            appName: { type: 'string', description: 'The app\'s name as the user said it (for messages only)' },
+          },
+          required: ['packageName'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => this.installApp(String(args.packageName ?? '').trim(), args),
+      },
+      {
         name: 'set_clipboard',
         description:
           'Put text on the device clipboard, then use paste to drop it into a focused field. Faster than set_text for long text, and it works in fields that refuse set_text.',
@@ -817,7 +851,9 @@ WORKFLOW:
    click_node with its exact visible text). Use tap_coordinate only for a point the
    list does not name.
 3. For text input: tap the input field (tap_element), then type_text.
-4. Use open_app to launch apps, open_url to open websites directly.
+4. Use open_app to launch apps, open_url to open websites directly. To install an
+   app use install_app with its package name — it opens the Play Store page, taps
+   Install and checks the app is really on the phone.
 5. To scroll, use scroll_element with direction FORWARD to move down a list and
    BACKWARD to move back up. Fall back to swipe only when scroll_element says
    nothing is scrollable, or for horizontal carousels.
@@ -842,6 +878,9 @@ CRITICAL RULES:
   visiting many sites "one by one" should stay in a single tab.
 - For research tasks: visit multiple sources, read content from each, summarize at the end.
 - Only mark task complete when ALL requested information has been collected.
+- Lines starting "AUTO-CLEARED:" mean the system already dismissed a popup (a
+  permission request, "rate this app", an update prompt, a network retry). Do not
+  go looking for it; carry on from the screen shown.
 - task_snapshot is requested by the framework, not by the user. When it is asked
   for, answer it briefly and move on; never call it yourself as a checkpoint.
 - If you already have enough information to answer the user's question, STOP
@@ -977,6 +1016,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     }
     if (tap && !isError) this.lastTap = { grid: tap.grid, label: tap.label, at: Date.now() };
 
+    const cleared = isError ? '' : await this.clearObstacles();
+    if (cleared) freshShot = undefined;
     const extra = isError || skipObservation ? { note: '' } : await this.screenExtras(freshShot);
 
     this.callbacks?.onStepExecuted?.({
@@ -998,7 +1039,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       type: 'text' as const,
       text: isError
         ? `Action failed: ${summary}${stuckHint}`
-        : `Action succeeded: ${summary}${checkNote}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
+        : `Action succeeded: ${summary}${checkNote}${cleared ? `\n\n${cleared.trim()}` : ''}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
     };
     if (extra.image) {
       return { content: [textPart, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError };
@@ -1176,6 +1217,152 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     this.actionHistory.push(actionKey);
     if (this.actionHistory.length > 10) this.actionHistory.shift();
     return this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
+  }
+
+  /**
+   * Clears known popups by rule before the model sees the screen (see
+   * obstacles.ts). Each press is checked: the screen must change, and a rule
+   * that did not work on a screen is not tried there again. Returns lines for
+   * the model ("AUTO-CLEARED: …"), or '' when nothing was done.
+   */
+  private async clearObstacles(): Promise<string> {
+    const notes: string[] = [];
+    for (let round = 0; round < 3 && this.obstaclesCleared < OBSTACLE_BUDGET; round += 1) {
+      const match = findObstacle(this.screen, this.lastForegroundApp, this.options.task ?? '');
+      if (!match) break;
+      const before = this.currentKey();
+      const attempt = `${match.rule.id}|${before}`;
+      if (this.obstacleTried.has(attempt)) break;
+      this.obstacleTried.add(attempt);
+      const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: match.element.px.x, y: match.element.px.y });
+      if (res.status !== 'SUCCESS') break;
+      await sleep(700);
+      try {
+        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+      } catch {
+        break;
+      }
+      if (this.currentKey() === before) {
+        notes.push(`NOTE: a ${match.rule.label} is on screen; the system pressed "${match.element.label}" but nothing changed — deal with it yourself.`);
+        break;
+      }
+      this.obstaclesCleared += 1;
+      this.noEffect = null;
+      notes.push(`AUTO-CLEARED: ${match.rule.label} (pressed "${match.element.label}").`);
+      this.callbacks?.onRecovery?.(match.rule.id, match.element.label);
+    }
+    return notes.length ? `${notes.join('\n')}\n\n` : '';
+  }
+
+  /** Packages of the phone's launchable apps (ListApps). Null when the phone could not say. */
+  private async installedPackages(): Promise<Set<string> | null> {
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ListApps' });
+    if (res.status !== 'SUCCESS') return null;
+    return new Set(parseAppList(res.summary ?? '').map((a) => a.packageName));
+  }
+
+  private findButton(labels: RegExp): ScreenElement | null {
+    return this.screen?.elements.find((e) => e.tappable && !e.disabled && !e.seen && labels.test(e.label.trim())) ?? null;
+  }
+
+  /**
+   * "Install X", done as a direct action with a check at the end: the Play
+   * Store page by link (no searching), Install pressed once, then the phone's
+   * own app list polled until the package is there. The model never has to
+   * judge "is it installed" from a screen.
+   */
+  private async installApp(packageName: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const started = Date.now();
+    const finish = (ok: boolean, text: string): ToolResult => {
+      this.callbacks?.onStepExecuted?.({
+        toolName: 'install_app',
+        args,
+        result: text.split('\n')[0],
+        foregroundApp: this.lastForegroundApp || undefined,
+        uiTree: this.lastUiTree || undefined,
+        screenshotBase64: this.lastScreenshotBase64 || undefined,
+      });
+      const screen = this.lastUiTree ? `\n\nCURRENT APP: ${this.lastForegroundApp ?? 'unknown'}\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : '';
+      return { content: [{ type: 'text', text: `${ok ? 'Action succeeded' : 'Action failed'}: ${text}${screen}` }], isError: !ok };
+    };
+    if (!PACKAGE_NAME.test(packageName)) {
+      return finish(false, `"${packageName}" is not a package name (it looks like "com.whatsapp"). Find the app's package name first (for example open_url on a web search for "<app> play store"), then call install_app again.`);
+    }
+    const name = String(args.appName ?? '').trim() || packageName;
+
+    const before = await this.installedPackages();
+    if (before?.has(packageName)) return finish(true, `VERIFIED: ${name} (${packageName}) is already installed on this phone.`);
+
+    const opened = await this.gatewayService.executeAction(this.hardwareDeviceId, {
+      type: 'OpenUrl',
+      url: `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageName)}`,
+      sameTab: false,
+    });
+    if (opened.status !== 'SUCCESS' || !(await this.waitForForeground(PLAY_STORE))) {
+      return finish(
+        false,
+        `The Play Store page for ${packageName} did not open in the Play Store (the current app is ${this.lastForegroundApp ?? 'unknown'}). Open the Play Store with open_app "${PLAY_STORE}", search for ${name}, open its page, then call install_app "${packageName}" again — it will press Install and check it.`,
+      );
+    }
+    await this.waitUntilSettled(6000);
+    await this.clearObstacles();
+
+    const pageText = () => (this.screen?.elements ?? []).map((e) => e.label).join('\n');
+    const failure = INSTALL_FAILED.exec(pageText());
+    if (failure) return finish(false, `The Play Store says: "${failure[0]}". ${name} cannot be installed on this phone as it is.`);
+
+    const downloading = this.findButton(/^cancel$/i) || /\b\d{1,3}\s?%|pending|downloading|installing/i.test(pageText());
+    if (!downloading) {
+      if (this.findButton(/^(open|play|uninstall)$/i)) {
+        return finish(true, `VERIFIED: the Play Store shows ${name} (${packageName}) as installed ("Open").`);
+      }
+      const price = this.findButton(PRICE);
+      if (price) return finish(false, `${name} is a paid app ("${price.label}"). Buying needs the user's approval — do not press it; tell the user.`);
+      const install = this.findButton(/^install$/i);
+      if (!install) {
+        return finish(false, `The Play Store page for ${packageName} has no Install button${NEEDS_USER.test(pageText()) ? ' — it is asking for something only the user can do (sign-in, account setup or payment)' : ''}. Read the screen: the app may not exist under that package name, or the page needs the user.`);
+      }
+      const tapped = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: install.px.x, y: install.px.y });
+      if (tapped.status !== 'SUCCESS') return finish(false, `Could not press Install: ${tapped.status === 'FAILURE' ? tapped.message : 'cancelled'}.`);
+    }
+
+    // Wait on the outcome, not on a guess: the phone's own app list.
+    let retappedInstall = false;
+    let lastProgress = '';
+    for (let poll = 0; Date.now() - started < INSTALL_WAIT_MS; poll += 1) {
+      await sleep(4000);
+      this.callbacks?.onHeartbeat?.();
+      try {
+        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+      } catch {
+        // keep polling
+      }
+      await this.clearObstacles();
+      const text = pageText();
+      const failed = INSTALL_FAILED.exec(text);
+      if (failed) return finish(false, `The Play Store says: "${failed[0]}". ${name} was not installed.`);
+      if (NEEDS_USER.test(text)) return finish(false, `The Play Store is asking for something only the user can do (sign-in, account setup or payment) before installing ${name}. Hand this step to the user.`);
+      const progress = /\b\d{1,3}\s?%/.exec(text)?.[0] ?? '';
+      if (progress) lastProgress = progress;
+      if (poll % 2 === 1 || this.findButton(/^(open|play)$/i)) {
+        const now = await this.installedPackages();
+        if (now?.has(packageName)) return finish(true, `VERIFIED: ${name} (${packageName}) is installed — the phone lists it (took ${Math.round((Date.now() - started) / 1000)}s).`);
+        if (this.findButton(/^(open|play)$/i)) return finish(true, `VERIFIED: the Play Store shows ${name} (${packageName}) as installed ("Open").`);
+      }
+      // The first press did not register (the page was still loading): once more, never twice.
+      const busy = progress || /pending|downloading|installing|waiting for/i.test(text);
+      if (!retappedInstall && Date.now() - started > 20_000 && !this.findButton(/^cancel$/i) && !busy) {
+        const again = this.lastForegroundApp === PLAY_STORE ? this.findButton(/^install$/i) : null;
+        if (again) {
+          retappedInstall = true;
+          await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: again.px.x, y: again.px.y });
+        }
+      }
+    }
+    return finish(
+      false,
+      `${name} is not installed yet after ${Math.round(INSTALL_WAIT_MS / 1000)}s${lastProgress ? ` (last progress ${lastProgress})` : ''}. If the download is still running, call install_app "${packageName}" again to keep waiting — do not press Cancel.`,
+    );
   }
 
   /** Watches the screen until two looks in a row match, up to maxMs (15 s at most). */

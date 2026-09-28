@@ -97,6 +97,8 @@ export function describeStep(type: string, params: Record<string, unknown> | nul
       return { kind: 'look', verb: 'Looked at', target: 'the screen' };
     case 'list_apps':
       return { kind: 'look', verb: 'Checked', target: 'installed apps' };
+    case 'install_app':
+      return { kind: 'app', verb: 'Installed', target: str(p.appName) || (str(p.packageName) ? appName(str(p.packageName)) : 'an app') };
     case 'read_notifications':
       return { kind: 'look', verb: 'Read', target: 'notifications' };
     case 'read_clipboard':

@@ -5,7 +5,8 @@ import type { VerificationOutcome } from './AgentEngine';
  *
  * Two levels, cheapest first:
  * - rule: things the phone can prove without a model — "open X" means X is in
- *   the foreground; "close X" means X is no longer on screen. Applied only
+ *   the foreground; "close X" means X is no longer on screen; "install X"
+ *   means the phone's app list has X (not found by name → the judge decides). Applied only
  *   when the whole task is that one action, so "open YouTube and play lofi"
  *   is never marked verified just because YouTube is open.
  * - judge: a separate, small model call that compares the goal with the
@@ -28,6 +29,9 @@ export interface VerifyInput {
   judge?: (prompt: string) => Promise<string>;
 }
 
+const INSTALL = /\b(install|download|daal(?:o|do)?|dalo)\b/i;
+/** Words that come with an install request without asking for anything more. */
+const INSTALL_FILLER = /\b(the|app|application|from|on|play\s*store|google\s*play|store|please|kar(?:o|do|na)?|karke|this|phone|device)\b/gi;
 const OPEN = /\b(open|launch|start|khol(?:o|na|do)?|chalu\s+kar(?:o|do)?)\b/i;
 const CLOSE = /\b(close|stop|force[\s-]?stop|kill|quit|exit|band\s+kar(?:o|do|na)?|hata(?:o|do)?)\b/i;
 /** Anything past a single open/close means the task asks for more than the rule can prove. */
@@ -56,8 +60,9 @@ export function appNamedIn(goal: string, apps: { label: string; packageName: str
 }
 
 /** Which rule, if any, can check this goal on its own. */
-export function ruleFor(goal: string): 'open' | 'close' | null {
+export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   const stripped = goal.replace(/\(.*?\)/g, ' ');
+  if (INSTALL.test(stripped) && !MORE.test(stripped.replace(INSTALL, ' ').replace(INSTALL_FILLER, ' ').replace(INSTALL, ' '))) return 'install';
   if (CLOSE.test(stripped) && !/\b(search|play|type|send|post|install)\b/i.test(stripped)) return 'close';
   if (OPEN.test(stripped) && !MORE.test(stripped.replace(OPEN, ' '))) return 'open';
   return null;
@@ -100,14 +105,25 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
     const app = appNamedIn(input.goal, apps);
     if (app) {
       const onScreen = screen.packageName === app.packageName;
-      if (rule === 'open') {
+      if (rule === 'install') {
+        // "install Phone Cleaner" must not pass because "Phone" is installed:
+        // the goal has to be nothing but the install words and this app's name.
+        const leftover = input.goal
+          .replace(/\(.*?\)/g, ' ')
+          .replace(new RegExp(app.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ' ')
+          .replace(INSTALL, ' ')
+          .replace(INSTALL_FILLER, ' ')
+          .replace(/[^\p{L}\p{N}]/gu, '');
+        if (!leftover) return { status: 'verified', method: 'rule', reason: `${app.label} is installed (the phone lists ${app.packageName})`, retries };
+      } else if (rule === 'open') {
         return onScreen
           ? { status: 'verified', method: 'rule', reason: `${app.label} is in the foreground`, retries }
           : { status: 'failed', method: 'rule', reason: `${app.label} (${app.packageName}) is not in the foreground; ${screen.packageName ?? 'another screen'} is`, retries };
+      } else {
+        return onScreen
+          ? { status: 'failed', method: 'rule', reason: `${app.label} is still on screen`, retries }
+          : { status: 'verified', method: 'rule', reason: `${app.label} is no longer on screen`, retries };
       }
-      return onScreen
-        ? { status: 'failed', method: 'rule', reason: `${app.label} is still on screen`, retries }
-        : { status: 'verified', method: 'rule', reason: `${app.label} is no longer on screen`, retries };
     }
   }
 
