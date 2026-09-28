@@ -72,6 +72,17 @@ describe('successVerifier helpers', () => {
     expect(ruleFor('Search Google for phonebox')).toBeNull();
   });
 
+  it('never reads closing tabs or popups as closing the app', () => {
+    // Real runs 2250, 2254 and 2256 were done right and failed this rule.
+    expect(ruleFor('Open the Chrome browser and close all open tabs, leaving just one new tab open.')).toBeNull();
+    expect(ruleFor('Open Chrome, close all Trustpilot tabs, then open google.co.uk.')).toBeNull();
+    expect(ruleFor('Close the popup in Instagram')).toBeNull();
+    expect(ruleFor('close chrome and open youtube')).toBeNull();
+    // Closing the app as the last step still has its rule.
+    expect(ruleFor('Open the Reddit app, wait for it to load, then close the Reddit app.')).toBe('close');
+    expect(ruleFor('reddit band karo')).toBe('close');
+  });
+
   it('reads the judge verdict defensively', () => {
     expect(parseVerdict('{"verdict":"no","reason":"login wall"}')).toEqual({ verdict: 'no', reason: 'login wall' });
     expect(parseVerdict('Sure! {"verdict":"yes","reason":"ok"}').verdict).toBe('yes');

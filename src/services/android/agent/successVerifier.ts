@@ -59,11 +59,31 @@ export function appNamedIn(goal: string, apps: { label: string; packageName: str
   return best;
 }
 
+/**
+ * Things inside an app that get "closed" while the app stays open. "Close all
+ * tabs, leaving one new tab open" ends with Chrome on screen by design; the
+ * close rule used to read it as "close Chrome" and failed three correct runs.
+ */
+const NOT_THE_APP = /\b(tabs?|pop-?ups?|dialog(?:ue)?s?|windows?|ads?|adverts?|notifications?|keyboard|menus?|banners?|overlays?|sidebar|panels?|drawers?|sheets?|prompts?)\b/i;
+
+/** The last instruction of a goal: what the final screen should reflect. */
+function lastClause(text: string): string {
+  const parts = text.split(/\b(?:and\s+)?then\b|\band\b|\bphir\b|\bfir\b|\baur\b|[,;.]/i).map((p) => p.trim()).filter(Boolean);
+  return parts[parts.length - 1] ?? text;
+}
+
 /** Which rule, if any, can check this goal on its own. */
 export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   const stripped = goal.replace(/\(.*?\)/g, ' ');
   if (INSTALL.test(stripped) && !MORE.test(stripped.replace(INSTALL, ' ').replace(INSTALL_FILLER, ' ').replace(INSTALL, ' '))) return 'install';
-  if (CLOSE.test(stripped) && !/\b(search|play|type|send|post|install)\b/i.test(stripped)) return 'close';
+  // "Close X" is provable only when closing the app itself is the last thing asked.
+  if (
+    CLOSE.test(stripped) &&
+    !NOT_THE_APP.test(stripped) &&
+    CLOSE.test(lastClause(stripped)) &&
+    !/\b(search|play|type|send|post|install)\b/i.test(stripped)
+  ) return 'close';
+  if (CLOSE.test(stripped)) return null;
   if (OPEN.test(stripped) && !MORE.test(stripped.replace(OPEN, ' '))) return 'open';
   return null;
 }

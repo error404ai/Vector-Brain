@@ -24,6 +24,7 @@ import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
+import { isOscillating } from './agent/oscillation';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
 import crypto from 'node:crypto';
@@ -46,6 +47,13 @@ config.toolResultMultimodal = false;
 const MAX_CONSECUTIVE_FAILURES = 6;
 const MAX_IDENTICAL_TOOL_STATES = 3;
 const MAX_UNCHANGED_OBSERVATIONS = 3;
+/**
+ * A run bouncing between the same two steps on the same two screens
+ * (tap → menu → BACK → tap …) never repeats one step twice in a row, so the
+ * identical-step guard missed it; one run went round 28 times in 12 minutes.
+ * The agent is shown the screen after two rounds; six rounds stops the run.
+ */
+const OSCILLATION_WINDOW = 12;
 
 /** Step budget used when a caller does not supply one. */
 /** Time a sleeping phone gets to come up before its first action. */
@@ -1095,6 +1103,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let consecutiveFailures = 0;
     let lastToolStateSignature: string | undefined;
     let identicalToolStateCount = 0;
+    const recentStepSignatures: string[] = [];
     let lastObservationFingerprint: string | undefined;
     let pendingTapPx: { x: number; y: number } | null = null;
     let unchangedObservationCount = 0;
@@ -1341,6 +1350,16 @@ Use the current visible Android screen and UI state as context. Continue from wh
             lastToolStateSignature = toolStateSignature;
             if (identicalToolStateCount >= MAX_IDENTICAL_TOOL_STATES) {
               const reason = `Task stopped because ${toolName} was repeated on the same unchanged screen.`;
+              stopForSafety(reason, 'LOOP_DETECTED');
+              throw new Error(reason);
+            }
+            // Without the screenshot: a clock or an animation must not hide a loop.
+            recentStepSignatures.push(
+              this.hashText(`${toolName}\n${JSON.stringify(toolParams)}\n${lastForegroundApp || ''}\n${lastUiTree || ''}`),
+            );
+            if (recentStepSignatures.length > OSCILLATION_WINDOW) recentStepSignatures.shift();
+            if (isOscillating(recentStepSignatures, OSCILLATION_WINDOW)) {
+              const reason = 'Task stopped because it kept going back and forth between the same two screens without getting anywhere.';
               stopForSafety(reason, 'LOOP_DETECTED');
               throw new Error(reason);
             }

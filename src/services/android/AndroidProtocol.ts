@@ -44,7 +44,8 @@ export type AutomationAction =
   // parser ignores unknown keys a newTab field was silently dropped, leaving
   // sameTab on its default of true — which is why every page opened in the
   // in-app browser instead of Chrome.
-  | { type: 'OpenUrl'; url: string; sameTab?: boolean }
+  /** packageName: the browser to open it in (companion 0.27+; older ones ignore it and use the default browser). */
+  | { type: 'OpenUrl'; url: string; sameTab?: boolean; packageName?: string }
   | { type: 'ClickNode'; nodePath?: string; viewId?: string; text?: string }
   | { type: 'Tap'; x: number; y: number }
   | { type: 'SetText'; nodePath?: string; viewId?: string; text: string }

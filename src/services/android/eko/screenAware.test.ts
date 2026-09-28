@@ -113,6 +113,12 @@ describe('AndroidAgent taps', () => {
     const phone = fakePhone([same, same, same]);
     const agent = new AndroidAgent(phone.gateway as never, 'hw');
     await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    // Nothing in the list is at 100,100: the guess is questioned once, not tapped.
+    const guess = await tool(agent, 'tap_coordinate').execute({ x: 100, y: 100 }, {}, {});
+    expect(guess.isError).toBe(true);
+    expect(text(guess)).toMatch(/so this is a guess/);
+    expect(phone.actions.filter((a) => a.type === 'Tap')).toHaveLength(0);
+    // The same point again is taken as meant.
     const first = await tool(agent, 'tap_coordinate').execute({ x: 100, y: 100 }, {}, {});
     expect(text(first)).toMatch(/did NOT change/);
     const again = await tool(agent, 'tap_coordinate').execute({ x: 102, y: 101 }, {}, {});

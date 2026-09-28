@@ -51,6 +51,26 @@ const NEEDS_USER = /(complete account setup|add (a )?payment method|verify it['�
  */
 const USE_IN_APP_BROWSER = false;
 
+const BROWSERS: [RegExp, string][] = [
+  [/\bchrome\b/i, 'com.android.chrome'],
+  [/\bfirefox\b/i, 'org.mozilla.firefox'],
+  [/\bsamsung\s+internet\b/i, 'com.sec.android.app.sbrowser'],
+  [/\bbrave\b/i, 'com.brave.browser'],
+  [/\bedge\b/i, 'com.microsoft.emmx'],
+  [/\bopera\b/i, 'com.opera.browser'],
+];
+
+/**
+ * The browser a URL should open in: the one already in front, else the one the
+ * task names, else none (the phone's default).
+ */
+export function browserFor(foreground: string | null | undefined, task: string | undefined): string | undefined {
+  const inFront = BROWSERS.find(([, pkg]) => foreground === pkg);
+  if (inFront) return inFront[1];
+  const named = BROWSERS.find(([name]) => name.test(task ?? ''));
+  return named?.[1];
+}
+
 
 /**
  * Below this many usable rows we assume the app is not exposing its content to
@@ -183,6 +203,19 @@ export class AndroidAgent extends Agent {
    * usually a web page whose content never reaches the accessibility tree.
    */
   private consecutiveWaits = 0;
+
+  /**
+   * Stuck detection. The last few screens after real actions, and how many
+   * actions in a row changed nothing. A run that bounces between two screens
+   * (tap → menu → BACK → tap …) never repeats an identical step, so the old
+   * guards missed it; in one run it went round 28 times.
+   */
+  private recentKeys: string[] = [];
+  private noEffectStreak = 0;
+  /** The screen a forced look was last spent on, so one screen is not looked at twice. */
+  private lastStuckLookKey = '';
+  /** A coordinate tap on nothing in the list is questioned once per screen and point. */
+  private blindTapWarned = '';
 
   constructor(
     private gatewayService: AndroidGatewayService,
@@ -325,7 +358,24 @@ export class AndroidAgent extends Agent {
             };
           }
           const grid = { x: Math.round(x), y: Math.round(y) };
-          return this.tapAt(grid, elementAt(this.screen, grid.x, grid.y), 'tap_coordinate', args);
+          const target = elementAt(this.screen, grid.x, grid.y);
+          // A point with nothing under it on a screen the list does describe is
+          // a guess ("the tab button is usually here"), which opened Google Lens
+          // twice in one run. Question it once; the same call again goes through.
+          if (!target && this.screen && !isThin(this.screen)) {
+            const warnKey = `${this.currentKey()}|${grid.x},${grid.y}`;
+            if (this.blindTapWarned !== warnKey) {
+              this.blindTapWarned = warnKey;
+              const look = this.options.vision
+                ? ' If what you want is not in the list, call capture_screen and look first.'
+                : '';
+              return {
+                content: [{ type: 'text', text: `Not tapped: nothing in the screen list is at ${grid.x},${grid.y}, so this is a guess. Pick the element from the list with tap_element or click_node.${look} If you are sure about this point, call tap_coordinate again with the same x and y.` }],
+                isError: true,
+              };
+            }
+          }
+          return this.tapAt(grid, target, 'tap_coordinate', args);
         },
       },
       {
@@ -475,11 +525,15 @@ export class AndroidAgent extends Agent {
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
           this.actionHistory = []; // Reset history on URL open
           this.consecutiveFailures = 0;
+          // Stay in the browser the task is about. Without this the phone's
+          // default browser took the link: a Chrome task landed in Firefox.
+          const browser = browserFor(this.lastForegroundApp, this.options.task);
           return this.runDeviceAction(
             {
               type: 'OpenUrl',
               url: String(args.url || ''),
               sameTab: USE_IN_APP_BROWSER,
+              ...(browser ? { packageName: browser } : {}),
             },
             'open_url',
             args,
@@ -936,6 +990,11 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         : 'Action cancelled';
     const isError = res.status !== 'SUCCESS';
 
+    // Say what a coordinate tap actually hit, so a wrong guess is noticed at once.
+    if (!isError && toolName === 'tap_coordinate' && tap?.label) {
+      summary = `${summary} — the point tapped is "${tap.label.slice(0, 60)}"`;
+    }
+
     if (action.type === 'OpenApp' && !isError && launchedPackage !== String(action.packageName || '')) {
       summary = `${summary} (resolved to ${launchedPackage} on this device)`;
     }
@@ -1008,17 +1067,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const meantToChange = ['Tap', 'ClickNode', 'LongPress'].includes(action.type);
     let checkNote = '';
     if (!isError && meantToChange && keyAfter === keyBefore) {
+      this.noEffectStreak += 1;
       if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
       checkNote =
         '\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.';
     } else if (keyAfter !== keyBefore) {
       this.noEffect = null;
+      this.noEffectStreak = 0;
     }
+    if (!skipObservation && !isError) {
+      this.recentKeys.push(keyAfter);
+      if (this.recentKeys.length > 6) this.recentKeys.shift();
+    }
+    const stuck = isError ? null : this.stuckReason();
     if (tap && !isError) this.lastTap = { grid: tap.grid, label: tap.label, at: Date.now() };
 
     const cleared = isError ? '' : await this.clearObstacles();
     if (cleared) freshShot = undefined;
-    const extra = isError || skipObservation ? { note: '' } : await this.screenExtras(freshShot);
+    const extra = isError || skipObservation ? { note: '' } : await this.screenExtras(freshShot, stuck);
 
     this.callbacks?.onStepExecuted?.({
       toolName,
@@ -1153,13 +1219,29 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * text-only model gets the elements a vision helper read off it, as rows
    * v1, v2… it can tap. Without either it is told so plainly.
    */
-  private async screenExtras(shot?: string): Promise<{ note: string; image?: string }> {
-    if (!this.screen || !isThin(this.screen)) return { note: '' };
+  private async screenExtras(shot?: string, stuck: 'loop' | 'no_effect' | null = null): Promise<{ note: string; image?: string }> {
+    if (!this.screen) return { note: '' };
+    const thin = isThin(this.screen);
+    if (!thin && !stuck) return { note: '' };
+    const stuckNote =
+      stuck === 'loop'
+        ? '\n\nSTUCK: you are going back and forth between the same two screens. Repeating it will not work. Take a completely different route (another element, the ⋮ menu, open_url or a deep link), or finish and report the reason.'
+        : stuck === 'no_effect'
+        ? '\n\nSTUCK: your last actions changed nothing on the screen. Do not repeat them. Take a completely different route, or finish and report the reason.'
+        : '';
+    // Stuck on a screen the list does describe: one look per screen, not per step.
+    if (stuck && !thin) {
+      const key = this.currentKey();
+      if (key === this.lastStuckLookKey) return { note: stuckNote };
+      this.lastStuckLookKey = key;
+    }
     const image = shot ?? this.lastScreenshotBase64 ?? undefined;
     if (this.options.vision && image && this.autoVisionUsed < this.autoVisionBudget) {
       this.autoVisionUsed += 1;
       return {
-        note: '\n\nNOTE: this screen exposes little to the element list, so a screenshot is attached. Read it, and tap with tap_coordinate on the 0–1000 grid (500,500 is the middle of the screen).',
+        note: stuck
+          ? `${stuckNote} A screenshot of the screen is attached: look at it to see what the element list is missing, then choose.`
+          : '\n\nNOTE: this screen exposes little to the element list, so a screenshot is attached. Read it, and tap with tap_coordinate on the 0–1000 grid (500,500 is the middle of the screen).',
         image,
       };
     }
@@ -1181,12 +1263,25 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         this.lastUiTree = formatScreen(this.screen);
       }
       if (this.screen.elements.some((e) => e.seen)) {
-        return { note: '\n\nNOTE: this screen exposes little to the element list. Rows v1, v2… were read from a screenshot by a vision model — tap them with tap_element (e.g. idx "v2").' };
+        return { note: `${stuckNote}\n\nNOTE: ${stuck ? 'rows' : 'this screen exposes little to the element list. Rows'} v1, v2… were read from a screenshot by a vision model — tap them with tap_element (e.g. idx "v2").` };
       }
     }
+    if (stuck) return { note: stuckNote };
     return {
       note: '\n\nNOTE: this screen exposes very little to the element list (web pages, games), and no screenshot reader is available. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element.',
     };
+  }
+
+  /**
+   * "loop": the last four screens after real actions went A, B, A, B.
+   * "no_effect": two actions in a row changed nothing. Otherwise null.
+   */
+  private stuckReason(): 'loop' | 'no_effect' | null {
+    const k = this.recentKeys;
+    const n = k.length;
+    if (n >= 4 && k[n - 1] === k[n - 3] && k[n - 2] === k[n - 4] && k[n - 1] !== k[n - 2]) return 'loop';
+    if (this.noEffectStreak >= 2) return 'no_effect';
+    return null;
   }
 
   /** Every tap goes through here: guards first, then the phone, then the check. */
