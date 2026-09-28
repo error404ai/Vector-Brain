@@ -46,6 +46,7 @@ public/favicon.svg
 public/vite.svg
 public/fleet/
 public/landing/
+public/brand/
 
 # Test harness run logs
 test/harness/logs/
