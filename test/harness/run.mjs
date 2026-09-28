@@ -1333,6 +1333,68 @@ const scenarios = [
     },
   },
   {
+    name: 'pause stops a running phone and resume continues the same run',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'scroll the feed [sim steps=60 delay=150]', device_ids: [phones.free1.dbId] });
+      const id = created?.data?.id;
+      if (!id) return `mission not created: ${JSON.stringify(created).slice(0, 160)}`;
+      const running = await waitFor(async () => {
+        const m = await getMission(id);
+        return m?.items[0]?.status === 'RUNNING' && m.items[0].agent_task_id ? m : null;
+      }, 30_000);
+      if (!running) return 'the phone never started';
+      const taskId = running.items[0].agent_task_id;
+      await sleep(1200);
+
+      const paused = (await api('POST', `/android/missions/${id}/pause`))?.data;
+      if (paused?.status !== 'PAUSED') return `pause left the mission ${paused?.status}`;
+      if (paused.items[0].status !== 'PENDING' || paused.items[0].last_reason !== 'PAUSED') return `paused item is ${paused.items[0].status}/${paused.items[0].last_reason}`;
+      const stopped = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT status FROM agent_tasks WHERE id = ?', [taskId]);
+        return row && row.status !== 'RUNNING' ? row.status : null;
+      }, 15_000);
+      if (!stopped) return 'the run kept going after pause';
+      await sleep(2500);
+      const still = await getMission(id);
+      if (still.status !== 'PAUSED' || still.items[0].status !== 'PENDING') return `while paused it moved on: ${still.status}/${still.items[0].status}`;
+
+      const resumed = (await api('POST', `/android/missions/${id}/resume`))?.data;
+      if (resumed?.status !== 'RUNNING') return `resume left the mission ${resumed?.status}`;
+      const done = await waitForMission(id, 90_000);
+      if (!done) return 'mission never finished after resume';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `item ${item.status}: ${item.last_message}`;
+      if (item.agent_task_id !== taskId) return `resume started a new run (${item.agent_task_id}) instead of continuing ${taskId}`;
+      if (item.attempts !== 1) return `pausing used up a try (attempts ${item.attempts})`;
+    },
+  },
+  {
+    name: 'a paused timed mission only runs the time it has left',
+    async run() {
+      const created = await api('POST', '/android/missions', { request: 'browse random websites [sim steps=2 delay=100]', device_ids: [phones.free2.dbId], duration_seconds: 20 });
+      const id = created?.data?.id;
+      if (!id) return `mission not created: ${JSON.stringify(created).slice(0, 160)}`;
+      const running = await waitFor(async () => {
+        const m = await getMission(id);
+        return m?.items[0]?.status === 'RUNNING' ? m : null;
+      }, 30_000);
+      if (!running) return 'the phone never started';
+      await sleep(9000);
+      const paused = (await api('POST', `/android/missions/${id}/pause`))?.data;
+      if (paused?.status !== 'PAUSED') return `pause left the mission ${paused?.status}`;
+      const used = paused.items[0].run_seconds;
+      if (!(used >= 6 && used <= 14)) return `recorded ${used}s of work before the pause`;
+      await sleep(1500);
+      const t0 = Date.now();
+      await api('POST', `/android/missions/${id}/resume`);
+      const done = await waitForMission(id, 60_000);
+      if (!done) return 'mission never finished after resume';
+      const took = (Date.now() - t0) / 1000;
+      if (done.items[0].status !== 'SUCCEEDED') return `item ${done.items[0].status}: ${done.items[0].last_message}`;
+      if (took > 18) return `resumed run took ${took.toFixed(0)}s; only ~${20 - used}s were left`;
+    },
+  },
+  {
     name: 'chat picks the duration out of the request',
     async run() {
       const res = await api('POST', '/android/chat', { message: 'browse random websites for 1 hour on all phones [sim steps=1 delay=50]' });

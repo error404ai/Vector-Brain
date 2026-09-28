@@ -524,8 +524,11 @@ export class MissionService {
     if (fresh?.status !== 'RUNNING') return;
 
     // A timed mission resumed after a pause only runs the time it has left.
-    const runFor = mission.duration_seconds ? mission.duration_seconds - item.run_seconds : undefined;
-    if (runFor !== undefined && runFor < 15) {
+    // Only a phone that already worked before a pause can have run out; a new
+    // short timed run (say 8 s) must still run.
+    const used = item.run_seconds ?? 0;
+    const runFor = mission.duration_seconds ? Math.max(1, mission.duration_seconds - used) : undefined;
+    if (mission.duration_seconds && used > 0 && mission.duration_seconds - used <= 3) {
       item.status = 'SUCCEEDED';
       item.last_reason = null;
       item.last_message = 'Its time was used up before the pause.';
