@@ -87,6 +87,7 @@ import FleetPromptField from '@/components/android/FleetPromptField';
 import DeviceProxySelect from '@/components/android/DeviceProxySelect';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import DeviceEmailRow from '@/components/android/DeviceEmailRow';
+import DeviceNetworkRow from '@/components/android/DeviceNetworkRow';
 import DeviceTagChip, { TAG_COLORS, parseTag, type TagColor } from '@/components/android/DeviceTagChip';
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
@@ -925,6 +926,7 @@ export default function AndroidFleetPage() {
                 </Stack>
 
                 <DeviceEmailRow deviceId={device.id} value={serverStateByDevice.get(device.id)?.emails} />
+                <DeviceNetworkRow deviceId={device.id} name={device.device_name} online={isOnline} value={serverStateByDevice.get(device.id)?.network} />
 
                 {state.isRunning && <LinearProgress />}
 

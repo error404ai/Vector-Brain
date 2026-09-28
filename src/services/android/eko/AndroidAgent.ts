@@ -227,7 +227,7 @@ export class AndroidAgent extends Agent {
      * is never offered a screenshot — a text-only model cannot read one, and
      * each capture cost ~80k tokens of base64 on every later call.
      */
-    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string; screenshots?: ScreenshotMode } = {},
+    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string; screenshots?: ScreenshotMode; deviceFacts?: string } = {},
   ) {
     const tools: Tool[] = [
       {
@@ -890,7 +890,12 @@ export class AndroidAgent extends Agent {
     const vision = this.options.vision
       ? '\n\nSCREENSHOTS: capture_screen shows you the screen as an image. It is expensive; use it only when the element list cannot describe what you need.'
       : '\n\nSCREENSHOTS: this model cannot see images, so there is no screenshot tool. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".';
-    return this.baseSystemPrompt() + vision;
+    // What this phone last reported about its network and locale: a task that
+    // only asks for its IP, DNS, language or timezone is answered from here.
+    const facts = this.options.deviceFacts
+      ? `\n\nTHIS PHONE (read by the phone itself, ${this.options.deviceFacts.split('\n')[0]}):\n${this.options.deviceFacts.split('\n').slice(1).join('\n')}\nIf the task only asks for any of these (IP, proxy, DNS, language, region, timezone, time), answer from this and finish at once — do not open Settings or a website for it.`
+      : '';
+    return this.baseSystemPrompt() + vision + facts;
   }
 
   private baseSystemPrompt(): string {

@@ -166,6 +166,8 @@ export class FleetStateService {
         tag: device.tag,
         /** Email accounts on the phone, as a run read them or the user entered them. */
         emails: emails.get(device.id) ?? null,
+        /** Network and locale as the phone last reported them (companion 0.28+); null until then. */
+        network: device.network_info ?? null,
         proxy_id: device.proxy_id ?? null,
         last_seen_at: device.last_seen_at,
         state,

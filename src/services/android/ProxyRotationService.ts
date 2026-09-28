@@ -7,6 +7,7 @@ import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
 import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
+import { DeviceNetworkService } from './DeviceNetworkService';
 import { z } from 'zod';
 import { CreateProxyValidation, UpdateProxyValidation } from '@/validations/DeviceProxyValidation';
 
@@ -25,7 +26,10 @@ const ROTATION_RETRY_MAX_MS = 5 * 60_000;
 
 @Service()
 export class ProxyRotationService {
-  constructor(private gatewayService: AndroidGatewayService) {}
+  constructor(
+    private gatewayService: AndroidGatewayService,
+    private networkService: DeviceNetworkService,
+  ) {}
 
   /**
    * Lanes whose last rotation failed.
@@ -289,6 +293,8 @@ export class ProxyRotationService {
     });
 
     if (!ok) Logger.warn(`[Proxy] "${proxy.name}" rotation failed: ${status}`);
+    // The phones on this proxy now leave from a new address: have them read it.
+    if (ok) this.networkService.refreshProxyDevices(proxy.user_id, proxy.id);
 
     // Announced to the dashboard, so a rotation is something the user watches
     // happen rather than something they open a dialog to verify.

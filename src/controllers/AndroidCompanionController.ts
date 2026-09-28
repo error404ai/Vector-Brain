@@ -1,3 +1,5 @@
+import { DeviceNetworkService } from '@/services/android/DeviceNetworkService';
+import { requestIp } from '@/services/android/deviceNetwork';
 import { AgentTask } from '@/entities/AgentTask';
 import { AiConfigType } from '@/entities/AiConfig';
 import { AndroidDevice } from '@/entities/AndroidDevice';
@@ -36,6 +38,7 @@ export class AndroidCompanionController {
     private fileService: DeviceFileService,
     private plannerService: AndroidPlannerService,
     private aiConfigService: AiConfigService,
+    private networkService: DeviceNetworkService,
   ) {}
 
   /**
@@ -228,6 +231,22 @@ export class AndroidCompanionController {
    * The app keeps only the entries whose status is PENDING and reads id, name,
    * size and sha256 from each one.
    */
+  /**
+   * The address this request came from. Asked by the phone with its proxy
+   * switched off, so the dashboard can show the phone's own address next to
+   * the one its proxy gives it.
+   */
+  @Get('/whoami')
+  async whoami(@Req() req: any) {
+    return { data: { ip: requestIp(req.headers ?? {}, req.socket?.remoteAddress) } };
+  }
+
+  /** The phone's network and locale (companion 0.28+). Sent through its normal route, so the address it arrives from is the public one. */
+  @Post('/device-info')
+  async deviceInfo(@Req() req: any, @Body() body: Record<string, unknown>) {
+    return this.networkService.record(req.deviceToken, body ?? {}, requestIp(req.headers ?? {}, req.socket?.remoteAddress));
+  }
+
   @Get('/files')
   async listFiles(@Req() req: any) {
     return this.fileService.listPendingForDevice(req.deviceToken.deviceId);

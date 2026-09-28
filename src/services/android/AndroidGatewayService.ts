@@ -457,6 +457,19 @@ export class AndroidGatewayService {
   /** A closed session may still be echoed by a heartbeat already on its way. */
   private static readonly SESSION_ECHO_GRACE_MS = 5_000;
 
+  /** Asks a connected phone to report its network and locale now. False when it is not connected. */
+  requestDeviceInfo(deviceId: string): boolean {
+    const ws = this.deviceSockets.get(deviceId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    const message: AndroidWsServerMessage = { event: 'server:refresh_device_info' };
+    try {
+      ws.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   setAutomationSession(deviceId: string, active: boolean) {
     this.serverSessions.set(deviceId, { active, at: Date.now() });
     const ws = this.deviceSockets.get(deviceId);

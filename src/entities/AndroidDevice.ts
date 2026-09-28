@@ -1,3 +1,4 @@
+import type { DeviceNetworkInfo } from '@/services/android/deviceNetwork';
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
 import { User } from './User';
 
@@ -54,6 +55,10 @@ export class AndroidDevice {
    */
   @Column({ type: 'int', nullable: true })
   proxy_id: number | null;
+
+  /** Network and locale as the phone last reported them (see services/android/deviceNetwork.ts). */
+  @Column({ type: 'json', nullable: true })
+  network_info: DeviceNetworkInfo | null;
 
   @Column({ type: 'enum', enum: AndroidDeviceStatus, default: AndroidDeviceStatus.OFFLINE })
   status: AndroidDeviceStatus;

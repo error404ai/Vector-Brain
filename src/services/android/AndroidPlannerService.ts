@@ -26,6 +26,7 @@ import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
 import { isScreenshotMode, type ScreenshotMode } from './eko/screenshotMode';
+import { deviceFactsText } from './deviceNetwork';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
 import crypto from 'node:crypto';
@@ -1255,7 +1256,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
-    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots });
+    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info) });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.

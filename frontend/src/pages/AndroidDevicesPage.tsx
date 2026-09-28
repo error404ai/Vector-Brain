@@ -1,3 +1,4 @@
+import DeviceNetworkTable from '@/components/android/DeviceNetworkTable';
 import {
   useGetAndroidDevicesQuery,
   useRenameDeviceMutation,
@@ -342,6 +343,9 @@ export function AndroidDevicesPage() {
           })}
         </Box>
       )}
+
+      {/* Every phone's IP, DNS, language, timezone and clock, side by side. */}
+      {devices.length > 0 && <DeviceNetworkTable />}
 
       {/* Pairing Modal */}
       <Dialog open={pairingModalOpen} onClose={() => setPairingModalOpen(false)} maxWidth="xs" fullWidth>

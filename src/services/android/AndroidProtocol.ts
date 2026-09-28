@@ -209,6 +209,10 @@ export type AndroidWsServerMessage =
       requestId?: string;
     }
   | {
+      /** Ask the phone to read its network and locale again now (companion 0.28+; older ones ignore it). */
+      event: 'server:refresh_device_info';
+    }
+  | {
       event: 'server:automation_session';
       payload: {
         active: boolean;

@@ -75,6 +75,34 @@ export interface DeviceEmails {
   suggested_mission_id: number | null;
 }
 
+/** A phone's network and locale as it last reported them (companion 0.28+). Fields it could not read are null. */
+export interface DeviceNetworkInfo {
+  public_ip: string | null;
+  public_country: string | null;
+  direct_ip: string | null;
+  direct_country: string | null;
+  webrtc_ip: string | null;
+  webrtc_country: string | null;
+  local_ips: string[];
+  proxy: string | null;
+  network_type: string | null;
+  dns: string[];
+  private_dns: string | null;
+  languages: string[];
+  region: string | null;
+  sim_country: string | null;
+  network_country: string | null;
+  timezone: string | null;
+  utc_offset_minutes: number | null;
+  auto_time: boolean | null;
+  auto_timezone: boolean | null;
+  clock_skew_s: number | null;
+  checked_at: string;
+  reason: string;
+  ip_history: { ip: string; country: string | null; at: string; reason: string }[];
+  attention: string[];
+}
+
 export interface FleetStateDevice {
   id: number;
   device_id: string;
@@ -89,6 +117,8 @@ export interface FleetStateDevice {
   tag: string | null;
   /** Email accounts on the phone: read by a run (source ai) or entered by the user. */
   emails?: DeviceEmails | null;
+  /** Network and locale the phone last reported; null until it runs companion 0.28+. */
+  network?: DeviceNetworkInfo | null;
   proxy_id: number | null;
   last_seen_at?: string | null;
   state: FleetDeviceState;
@@ -235,6 +265,10 @@ const androidApi = baseApi.injectEndpoints({
       providesTags: ['ANDROID_DEVICES' as any],
     }),
 
+    refreshDeviceNetwork: builder.mutation<{ message: string; data: { asked: number; offline: number } }, { ids?: number[] }>({
+      query: (body) => ({ url: '/android/devices/network/refresh', method: 'POST', body }),
+    }),
+
     deleteOfflineDevices: builder.mutation<{ message: string; data: { removed: number } }, void>({
       query: () => ({ url: '/android/devices/offline', method: 'DELETE' }),
       invalidatesTags: ['ANDROID_DEVICES' as any],
@@ -346,6 +380,7 @@ export const {
   useUnpairDeviceMutation,
   useDeleteOfflineDevicesMutation,
   useGetFleetStateQuery,
+  useRefreshDeviceNetworkMutation,
   useGetDbSpaceQuery,
   useWatchDeviceScreenMutation,
   useUnwatchDeviceScreenMutation,

@@ -1,3 +1,4 @@
+import { DeviceNetworkService } from '@/services/android/DeviceNetworkService';
 import { FleetStateService } from '@/services/android/FleetStateService';
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
@@ -19,6 +20,7 @@ export class AndroidDeviceController {
     private liveScreenService: LiveScreenService,
     private fleetStateService: FleetStateService,
     private deviceFactService: DeviceFactService,
+    private networkService: DeviceNetworkService,
   ) {}
 
   /**
@@ -101,6 +103,14 @@ export class AndroidDeviceController {
   @UseBefore(zodValidationMiddleware(z.object({ emails: z.array(z.string().max(254)).max(10) })))
   async setEmails(@Param('id') id: number, @Body() body: { emails: string[] }, @CurrentUser({ required: true }) user: { userId: number }) {
     return this.deviceFactService.setEmails(user.userId, Number(id), body.emails);
+  }
+
+  /** Ask phones to report their network and locale now: body.ids, or every phone. */
+  @Authorized()
+  @Post('/network/refresh')
+  async refreshNetwork(@Body() body: { ids?: number[] }, @CurrentUser({ required: true }) user: { userId: number }) {
+    const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter((n) => Number.isInteger(n)) : undefined;
+    return this.networkService.refresh(user.userId, ids);
   }
 
   @Authorized()

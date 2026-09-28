@@ -1,3 +1,4 @@
+import { networkForChat, type DeviceNetworkInfo } from './deviceNetwork';
 import { claimsActivity, claimsStart, stripRecords, type HistoryEntry } from './chatClaims';
 import { modelErrorText } from '@/services/ai/modelErrors';
 import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
@@ -900,7 +901,7 @@ export class VectorAgentService {
   private async fleetSnapshot(userId: number) {
     const state = (await this.fleetStateService.getState(userId)) as {
       counts: Record<string, number>;
-      devices: { id: number; name: string; state: string; tag: string | null; proxy_id: number | null; emails: EmailFactView | null }[];
+      devices: { id: number; name: string; state: string; tag: string | null; proxy_id: number | null; emails: EmailFactView | null; network?: DeviceNetworkInfo | null }[];
       lanes: { id: number; name: string; running: number; waiting: number }[];
     };
     const proxies = await this.proxyRepo.find({ where: { user_id: userId } });
@@ -942,6 +943,7 @@ export class VectorAgentService {
         tag: d.tag ? d.tag.split(':').pop() : null,
         emails: d.emails ? d.emails.emails : null,
         ...(d.emails?.suggested ? { emails_newer_read: d.emails.suggested } : {}),
+        network: networkForChat(d.network),
       })),
       lanes: proxies.map((p) => ({
         name: p.name,
@@ -963,6 +965,7 @@ export class VectorAgentService {
       "Language: ALWAYS reply in the SAME language as the user's latest message — English gets English, Hinglish gets Hinglish, Hindi in Devanagari gets Hindi in Devanagari. Earlier messages don't decide it; only the latest one does.",
       '- Formatting: plain text. You may use **bold** and "- " bullet lines; no headings, tables or emoji.',
       "- Each phone's `emails` are the email accounts saved on it (read by an earlier run, or entered by the user); null means never checked. Answer \"which email is on X\" / \"list the emails\" from them without running anything. To check or refresh, call run_mission with collect_emails true — the results are saved on each phone by the system, so never claim you saved or will remember them yourself.",
+      "- Each phone's `network` is what the phone itself last reported: public_ip (the address it reaches the internet from — its proxy exit when a proxy is set) and public_country, direct_ip (its own connection with the proxy off), webrtc_ip (what WebRTC/UDP exposes), proxy, dns, private_dns, languages, region, sim_country, timezone, auto_time, auto_timezone, clock_skew_s (phone clock minus server clock), checked_at, and attention (things worth checking). Answer questions about a phone's IP, proxy, DNS, language, region, timezone or time from it directly — never start a mission to read these. null means that phone has not reported yet (companion 0.28 or newer reports it); say so. Mention checked_at when it is old. To read them again, tell the user to press Refresh on the fleet page.",
       '- Numbers about the fleet come ONLY from `counts` and `by_lane` in the fleet data — quote them exactly. Never count, add up or regroup phones yourself. When listing phones, list each lane\'s `online`/`offline` names as given (several phones can share a model name — that is not a duplicate).',
       'Rules:',
       '- To do something on phones, call run_mission. If the user names no phones and is continuing the last task, use phones "last"; if it is unclear which phones, ask_user with phone options.',
