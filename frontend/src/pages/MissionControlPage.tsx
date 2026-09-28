@@ -64,6 +64,9 @@ import toast from 'react-hot-toast';
 import { StepFeed } from '@/components/mission/StepFeed';
 import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
+import FileDropCard from '@/components/mission/FileDropCard';
+import { AttachChip, AttachedFile } from '@/components/mission/FileAttach';
+import { formatSize, MAX_FILE_BYTES, MAX_SEND_DEVICES, resolveTargets, startDrop } from '@/components/mission/fileDrop';
 import VectorBot from '@/components/mission/VectorBot';
 import { isStructured } from '@/components/mission/chatText';
 import { stepSummary, useRunSteps } from '@/components/mission/steps';
@@ -1100,7 +1103,9 @@ interface RotationEvent {
 type ChatTurn =
   | { id: string; role: 'user'; text: string }
   | { id: string; role: 'assistant'; reply: ChatReply; confirming?: boolean }
-  | { id: string; role: 'rotation'; event: RotationEvent };
+  | { id: string; role: 'rotation'; event: RotationEvent }
+  /** A file sent from the composer; lives for this page only (the upload is in memory). */
+  | { id: string; role: 'file'; sentAt: number };
 
 const bubbleIn = { animation: `${riseIn} 280ms ${ease}`, ...reducedMotion };
 
@@ -1927,6 +1932,26 @@ export default function MissionControlPage() {
   // Names and tags for @ / # suggestions in the input.
   const { data: fleetData } = useGetFleetStateQuery();
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
+
+  // A file waiting in the composer, and the phones it would go to right now.
+  const [attached, setAttached] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const attachTargets = useMemo(
+    () => (attached ? resolveTargets(input, fleetData?.data?.devices ?? []) : { targets: [], picked: false }),
+    [attached, input, fleetData],
+  );
+  const attachFile = (file: File) => {
+    if (file.size === 0) {
+      toast.error('That file is empty.');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error(`That file is ${formatSize(file.size)}. The limit is 100 MB.`);
+      return;
+    }
+    setAttached(file);
+    inputRef.current?.focus();
+  };
   const tagNames = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
 
   // The active conversation is stored on the server; a reload picks it back up.
@@ -2038,7 +2063,34 @@ export default function MissionControlPage() {
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
 
+  /** Sends the attached file to the phones named in the message (or all online ones). */
+  const sendFile = () => {
+    if (!attached) return;
+    const { targets } = attachTargets;
+    if (targets.length === 0) {
+      toast.error('No phone to send to. Name one with @ or #, or bring a phone online.');
+      return;
+    }
+    if (targets.length > MAX_SEND_DEVICES) {
+      toast.error(`One send can reach at most ${MAX_SEND_DEVICES} phones. Narrow it with @ or #.`);
+      return;
+    }
+    const text = input.trim();
+    stopDictation();
+    setInput('');
+    stickRef.current = true;
+    pushTurn({ id: nextId('u'), role: 'user', text: `📎 ${attached.name} · ${formatSize(attached.size)}${text ? `\n${text}` : ''}` });
+    const id = nextId('f');
+    startDrop(id, attached, targets);
+    pushTurn({ id, role: 'file', sentAt: Date.now() });
+    setAttached(null);
+  };
+
   const send = async (override?: string) => {
+    if (attached && override === undefined) {
+      sendFile();
+      return;
+    }
     const text = (override ?? input).trim();
     if (!text || sending) return;
     stopDictation();
@@ -2213,6 +2265,10 @@ export default function MissionControlPage() {
         {turns.map((turn, index) =>
           turn.role === 'rotation' ? (
             <RotationRow key={turn.id} event={turn.event} />
+          ) : turn.role === 'file' ? (
+            <AssistantRow key={turn.id}>
+              <FileDropCard dropId={turn.id} sentAt={turn.sentAt} />
+            </AssistantRow>
           ) : turn.role === 'user' ? (
             <Box
               key={turn.id}
@@ -2269,15 +2325,30 @@ export default function MissionControlPage() {
 
       <Paper
         variant="outlined"
-        sx={{ px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' } }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes('Files')) return;
+          event.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return;
+          event.preventDefault();
+          setDragOver(false);
+          attachFile(event.dataTransfer.files[0]);
+        }}
+        sx={{ px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms, border-color 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' }, ...(dragOver ? { borderColor: 'primary.main', borderStyle: 'dashed', boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.14)' } : {}) }}
       >
+        {attached && (
+          <AttachedFile file={attached} targets={attachTargets.targets} picked={attachTargets.picked} onRemove={() => setAttached(null)} />
+        )}
         <TextField
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={onKeyDown}
           onFocus={() => setComposerFocused(true)}
           onBlur={() => setComposerFocused(false)}
-          placeholder="Tell Vector what the phones should do…"
+          placeholder={attached ? 'Pick phones with @ or # (or leave empty for all online phones)' : 'Tell Vector what the phones should do…'}
           multiline
           minRows={2}
           maxRows={8}
@@ -2288,6 +2359,7 @@ export default function MissionControlPage() {
           inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
         />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
+          <AttachChip onPick={attachFile} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
           <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
           <RotationSwitch />
@@ -2325,7 +2397,7 @@ export default function MissionControlPage() {
             <Button
               variant="contained"
               onClick={() => void send()}
-              disabled={!input.trim()}
+              disabled={!input.trim() && !attached}
               endIcon={<SendIcon />}
               sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
             >

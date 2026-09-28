@@ -18,6 +18,37 @@ export interface DeviceFile {
   created_at: string;
 }
 
+/** One queued transfer row per device, as returned by queue / finish. */
+export interface QueuedTransfer {
+  id: number;
+  device_id: number;
+}
+
+/** A send's result: one row per device (older servers omit `queued`). */
+export interface QueuedFileResult {
+  id: number;
+  file_name?: string;
+  device_count?: number;
+  queued?: QueuedTransfer[];
+}
+
+/** Where one transfer stands, from the batch status endpoint. */
+export interface FileTransferStatus {
+  id: number;
+  device_id: number;
+  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  /** Downloads the phone has started; above 0 while PENDING means it is receiving. */
+  download_attempts: number;
+  failure_message: string | null;
+  delivered_at: string | null;
+  install_status: string | null;
+  install_message: string | null;
+  expires_at: string;
+}
+
+/** Ids per status request; keeps the query string well under header limits. */
+export const STATUS_IDS_PER_REQUEST = 400;
+
 export interface QueueFilePayload {
   /** One device. Omit when sending device_ids. */
   device_id?: number;
@@ -51,31 +82,30 @@ const deviceFileApi = baseApi.injectEndpoints({
         url: `/android/files?device_id=${deviceId}`,
         method: 'GET',
       }),
-      providesTags: ['DEVICE_FILES' as any],
+      providesTags: ['DEVICE_FILES'],
     }),
 
-    queueDeviceFile: builder.mutation<
-      { message: string; data: { id: number; file_name: string; device_count?: number } },
-      QueueFilePayload
-    >({
+    queueDeviceFile: builder.mutation<{ message: string; data: QueuedFileResult }, QueueFilePayload>({
       query: (body) => ({
         url: '/android/files',
         method: 'POST',
         body,
       }),
-      invalidatesTags: ['DEVICE_FILES' as any],
+      invalidatesTags: ['DEVICE_FILES'],
     }),
 
     initDeviceUpload: builder.mutation<{ message: string; data: { upload_id: string; chunk_size: number } }, InitUploadPayload>({
       query: (body) => ({ url: '/android/files/init', method: 'POST', body }),
     }),
 
-    finishDeviceUpload: builder.mutation<
-      { message: string; data: { id: number; device_count?: number } },
-      { upload_id: string }
-    >({
+    finishDeviceUpload: builder.mutation<{ message: string; data: QueuedFileResult }, { upload_id: string }>({
       query: (body) => ({ url: '/android/files/finish', method: 'POST', body }),
-      invalidatesTags: ['DEVICE_FILES' as any],
+      invalidatesTags: ['DEVICE_FILES'],
+    }),
+
+    getFileStatus: builder.query<{ message: string; data: FileTransferStatus[] }, number[]>({
+      query: (ids) => ({ url: `/android/files/status?ids=${ids.join(',')}`, method: 'GET' }),
+      keepUnusedDataFor: 0,
     }),
 
     deleteDeviceFile: builder.mutation<{ message: string }, number>({
@@ -83,7 +113,7 @@ const deviceFileApi = baseApi.injectEndpoints({
         url: `/android/files/${id}`,
         method: 'DELETE',
       }),
-      invalidatesTags: ['DEVICE_FILES' as any],
+      invalidatesTags: ['DEVICE_FILES'],
     }),
   }),
 });
@@ -95,6 +125,7 @@ export const {
   useInitDeviceUploadMutation,
   useFinishDeviceUploadMutation,
   useDeleteDeviceFileMutation,
+  useLazyGetFileStatusQuery,
 } = deviceFileApi;
 
 /** Lowercase-hex SHA-256 of a file, computed in the browser via WebCrypto. */
