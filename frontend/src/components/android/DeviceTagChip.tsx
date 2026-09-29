@@ -17,7 +17,7 @@ export const TAG_COLORS = {
 export type TagColor = keyof typeof TAG_COLORS;
 
 /** Short on purpose: a tag is a glanceable label on a card header, not a note. */
-const MAX_TAG_LENGTH = 10;
+const MAX_TAG_LENGTH = 20;
 
 export interface ParsedTag {
   color: TagColor;
@@ -95,8 +95,9 @@ function DeviceTagChipBase({ tag, onSave }: DeviceTagChipProps) {
           fontSize: 11.5,
           fontWeight: 700,
           lineHeight: '17px',
-          maxWidth: 120,
-          flexShrink: 0,
+          maxWidth: 180,
+          flexShrink: 1,
+          minWidth: 0,
           color: '#fff',
           bgcolor: TAG_COLORS[current.color],
           boxShadow: `0 1px 4px ${alpha(TAG_COLORS[current.color], 0.35)}`,
