@@ -1,4 +1,4 @@
-import { attentionFor, buildNetworkInfo, countryOf, deviceFactsText, networkForChat, requestIp } from './deviceNetwork';
+import { attentionFor, buildNetworkInfo, countryOf, deviceFactsText, durationText, ipTimezone, networkForChat, offsetMinutes, requestIp, timezoneCountries } from './deviceNetwork';
 
 const report = {
   reason: 'connect',
@@ -46,7 +46,28 @@ describe('device network info', () => {
     const leak = buildNetworkInfo({ ...report, webrtc_ip: '49.36.1.1', device_time_ms: now.getTime() - 240_000 }, '81.2.69.160', null, now);
     expect(leak.attention.join(' ')).toMatch(/WebRTC/);
     expect(leak.attention.join(' ')).toMatch(/4 min behind/);
-    expect(attentionFor({ ...leak, webrtc_ip: leak.public_ip, clock_skew_s: 3 })).toEqual([]);
+    expect(attentionFor({ ...leak, webrtc_ip: leak.public_ip, clock_skew_s: 3, sim_country: 'GB' })).toEqual([]);
+  });
+
+  it('flags a timezone, region, language or SIM that does not match the IP country, with the time gap', () => {
+    const now = new Date('2026-09-28T22:00:00Z'); // BST: London is UTC+1, India UTC+5:30
+    const info = buildNetworkInfo({ ...report, device_time_ms: now.getTime(), sim_country: 'us' }, '49.36.1.1', null, now);
+    expect(info.public_country).toBe('IN');
+    expect(info.timezone_countries).toContain('GB');
+    expect(info.ip_timezone).toBe('Asia/Kolkata');
+    const text = info.attention.join(' | ');
+    expect(text).toMatch(/Timezone Europe\/London \(GB\) does not match the IP’s country \(IN\): the phone shows 4 h 30 min behind local time at the IP \(Asia\/Kolkata\)/);
+    expect(text).toMatch(/region GB and language en-GB do not match/);
+    expect(text).toMatch(/SIM is from US, the IP is in IN/);
+  });
+
+  it('knows the timezone at the IP, keeping the phone’s own when it is one of the country’s', () => {
+    expect(timezoneCountries('Asia/Calcutta')).toEqual(['IN']);
+    expect(ipTimezone('US', 'America/Chicago')).toEqual({ zone: 'America/Chicago', count: expect.any(Number) });
+    expect(ipTimezone('US', 'Europe/London').zone).toBe('America/New_York');
+    expect(ipTimezone(null, 'Europe/London').zone).toBeNull();
+    expect(offsetMinutes('Asia/Kolkata', new Date())).toBe(330);
+    expect(durationText(-270)).toBe('4 h 30 min');
   });
 
   it('gives the chats and the agent the facts, and nothing for a phone that never reported', () => {

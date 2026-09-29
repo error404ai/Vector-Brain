@@ -7,6 +7,7 @@ import { AppDataSource } from '@/loaders/database';
 import { Service } from 'typedi';
 import { DeviceFactService } from './DeviceFactService';
 import { ProxyRotationService } from './ProxyRotationService';
+import { withLocationChecks } from './deviceNetwork';
 
 /**
  * How long a finished run keeps showing on its device card. After this the card
@@ -167,7 +168,7 @@ export class FleetStateService {
         /** Email accounts on the phone, as a run read them or the user entered them. */
         emails: emails.get(device.id) ?? null,
         /** Network and locale as the phone last reported them (companion 0.28+); null until then. */
-        network: device.network_info ?? null,
+        network: withLocationChecks(device.network_info),
         proxy_id: device.proxy_id ?? null,
         last_seen_at: device.last_seen_at,
         state,

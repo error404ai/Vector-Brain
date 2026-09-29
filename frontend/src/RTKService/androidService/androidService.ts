@@ -96,6 +96,9 @@ export interface DeviceNetworkInfo {
   utc_offset_minutes: number | null;
   auto_time: boolean | null;
   auto_timezone: boolean | null;
+  timezone_countries?: string[];
+  ip_timezone?: string | null;
+  ip_timezone_count?: number;
   clock_skew_s: number | null;
   checked_at: string;
   reason: string;

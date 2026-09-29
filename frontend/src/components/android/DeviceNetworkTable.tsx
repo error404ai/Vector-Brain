@@ -21,7 +21,8 @@ import {
 import { Fragment, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useGetFleetStateQuery, useRefreshDeviceNetworkMutation } from '@/RTKService/androidService/androidService';
-import { CSV_HEADER, checkedAgo, clockOk, clockText, csvRow, ipWithCountry, toCsv } from './networkInfo';
+import DeviceTimePanel from './DeviceTimePanel';
+import { CSV_HEADER, checkedAgo, clockOk, clockText, csvRow, inZone, ipWithCountry, phoneNow, timezoneMatchesIp, toCsv, useNow } from './networkInfo';
 
 const MONO = '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 
@@ -36,6 +37,7 @@ export default function DeviceNetworkTable() {
   const [query, setQuery] = useState('');
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  const now = useNow();
 
   const lanes = useMemo(() => new Map((data?.data.lanes ?? []).map((l) => [l.id, l.name])), [data]);
   const devices = useMemo(() => data?.data.devices ?? [], [data]);
@@ -104,7 +106,7 @@ export default function DeviceNetworkTable() {
         <Table size="small" sx={{ '& td, & th': { whiteSpace: 'nowrap' } }}>
           <TableHead>
             <TableRow>
-              {['Phone', 'Lane', 'Public IP', 'Direct IP', 'WebRTC IP', 'DNS', 'Language', 'Timezone', 'Clock', 'Checked'].map((h) => (
+              {['Phone', 'Lane', 'Public IP', 'Direct IP', 'WebRTC IP', 'DNS', 'Language', 'Timezone', 'Phone time', 'Clock', 'Checked'].map((h) => (
                 <TableCell key={h} sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary', fontWeight: 700 }}>
                   {h}
                 </TableCell>
@@ -137,7 +139,19 @@ export default function DeviceNetworkTable() {
                     </TableCell>
                     <TableCell sx={{ fontFamily: MONO, color: 'text.secondary' }}>{n?.dns.join(', ') || '—'}</TableCell>
                     <TableCell>{n?.languages[0] ?? '—'}</TableCell>
-                    <TableCell>{n?.timezone ?? '—'}</TableCell>
+                    <TableCell sx={{ color: n && timezoneMatchesIp(n) === false ? 'warning.dark' : undefined }}>
+                      {n?.timezone ?? '—'}
+                      {n && timezoneMatchesIp(n) === false ? ` ≠ ${n.public_country}` : ''}
+                    </TableCell>
+                    <TableCell sx={{ fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
+                      {n?.timezone ? (
+                        <Tooltip title={inZone(phoneNow(n, now), n.timezone).date}>
+                          <span>{inZone(phoneNow(n, now), n.timezone).time}</span>
+                        </Tooltip>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
                     <TableCell sx={{ color: n && !clockOk(n.clock_skew_s) ? 'warning.dark' : 'success.dark' }}>{n ? clockText(n.clock_skew_s) : '—'}</TableCell>
                     <TableCell sx={{ color: 'text.secondary' }}>
                       {n ? (
@@ -150,7 +164,7 @@ export default function DeviceNetworkTable() {
                     </TableCell>
                   </TableRow>
                   <TableRow>
-                    <TableCell colSpan={10} sx={{ p: 0, borderBottom: openId === d.id ? undefined : 'none' }}>
+                    <TableCell colSpan={11} sx={{ p: 0, borderBottom: openId === d.id ? undefined : 'none' }}>
                       <Collapse in={openId === d.id} unmountOnExit>
                         {n ? (
                           <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} sx={{ p: 2, bgcolor: (t) => alpha(t.palette.primary.main, 0.03) }}>
@@ -164,11 +178,11 @@ export default function DeviceNetworkTable() {
                               <Typography variant="caption">
                                 Region {n.region || '—'} · SIM {n.sim_country ?? 'none'} · Network {n.network_country ?? 'none'}
                               </Typography>
-                              <Typography variant="caption">
-                                Automatic time {n.auto_time ? 'on' : 'off'} · automatic timezone {n.auto_timezone ? 'on' : 'off'}
-                              </Typography>
                               <Typography variant="caption">Local IPs: {n.local_ips.join(', ') || '—'}</Typography>
                             </Stack>
+                            <Box sx={{ minWidth: 360, maxWidth: 440 }}>
+                              <DeviceTimePanel info={n} />
+                            </Box>
                             <Stack spacing={0.5} sx={{ minWidth: 260 }}>
                               <Typography variant="caption" fontWeight={700}>
                                 IP history

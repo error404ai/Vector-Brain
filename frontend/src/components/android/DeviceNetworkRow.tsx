@@ -5,7 +5,8 @@ import { Box, Button, ButtonBase, Divider, Popover, Stack, Typography, alpha } f
 import { memo, useState, type MouseEvent } from 'react';
 import toast from 'react-hot-toast';
 import { useRefreshDeviceNetworkMutation, type DeviceNetworkInfo } from '@/RTKService/androidService/androidService';
-import { checkedAgo, clockOk, clockText, ipWithCountry, summaryLine } from './networkInfo';
+import DeviceTimePanel from './DeviceTimePanel';
+import { checkedAgo, ipWithCountry, summaryLine } from './networkInfo';
 
 interface Props {
   deviceId: number;
@@ -109,7 +110,7 @@ function DeviceNetworkRowBase({ deviceId, name, online, value }: Props) {
         onClose={() => setAnchor(null)}
         onClick={(e) => e.stopPropagation()}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { borderRadius: 3, width: 520, maxWidth: 'calc(100vw - 32px)', p: 2 } } }}
+        slotProps={{ paper: { sx: { borderRadius: 3, width: 560, maxWidth: 'calc(100vw - 32px)', p: 2 } } }}
       >
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
           <Typography variant="subtitle2" fontWeight={700} sx={{ flexGrow: 1 }}>
@@ -141,16 +142,7 @@ function DeviceNetworkRowBase({ deviceId, name, online, value }: Props) {
               <Field label="DNS" value={value.dns.join(', ') || '—'} sub={value.private_dns ? `Private DNS: ${value.private_dns}` : undefined} mono />
               <Field label="Language" value={value.languages[0] ?? '—'} sub={value.languages.length > 1 ? `Also: ${value.languages.slice(1).join(', ')}` : undefined} />
               <Field label="Region" value={value.region || '—'} sub={`SIM: ${value.sim_country ?? 'none'} · Network: ${value.network_country ?? 'none'}`} />
-              <Field
-                label="Timezone"
-                value={value.timezone ?? '—'}
-                sub={value.auto_timezone === null ? undefined : `Automatic timezone: ${value.auto_timezone ? 'on' : 'off'}`}
-              />
-              <Field
-                label="Phone clock"
-                value={clockOk(value.clock_skew_s) ? `In step (${clockText(value.clock_skew_s)})` : `${clockText(value.clock_skew_s)} vs server`}
-                sub={value.auto_time === null ? undefined : `Automatic time: ${value.auto_time ? 'on' : 'off'}`}
-              />
+              <DeviceTimePanel info={value} />
             </Box>
             {value.ip_history.length > 1 ? (
               <>

@@ -1,3 +1,4 @@
+import ct from 'countries-and-timezones';
 import ip3country from 'ip3country';
 
 /**
@@ -30,6 +31,12 @@ export interface DeviceNetworkInfo {
   utc_offset_minutes: number | null;
   auto_time: boolean | null;
   auto_timezone: boolean | null;
+  /** Countries that use the phone's timezone (Europe/London → GB, GG, IM, JE). */
+  timezone_countries?: string[];
+  /** The timezone at the public IP: the country's own, or its main one when it has several. */
+  ip_timezone?: string | null;
+  /** How many timezones the IP's country has: above 1, ip_timezone is the country's main one, not the exact place. */
+  ip_timezone_count?: number;
   /** Phone clock minus server clock, in seconds, when the report was received. */
   clock_skew_s: number | null;
   checked_at: string;
@@ -41,6 +48,58 @@ export interface DeviceNetworkInfo {
 }
 
 const IP_HISTORY = 20;
+
+/** The main timezone of countries that span several, where the alphabetical first would mislead. */
+const MAIN_TIMEZONE: Record<string, string> = {
+  US: 'America/New_York', CA: 'America/Toronto', AU: 'Australia/Sydney', BR: 'America/Sao_Paulo', RU: 'Europe/Moscow',
+  MX: 'America/Mexico_City', ID: 'Asia/Jakarta', CN: 'Asia/Shanghai', KZ: 'Asia/Almaty', AR: 'America/Argentina/Buenos_Aires',
+  ES: 'Europe/Madrid', PT: 'Europe/Lisbon', DE: 'Europe/Berlin', NZ: 'Pacific/Auckland', CL: 'America/Santiago',
+  UA: 'Europe/Kyiv', MN: 'Asia/Ulaanbaatar', CD: 'Africa/Kinshasa', EC: 'America/Guayaquil', MY: 'Asia/Kuala_Lumpur',
+};
+
+/** Countries whose clocks follow this timezone, aliases resolved (Asia/Calcutta → IN). */
+export function timezoneCountries(tz: string | null | undefined): string[] {
+  if (!tz) return [];
+  const zone = ct.getTimezone(tz);
+  if (!zone) return [];
+  if (zone.countries.length) return [...zone.countries];
+  return zone.aliasOf ? ct.getTimezone(zone.aliasOf)?.countries ?? [] : [];
+}
+
+/** The timezone at an IP's country: the phone's own when it is one of the country's, else the main one. */
+export function ipTimezone(country: string | null | undefined, phoneTz: string | null | undefined): { zone: string | null; count: number } {
+  if (!country) return { zone: null, count: 0 };
+  const zones = ct.getCountry(country)?.timezones ?? [];
+  if (!zones.length) return { zone: null, count: 0 };
+  if (phoneTz && timezoneCountries(phoneTz).includes(country)) return { zone: phoneTz, count: zones.length };
+  return { zone: MAIN_TIMEZONE[country] ?? zones[0], count: zones.length };
+}
+
+/** Minutes east of UTC for a timezone at a moment, from the runtime's own tz data. */
+export function offsetMinutes(tz: string, at: Date): number | null {
+  try {
+    const name = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' }).formatToParts(at).find((p) => p.type === 'timeZoneName')?.value ?? '';
+    const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(name);
+    if (!m) return name === 'GMT' ? 0 : null;
+    return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0));
+  } catch {
+    return null;
+  }
+}
+
+/** "4 h 30 min", "45 min", "2 h". */
+export function durationText(minutes: number): string {
+  const abs = Math.abs(Math.round(minutes));
+  const h = Math.floor(abs / 60);
+  const m = abs % 60;
+  return [h ? `${h} h` : '', m ? `${m} min` : ''].filter(Boolean).join(' ') || '0 min';
+}
+
+/** The region part of a language tag: en-GB → GB, es-419 → null, en → null. */
+function languageRegion(tag: string | undefined): string | null {
+  const part = tag?.split(/[-_]/).find((p, i) => i > 0 && /^[A-Za-z]{2}$/.test(p));
+  return part ? part.toUpperCase() : null;
+}
 const CLOCK_TOLERANCE_S = 60;
 
 let countryReady = false;
@@ -104,19 +163,44 @@ export function buildNetworkInfo(report: Record<string, unknown>, seenFrom: stri
     utc_offset_minutes: num(report.utc_offset_minutes),
     auto_time: bool(report.auto_time),
     auto_timezone: bool(report.auto_timezone),
+    timezone_countries: [],
+    ip_timezone: null,
+    ip_timezone_count: 0,
     clock_skew_s: deviceTime === null ? null : Math.round((deviceTime - now.getTime()) / 1000),
     checked_at: at,
     reason,
     ip_history: history.slice(0, IP_HISTORY),
     attention: [],
   };
-  info.attention = attentionFor(info);
+  info.timezone_countries = timezoneCountries(info.timezone);
+  const atIp = ipTimezone(info.public_country, info.timezone);
+  info.ip_timezone = atIp.zone;
+  info.ip_timezone_count = atIp.count;
+  info.attention = attentionFor(info, now);
   return info;
 }
 
 /** Things a person would want to know, each one line. Never a verdict on what the settings should be. */
-export function attentionFor(info: DeviceNetworkInfo): string[] {
+export function attentionFor(info: DeviceNetworkInfo, now = new Date()): string[] {
   const notes: string[] = [];
+  const ipCountry = info.public_country;
+  const tzCountries = info.timezone_countries ?? timezoneCountries(info.timezone);
+  if (ipCountry && info.timezone && tzCountries.length && !tzCountries.includes(ipCountry)) {
+    const ipZone = info.ip_timezone ?? ipTimezone(ipCountry, info.timezone).zone;
+    const phoneOffset = offsetMinutes(info.timezone, now);
+    const ipOffset = ipZone ? offsetMinutes(ipZone, now) : null;
+    const gap = phoneOffset !== null && ipOffset !== null ? ipOffset - phoneOffset : null;
+    const when = gap === null ? '' : gap === 0 ? ', though the clock time is the same' : `: the phone shows ${durationText(gap)} ${gap > 0 ? 'behind' : 'ahead of'} local time at the IP (${ipZone})`;
+    notes.push(`Timezone ${info.timezone} (${tzCountries[0]}) does not match the IP’s country (${ipCountry})${when}.`);
+  }
+  if (ipCountry) {
+    const locale: string[] = [];
+    if (info.region && info.region.toUpperCase() !== ipCountry) locale.push(`region ${info.region.toUpperCase()}`);
+    const langRegion = languageRegion(info.languages[0]);
+    if (langRegion && langRegion !== ipCountry) locale.push(`language ${info.languages[0]}`);
+    if (locale.length) notes.push(`Phone ${locale.join(' and ')} ${locale.length > 1 ? 'do' : 'does'} not match the IP’s country (${ipCountry}).`);
+    if (info.sim_country && info.sim_country !== ipCountry) notes.push(`SIM is from ${info.sim_country}, the IP is in ${ipCountry}.`);
+  }
   if (info.proxy && info.public_ip && info.direct_ip && info.public_ip === info.direct_ip) {
     notes.push('A proxy is set, but traffic reaches the internet from the phone’s own address: the proxy is not being used.');
   }
@@ -130,8 +214,21 @@ export function attentionFor(info: DeviceNetworkInfo): string[] {
   return notes;
 }
 
+/**
+ * A stored record with the location checks filled in: records saved before
+ * those checks existed get them on read, without waiting for the next report.
+ */
+export function withLocationChecks(info: DeviceNetworkInfo | null | undefined, now = new Date()): DeviceNetworkInfo | null {
+  if (!info) return null;
+  if (info.timezone_countries !== undefined) return info;
+  const atIp = ipTimezone(info.public_country, info.timezone);
+  const filled = { ...info, timezone_countries: timezoneCountries(info.timezone), ip_timezone: atIp.zone, ip_timezone_count: atIp.count };
+  return { ...filled, attention: attentionFor(filled, now) };
+}
+
 /** A compact form for the AI chats: what they need to answer "which IP / language / timezone is on X". */
-export function networkForChat(info: DeviceNetworkInfo | null | undefined): Record<string, unknown> | null {
+export function networkForChat(stored: DeviceNetworkInfo | null | undefined): Record<string, unknown> | null {
+  const info = withLocationChecks(stored);
   if (!info) return null;
   return {
     public_ip: info.public_ip,
@@ -145,6 +242,8 @@ export function networkForChat(info: DeviceNetworkInfo | null | undefined): Reco
     region: info.region,
     sim_country: info.sim_country,
     timezone: info.timezone,
+    timezone_countries: info.timezone_countries ?? [],
+    timezone_at_ip: info.ip_timezone ?? null,
     auto_time: info.auto_time,
     auto_timezone: info.auto_timezone,
     clock_skew_s: info.clock_skew_s,
@@ -154,7 +253,8 @@ export function networkForChat(info: DeviceNetworkInfo | null | undefined): Reco
 }
 
 /** The agent's view: first line when it was read, then one fact per line. Null when the phone never reported. */
-export function deviceFactsText(info: DeviceNetworkInfo | null | undefined): string | undefined {
+export function deviceFactsText(stored: DeviceNetworkInfo | null | undefined): string | undefined {
+  const info = withLocationChecks(stored);
   if (!info) return undefined;
   const line = (label: string, value: unknown) => (value === null || value === undefined || (Array.isArray(value) && !value.length) ? null : `- ${label}: ${Array.isArray(value) ? value.join(', ') : value}`);
   const rows = [
@@ -168,6 +268,7 @@ export function deviceFactsText(info: DeviceNetworkInfo | null | undefined): str
     line('region', info.region),
     line('SIM country', info.sim_country),
     line('timezone', info.timezone),
+    line('timezone at the IP', info.ip_timezone && info.ip_timezone !== info.timezone ? info.ip_timezone : null),
     line('automatic time / timezone', info.auto_time === null ? null : `${info.auto_time ? 'on' : 'off'} / ${info.auto_timezone ? 'on' : 'off'}`),
     line('clock vs server', info.clock_skew_s === null ? null : `${info.clock_skew_s} s`),
   ].filter(Boolean);
