@@ -171,7 +171,9 @@ export function AlertsSheet({
                       Fix
                     </SheetButton>
                   ) : (
-                    <span />
+                    <Typography sx={{ fontSize: 11.5, color: MUTED, maxWidth: 120, textAlign: 'right', lineHeight: 1.3 }}>
+                      {a.phone.includes(' · ') ? 'Name shared by other phones: rename it to fix from here' : ''}
+                    </Typography>
                   )}
                 </Box>
               ))}

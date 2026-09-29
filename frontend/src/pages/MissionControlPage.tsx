@@ -124,10 +124,12 @@ const FRAME_FLUSH_MS = 1000;
 /** A chat reply the server pushed on its own (a finished task's answer). */
 type PushedReply = { conversation_id: number | null; reply: ChatReply };
 
-function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void): LiveFeed {
+function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void, onNetworkInfo?: () => void): LiveFeed {
   const pushedRef = useRef(onPushedReply);
+  const networkRef = useRef(onNetworkInfo);
   useEffect(() => {
     pushedRef.current = onPushedReply;
+    networkRef.current = onNetworkInfo;
   });
   const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
   useEffect(() => {
@@ -161,6 +163,10 @@ function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void): LiveFeed {
         }
         const p = msg.payload ?? {};
         switch (msg.event) {
+          case 'device:network_info': {
+            networkRef.current?.();
+            break;
+          }
           case 'chat:result': {
             if (p.reply && typeof p.reply === 'object') pushedRef.current?.(p as unknown as PushedReply);
             break;
@@ -1888,6 +1894,8 @@ export default function MissionControlPage() {
   // content when they haven't scrolled up to read something. A ref, not state,
   // so a running task's frequent growth doesn't re-render the whole page.
   const stickRef = useRef(true);
+  const networkRefetchRef = useRef<number | undefined>(undefined);
+  const refetchFleetRef = useRef<(() => unknown) | null>(null);
   // Last time the reader scrolled themselves (wheel, touch, keys, scrollbar).
   // Only their scrolling may unpin the thread: scroll events that come from our
   // own scrollTo, a smooth scroll still under way, or content loading in must
@@ -1898,11 +1906,18 @@ export default function MissionControlPage() {
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // A finished task's answer arrives on its own; show it in the chat it belongs to.
-  const feed = useLiveFeed((pushed) => {
-    if (pushed.conversation_id !== conversationId) return;
-    stickRef.current = true;
-    setTurns((prev) => [...prev, { id: nextId('a'), role: 'assistant', reply: pushed.reply }]);
-  });
+  const feed = useLiveFeed(
+    (pushed) => {
+      if (pushed.conversation_id !== conversationId) return;
+      stickRef.current = true;
+      setTurns((prev) => [...prev, { id: nextId('a'), role: 'assistant', reply: pushed.reply }]);
+    },
+    // A phone sent a new network reading: refresh the fleet (alerts) once the burst settles.
+    () => {
+      window.clearTimeout(networkRefetchRef.current);
+      networkRefetchRef.current = window.setTimeout(() => void refetchFleetRef.current?.(), 1200);
+    },
+  );
   // When a phone last reported a step: keeps the docked robot "working".
   const lastStepAt = useMemo(() => {
     let latest = 0;
@@ -2014,7 +2029,10 @@ export default function MissionControlPage() {
   }, [input]);
 
   // Names and tags for @ / # suggestions in the input.
-  const { data: fleetData } = useGetFleetStateQuery();
+  const { data: fleetData, refetch: refetchFleet } = useGetFleetStateQuery();
+  useEffect(() => {
+    refetchFleetRef.current = refetchFleet;
+  }, [refetchFleet]);
   const phoneNames = (fleetData?.data?.devices ?? []).map((d) => d.name);
   const tagList = [...new Set((fleetData?.data?.devices ?? []).map((d) => (d.tag ?? '').split(':').pop()?.trim()).filter(Boolean))] as string[];
   // What the composer and the sent bubbles colour as @phones / #tags.
@@ -2027,7 +2045,10 @@ export default function MissionControlPage() {
   // Phones whose IP, language, timezone, clock or SIM needs a look.
   const alerts = useMemo(() => fleetAlerts(fleetData?.data?.devices ?? []), [fleetData]);
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [refreshNetwork, { isLoading: refreshingNetwork }] = useRefreshDeviceNetworkMutation();
+  const [refreshNetwork, { isLoading: askingNetwork }] = useRefreshDeviceNetworkMutation();
+  // Readings arrive over the next seconds; the sheet updates itself as they do.
+  const [awaitingReadings, setAwaitingReadings] = useState(false);
+  const refreshingNetwork = askingNetwork || awaitingReadings;
 
   // A file waiting in the composer, and the phones it would go to right now.
   const [attached, setAttached] = useState<File | null>(null);
@@ -2407,6 +2428,8 @@ export default function MissionControlPage() {
           onRefresh={async () => {
             try {
               const res = await refreshNetwork({}).unwrap();
+              setAwaitingReadings(true);
+              window.setTimeout(() => setAwaitingReadings(false), 8000);
               toast.success(`Asked ${res.data.asked} phones to check in${res.data.offline ? ` (${res.data.offline} offline)` : ''}.`);
             } catch (error) {
               toast.error(errorMessage(error));

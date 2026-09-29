@@ -772,6 +772,10 @@ export class MissionService {
     await this.missionRepo.save(mission);
     Logger.info(`[Mission] #${mission.id} ${status}: ${mission.summary.split('\n')[0]}`);
     this.gatewayService.broadcastToUser(mission.user_id, 'mission:update', { id: mission.id });
+    // A task may have changed what the phone reports (timezone, language,
+    // proxy): ask its phones for a fresh reading, so alerts it fixed clear.
+    const hw = await this.hardwareIds(items.map((i) => i.device_id)).catch(() => new Map<number, string>());
+    setTimeout(() => hw.forEach((id) => this.gatewayService.requestDeviceInfo(id)), 4_000).unref?.();
     for (const listener of this.finishListeners) {
       try {
         listener(mission);

@@ -17,6 +17,8 @@ export interface FleetAlert {
 interface AlertDevice {
   id: number;
   name: string;
+  /** Hardware id: tells apart phones that share a name. */
+  device_id?: string;
   proxy_id: number | null;
   network?: DeviceNetworkInfo | null;
 }
@@ -70,12 +72,19 @@ function mostCommon(values: string[]): { value: string; count: number } | null {
  */
 export function fleetAlerts(devices: AlertDevice[]): FleetAlert[] {
   const out: FleetAlert[] = [];
+  // Several phones can share a model name (three SM-G960F): show which one.
+  const nameCount = new Map<string, number>();
+  for (const d of devices) nameCount.set(d.name, (nameCount.get(d.name) ?? 0) + 1);
+  const label = (d: AlertDevice) => ((nameCount.get(d.name) ?? 0) > 1 && d.device_id ? `${d.name} · ${d.device_id.slice(-4)}` : d.name);
   const seen = new Set<string>();
-  const push = (d: AlertDevice, kind: AlertKind, detail: string, fix: string | null) => {
+  const push = (d: AlertDevice, kind: AlertKind, detail: string, fixCommand: string | null) => {
+    let fix = fixCommand;
     const key = `${d.id}:${kind}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ key, phone: d.name, kind, level: LEVEL[kind], title: TITLE[kind], detail, fix });
+    // "@name" reaches every phone with that name, so a shared name gets no Fix.
+    if ((nameCount.get(d.name) ?? 0) > 1) fix = null;
+    out.push({ key, phone: label(d), kind, level: LEVEL[kind], title: TITLE[kind], detail, fix });
   };
 
   // Lane checks: compare each phone with its lane-mates' recent readings.
