@@ -2,7 +2,7 @@ import { Agent } from '@eko-ai/eko';
 import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
-import type { AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
+import type { ActionResult, AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
@@ -407,7 +407,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'type_text',
         description:
-          'Type text into a focused input field. Always tap the input field first. This only puts the text in the field; it does not submit it. To submit (search, send, go), call press_key with ENTER next — on Android 11+ that fires the keyboard\'s own Search/Go/Done action. If press_key is refused (older Android or the field ignores it), tap the Search, Go, Send or Done button on screen. For a web or YouTube search, opening the results URL with open_url is a quicker shortcut (e.g. https://www.google.com/search?q=... or https://www.youtube.com/results?search_query=...).',
+          'Type text into a focused input field. Always tap the input field first. This only puts the text in the field; it does not submit it. To submit (search, send, go), call press_key with ENTER next — on Android 11+ that fires the keyboard\'s own Search/Go/Done action. If press_key is refused (older Android or the field ignores it), tap the Search, Go, Send or Done button on screen. For a web or YouTube search, opening the results URL with open_url is a quicker shortcut (e.g. https://www.google.com/search?q=... or https://www.youtube.com/results?search_query=...). If the field refuses the text (one-time code boxes, PIN pads), this retries through the Vector Keyboard by itself — do not fall back to tapping keyboard keys.',
         parameters: {
           type: 'object',
           properties: {
@@ -709,6 +709,30 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'use_vector_keyboard',
+        description:
+          "Make the Vector Keyboard the phone's active keyboard (on: true), or go back to the phone's usual keyboard (on: false). type_text already switches to it by itself when a field refuses text, so call this only when the task asks for the Vector Keyboard.",
+        parameters: {
+          type: 'object',
+          properties: { on: { type: 'boolean', description: 'true: Vector Keyboard; false: the usual keyboard' } },
+          required: ['on'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const on = args.on !== false;
+          const state = this.gatewayService.vectorKeyboard?.(this.hardwareDeviceId) ?? null;
+          const refuse = (text: string): ToolResult => ({ content: [{ type: 'text', text }], isError: true });
+          if (!state) return refuse('This phone runs a Vector app without the Vector Keyboard. It needs the updated Vector app; tell the user.');
+          if (on && state === 'active') return { content: [{ type: 'text', text: 'The Vector Keyboard is already the active keyboard.' }], isError: false };
+          if (on && state === 'off') {
+            return refuse('The Vector Keyboard is not switched on on this phone. It has to be enabled once from the Vector app setup (Enable Vector Keyboard); tell the user.');
+          }
+          const result = await this.runDeviceAction({ type: 'SetKeyboard', keyboard: on ? 'VECTOR' : 'DEFAULT' }, 'use_vector_keyboard', args);
+          if (!result.isError) this.gatewayService.keyboardSwitched?.(this.hardwareDeviceId, on);
+          return result;
+        },
+      },
+      {
         name: 'read_clipboard',
         description:
           'Read the current text on the device clipboard. Use this after copying something in one app (a code, a link, a reference number) to carry it into another, or to confirm what set_clipboard put there.',
@@ -952,6 +976,30 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
 → tap_element idx "5". A tappable row's label includes the text shown inside it.`;
   }
 
+  /**
+   * Types through the Vector Keyboard after accessibility SetText was refused,
+   * switching to it first if it is enabled but not the current keyboard.
+   * result is set only when the keyboard typed the text; note explains what
+   * happened otherwise, so the model does not try paste or key taps blindly.
+   */
+  private async typeWithVectorKeyboard(text: string): Promise<{ result?: ActionResult; note: string }> {
+    const state = this.gatewayService.vectorKeyboard?.(this.hardwareDeviceId) ?? null;
+    if (!state) return { note: '' };
+    if (state === 'off') {
+      return { note: 'The Vector Keyboard would type this, but it is not switched on on this phone: it has to be enabled once in the Vector app setup (Enable Vector Keyboard). Tell the user instead of trying other ways.' };
+    }
+    if (state === 'enabled') {
+      const switched = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'SetKeyboard', keyboard: 'VECTOR' });
+      if (switched.status !== 'SUCCESS') {
+        return { note: `Could not switch to the Vector Keyboard (${switched.status === 'FAILURE' ? switched.message : 'cancelled'}).` };
+      }
+      this.gatewayService.keyboardSwitched?.(this.hardwareDeviceId, true);
+    }
+    const typed = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'KeyboardType', text, replace: true });
+    if (typed.status === 'SUCCESS') return { result: { ...typed, summary: `Typed with the Vector Keyboard (the field refused direct text): ${typed.summary}` }, note: '' };
+    return { note: `The Vector Keyboard could not type it either (${typed.status === 'FAILURE' ? typed.message : 'cancelled'}) — tap the field so it has focus, then type_text again.` };
+  }
+
   private async runDeviceAction(
     action: AutomationAction,
     toolName: string,
@@ -988,12 +1036,23 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       }
     }
 
+    // A field that refuses accessibility text (one-time code boxes, PIN pads,
+    // custom editors) takes real keyboard input: retry through the Vector
+    // Keyboard when this phone has one.
+    let keyboardNote = '';
+    if (action.type === 'SetText' && res.status === 'FAILURE' && res.code !== 'TIMEOUT' && res.code !== 'ACCESSIBILITY_DISABLED') {
+      const viaKeyboard = await this.typeWithVectorKeyboard(action.text);
+      if (viaKeyboard.result) res = viaKeyboard.result;
+      keyboardNote = viaKeyboard.note;
+    }
+
     let summary =
       res.status === 'SUCCESS'
         ? res.summary
         : res.status === 'FAILURE'
         ? `${res.code}: ${res.message}`
         : 'Action cancelled';
+    if (keyboardNote) summary = `${summary} ${keyboardNote}`;
     const isError = res.status !== 'SUCCESS';
 
     // Say what a coordinate tap actually hit, so a wrong guess is noticed at once.

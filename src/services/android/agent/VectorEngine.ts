@@ -95,6 +95,7 @@ const NOT_IDEMPOTENT = new Set([
   'press_key',
   'paste',
   'global_action',
+  'use_vector_keyboard',
 ]);
 
 const TASK_DONE = 'task_done';

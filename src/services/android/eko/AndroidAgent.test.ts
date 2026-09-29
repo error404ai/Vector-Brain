@@ -113,6 +113,62 @@ describe('AndroidAgent Eko Integration', () => {
   });
 });
 
+describe('Vector Keyboard', () => {
+  const rejected = { status: 'FAILURE', code: 'ACTION_REJECTED', message: 'The app rejected text input' };
+  const ok = (summary: string) => ({ status: 'SUCCESS', summary });
+  const setup = (state: string | null, replies: any[]) => {
+    const executeAction = jest.fn();
+    for (const r of replies) executeAction.mockResolvedValueOnce(r);
+    executeAction.mockResolvedValue(ok('observed'));
+    const gateway = { executeAction, vectorKeyboard: jest.fn().mockReturnValue(state), keyboardSwitched: jest.fn() };
+    const agent = new AndroidAgent(gateway as unknown as AndroidGatewayService, 'hw-1') as any;
+    return { gateway, tool: (name: string) => agent.tools.find((t: any) => t.name === name) };
+  };
+  const sent = (gateway: any) => gateway.executeAction.mock.calls.map((c: any[]) => c[1].type);
+
+  it('types a refused code through the active Vector Keyboard', async () => {
+    const { gateway, tool } = setup('active', [rejected, ok('typed 6 chars')]);
+    const result = await tool('type_text').execute({ text: '482913' }, {} as any, {} as any);
+    expect(sent(gateway).slice(0, 2)).toEqual(['SetText', 'KeyboardType']);
+    expect(gateway.executeAction.mock.calls[1][1]).toEqual({ type: 'KeyboardType', text: '482913', replace: true });
+    expect(result.isError).toBe(false);
+    expect(result.content[0].text).toMatch(/Vector Keyboard/);
+  });
+
+  it('switches to the keyboard first when it is enabled but not current', async () => {
+    const { gateway, tool } = setup('enabled', [rejected, ok('switched'), ok('typed')]);
+    const result = await tool('type_text').execute({ text: '1234' }, {} as any, {} as any);
+    expect(sent(gateway).slice(0, 3)).toEqual(['SetText', 'SetKeyboard', 'KeyboardType']);
+    expect(gateway.keyboardSwitched).toHaveBeenCalledWith('hw-1', true);
+    expect(result.isError).toBe(false);
+  });
+
+  it('says the keyboard must be enabled when it is off, without sending it', async () => {
+    const { gateway, tool } = setup('off', [rejected]);
+    const result = await tool('type_text').execute({ text: '1234' }, {} as any, {} as any);
+    expect(sent(gateway)).not.toContain('KeyboardType');
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Enable Vector Keyboard/);
+  });
+
+  it('leaves older companions alone', async () => {
+    const { gateway, tool } = setup(null, [rejected]);
+    const result = await tool('type_text').execute({ text: '1234' }, {} as any, {} as any);
+    expect(sent(gateway)).not.toContain('KeyboardType');
+    expect(result.isError).toBe(true);
+    const onTool = await tool('use_vector_keyboard').execute({ on: true }, {} as any, {} as any);
+    expect(onTool.isError).toBe(true);
+    expect(sent(gateway)).not.toContain('SetKeyboard');
+  });
+
+  it('use_vector_keyboard switches the phone keyboard', async () => {
+    const { gateway, tool } = setup('enabled', [ok('Vector Keyboard is now active')]);
+    const result = await tool('use_vector_keyboard').execute({ on: true }, {} as any, {} as any);
+    expect(gateway.executeAction.mock.calls[0][1]).toEqual({ type: 'SetKeyboard', keyboard: 'VECTOR' });
+    expect(result.isError).toBe(false);
+  });
+});
+
 describe('browserFor', () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { browserFor } = require('./AndroidAgent');

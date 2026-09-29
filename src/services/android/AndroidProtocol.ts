@@ -71,7 +71,25 @@ export type AutomationAction =
   | { type: 'Paste' }
   | { type: 'ReadClipboard' }
   | { type: 'OpenSettings'; screen: SettingsScreen }
-  | { type: 'ReadNotifications'; packageName?: string; limit?: number };
+  | { type: 'ReadNotifications'; packageName?: string; limit?: number }
+  /**
+   * Types through the Vector Keyboard (the companion's own input method) as real
+   * keyboard input, for fields that refuse accessibility SetText — one-time
+   * code boxes, PIN pads, custom editors. Needs the keyboard to be the active
+   * one; the phone answers NODE_NOT_FOUND when no field has input focus.
+   * `replace` clears the focused field first. Companion reports support via
+   * capabilities.vectorKeyboard.
+   */
+  | { type: 'KeyboardType'; text: string; replace?: boolean }
+  /** Makes the Vector Keyboard (or the phone's usual one) the active keyboard. */
+  | { type: 'SetKeyboard'; keyboard: 'VECTOR' | 'DEFAULT' };
+
+/**
+ * Where the Vector Keyboard stands on a phone: active (it is the current
+ * keyboard), enabled (switched on in Settings, not current), off (installed
+ * with the companion but not switched on). Absent: the companion predates it.
+ */
+export type VectorKeyboardState = 'active' | 'enabled' | 'off';
 
 export interface NodeBounds {
   left: number;
@@ -143,6 +161,7 @@ export interface DeviceCapabilities {
   screenHeight?: number;
   /** Companion build the phone is running — shows who still needs an update. */
   appVersion?: string;
+  vectorKeyboard?: VectorKeyboardState;
 }
 
 // WebSocket Message Envelopes

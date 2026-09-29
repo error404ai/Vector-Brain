@@ -1,7 +1,7 @@
 import { AgentTask } from '@/entities/AgentTask';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
-import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction } from './AndroidProtocol';
+import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction, DeviceCapabilities, VectorKeyboardState } from './AndroidProtocol';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { Service } from 'typedi';
@@ -39,6 +39,8 @@ export class AndroidGatewayService {
   // Heartbeats arrive every five seconds. Persist periodically (or whenever
   // capabilities change) instead of writing the same row on every heartbeat.
   private lastHeartbeatPersistence = new Map<string, { at: number; capabilities: string; battery?: number }>();
+  /** Vector Keyboard state per phone, as last reported (see VectorKeyboardState). */
+  private keyboards = new Map<string, VectorKeyboardState>();
 
   /**
    * Server-side subscribers to user events (task finished, new frame, ...).
@@ -76,6 +78,7 @@ export class AndroidGatewayService {
 
     this.deviceSockets.set(deviceId, ws);
     this.socketToDeviceId.set(ws, deviceId);
+    this.noteKeyboard(deviceId, metadata?.capabilities, true);
 
     // Update DB status to ONLINE
     await this.deviceService.updateDeviceStatus(deviceId, AndroidDeviceStatus.ONLINE, metadata.capabilities);
@@ -165,6 +168,7 @@ export class AndroidGatewayService {
             msg.payload.capabilities || msg.payload.appVersion
               ? { ...(msg.payload.capabilities ?? {}), ...(msg.payload.appVersion ? { appVersion: msg.payload.appVersion } : {}) }
               : undefined;
+          this.noteKeyboard(devId, msg.payload.capabilities, false);
           const reported = base && battery !== undefined ? { ...base, battery } : battery !== undefined ? { battery } : base;
           const capabilities = JSON.stringify(base || {});
           const lastPersistence = this.lastHeartbeatPersistence.get(devId);
@@ -276,6 +280,23 @@ export class AndroidGatewayService {
   /**
    * Sends an atomic action to the Android device and waits for the ActionResult.
    */
+  /** The Vector Keyboard state the phone last reported; null when its companion has no keyboard. */
+  vectorKeyboard(deviceId: string): VectorKeyboardState | null {
+    return this.keyboards.get(deviceId) ?? null;
+  }
+
+  /** After a SetKeyboard succeeds, before the next heartbeat confirms it. */
+  keyboardSwitched(deviceId: string, active: boolean) {
+    if (this.keyboards.has(deviceId)) this.keyboards.set(deviceId, active ? 'active' : 'enabled');
+  }
+
+  /** Records the keyboard state; a fresh registration without it means an older companion. */
+  private noteKeyboard(deviceId: string, caps: Partial<DeviceCapabilities> | undefined, registering: boolean) {
+    const state = caps?.vectorKeyboard;
+    if (state === 'active' || state === 'enabled' || state === 'off') this.keyboards.set(deviceId, state);
+    else if (registering) this.keyboards.delete(deviceId);
+  }
+
   async executeAction(
     deviceId: string,
     action: AutomationAction,

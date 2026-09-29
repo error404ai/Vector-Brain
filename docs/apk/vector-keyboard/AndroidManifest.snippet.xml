@@ -1,0 +1,23 @@
+<!-- Add inside <application> of the companion's AndroidManifest.xml -->
+<service
+    android:name=".keyboard.VectorKeyboardService"
+    android:exported="true"
+    android:label="@string/vector_keyboard_label"
+    android:permission="android.permission.BIND_INPUT_METHOD">
+    <intent-filter>
+        <action android:name="android.view.InputMethod" />
+    </intent-filter>
+    <meta-data
+        android:name="android.view.im"
+        android:resource="@xml/vector_keyboard_method" />
+</service>
+
+<!-- Optional, top level of the manifest. Only takes effect after a one-time
+     `adb shell pm grant <package> android.permission.WRITE_SECURE_SETTINGS`;
+     with it the app enables and switches the keyboard itself on any Android. -->
+<uses-permission
+    android:name="android.permission.WRITE_SECURE_SETTINGS"
+    tools:ignore="ProtectedPermissions" />
+
+<!-- res/values/strings.xml -->
+<!-- <string name="vector_keyboard_label">Vector Keyboard</string> -->
