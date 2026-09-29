@@ -962,6 +962,31 @@ const scenarios = [
     },
   },
   {
+    name: 'a restart task whose phone drops (to reboot) is done, not retried',
+    async run() {
+      const created = await api('POST', '/android/missions', {
+        request: 'Open the power menu and tap Restart [sim steps=30 delay=200]',
+        device_ids: [phones.free1.dbId],
+      });
+      const id = created?.data?.id;
+      if (!id) return 'mission not created';
+      const running = await waitFor(async () => {
+        const m = await getMission(id);
+        return m?.items?.[0]?.status === 'RUNNING' ? m : null;
+      }, 20_000, 300);
+      if (!running) return 'item never started';
+      await sleep(1000);
+      phones.free1.phone.drop();
+      await sleep(2500);
+      await phones.free1.phone.connect();
+      const done = await waitForMission(id, 90_000);
+      if (!done) return 'mission never finished';
+      const item = done.items[0];
+      if (item.status !== 'SUCCEEDED') return `restart ended ${item.status} (${item.last_reason})`;
+      if (item.attempts !== 1) return `restarted ${item.attempts} times for one request`;
+    },
+  },
+  {
     name: 'a mission does not retry what the agent itself reported as failed',
     async run() {
       const created = await api('POST', '/android/missions', {

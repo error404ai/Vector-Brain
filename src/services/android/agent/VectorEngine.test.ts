@@ -1,7 +1,7 @@
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV2 } from 'ai/test';
 import type { AndroidAgent } from '../eko/AndroidAgent';
-import { VectorEngine } from './VectorEngine';
+import { RESTART_SUMMARY, VectorEngine, restartedByTap } from './VectorEngine';
 
 type Chunk = Record<string, unknown>;
 type Slow = { chunks: Chunk[]; initialDelayInMs?: number; chunkDelayInMs?: number };
@@ -60,7 +60,7 @@ function scriptedModel(responses: Response[]) {
   return { model, prompts };
 }
 
-function fakeAgent(options: { tapResult?: () => { text: string; isError?: boolean }; foreground?: string } = {}) {
+function fakeAgent(options: { tapResult?: () => { text: string; isError?: boolean }; foreground?: string; tapDelayMs?: number } = {}) {
   const calls: Record<string, number> = {};
   const count = (name: string) => (calls[name] = (calls[name] ?? 0) + 1);
   let foreground = options.foreground ?? 'com.android.launcher3';
@@ -72,8 +72,18 @@ function fakeAgent(options: { tapResult?: () => { text: string; isError?: boolea
         parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } } },
         execute: async () => {
           count('tap_coordinate');
+          if (options.tapDelayMs) await new Promise((r) => setTimeout(r, options.tapDelayMs));
           const r = options.tapResult?.() ?? { text: 'Action succeeded: Tapped\n\nUPDATED SCREEN ELEMENTS:\nidx|type|label|flags|tap_at\n0|btn|OK|t|1,1' };
           return { content: [{ type: 'text', text: r.text }], isError: Boolean(r.isError) };
+        },
+      },
+      {
+        name: 'global_action',
+        description: 'global',
+        parameters: { type: 'object', properties: { action: { type: 'string' } } },
+        execute: async () => {
+          count('global_action');
+          return { content: [{ type: 'text', text: 'Action succeeded: Performed global power_dialog action' }] };
         },
       },
       {
@@ -114,7 +124,38 @@ function engineWith(responses: Response[], agentOptions?: Parameters<typeof fake
   return { engine, calls, messages, prompts };
 }
 
+describe('restart detection', () => {
+  const ok = { isError: false, resultText: 'Action succeeded: Gesture completed' };
+  it('reads a slow or dropped tap in the power menu as a restart', () => {
+    expect(restartedByTap(true, 'tap_element', 17_344, ok)).toBe(true);
+    expect(restartedByTap(true, 'tap_coordinate', 900, { isError: true, resultText: 'Action failed: TIMEOUT: Remote action timed out' })).toBe(true);
+  });
+  it('leaves ordinary taps alone', () => {
+    expect(restartedByTap(true, 'tap_element', 1_200, ok)).toBe(false);
+    expect(restartedByTap(false, 'tap_element', 17_344, ok)).toBe(false);
+    expect(restartedByTap(true, 'open_app', 17_344, ok)).toBe(false);
+  });
+});
+
 describe('VectorEngine', () => {
+  it('ends the run after the Restart tap instead of restarting the phone again', async () => {
+    const { engine, calls } = engineWith(
+      [toolCall('global_action', { action: 'POWER_DIALOG' }), toolCall('tap_coordinate', { x: 5, y: 5 }), toolCall('tap_coordinate', { x: 5, y: 5 }), done(true, 'restarted')],
+      { tapDelayMs: 60 },
+      { restartGapMs: 50 },
+    );
+    const result = await engine.run('restart the phone', 'r-restart');
+    expect(result).toMatchObject({ success: true, stopReason: 'done', result: RESTART_SUMMARY });
+    expect(calls.tap_coordinate).toBe(1);
+  });
+
+  it('a slow tap outside the power menu is just a slow tap', async () => {
+    const { engine, calls } = engineWith([toolCall('tap_coordinate', { x: 5, y: 5 }), done(true, 'Tapped OK')], { tapDelayMs: 60 }, { restartGapMs: 50, verify: false });
+    const result = await engine.run('tap ok', 'r-slow');
+    expect(result.result).toBe('Tapped OK');
+    expect(calls.tap_coordinate).toBe(1);
+  });
+
   it('acts, finishes with task_done and passes a rule check without a judge call', async () => {
     const { engine, calls, messages } = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')]);
     const result = await engine.run('open YouTube', 'r1');

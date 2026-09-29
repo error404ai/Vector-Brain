@@ -25,6 +25,10 @@ export class MissionTargetMissing extends AppError {
 
 /** Total tries per phone: the first run plus two retries. */
 const MAX_ATTEMPTS = 3;
+/** A task that restarts the phone (English / Hinglish / Hindi). */
+const RESTART_TASK = /\b(restart|reboot)\b|रीस्टार्ट|रिस्टार्ट/i;
+/** How a run ends when its phone goes down to restart. */
+const RESTART_DROP = new Set(['DEVICE_OFFLINE', 'INTERRUPTED', 'TIMEOUT', 'STALLED', 'TASK_MISSING']);
 /** Most phones one mission may drive, whatever the request says. */
 const MAX_MISSION_DEVICES = 50;
 const TICK_MS = Number(process.env.MISSION_TICK_MS) || 3000;
@@ -699,6 +703,17 @@ export class MissionService {
       item.next_attempt_at = new Date(Date.now() + OFFLINE_POLL_MS);
       await this.itemRepo.save(item);
       Logger.info(`[Mission] #${mission.id} item ${item.id} waiting for its phone to come back online`);
+      return;
+    }
+
+    // A restart task: the phone dropping off mid-run IS the restart. Counting it
+    // as a failure retried the run, and each retry restarted the phone again.
+    if (RESTART_TASK.test(mission.prompt ?? mission.request) && !options.neverStarted && RESTART_DROP.has(reason)) {
+      item.status = 'SUCCEEDED';
+      item.last_reason = null;
+      item.last_message = 'The phone went offline to restart; it reconnects by itself.';
+      item.next_attempt_at = null;
+      await this.itemRepo.save(item);
       return;
     }
 

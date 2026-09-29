@@ -27,9 +27,29 @@ export interface VectorEngineOptions {
   callMaxMs?: number;
   /** Used for the rest of the run when the main model is rate-limited or out of quota. */
   fallback?: { model: LanguageModel; label: string };
+  /** A tap in the power menu that takes this long (ms) means the phone restarted. */
+  restartGapMs?: number;
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
+
+/** Taps answer in 1–3 s; a tap in the power menu that takes longer than this rebooted the phone. */
+const RESTART_GAP_MS = 8000;
+const TAP_TOOLS = new Set(['tap_coordinate', 'tap_element', 'click_node', 'long_press']);
+export const RESTART_SUMMARY = 'Restart sent: the phone went offline to restart and reconnects by itself in a minute or two.';
+
+/**
+ * Did this tap restart the phone? It was made in the power menu and either
+ * took far longer than a tap does (the phone went down mid-answer) or never
+ * came back. The screen check cannot tell — it compares against the frame from
+ * before the restart — so without this the agent saw "no change" and tapped
+ * Restart again: three restarts for one request.
+ */
+export function restartedByTap(powerMenuOpen: boolean, toolName: string, tookMs: number, result: { isError: boolean; resultText: string }, gapMs = RESTART_GAP_MS): boolean {
+  if (!powerMenuOpen || !TAP_TOOLS.has(toolName)) return false;
+  if (tookMs >= gapMs) return true;
+  return result.isError && /TIMEOUT|timed out|not connected|disconnected|offline|socket/i.test(result.resultText);
+}
 const MIN_RECENT_STEPS = 3;
 /** Attempts per model call; only the model request is retried, never a phone action. */
 const MODEL_ATTEMPTS = 3;
@@ -147,6 +167,8 @@ export class VectorEngine implements AgentEngine {
   private readonly tools: Tool[];
   private readonly toolSet: ToolSet;
   private callCounter = 0;
+  /** The last action opened the power menu (and only taps followed). */
+  private powerMenuOpen = false;
   private model: LanguageModel;
   private onFallback = false;
 
@@ -246,6 +268,7 @@ export class VectorEngine implements AgentEngine {
       };
 
       let done: { success: boolean; summary: string } | null = null;
+      let restarted = false;
       for (const c of calls) {
         if (signal.aborted) return this.aborted();
         if (c.toolName === TASK_DONE) {
@@ -257,7 +280,13 @@ export class VectorEngine implements AgentEngine {
         const thought = [turn.reasoning, turn.text].filter(Boolean).join(' ').trim();
         await emit({ type: 'tool_use', toolCallId: callId, toolName: c.toolName, params: c.input ?? {} });
         await bookUsage();
+        const began = Date.now();
         const record = await this.executeTool(c.toolName, c.input, callId, thought.slice(-600));
+        if (restartedByTap(this.powerMenuOpen, c.toolName, Date.now() - began, record, this.options.restartGapMs)) restarted = true;
+        this.powerMenuOpen =
+          c.toolName === 'global_action'
+            ? !record.isError && /POWER_DIALOG/i.test(JSON.stringify(c.input ?? {}))
+            : this.powerMenuOpen && TAP_TOOLS.has(c.toolName);
         await emit({
           type: 'tool_result',
           toolCallId: callId,
@@ -266,8 +295,15 @@ export class VectorEngine implements AgentEngine {
           toolResult: { content: [{ type: 'text', text: record.resultText }], isError: record.isError },
         });
         steps.push(record);
+        if (restarted) break;
       }
       await bookUsage();
+
+      // The phone is rebooting: the run is done, and nothing may tap Restart again.
+      if (restarted) {
+        await emit({ type: 'agent_result', result: RESTART_SUMMARY });
+        return { success: true, stopReason: 'done', result: RESTART_SUMMARY, verification: { status: 'unverified', method: 'none', reason: 'The phone is restarting', retries: 0 } };
+      }
 
       if (!done && calls.length === 0) {
         // The model answered in text instead of calling task_done; take it as
