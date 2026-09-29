@@ -47,7 +47,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendIcon from '@mui/icons-material/Send';
 import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
-import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
+import { useGetFleetStateQuery, useRefreshDeviceNetworkMutation } from '@/RTKService/androidService/androidService';
 import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKService/androidService/proxyService';
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
@@ -68,6 +68,8 @@ import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
 import FileDropCard from '@/components/mission/FileDropCard';
 import AnswerCard from '@/components/mission/AnswerCard';
+import { AlertsChip, AlertsSheet } from '@/components/mission/AlertsSheet';
+import { fleetAlerts } from '@/components/mission/alertRules';
 import { MentionHighlighter, MentionMenu, MentionText } from '@/components/mission/MentionUI';
 import { mentionOptions, typedMention } from '@/components/mission/mentions';
 import { PauseButton, PausedGlyph, PausedProgress, ResumeButton } from '@/components/mission/MissionPause';
@@ -2022,6 +2024,11 @@ export default function MissionControlPage() {
     return { phones: [...new Set(phones.split('\u0001').filter(Boolean))], tags: tags.split('\u0001').filter(Boolean) };
   }, [vocabKey]);
 
+  // Phones whose IP, language, timezone, clock or SIM needs a look.
+  const alerts = useMemo(() => fleetAlerts(fleetData?.data?.devices ?? []), [fleetData]);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [refreshNetwork, { isLoading: refreshingNetwork }] = useRefreshDeviceNetworkMutation();
+
   // A file waiting in the composer, and the phones it would go to right now.
   const [attached, setAttached] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -2392,6 +2399,27 @@ export default function MissionControlPage() {
       )}
       </Box>
 
+      {alertsOpen && (
+        <AlertsSheet
+          alerts={alerts}
+          refreshing={refreshingNetwork}
+          onClose={() => setAlertsOpen(false)}
+          onRefresh={async () => {
+            try {
+              const res = await refreshNetwork({}).unwrap();
+              toast.success(`Asked ${res.data.asked} phones to check in${res.data.offline ? ` (${res.data.offline} offline)` : ''}.`);
+            } catch (error) {
+              toast.error(errorMessage(error));
+            }
+          }}
+          onFix={(command) => {
+            setInput(`${command} `);
+            setAlertsOpen(false);
+            inputRef.current?.focus();
+          }}
+        />
+      )}
+
       {mention && suggestions.length > 0 && (
         <MentionMenu
           trigger={mention.trigger}
@@ -2443,6 +2471,7 @@ export default function MissionControlPage() {
         <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
           <AttachChip onPick={attachFile} />
+          <AlertsChip count={new Set(alerts.map((a) => a.phone)).size} open={alertsOpen} onClick={() => setAlertsOpen((v) => !v)} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
           <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
           <RotationSwitch />
