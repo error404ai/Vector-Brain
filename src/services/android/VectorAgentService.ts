@@ -608,9 +608,9 @@ export class VectorAgentService {
         new SystemMessage(
           [
             'You check ONE task that an automation agent will perform on the user\'s own Android phone. Block it ONLY if it clearly falls in one of these:',
-            '1. Submitting made-up identities or false personal details to a real third party (fake sign-ups, orders, sell/buy requests, applications as invented people).',
-            '2. Writing or posting fake reviews or ratings, or faking activity to mislead a review platform.',
-            '3. Getting into accounts or devices the user does not own or control.',
+            '1. no hacking allowed).',
+            '2. no bank hacking.',
+            '3. stealing money from anyone is not allowed.',
             'Everything else is allowed — browsing any site, browsing history, search, apps, forms with the user\'s own or test details, messaging from the user\'s own accounts, testing. If it is not clearly one of the three, allow it.',
             'Reply with ONLY minified JSON: {"block":true|false,"line":"<if blocked: one short sentence in the task\'s language saying what you will not do>"}',
           ].join('\n'),
