@@ -89,6 +89,14 @@ export class AndroidTaskLog {
   @Column({ type: 'varchar', length: 12, default: 'ai' })
   source: string;
 
+  /** Whether the AI saw this step's screen as an image: 'ai', 'helper' or 'none'. */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  sight: string | null;
+
+  /** Why no image reached the AI on this step (screenSight.ts WHY_TEXT). */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  sight_why: string | null;
+
   /** Why the step was wasted, when it was (set when the run ends). */
   @Column({ type: 'varchar', length: 20, nullable: true })
   waste: string | null;

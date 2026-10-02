@@ -6,6 +6,7 @@
  */
 import { ease, reducedMotion, typingDot } from '@/components/mission/motion';
 import type { FeedStep, StepKind } from './steps';
+import { StepSightMark } from './sight';
 import AppsRoundedIcon from '@mui/icons-material/AppsRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import HourglassEmptyRoundedIcon from '@mui/icons-material/HourglassEmptyRounded';
@@ -165,6 +166,7 @@ export function StepFeed({
                 <Typography component="span" sx={{ fontSize: compact ? 14 : 15, fontWeight: 800, color: step.failed ? '#b91c1c' : 'text.primary', minWidth: 0, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                   {step.target}
                 </Typography>
+                <StepSightMark sight={step.sight} />
                 {step.failed && (
                   <Typography component="span" sx={{ fontSize: 11.5, fontWeight: 700, color: '#b91c1c', bgcolor: '#fee2e2', px: 1, py: 0.25, borderRadius: 99, whiteSpace: 'nowrap' }}>
                     Failed

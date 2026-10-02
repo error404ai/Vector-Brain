@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { runSightLine } from './screenSight';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { Mission, MissionTargetMode } from '@/entities/Mission';
 import { MissionItem } from '@/entities/MissionItem';
@@ -668,6 +669,8 @@ export class MissionService {
       return;
     }
     if (task.status === 'RUNNING' || task.status === 'QUEUED') return;
+    // Kept on the item: the run id is cleared when it fails, the card still shows what the AI saw.
+    item.sight = task.sight ?? null;
 
     if (task.status === 'SUCCEEDED') {
       item.status = 'SUCCEEDED';
@@ -849,6 +852,8 @@ export class MissionService {
         last_reason: item.last_reason,
         reason_text: item.last_reason ? PLAIN_REASON[item.last_reason] ?? 'failed' : null,
         last_message: item.last_message,
+        sight: item.sight ?? null,
+        sight_line: runSightLine(item.sight),
         next_attempt_at: item.next_attempt_at,
         /** While the phone is offline: until when the mission waits for it. */
         waiting_until: item.status === 'PENDING' && item.waiting_since ? new Date(item.waiting_since.getTime() + offlineWaitFor(mission)) : null,

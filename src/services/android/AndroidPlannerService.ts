@@ -1,4 +1,5 @@
 import { modelErrorText } from '@/services/ai/modelErrors';
+import { addSight, emptyRunSight, runSightLine, sightCapability, type SightWhy } from './screenSight';
 import { AgentTask, type AgentTaskStatus } from '@/entities/AgentTask';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { AndroidStepStatus, AndroidTaskLog } from '@/entities/AndroidTaskLog';
@@ -1002,6 +1003,23 @@ Use the current visible Android screen and UI state as context. Continue from wh
     };
   }
 
+  /** The fleet default model, its vision helper and the screenshot setting, as the next run would use them. */
+  async sightStatus(userId: number) {
+    const settings = await this.engineSettings(userId);
+    const config = await this.aiConfigService.resolveActiveConfig(userId);
+    const modelSees = config ? await modelSeesImages(config.provider, config.model).catch(() => false) : false;
+    const helper = !modelSees && settings.vision_config_id ? await this.aiConfigService.resolveConfigById(userId, settings.vision_config_id).catch(() => null) : null;
+    const helperSees = helper ? await modelSeesImages(helper.provider, helper.model).catch(() => false) : false;
+    return {
+      model: config?.model ?? null,
+      model_sees: modelSees,
+      helper_model: helper?.model ?? null,
+      helper_sees: helperSees,
+      screenshots: settings.screenshots ?? 'stuck',
+      capability: sightCapability(modelSees, helperSees),
+    };
+  }
+
   async setEngineSettings(
     userId: number,
     input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null },
@@ -1203,6 +1221,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
           })
         : undefined;
     if (grounder) Logger.info(`[AndroidPlanner] Task ${agentTask.id}: screens the element list cannot describe are read by ${helperConfig?.model}`);
+    // Per step and for the run: did the AI see the screen as an image (screenSight.ts).
+    const runSight = emptyRunSight(aiConfig.model, vision, grounder ? helperConfig?.model ?? null : null);
+    const sightWhys = new Map<SightWhy, number>();
     // The backup model, for when the main one is rate-limited or out of quota.
     const fallbackConfig =
       engineSettings.fallback_config_id && engineSettings.fallback_config_id !== aiConfig.id
@@ -1411,6 +1432,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
             const isError = toolResult?.isError;
             const textPart = toolResult?.content?.find((c) => c.type === 'text');
             const textContent = (textPart && 'text' in textPart ? textPart.text : '') || '';
+            // Read once per result; replayed steps (no model) carry none.
+            const stepSight = androidAgent.sight;
+            androidAgent.sight = null;
+            if (stepSight) addSight(runSight, stepSight, sightWhys);
 
             consecutiveFailures = isError ? consecutiveFailures + 1 : 0;
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -1424,6 +1449,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
               }
               pendingTapPx = null;
               currentTaskLog.result_message = stripScreenDump(textContent);
+              if (stepSight) {
+                currentTaskLog.sight = stepSight.seen;
+                currentTaskLog.sight_why = stepSight.why ?? null;
+              }
               currentTaskLog.duration_ms = Date.now() - stepStartTime;
               currentTaskLog.ui_tree_snapshot = lastUiTree || currentTaskLog.ui_tree_snapshot;
               currentTaskLog.package_after = lastForegroundApp ?? null;
@@ -1445,6 +1474,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
               result: textContent,
               error: isError ? textContent : undefined,
               foregroundApp: lastForegroundApp,
+              sight: stepSight,
+              runSight,
             });
             lastResultAt = Date.now();
           } else if (message.type === 'agent_result') {
@@ -1712,6 +1743,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // Keep just the final frame (one per task) so the card can show each
       // phone's last screen after the task ends, even after a reload.
       if (lastScreenshot) agentTask.final_screenshot = lastScreenshot;
+      agentTask.sight = runSight;
       if (!this.shuttingDown) await this.agentTaskRepo.save(agentTask);
 
       if (!wasCancelled) {
@@ -1722,6 +1754,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
           message: agentTask.message,
           totalSteps: stepCount,
           reasonCode: agentTask.reason_code,
+          sight: runSight,
+          sightLine: runSightLine(runSight),
         });
       }
     } catch (err: any) {
@@ -1740,12 +1774,15 @@ Use the current visible Android screen and UI state as context. Continue from wh
         agentTask.status = 'FAILED';
         agentTask.finished_at = new Date();
         agentTask.lease_until = null;
+        agentTask.sight = runSight;
         await this.agentTaskRepo.save(agentTask);
         this.gatewayService.broadcastToUser(userId, 'task:error', {
           taskId: agentTask.id,
           deviceId: deviceDbId,
           error: agentTask.message,
           reasonCode: agentTask.reason_code,
+          sight: runSight,
+          sightLine: runSightLine(runSight),
         });
       }
     } finally {

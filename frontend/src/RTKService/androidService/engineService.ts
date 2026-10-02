@@ -17,6 +17,16 @@ export interface EngineSettings {
   screenshots: ScreenshotMode;
 }
 
+/** sees: the model reads images; helper: a vision helper reads them for it; blind: no image reaches the AI. */
+export interface AgentSightStatus {
+  model: string | null;
+  model_sees: boolean;
+  helper_model: string | null;
+  helper_sees: boolean;
+  screenshots: ScreenshotMode;
+  capability: 'sees' | 'helper' | 'blind';
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tag types are not declared centrally (same as the other services)
 const TAG = 'AGENT_ENGINE' as any;
 
@@ -27,6 +37,11 @@ export const engineService = baseApi.injectEndpoints({
       query: () => ({ url: '/android/agent/engine', method: 'GET' }),
       providesTags: [TAG],
     }),
+    /** Before a run: can the AI see the phone's screen with the current model, helper and setting. */
+    getAgentSight: builder.query<{ data: AgentSightStatus }, void>({
+      query: () => ({ url: '/android/agent/sight', method: 'GET' }),
+      providesTags: [TAG],
+    }),
     setAgentEngine: builder.mutation<{ data: EngineSettings }, { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null }>({
       query: (body) => ({ url: '/android/agent/engine', method: 'PUT', body }),
       invalidatesTags: [TAG],
@@ -34,4 +49,4 @@ export const engineService = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetAgentEngineQuery, useSetAgentEngineMutation } = engineService;
+export const { useGetAgentEngineQuery, useSetAgentEngineMutation, useGetAgentSightQuery } = engineService;

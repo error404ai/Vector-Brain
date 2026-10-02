@@ -1,4 +1,5 @@
 import { Agent } from '@eko-ai/eko';
+import { sightOfResult, type Sight } from '../screenSight';
 import { wrongPackageHint } from './playStoreLookup';
 import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
@@ -172,6 +173,8 @@ export interface AndroidAgentCallbacks {
 
 export class AndroidAgent extends Agent {
   private lastUiTree: string | null = null;
+  /** Whether the AI saw the screen as an image on the latest step. */
+  sight: Sight | null = null;
   private lastForegroundApp: string | null = null;
   private lastScreenshotBase64: string | null = null;
   /** The latest screen as elements, for tap_element and "what is at this point". */
@@ -863,6 +866,22 @@ export class AndroidAgent extends Agent {
         },
       },
     ];
+
+    // Every tool's result says whether the AI saw the screen as an image on
+    // this step (screenSight.ts); the run records it per step.
+    for (const tool of tools) {
+      const run = tool.execute.bind(tool);
+      tool.execute = async (...args: Parameters<typeof run>) => {
+        const result = await run(...args);
+        this.sight = sightOfResult(result as never, {
+          vision: Boolean(this.options.vision),
+          grounder: Boolean(this.options.grounder),
+          screenshots: this.options.screenshots,
+          hasFrame: Boolean(this.lastScreenshotBase64),
+        });
+        return result;
+      };
+    }
 
     super({
       name: 'AndroidAgent',

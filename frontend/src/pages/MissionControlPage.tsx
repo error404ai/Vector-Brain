@@ -1,4 +1,6 @@
 import { report } from '@/_helpers/clientDiagnostics';
+import { AgentSightChip, SightCounter, sumSight, type RunSight, type StepSight } from '@/components/mission/sight';
+import { useGetAgentSightQuery } from '@/RTKService/androidService/engineService';
 import authManager from '@/_helpers/authManager';
 import {
   useConfirmCommandMutation,
@@ -55,7 +57,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import AddIcon from '@mui/icons-material/Add';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
@@ -95,6 +97,8 @@ interface LiveStep {
   /** The action as sent: its type plus params (URL, text, target). */
   raw: Record<string, unknown> | null;
   at: number;
+  /** Arrives with the step's result: did the AI see the screen as an image. */
+  sight?: StepSight | null;
 }
 interface LiveFeed {
   frames: FrameMap;
@@ -104,6 +108,8 @@ interface LiveFeed {
   rounds: Record<number, { round: number; endsAt: number }>;
   /** Bumped when the server says a mission changed, so its card refetches. */
   missionPush: Record<number, number>;
+  /** Live screenshot totals per agent task id: how often the AI saw the screen. */
+  sight: Record<number, RunSight>;
 }
 
 const MAX_STEPS_KEPT = 40;
@@ -131,7 +137,7 @@ function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void, onNetworkInf
     pushedRef.current = onPushedReply;
     networkRef.current = onNetworkInfo;
   });
-  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {} });
+  const [feed, setFeed] = useState<LiveFeed>({ frames: {}, steps: {}, rounds: {}, missionPush: {}, sight: {} });
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -199,6 +205,28 @@ function useLiveFeed(onPushedReply?: (pushed: PushedReply) => void, onNetworkInf
               ...prev,
               steps: { ...prev.steps, [id]: [...(prev.steps[id] ?? []), step].slice(-MAX_STEPS_KEPT) },
             }));
+            break;
+          }
+          case 'task:step_result': {
+            const id = p.taskId;
+            if (typeof id !== 'number') break;
+            const index = Number(p.stepIndex) || 0;
+            const stepSight = p.sight && typeof p.sight === 'object' ? (p.sight as StepSight) : null;
+            const runSight = p.runSight && typeof p.runSight === 'object' ? (p.runSight as RunSight) : null;
+            setFeed((prev) => ({
+              ...prev,
+              steps: stepSight ? { ...prev.steps, [id]: (prev.steps[id] ?? []).map((s) => (s.index === index ? { ...s, sight: stepSight } : s)) } : prev.steps,
+              sight: runSight ? { ...prev.sight, [id]: runSight } : prev.sight,
+            }));
+            break;
+          }
+          case 'task:completed':
+          case 'task:error': {
+            const id = p.taskId;
+            if (typeof id === 'number' && p.sight && typeof p.sight === 'object') {
+              const runSight = p.sight as RunSight;
+              setFeed((prev) => ({ ...prev, sight: { ...prev.sight, [id]: runSight } }));
+            }
             break;
           }
           case 'task:round': {
@@ -580,6 +608,8 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
           <Typography sx={{ fontSize: 15.5, fontWeight: 800 }}>What {live.length > 1 ? current.device_name : 'the agent'} is doing</Typography>
           <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>{run.steps.length ? stepSummary(run.steps) : ''}</Typography>
+          <Box sx={{ flex: 1 }} />
+          <SightCounter run={(current.agent_task_id ? feed.sight[current.agent_task_id] : null) ?? current.sight ?? run.sight} />
         </Box>
         {run.loading && run.steps.length === 0 ? (
           <CircularProgress size={18} sx={{ alignSelf: 'flex-start', mt: 1 }} />
@@ -739,6 +769,11 @@ function RunResult({ item }: { item: MissionItem }) {
     <Box sx={{ borderRadius: 2.5, px: 1.75, py: 1.25, border: '1px solid', borderColor: ok ? '#bbf7d0' : '#fecaca', bgcolor: ok ? '#f0fdf4' : '#fef2f2' }}>
       <Typography sx={{ fontSize: 11, fontWeight: 800, letterSpacing: '.06em', color: ok ? '#15803d' : '#b91c1c', mb: 0.5 }}>{ok ? 'RESULT' : 'WHY IT STOPPED'}</Typography>
       <Typography sx={{ fontSize: 15, lineHeight: 1.5, color: ok ? '#14532d' : '#7f1d1d', whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{text}</Typography>
+      {item.sight_line && (
+        <Typography sx={{ mt: 0.75, fontSize: 12.5, fontWeight: 600, color: item.sight && !item.sight.ai && !item.sight.helper && !item.sight.model_sees && !item.sight.helper_model ? '#b91c1c' : '#64748b' }}>
+          {item.sight_line}
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -1044,7 +1079,10 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
             {mission.duration_seconds ? ` · for ${Math.round(mission.duration_seconds / 60)} min` : ''}
           </Typography>
         )}
-        <SummaryLine items={items} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <SummaryLine items={items} />
+          <SightCounter run={sumSight(items.map((i) => (i.agent_task_id ? feed.sight[i.agent_task_id] : null) ?? i.sight))} finished={!running && !paused} />
+        </Box>
         {paused && (
           <>
             <PausedProgress percent={percent} />
@@ -1885,6 +1923,13 @@ function getSpeechRecognition(): SRCtor | undefined {
 
 export default function MissionControlPage() {
   const [input, setInput] = useState('');
+  // Can the AI see the phone's screen on the next run (model, vision helper, setting)?
+  const { data: sightData } = useGetAgentSightQuery(undefined, { refetchOnFocus: true, refetchOnMountOrArgChange: true });
+  const sightStatus = sightData?.data ?? null;
+  const blindAcknowledged = useRef(false);
+  const [blindAsk, setBlindAsk] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const openVisionSettings = () => navigate('/settings#agent-engine');
   const [composerFocused, setComposerFocused] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -2209,6 +2254,11 @@ export default function MissionControlPage() {
     }
     const text = (override ?? input).trim();
     if (!text || sending) return;
+    // Screenshots are on but nothing can read them: say so once, before the run.
+    if (sightStatus?.capability === 'blind' && sightStatus.screenshots !== 'off' && !blindAcknowledged.current) {
+      setBlindAsk(text);
+      return;
+    }
     stopDictation();
     setInput('');
     stickRef.current = true; // sending always follows to the bottom
@@ -2498,6 +2548,30 @@ export default function MissionControlPage() {
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
           <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
           <RotationSwitch />
+          <AgentSightChip status={sightStatus} onFix={openVisionSettings} />
+          <Dialog open={blindAsk !== null} onClose={() => setBlindAsk(null)} maxWidth="xs" fullWidth>
+            <Box sx={{ p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography sx={{ fontWeight: 800, fontSize: 17 }}>The AI won't see the screenshots</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Screenshots are on, but {(sightStatus?.model ?? 'this model').split('/').pop()} can't read images and no vision helper is set. On screens the
+                element list can't describe (ChatGPT, games, web views) it will tap blind. Run anyway?
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <Button onClick={() => { setBlindAsk(null); openVisionSettings(); }}>Add vision helper</Button>
+                <Button
+                  variant="contained"
+                  onClick={() => {
+                    const text = blindAsk;
+                    blindAcknowledged.current = true;
+                    setBlindAsk(null);
+                    if (text) void send(text);
+                  }}
+                >
+                  Run anyway
+                </Button>
+              </Box>
+            </Box>
+          </Dialog>
           <Box sx={{ flex: 1 }} />
           {speechSupported && (
             <Tooltip title={listening ? 'Stop dictation' : 'Speak to type'}>

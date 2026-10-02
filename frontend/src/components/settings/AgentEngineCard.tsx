@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
 import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind, type ScreenshotMode } from '@/RTKService/androidService/engineService';
 import { isFreeModel } from '@/utils/modelMeta';
@@ -18,6 +19,12 @@ const SCREENSHOT_HELP: Record<ScreenshotMode, string> = {
  * tools, prompt, guards and recording; Run diagnostics compares them.
  */
 export default function AgentEngineCard() {
+  // Mission Control's "Add vision helper" links here: bring the card into view.
+  useEffect(() => {
+    if (window.location.hash !== '#agent-engine') return;
+    const timer = setTimeout(() => document.getElementById('agent-engine')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    return () => clearTimeout(timer);
+  }, []);
   const { data, isLoading } = useGetAgentEngineQuery();
   const [save, { isLoading: saving }] = useSetAgentEngineMutation();
   const settings = data?.data;
@@ -36,7 +43,7 @@ export default function AgentEngineCard() {
   };
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 3 }}>
+    <Card id="agent-engine" variant="outlined" sx={{ borderRadius: 3, scrollMarginTop: 80 }}>
       <CardContent>
         <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
           <MemoryIcon fontSize="small" color="action" />

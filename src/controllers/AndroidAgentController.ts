@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { runSightLine } from '@/services/android/screenSight';
 import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
@@ -25,6 +26,16 @@ export class AndroidAgentController {
   @Get('/engine')
   async getEngine(@CurrentUser({ required: true }) user: { userId: number }) {
     return { data: await this.plannerService.engineSettings(user.userId) };
+  }
+
+  /**
+   * Before a run: can the AI see the phone's screen with the current settings?
+   * capability 'sees' (the model reads images), 'helper' (a vision helper reads
+   * them for a text-only model) or 'blind' (no image reaches the AI at all).
+   */
+  @Get('/sight')
+  async getSight(@CurrentUser({ required: true }) user: { userId: number }) {
+    return { data: await this.plannerService.sightStatus(user.userId) };
   }
 
   /**
@@ -110,6 +121,7 @@ export class AndroidAgentController {
         total_duration_seconds: true,
         status: true,
         reason_code: true,
+        sight: true,
         started_at: true,
         finished_at: true,
         created_at: true,
@@ -203,11 +215,11 @@ export class AndroidAgentController {
    */
   @Get('/logs/:taskId/steps')
   async getTaskSteps(@Param('taskId') taskId: number, @CurrentUser({ required: true }) user: { userId: number }) {
-    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId }, select: ['id', 'status', 'message', 'total_steps'] });
+    const task = await this.agentTaskRepo.findOne({ where: { id: taskId, user_id: user.userId }, select: ['id', 'status', 'message', 'total_steps', 'sight'] });
     if (!task) throw new AppError('Task not found', 404);
     const rows = await this.taskLogRepo
       .createQueryBuilder('l')
-      .select(['l.id', 'l.step_index', 'l.action_type', 'l.action_payload', 'l.thought_reasoning', 'l.status', 'l.duration_ms', 'l.error_message', 'l.created_at'])
+      .select(['l.id', 'l.step_index', 'l.action_type', 'l.action_payload', 'l.thought_reasoning', 'l.status', 'l.duration_ms', 'l.error_message', 'l.created_at', 'l.sight', 'l.sight_why'])
       .where('l.agent_task_id = :taskId', { taskId })
       .orderBy('l.step_index', 'DESC')
       .addOrderBy('l.id', 'DESC')
@@ -217,7 +229,7 @@ export class AndroidAgentController {
     return {
       message: 'Task steps',
       data: {
-        task: { id: task.id, status: task.status, message: task.message, total_steps: task.total_steps },
+        task: { id: task.id, status: task.status, message: task.message, total_steps: task.total_steps, sight: task.sight ?? null, sight_line: runSightLine(task.sight) },
         steps: rows.reverse().map((l) => ({
           id: l.id,
           step_index: l.step_index,
@@ -230,6 +242,8 @@ export class AndroidAgentController {
           status: l.status,
           duration_ms: l.duration_ms,
           error: clip(l.error_message ?? null, 300),
+          sight: l.sight ?? null,
+          sight_why: l.sight_why ?? null,
           at: l.created_at,
         })),
       },

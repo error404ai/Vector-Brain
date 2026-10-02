@@ -1,3 +1,4 @@
+import type { RunSight } from '@/components/mission/sight';
 import { baseApi, TAGS } from '../baseApi';
 
 export type MissionStatus = 'RUNNING' | 'PAUSED' | 'DONE' | 'CANCELLED';
@@ -20,6 +21,9 @@ export interface MissionItem {
   next_attempt_at: string | null;
   /** While the phone is offline: until when the mission waits for it to reconnect. */
   waiting_until?: string | null;
+  /** The latest run's screenshot totals, and its one line ("AI saw 6 screenshots."). */
+  sight?: RunSight | null;
+  sight_line?: string | null;
 }
 
 export interface Mission {

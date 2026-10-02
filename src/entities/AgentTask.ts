@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
+import type { RunSight } from '../services/android/screenSight';
 import type { RunDiagnostics } from '@/services/android/runDiagnostics';
 import type { VerificationOutcome } from '@/services/android/agent/AgentEngine';
 import { User } from './User';
@@ -117,6 +118,10 @@ export class AgentTask {
   /** Where the run's steps and time went; written when the run ends (RunDiagnosticsService). */
   @Column({ type: 'json', nullable: true })
   diagnostics: RunDiagnostics | null;
+
+  /** Whether the AI saw the phone's screen as images in this run (screenSight.ts). */
+  @Column({ type: 'json', nullable: true })
+  sight: RunSight | null;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'user_id' })

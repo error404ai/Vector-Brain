@@ -1,3 +1,4 @@
+import type { RunSight } from '@/components/mission/sight';
 import { baseApi, TAGS } from '../baseApi';
 
 export interface AndroidDevice {
@@ -33,6 +34,9 @@ export interface TaskStepRow {
   status: 'PENDING' | 'EXECUTING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
   duration_ms: number;
   error: string | null;
+  /** Did the AI see this step's screen as an image ('ai' / 'helper' / 'none'). */
+  sight?: 'ai' | 'helper' | 'none' | null;
+  sight_why?: string | null;
   at: string;
 }
 
@@ -331,7 +335,7 @@ const androidApi = baseApi.injectEndpoints({
     }),
 
     /** A run's steps without screenshots, for the Mission Control step feed. */
-    getTaskSteps: builder.query<{ message: string; data: { task: { id: number; status: string; message: string | null; total_steps: number }; steps: TaskStepRow[] } }, number>({
+    getTaskSteps: builder.query<{ message: string; data: { task: { id: number; status: string; message: string | null; total_steps: number; sight?: RunSight | null; sight_line?: string | null }; steps: TaskStepRow[] } }, number>({
       query: (taskId) => ({ url: `/android/agent/logs/${taskId}/steps`, method: 'GET' }),
       keepUnusedDataFor: 120,
     }),

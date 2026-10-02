@@ -2564,6 +2564,15 @@ const scenarios = [
       }, 10_000);
       if (!diagnostics) return 'vector run has no diagnostics';
       if (!diagnostics.tokens_reported || diagnostics.llm_calls < 2) return `vector usage not recorded: ${JSON.stringify({ llm: diagnostics.llm_calls, tokens: diagnostics.prompt_tokens })}`;
+      // Whether the AI saw the screen: per step, for the run, and in the step feed.
+      const [[taskRow]] = await db.query('SELECT sight FROM agent_tasks WHERE id = ?', [vector.taskId]);
+      const runSight = typeof taskRow?.sight === 'string' ? JSON.parse(taskRow.sight) : taskRow?.sight;
+      if (!runSight || runSight.ai + runSight.helper + runSight.none < 1) return `run has no screenshot totals: ${JSON.stringify(runSight)}`;
+      const feed = (await api('GET', `/android/agent/logs/${vector.taskId}/steps`))?.data;
+      if (!feed?.steps?.some((st) => st.sight)) return 'no step in the feed says whether the AI saw the screen';
+      if (!feed.task?.sight_line) return 'the run has no "screenshots seen" line';
+      const sight = (await api('GET', '/android/agent/sight'))?.data;
+      if (!['sees', 'helper', 'blind'].includes(sight?.capability)) return `pre-run sight status missing: ${JSON.stringify(sight)}`;
     },
   },
   {

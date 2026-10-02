@@ -4,6 +4,7 @@
  */
 import { useGetTaskStepsQuery, type TaskStepRow } from '@/RTKService/androidService/androidService';
 import { useMemo } from 'react';
+import type { RunSight, StepSight } from './sight';
 
 /** A step as the server announces it live over the socket. */
 export interface LiveStepInput {
@@ -11,6 +12,8 @@ export interface LiveStepInput {
   thought: string;
   raw?: Record<string, unknown> | null;
   at: number;
+  /** Arrives with the step's result: did the AI see the screen as an image. */
+  sight?: StepSight | null;
 }
 
 export interface FeedStep {
@@ -23,6 +26,7 @@ export interface FeedStep {
   failed: boolean;
   error: string | null;
   at: number | null;
+  sight?: StepSight | null;
 }
 
 export type StepKind = 'app' | 'url' | 'tap' | 'type' | 'scroll' | 'nav' | 'wait' | 'look' | 'settings' | 'done' | 'other';
@@ -124,7 +128,7 @@ export function fromLive(step: LiveStepInput): FeedStep {
   const raw = step.raw ?? {};
   const type = str(raw.type);
   const d = describeStep(type, raw);
-  return { key: `n${step.index}`, n: step.index, ...d, thought: cleanThought(step.thought, type), failed: false, error: null, at: step.at };
+  return { key: `n${step.index}`, n: step.index, ...d, thought: cleanThought(step.thought, type), failed: false, error: null, at: step.at, sight: step.sight ?? null };
 }
 
 export function fromRow(row: TaskStepRow): FeedStep {
@@ -137,6 +141,7 @@ export function fromRow(row: TaskStepRow): FeedStep {
     failed: row.status === 'FAILED',
     error: row.error,
     at: Date.parse(row.at) || null,
+    sight: row.sight ? { seen: row.sight, why: (row.sight_why as StepSight['why']) ?? null } : null,
   };
 }
 
@@ -145,15 +150,20 @@ export function fromRow(row: TaskStepRow): FeedStep {
  * run shows them all) followed by what arrived live since. Fetched once per
  * run while it is visible; live steps keep it current after that.
  */
-export function useRunSteps(taskId: number | null, live: LiveStepInput[], enabled = true): { steps: FeedStep[]; loading: boolean; total: number | null } {
+export function useRunSteps(taskId: number | null, live: LiveStepInput[], enabled = true): { steps: FeedStep[]; loading: boolean; total: number | null; sight: RunSight | null } {
   const { data, isLoading } = useGetTaskStepsQuery(taskId ?? 0, { skip: !taskId || !enabled });
   const steps = useMemo(() => {
     const byIndex = new Map<number, FeedStep>();
     for (const row of data?.data.steps ?? []) byIndex.set(row.step_index, fromRow(row));
-    for (const step of live) if (!byIndex.has(step.index)) byIndex.set(step.index, fromLive(step));
+    for (const step of live) {
+      const known = byIndex.get(step.index);
+      if (!known) byIndex.set(step.index, fromLive(step));
+      // The fetched row may predate the step's result; the live one has its sight.
+      else if (!known.sight && step.sight) byIndex.set(step.index, { ...known, sight: step.sight });
+    }
     return [...byIndex.values()].sort((a, b) => a.n - b.n);
   }, [data, live]);
-  return { steps, loading: !!taskId && enabled && isLoading, total: data?.data.task.total_steps ?? null };
+  return { steps, loading: !!taskId && enabled && isLoading, total: data?.data.task.total_steps ?? null, sight: data?.data.task.sight ?? null };
 }
 
 /** One line a person can scan: "12 steps · 3 pages · 2 typed · 1 failed". */

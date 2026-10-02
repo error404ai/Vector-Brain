@@ -1,4 +1,5 @@
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Relation, UpdateDateColumn } from 'typeorm';
+import type { RunSight } from '../services/android/screenSight';
 import { Mission } from './Mission';
 
 /**
@@ -60,6 +61,10 @@ export class MissionItem {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  /** The latest run's screenshot totals (screenSight.ts), for the mission card. */
+  @Column({ type: 'json', nullable: true })
+  sight: RunSight | null;
 
   @ManyToOne(() => Mission, (mission) => mission.items, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'mission_id' })
