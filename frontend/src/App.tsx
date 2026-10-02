@@ -124,6 +124,8 @@ const router = createBrowserRouter([
       // GuestShell — that wraps its children in the narrow light card the
       // sign-in and sign-up forms are built around.
       { path: '/', lazy: lazy(pages.home) },
+      // Public docs, readable without an account.
+      { path: '/docs', lazy: lazy(pages.docs) },
       {
         Component: GuestShell,
         children: [

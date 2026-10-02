@@ -1,0 +1,468 @@
+/* FLEET docs. Scoped under .dx so nothing leaks into the app. Tokens follow the landing page. */
+.dx {
+  --paper: #f6f8fb;
+  --sheet: #ffffff;
+  --ink: #111827;
+  --body: #374151;
+  --graphite: #6b7280;
+  --rule: rgba(17, 24, 39, 0.1);
+  --blue: #2563eb;
+  --teal: #0f766e;
+  --wait: #cbd5e1;
+  --code-bg: #eef2f8;
+  --display: 'Archivo', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --text: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --g: clamp(16px, 4vw, 48px);
+  color-scheme: light;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--body);
+  font: 400 16.5px/1.65 var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+@media (prefers-color-scheme: dark) {
+  .dx {
+    --paper: #0a1020;
+    --sheet: #0f172a;
+    --ink: #eef2f8;
+    --body: #c3cad8;
+    --graphite: #8792a8;
+    --rule: rgba(226, 232, 240, 0.12);
+    --blue: #6b9bff;
+    --teal: #2dd4bf;
+    --wait: #334155;
+    --code-bg: #141d33;
+    color-scheme: dark;
+  }
+}
+.dx *,
+.dx *::before,
+.dx *::after {
+  box-sizing: border-box;
+}
+.dx a {
+  color: var(--blue);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.dx a:focus-visible,
+.dx .table:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.dx ::selection {
+  background: var(--blue);
+  color: #fff;
+}
+
+.dx-skip {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 50;
+  background: var(--ink);
+  color: var(--paper) !important;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+.dx-skip:focus {
+  top: 12px;
+}
+
+/* Top bar */
+.dx-top {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px var(--g);
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--rule);
+}
+.dx-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ink) !important;
+}
+.dx-brand b {
+  font: 800 24px/1 var(--display);
+  font-stretch: 62%;
+  letter-spacing: 0.02em;
+}
+.dx-brand span {
+  font-weight: 500;
+  color: var(--graphite);
+}
+.dx-top nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2.4vw, 26px);
+  font-size: 15px;
+}
+.dx-top nav a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.dx-top nav a:hover {
+  color: var(--blue);
+}
+.dx-top .dx-cta {
+  background: var(--ink);
+  color: var(--paper) !important;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.dx-top .dx-cta:hover {
+  background: var(--blue);
+}
+
+/* Hero: the title is set in the landing's condensed face and wipes in once. */
+.dx-hero {
+  padding: clamp(48px, 9vw, 120px) var(--g) clamp(28px, 5vw, 56px);
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  gap: clamp(20px, 3vw, 32px);
+}
+.dx-hero h1 {
+  margin: 0;
+  color: var(--ink);
+  font: 800 clamp(56px, 10vw, 140px) / 0.84 var(--display);
+  font-stretch: 62%;
+  text-transform: uppercase;
+  letter-spacing: -0.005em;
+}
+.dx-hero h1 span {
+  display: block;
+  clip-path: inset(0 100% 0 0);
+  animation: dx-wipe 900ms cubic-bezier(0.7, 0, 0.2, 1) forwards;
+}
+.dx-hero h1 span + span {
+  animation-delay: 160ms;
+}
+@keyframes dx-wipe {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.dx-lede {
+  max-width: 62ch;
+  font-size: clamp(17px, 1.6vw, 20px);
+  color: var(--body);
+}
+.dx-lede p {
+  margin: 0;
+}
+
+/* Body: lane rail + reading column */
+.dx-body {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--g) 96px;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: clamp(32px, 6vw, 96px);
+  align-items: start;
+}
+
+.dx-rail {
+  position: sticky;
+  top: 84px;
+}
+.dx-rail ol {
+  --fill: 0;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  position: relative;
+}
+/* The lane: a grey track, filled in blue up to the section being read. */
+.dx-rail ol::before,
+.dx-rail ol::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  width: 2px;
+  bottom: 18px;
+  background: var(--wait);
+  border-radius: 2px;
+}
+.dx-rail ol::after {
+  background: linear-gradient(var(--teal), var(--blue));
+  bottom: auto;
+  height: calc((100% - 36px) * var(--fill));
+  transition: height 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dx-rail li a {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 0;
+  color: var(--graphite);
+  text-decoration: none;
+  font-size: 15px;
+  line-height: 1.3;
+  transition: color 200ms;
+}
+.dx-rail li a:hover {
+  color: var(--ink);
+}
+.dx-rail i {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 2px solid var(--wait);
+  transition:
+    background 300ms,
+    border-color 300ms,
+    transform 300ms;
+}
+.dx-rail [data-state='done'] i {
+  background: var(--teal);
+  border-color: var(--teal);
+  box-shadow: inset 0 0 0 3px var(--paper);
+}
+.dx-rail [data-state='done'] a {
+  color: var(--body);
+}
+.dx-rail [data-state='running'] a {
+  color: var(--ink);
+  font-weight: 650;
+}
+.dx-rail [data-state='running'] i {
+  border-color: var(--blue);
+  background: var(--blue);
+  transform: scale(1.15);
+  animation: dx-pulse 1.8s ease-out infinite;
+}
+@keyframes dx-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+/* Reading column */
+.dx-content {
+  max-width: 72ch;
+  min-width: 0;
+}
+.dx-content section {
+  scroll-margin-top: 84px;
+  padding-top: 8px;
+}
+.dx-content section + section {
+  margin-top: 72px;
+  padding-top: 40px;
+  border-top: 1px solid var(--rule);
+}
+.dx-content h2 {
+  margin: 0 0 18px;
+  color: var(--ink);
+  font: 800 clamp(38px, 5vw, 60px) / 0.92 var(--display);
+  font-stretch: 62%;
+  text-transform: uppercase;
+}
+.dx-content h3 {
+  margin: 36px 0 10px;
+  color: var(--ink);
+  font: 700 21px/1.25 var(--text);
+  letter-spacing: -0.01em;
+  scroll-margin-top: 84px;
+}
+.dx-content h2 a,
+.dx-content h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.dx-content h2 a:hover,
+.dx-content h3 a:hover {
+  color: var(--blue);
+}
+.dx-content p,
+.dx-content ul,
+.dx-content ol {
+  margin: 0 0 14px;
+}
+.dx-content ul,
+.dx-content ol {
+  padding-left: 22px;
+}
+.dx-content li {
+  margin: 5px 0;
+  padding-left: 4px;
+}
+.dx-content li::marker {
+  color: var(--graphite);
+}
+.dx-content ol li::marker {
+  font-weight: 700;
+  color: var(--blue);
+}
+.dx-content strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+.dx-content .xref {
+  font-style: normal;
+  text-decoration: underline dotted;
+}
+.dx-content code {
+  font: 400 0.88em/1.4 var(--mono);
+  background: var(--code-bg);
+  color: var(--ink);
+  padding: 1px 5px;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+.dx-content pre {
+  margin: 0 0 18px;
+  padding: 16px 18px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--blue);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.dx-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.dx-content .table {
+  margin: 4px 0 20px;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--sheet);
+}
+.dx-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.dx-content th {
+  text-align: left;
+  color: var(--ink);
+  font-weight: 650;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.dx-content td {
+  padding: 10px 14px;
+  vertical-align: top;
+  border-top: 1px solid var(--rule);
+  min-width: 140px;
+}
+.dx-content tr:first-child td {
+  border-top: 0;
+}
+.dx-content td:first-child {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+.dx-foot {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  color: var(--graphite);
+  font-size: 14.5px;
+}
+.dx-foot p {
+  margin: 0 0 6px;
+}
+
+/* Phone width: the rail becomes a sticky row of stations under the top bar. */
+@media (max-width: 900px) {
+  .dx-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .dx-rail {
+    top: 57px;
+    z-index: 20;
+    margin: 0 calc(var(--g) * -1);
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--rule);
+  }
+  .dx-rail ol {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 10px var(--g);
+    scrollbar-width: none;
+  }
+  .dx-rail ol::-webkit-scrollbar {
+    display: none;
+  }
+  .dx-rail ol::before,
+  .dx-rail ol::after {
+    display: none;
+  }
+  .dx-rail li a {
+    white-space: nowrap;
+    gap: 8px;
+    padding: 6px 12px 6px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    font-size: 14px;
+    background: var(--sheet);
+  }
+  .dx-rail i {
+    width: 10px;
+    height: 10px;
+  }
+  .dx-rail [data-state='running'] a {
+    border-color: var(--blue);
+  }
+  .dx-content section,
+  .dx-content h3 {
+    scroll-margin-top: 120px;
+  }
+  .dx-top nav a:not(.dx-cta):first-child {
+    display: none;
+  }
+}
+@media (max-width: 420px) {
+  .dx-top nav {
+    gap: 12px;
+    font-size: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dx *,
+  .dx *::before,
+  .dx *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .dx-hero h1 span {
+    clip-path: none;
+  }
+}

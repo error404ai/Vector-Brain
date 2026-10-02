@@ -642,6 +642,10 @@ export default function HomePage() {
           </div>
           <div className="foot mono">
             <span>FLEET · by Vector Brain</span>
+            <span className="foot-links">
+              <Link to="/docs">Docs</Link>
+              <a href="/llms.txt">llms.txt</a>
+            </span>
             <span>Worldwide</span>
             <span>English + multilingual</span>
             <span>© {new Date().getFullYear()}</span>

@@ -151,6 +151,9 @@
 .fl .auth .ctl.solid:hover{background:var(--clay);color:var(--paper)}
 .fl .auth .ctl:hover{color:var(--clay)}
 .fl .auth small{color:#64748B}
+.fl .foot-links{display:flex;gap:18px}
+.fl .foot-links a{text-decoration:none}
+.fl .foot-links a:hover,.fl .foot-links a:focus-visible{color:var(--clay)}
 .fl .foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:110px;padding-top:16px;border-top:1px solid #1E293B;color:#64748B}
 .fl.nogl .fl-gl{display:none}
 .fl.nogl .stage.hero::before{content:"";position:absolute;right:12%;top:50%;width:min(170px,26vw);aspect-ratio:.485;transform:translateY(-50%) rotate(6deg);border-radius:22px;background:var(--ink);box-shadow:0 60px 40px -40px rgba(0,0,0,.35)}

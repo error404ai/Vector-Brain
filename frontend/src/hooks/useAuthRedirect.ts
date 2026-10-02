@@ -16,7 +16,7 @@ const HIDE_DELAY_MS = 150;
  * link has to open for a stranger with no session, and for a signed-in owner
  * without being pushed to the dashboard.
  */
-const openRoutePrefixes: string[] = [];
+const openRoutePrefixes: string[] = ['/docs'];
 
 export default function useAuthRedirect(skip: boolean = false) {
   const navigate = useNavigate();

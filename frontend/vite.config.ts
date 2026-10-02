@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
 // A build is always a production build. Vite takes NODE_ENV from the
 // environment, and a host that passes NODE_ENV=development into the build (as
@@ -9,9 +10,29 @@ import { defineConfig } from 'vite';
 // the performance timeline, which crashed Mission Control tabs.
 if (process.argv.includes('build')) process.env.NODE_ENV = 'production';
 
+/**
+ * /llms-full.txt is the docs page's own source (src/docs/docs.md), so AI tools
+ * read exactly what people read on /docs. Served in dev, emitted on build.
+ */
+function llmsFull(): Plugin {
+  const docs = fileURLToPath(new URL('./src/docs/docs.md', import.meta.url));
+  return {
+    name: 'llms-full',
+    configureServer(server) {
+      server.middlewares.use('/llms-full.txt', (_req, res) => {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end(readFileSync(docs, 'utf8'));
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'llms-full.txt', source: readFileSync(docs, 'utf8') });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), llmsFull()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
