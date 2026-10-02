@@ -1,4 +1,5 @@
 import { Agent } from '@eko-ai/eko';
+import { wrongPackageHint } from './playStoreLookup';
 import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
@@ -39,6 +40,8 @@ const PLAY_STORE = 'com.android.vending';
 const PACKAGE_NAME = /^[a-zA-Z][\w]*(\.[\w]+)+$/;
 const PRICE = /^(₹|\$|€|£|rs\.?\s?)\s?\d|^\d+([.,]\d{2})\s?(₹|\$|€|£)?$/i;
 const INSTALL_FAILED = /(can['’]t install|couldn['’]t install|can['’]t download|not enough (storage|space)|insufficient storage|isn['’]t compatible|not compatible with your device|not available (in your country|for your device|in your region)|item not found|this item isn['’]t available)/i;
+/** Xiaomi's full-screen pocket-mode warning: nothing opens until the sensor is uncovered. */
+const SENSOR_COVERED = /don['’]t cover the earphone area|do not cover the earpiece|proximity sensor (is )?covered/i;
 const NEEDS_USER = /(complete account setup|add (a )?payment method|verify it['’]s you|sign in to (continue|google play)|choose an account|parental (approval|controls))/i;
 
 /**
@@ -1149,7 +1152,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
 
     const cleared = isError ? '' : await this.clearObstacles();
     if (cleared) freshShot = undefined;
-    const extra = isError || skipObservation ? { note: '' } : await this.screenExtras(freshShot, stuck);
+    // A failed action still says when the phone is blocked (Xiaomi pocket mode).
+    const extra = skipObservation ? { note: '' } : isError ? { note: this.sensorNote() } : await this.screenExtras(freshShot, stuck);
 
     this.callbacks?.onStepExecuted?.({
       toolName,
@@ -1292,8 +1296,16 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * text-only model gets the elements a vision helper read off it, as rows
    * v1, v2… it can tap. Without either it is told so plainly.
    */
+  /** Set when Xiaomi's pocket-mode warning covers the screen: nothing works until it goes. */
+  private sensorNote(): string {
+    if (!this.screen || !SENSOR_COVERED.test(this.screen.elements.map((e) => e.label).join('\n'))) return '';
+    return '\n\nBLOCKED: the phone shows "Don\'t cover the earphone area" — its proximity sensor is covered (Xiaomi pocket mode). Nothing can be opened or tapped until the top of the phone is uncovered, or the user turns off Settings > Lock screen > Pocket mode / "Prevent accidental touches". Do not keep trying: finish, report this reason, and ask the user to fix it.';
+  }
+
   private async screenExtras(shot?: string, stuck: 'loop' | 'no_effect' | null = null): Promise<{ note: string; image?: string }> {
     if (!this.screen) return { note: '' };
+    const sensor = this.sensorNote();
+    if (sensor) return { note: sensor };
     const thin = isThin(this.screen);
     if (!thin && !stuck) return { note: '' };
     const stuckNote =
@@ -1462,6 +1474,10 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
 
     const before = await this.installedPackages();
     if (before?.has(packageName)) return finish(true, `VERIFIED: ${name} (${packageName}) is already installed on this phone.`);
+    // A guessed package (com.openai.chat for ChatGPT) is caught here, before
+    // the phone opens a page that does not exist.
+    const wrong = await wrongPackageHint(packageName, name);
+    if (wrong) return finish(false, wrong);
 
     const opened = await this.gatewayService.executeAction(this.hardwareDeviceId, {
       type: 'OpenUrl',
@@ -1490,6 +1506,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (price) return finish(false, `${name} is a paid app ("${price.label}"). Buying needs the user's approval — do not press it; tell the user.`);
       const install = this.findButton(/^install$/i);
       if (!install) {
+        const wrongPackage = await wrongPackageHint(packageName, name);
+        if (wrongPackage) return finish(false, wrongPackage);
         return finish(false, `The Play Store page for ${packageName} has no Install button${NEEDS_USER.test(pageText()) ? ' — it is asking for something only the user can do (sign-in, account setup or payment)' : ''}. Read the screen: the app may not exist under that package name, or the page needs the user.`);
       }
       const tapped = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: install.px.x, y: install.px.y });
