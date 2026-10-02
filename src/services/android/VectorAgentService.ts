@@ -114,6 +114,8 @@ export interface AgentContext {
   /** 'v2': model plans, backend (judge) blocks; 'v1': model decides (default). */
   policy?: 'v1' | 'v2';
   judge?: PolicyJudge;
+  /** false for scripted judges in tests, whose rules change between runs. */
+  cacheVerdicts?: boolean;
   /** Fires when the user presses Stop: no further model call or tool runs. */
   stop?: AbortSignal;
 }
@@ -140,9 +142,45 @@ export interface AgentResult {
   skipped?: { instruction: string; line: string }[];
   /** Policy v2: tasks accepted this turn, run together once the model is done. */
   planned?: { instruction: string; deviceIds: number[]; minutes: number }[];
+  /** The reply line is written in code (the model said nothing after handing over tasks). */
+  writtenInCode?: boolean;
   /** One point-in-time screenshot per phone the user asked to see. */
   screens?: PhoneShot[];
   calls: { name: string; args: Record<string, unknown>; result: string }[];
+  /** Where the reply's time went: each model call and each policy check, in ms. */
+  timing?: { model_ms: number[]; check_ms: number[]; total_ms: number };
+}
+
+/** Tool results that need no model turn after them: the reply is written in code. */
+const DONE_STATUSES = new Set(['accepted', 'needs_confirmation', 'skipped_by_policy']);
+
+/** How long a policy verdict for the same instruction is reused (Retry, "ok same again"). */
+const VERDICT_TTL_MS = 10 * 60_000;
+const verdictCache = new Map<string, { at: number; verdict: Promise<{ block: boolean; line?: string } | null> }>();
+
+/** The `status` of a tool result, or '' when it has none. */
+function statusOf(output: string | undefined): string {
+  try {
+    const parsed = JSON.parse(output ?? '') as { status?: unknown };
+    return typeof parsed.status === 'string' ? parsed.status : '';
+  } catch {
+    return '';
+  }
+}
+
+/** The instruction a run_mission call will actually run, report line included. */
+function missionInstruction(args: Record<string, unknown>): string {
+  let instruction = String(args.instruction ?? '').trim();
+  if (instruction && args.collect_emails === true && !instruction.includes('EMAILS:')) instruction = `${instruction}\n${EMAIL_REPORT_INSTRUCTION}`;
+  return instruction;
+}
+
+/** The one-line reply after tasks were handed over, in the user's language. */
+export function startedText(lang: 'English' | 'Hindi' | 'Hinglish', phones: number): string {
+  const n = `${phones} phone${phones === 1 ? '' : 's'}`;
+  if (lang === 'Hinglish') return `${n} par shuru kar diya — neeche dekho.`;
+  if (lang === 'Hindi') return `${phones} फ़ोन पर शुरू कर दिया — नीचे देखिए।`;
+  return `Started on ${n} — watch it below.`;
 }
 
 /** A single phone's current screen for the chat: the image, or why there is none. */
@@ -434,7 +472,8 @@ export class VectorAgentService {
   }
 
   async run(brain: Brain, message: string, ctx: AgentContext): Promise<AgentResult> {
-    const result: AgentResult = { text: '', calls: [] };
+    const result: AgentResult = { text: '', calls: [], timing: { model_ms: [], check_ms: [], total_ms: 0 } };
+    const started = Date.now();
     try {
       return await this.runTurns(brain, message, ctx, result);
     } catch (error) {
@@ -443,6 +482,11 @@ export class VectorAgentService {
       // already started (the Stop raced the start) is cancelled too.
       await this.cancelStarted(ctx.userId, result);
       throw error;
+    } finally {
+      if (result.timing) {
+        result.timing.total_ms = Date.now() - started;
+        Logger.info(`[VectorAgent] reply in ${result.timing.total_ms} ms — model ${result.timing.model_ms.join('+') || 0} ms, checks ${result.timing.check_ms.join('+') || 0} ms`);
+      }
     }
   }
 
@@ -479,8 +523,10 @@ export class VectorAgentService {
     for (let i = 0; i < MAX_MODEL_TURNS; i += 1) {
       let turn: BrainTurn;
       halt();
+      const modelStart = Date.now();
       try {
         turn = await untilStopped(brain(messages, ctx.stop), ctx.stop);
+        result.timing?.model_ms.push(Date.now() - modelStart);
       } catch (error) {
         if (error instanceof ChatStopped) throw error;
         Logger.warn('[VectorAgent] model call failed:', error);
@@ -527,15 +573,34 @@ export class VectorAgentService {
         break;
       }
       messages.push(new AIMessage({ content: turn.text, tool_calls: turn.calls.map((c) => ({ id: c.id, name: c.name, args: c.args, type: 'tool_call' as const })) }));
+      // Every task in this turn is checked at once, not one after another.
+      if (ctx.policy === 'v2' && ctx.judge) {
+        for (const call of turn.calls) if (call.name === 'run_mission') void this.verdictFor(ctx, missionInstruction(call.args ?? {}), result).catch(() => undefined);
+      }
+      const outputs: string[] = [];
       for (const call of turn.calls) {
         halt();
         const output = await this.execute(call, ctx, result, message);
+        outputs.push(output);
         result.calls.push({ name: call.name, args: call.args, result: output });
         messages.push(new ToolMessage({ content: output, tool_call_id: call.id }));
       }
       // A question to the user ends the turn — wait for their answer.
       if (result.ask) {
         result.text = result.ask.question;
+        break;
+      }
+      // Tasks handed over and nothing else to say: the reply is written in
+      // code instead of a second model call just to say "started".
+      if (ctx.policy === 'v2' && turn.calls.every((c, k) => c.name === 'run_mission' && DONE_STATUSES.has(statusOf(outputs[k])))) {
+        const own = stripRecords(turn.text);
+        const statuses = outputs.map(statusOf);
+        const nothingRuns = statuses.every((st) => st === 'skipped_by_policy');
+        const waits = statuses.includes('needs_confirmation');
+        // The model's own words are kept only when they can't mislead: never
+        // "started" for something that waits for Confirm or was removed.
+        if (own && !REFUSAL.test(own) && !nothingRuns && !(waits && (claimsStart(own) || claimsActivity(own)))) result.text = own;
+        result.writtenInCode = !result.text;
         break;
       }
     }
@@ -547,9 +612,14 @@ export class VectorAgentService {
       const lines = result.skipped.map((s) => `Skipped "${s.instruction.slice(0, 60)}${s.instruction.length > 60 ? '…' : ''}" — ${oneLineRefusal(s.line)}`);
       result.text = [result.text && !REFUSAL.test(result.text) ? result.text : '', ...lines].filter(Boolean).join('\n');
     }
+    // A Confirm card gets its own fixed "waiting for your OK" line later.
+    if (!result.text && result.writtenInCode && result.mission && !result.proposal) {
+      const phones = new Set((result.planned ?? []).flatMap((p) => p.deviceIds)).size;
+      result.text = startedText(lang, phones);
+    }
     if (!result.text) {
       result.text = result.proposal
-        ? 'This needs your confirmation.'
+        ? 'Waiting for your OK — nothing has started yet. Tap Confirm or reply "ok".'
         : result.mission
           ? 'Started — watch it below.'
           : result.cancelledPending
@@ -596,6 +666,34 @@ export class VectorAgentService {
       result.mission = missions[0];
       result.extraMissions = missions.slice(1);
     }
+  }
+
+  /**
+   * The policy verdict for one instruction: started once per turn for all
+   * tasks together, and reused for the same instruction for a few minutes
+   * (Retry, "same again"). A failed check is not kept, so it is tried again.
+   */
+  private verdictFor(ctx: AgentContext, instruction: string, result: AgentResult): Promise<{ block: boolean; line?: string } | null> {
+    const judge = ctx.judge;
+    if (!judge) return Promise.resolve(null);
+    const key = `${ctx.userId}\u0000${instruction}`;
+    const now = Date.now();
+    for (const [k, v] of verdictCache) if (now - v.at > VERDICT_TTL_MS) verdictCache.delete(k);
+    const cached = ctx.cacheVerdicts === false ? undefined : verdictCache.get(key);
+    if (cached) return cached.verdict;
+    const started = Date.now();
+    const verdict = judge(instruction).then(
+      (v) => {
+        result.timing?.check_ms.push(Date.now() - started);
+        return v;
+      },
+      () => {
+        verdictCache.delete(key);
+        return null;
+      },
+    );
+    verdictCache.set(key, { at: now, verdict });
+    return verdict;
   }
 
   /** The real policy check: the chat model with a narrow rubric, no tools. */
@@ -658,11 +756,10 @@ export class VectorAgentService {
           return JSON.stringify(await this.fleetSnapshot(ctx.userId));
 
         case 'run_mission': {
-          let instruction = String(args.instruction ?? '').trim();
-          if (!instruction) return JSON.stringify({ error: 'instruction is empty' });
           // The fixed report line is what the server saves; added by code so
           // it is there whatever the model wrote.
-          if (args.collect_emails === true && !instruction.includes('EMAILS:')) instruction = `${instruction}\n${EMAIL_REPORT_INSTRUCTION}`;
+          const instruction = missionInstruction(args);
+          if (!instruction) return JSON.stringify({ error: 'instruction is empty' });
           const deviceIds = await this.resolvePhones(ctx, String(args.phones ?? ''));
           if (!deviceIds.length) {
             return JSON.stringify({ error: 'No ready phones matched. Ask the user which phones, with ask_user.' });
@@ -676,7 +773,7 @@ export class VectorAgentService {
             // is nothing to check against, so the task runs rather than being
             // wrongly refused — the guardrail is off, not inverted into a block.
             if (ctx.judge) {
-              const verdict = await ctx.judge(instruction).catch(() => null);
+              const verdict = await this.verdictFor(ctx, instruction, result);
               if (!verdict || verdict.block) {
                 const line = verdict?.line?.trim() || "Couldn't run the safety check for this step — try again.";
                 (result.skipped ??= []).push({ instruction, line });

@@ -230,7 +230,8 @@ export function withLocationChecks(info: DeviceNetworkInfo | null | undefined, n
 export function networkForChat(stored: DeviceNetworkInfo | null | undefined): Record<string, unknown> | null {
   const info = withLocationChecks(stored);
   if (!info) return null;
-  return {
+  // Empty fields are left out: this goes into every chat call for every phone.
+  return dropEmpty({
     public_ip: info.public_ip,
     public_country: info.public_country,
     direct_ip: info.direct_ip,
@@ -249,7 +250,11 @@ export function networkForChat(stored: DeviceNetworkInfo | null | undefined): Re
     clock_skew_s: info.clock_skew_s,
     checked_at: info.checked_at,
     ...(info.attention.length ? { attention: info.attention } : {}),
-  };
+  });
+}
+
+function dropEmpty(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && !v.length)));
 }
 
 /** The agent's view: first line when it was read, then one fact per line. Null when the phone never reported. */

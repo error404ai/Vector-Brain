@@ -1633,6 +1633,23 @@ const scenarios = [
     },
   },
   {
+    name: 'agent (v2): a started task replies without a second model call — the model\'s own words, or a line in the user\'s language',
+    async run() {
+      // The second turn must never be used: the reply is ready once the task is handed over.
+      const silent = { policy_v2: true, turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'SECOND MODEL CALL' }] };
+      const a = (await api('POST', '/android/chat', { message: `open settings on free1 [agent:${JSON.stringify(silent)}]` })).data;
+      if (a?.kind !== 'mission') return `kind ${a?.kind}: ${a?.text}`;
+      if (/SECOND MODEL CALL/.test(a.text)) return 'a second model call was made after the task was handed over';
+      if (a.text !== 'Started on 1 phone — watch it below.') return `code-written reply was: ${a.text}`;
+      await waitForMission(a.mission.id, 30_000);
+      const own = { policy_v2: true, turns: [{ text: 'free1 pe settings khol raha hoon.', calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'SECOND MODEL CALL' }] };
+      const b = (await api('POST', '/android/chat', { message: `free1 pe settings khol do [agent:${JSON.stringify(own)}]` })).data;
+      if (b?.kind !== 'mission') return `kind ${b?.kind}: ${b?.text}`;
+      if (b.text !== 'free1 pe settings khol raha hoon.') return `model's own words were not kept: ${b.text}`;
+      await waitForMission(b.mission.id, 30_000);
+    },
+  },
+  {
     name: 'agent: a task from the chat ends with an answer card in the same chat',
     async run() {
       const script = { turns: [{ calls: [{ name: 'run_mission', args: { instruction: 'open settings [sim steps=1 delay=50]', phones: 'free1' } }] }, { text: 'Checking on free1.' }] };

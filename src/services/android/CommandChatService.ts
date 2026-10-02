@@ -290,7 +290,8 @@ export class CommandChatService {
   /** The policy check for v2: the scripted one if given, else the real model. */
   private async policyFor(userId: number, policy: { v2: boolean; judge?: PolicyJudge }) {
     if (!policy.v2) return { policy: 'v1' as const };
-    return { policy: 'v2' as const, judge: policy.judge ?? (await this.agent.realJudge(userId)) ?? undefined };
+    // Only the real check is cached; a scripted one changes between test runs.
+    return { policy: 'v2' as const, judge: policy.judge ?? (await this.agent.realJudge(userId)) ?? undefined, cacheVerdicts: !policy.judge };
   }
 
   private async runAgent(
