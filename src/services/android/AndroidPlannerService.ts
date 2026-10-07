@@ -2058,13 +2058,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         tokensReported,
         recoveries: [...ruleRecoveries, ...(activeEngine.usedBackupModel ? (['backup_model'] as const) : [])],
       });
-      this.activeTasks.delete(agentTask.id);
-      if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
-        this.activeDeviceTasks.delete(hardwareDeviceId);
-      }
-      // Saved flows: book how the flow did, keep a step fix, or save this run as a flow.
+      // Saved flows: book how the flow did, keep a step fix, or save this run as a
+      // flow — before the phone is free, so its next run sees the result. Never throws.
       if (!this.shuttingDown) {
-        void this.afterFlowRun({
+        await this.afterFlowRun({
           task: agentTask,
           settings: flowSettings,
           plan: flowPlan,
@@ -2080,6 +2077,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         });
       }
 
+      this.activeTasks.delete(agentTask.id);
+      if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
+        this.activeDeviceTasks.delete(hardwareDeviceId);
+      }
       // Give this phone's proxy a fresh IP for whatever runs next. Deliberately
       // not awaited: the run is over, and a slow provider must not hold the
       // device marked busy or delay the result the user is waiting on.

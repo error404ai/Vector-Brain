@@ -406,17 +406,21 @@ const PLAY_APP_INSTALLS = {
   start: 'listing',
   onUrl: 'listing',
   screens: {
-    listing: [{ text: 'Harness Messenger', type: 'text' }, { text: 'Install', to: 'installed', installs: 'com.harness.messenger' }],
+    listing: [{ text: 'Harness Messenger', type: 'text' }, { text: 'Install', to: 'installed', installs: 'com.whatsapp' }],
     installed: [{ text: 'Harness Messenger', type: 'text' }, { text: 'Open', to: 'installed' }],
   },
 };
 
-/** A one-step install flow, recorded (the old way) as starting on a Motorola home screen. */
+/**
+ * A one-step install flow, recorded (the old way) as starting on a Motorola home screen.
+ * The package is a real Play Store app: install_app asks the Play Store whether
+ * it exists, and CI has internet (a made-up package failed there as "wrong package").
+ */
 async function insertInstallFlow(prompt) {
   const steps = [
     {
       action: 'install_app',
-      args: { packageName: 'com.harness.messenger', appName: 'Harness Messenger' },
+      args: { packageName: 'com.whatsapp', appName: 'Harness Messenger' },
       before: { package: 'com.motorola.launcher3', anchors: ['Phone', 'Messages', 'Chrome'] },
       after: { package: null, appear: [] },
       label: 'Install Harness Messenger',
@@ -426,7 +430,7 @@ async function insertInstallFlow(prompt) {
   await db.query('DELETE FROM saved_flows WHERE user_id = ? AND prompt_key = ?', [userId, key]);
   const [row] = await db.query(
     `INSERT INTO saved_flows (user_id, name, source_prompt, steps_json, step_count, format, enabled, version, prompt_key, template, params_json, package_name, checked, stats)
-     VALUES (?, 'Harness install', ?, ?, 1, 2, 1, 1, ?, ?, '[]', 'com.harness.messenger', 1, NULL)`,
+     VALUES (?, 'Harness install', ?, ?, 1, 2, 1, 1, ?, ?, '[]', 'com.whatsapp', 1, NULL)`,
     [userId, prompt, JSON.stringify(steps), key, prompt],
   );
   return row.insertId;
@@ -2746,6 +2750,7 @@ const scenarios = [
       phone.setApp(null);
       await api('PUT', '/android/flows/settings', { replay_first: false });
       if (!done) return 'run never finished';
+      await waitIdle('free2'); // the flow's bookkeeping finishes before the phone is free
       const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
       if (task.status !== 'SUCCEEDED') return `run ${task.status}/${task.reason_code}: ${String(task.message).slice(0, 200)}`;
       if (task.flow_id !== flowId || task.flow_mode !== 'replay') return `flow ${task.flow_id}/${task.flow_mode}, expected ${flowId}/replay`;
@@ -2779,6 +2784,7 @@ const scenarios = [
       phone.setApp(null);
       await api('PUT', '/android/flows/settings', { replay_first: false });
       if (!done) return 'run never finished';
+      await waitIdle('free2'); // the flow's bookkeeping finishes before the phone is free
       const [[task]] = await db.query('SELECT status, reason_code, flow_id, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
       if (task.flow_id !== flowId || task.flow_mode !== 'fallback') return `flow ${task.flow_id}/${task.flow_mode}, expected ${flowId}/fallback`;
       if (task.status !== 'SUCCEEDED') return `run ${task.status}/${task.reason_code}`;
@@ -2829,6 +2835,7 @@ const scenarios = [
         const typed = [...phone.typedLog];
         phone.setApp(null);
         if (!done) return { error: 'run never finished' };
+        await waitIdle('free2');
         const [[task]] = await db.query('SELECT id, status, reason_code, message, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
         const [logs] = await db.query('SELECT action_type, source FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
         return { task, logs, typed };
@@ -2839,7 +2846,11 @@ const scenarios = [
       const firstSteps = first.logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
       if (firstSteps !== 'open_app/replay, click_node/ai, type_text/replay, press_key/replay') return `first run steps: ${firstSteps}`;
       if (!first.typed.includes('cats')) return `first run typed ${JSON.stringify(first.typed)}`;
-      const [patches] = await db.query('SELECT status, successes, step_index, resume_index FROM flow_patches WHERE flow_id = ?', [flowId]);
+      // The fix is saved just after the run ends (not awaited by it).
+      const patches = await waitFor(async () => {
+        const [rows] = await db.query('SELECT status, successes, step_index, resume_index FROM flow_patches WHERE flow_id = ?', [flowId]);
+        return rows.length === 1 && rows[0].successes === 1 ? rows : null;
+      }, 10_000, 250) ?? (await db.query('SELECT status, successes, step_index, resume_index FROM flow_patches WHERE flow_id = ?', [flowId]))[0];
       if (patches.length !== 1 || patches[0].successes !== 1 || patches[0].step_index !== 1 || patches[0].resume_index !== 2) return `fix saved as ${JSON.stringify(patches)}`;
 
       const second = await runOnce('dogs');
@@ -2848,8 +2859,14 @@ const scenarios = [
       if (second.task.status !== 'SUCCEEDED' || second.task.flow_mode !== 'repaired') return `second run ${second.task.status}/${second.task.flow_mode}`;
       const secondSteps = second.logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
       if (secondSteps !== 'open_app/replay, click_node/replay, type_text/replay, press_key/replay') return `second run steps: ${secondSteps}`;
-      const [[patch]] = await db.query('SELECT successes FROM flow_patches WHERE flow_id = ?', [flowId]);
-      if (patch.successes !== 2) return `fix successes ${patch.successes}, expected 2`;
+      const reused = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT successes FROM flow_patches WHERE flow_id = ?', [flowId]);
+        return row?.successes === 2 ? row : null;
+      }, 10_000, 250);
+      if (!reused) {
+        const [[row]] = await db.query('SELECT successes FROM flow_patches WHERE flow_id = ?', [flowId]);
+        return `fix successes ${row?.successes}, expected 2`;
+      }
     },
   },
   {
@@ -2872,8 +2889,8 @@ const scenarios = [
         }, 45_000);
         phones[name].phone.setApp(null);
         if (!done) return { error: 'run never finished' };
-        // Bookkeeping runs just after the run ends.
-        await sleep(800);
+        // The flow's bookkeeping is done before the phone is free.
+        if (!(await waitIdle(name))) return { error: `${name} never became idle` };
         const [[task]] = await db.query('SELECT status, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
         return task;
       };
@@ -2924,6 +2941,7 @@ const scenarios = [
       phone.setApp(null);
       await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false });
       if (!done) return 'run never finished';
+      await waitIdle('free2'); // the flow's bookkeeping finishes before the phone is free
       const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
       if (task.status !== 'SUCCEEDED' || task.flow_mode !== 'replay' || task.flow_id !== flowId) return `run ${task.status}/${task.reason_code}/${task.flow_mode}: ${String(task.message).slice(0, 200)}`;
       const [logs] = await db.query('SELECT action_type, source FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
@@ -2952,6 +2970,7 @@ const scenarios = [
       phone.setApp(null);
       await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false });
       if (!done) return 'run never finished';
+      await waitIdle('free2'); // the flow's bookkeeping finishes before the phone is free
       const [[task]] = await db.query('SELECT status, reason_code, message, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
       if (task.status !== 'FAILED' || task.reason_code !== 'VERIFICATION_FAILED') return `run ${task.status}/${task.reason_code}/${task.flow_mode}: ${String(task.message).slice(0, 200)}`;
       if (!/not installed/.test(task.message)) return `message: ${task.message}`;
