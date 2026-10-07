@@ -184,3 +184,49 @@ export function useNearViewport<T extends HTMLElement>(margin = '600px') {
   }, [margin, supported]);
   return { ref, near: supported ? near : true, seen: supported ? seen : true };
 }
+
+/**
+ * Live frames, small. A streaming phone sends a full-size JPEG every second;
+ * drawn as a data: URI in a tile that is ~10 MB of decoded bitmap per phone
+ * per frame, and with twenty phones running several tiles at once the tab's
+ * renderer ran out and Chrome killed it (browser_crash reports, Oct 7). This
+ * keeps one small Blob URL per phone, remade at most every `everyMs`, and frees
+ * the previous one. Only the one big live view should use the full frame.
+ */
+const liveThumbs = new Map<string, { bucket: number; url: string }>();
+const liveMaking = new Set<string>();
+
+export function useLiveThumbnail(hwId: string | null | undefined, frame: { data: string; at: number } | undefined, everyMs = 3000, maxWidth = 240): string | null {
+  const [, redraw] = useState(0);
+  const dataRef = useRef<string | undefined>(frame?.data);
+  // Kept current outside render; effects run in order, so the one below reads this frame.
+  useEffect(() => {
+    dataRef.current = frame?.data;
+  });
+  const bucket = frame ? Math.floor(frame.at / everyMs) : -1;
+  useEffect(() => {
+    const data = dataRef.current;
+    if (!hwId || !data || bucket < 0) return;
+    const have = liveThumbs.get(hwId);
+    if (have && have.bucket >= bucket) return;
+    const job = `${hwId}:${bucket}`;
+    if (liveMaking.has(job)) return;
+    liveMaking.add(job);
+    let alive = true;
+    void withSlot(() => downscale(data, maxWidth))
+      .then((small) => {
+        const prev = liveThumbs.get(hwId);
+        if (prev && prev.bucket >= bucket) return;
+        liveThumbs.set(hwId, { bucket, url: URL.createObjectURL(small) });
+        // Freed a little later, so any <img> still on it has swapped first.
+        if (prev) window.setTimeout(() => URL.revokeObjectURL(prev.url), 5000);
+        if (alive) redraw((n) => n + 1);
+      })
+      .catch(() => undefined)
+      .finally(() => liveMaking.delete(job));
+    return () => {
+      alive = false;
+    };
+  }, [hwId, bucket, maxWidth]);
+  return hwId ? liveThumbs.get(hwId)?.url ?? null : null;
+}

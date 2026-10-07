@@ -13,6 +13,7 @@ import type { FleetStateDevice } from '@/RTKService/androidService/androidServic
 import { useUnwatchDeviceScreenMutation, useWatchDeviceScreenMutation } from '@/RTKService/androidService/androidService';
 import type { Mission } from '@/RTKService/missionService/missionService';
 import type { FleetAlert } from './alertRules';
+import { useLiveThumbnail } from '@/_helpers/screenThumbs';
 
 const INK = '#0f172a';
 const MUTED = '#64748b';
@@ -175,7 +176,9 @@ function RunningCard({ missions }: { missions: Mission[] }) {
 }
 
 /** One phone kept live in the panel; picking none stops the stream. */
-function WatchCard({ devices, frameFor }: { devices: FleetStateDevice[]; frameFor: (hwId: string) => string | undefined }) {
+type LiveFrame = { data: string; at: number };
+
+function WatchCard({ devices, frameOf }: { devices: FleetStateDevice[]; frameOf: (hwId: string) => LiveFrame | undefined }) {
   const [watchId, setWatchId] = useState<number | ''>('');
   const [watch] = useWatchDeviceScreenMutation();
   const [unwatch] = useUnwatchDeviceScreenMutation();
@@ -194,7 +197,8 @@ function WatchCard({ devices, frameFor }: { devices: FleetStateDevice[]; frameFo
     };
   }, [watchId, goneOffline, watch, unwatch]);
 
-  const src = picked ? frameFor(picked.device_id) : undefined;
+  // Drawn 64px wide: a downscaled copy every 2s, not the full frame every second.
+  const src = useLiveThumbnail(picked?.device_id, picked ? frameOf(picked.device_id) : undefined, 2000) ?? undefined;
   return (
     <Box sx={{ ...card, display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
       <Box
@@ -242,14 +246,14 @@ export default function FleetPanel({
   missions,
   onFix,
   onOpenAlerts,
-  frameFor,
+  frameOf,
 }: {
   devices: FleetStateDevice[];
   alerts: FleetAlert[];
   missions: Mission[];
   onFix: (command: string) => void;
   onOpenAlerts: () => void;
-  frameFor: (hwId: string) => string | undefined;
+  frameOf: (hwId: string) => LiveFrame | undefined;
 }) {
   return (
     <Box
@@ -260,7 +264,7 @@ export default function FleetPanel({
       <FleetCard devices={devices} />
       <AlertsCard alerts={alerts} onFix={onFix} onOpen={onOpenAlerts} />
       <RunningCard missions={missions} />
-      <WatchCard devices={devices} frameFor={frameFor} />
+      <WatchCard devices={devices} frameOf={frameOf} />
     </Box>
   );
 }

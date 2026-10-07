@@ -85,7 +85,7 @@ import { formatSize, MAX_FILE_BYTES, MAX_SEND_DEVICES, resolveTargets, startDrop
 import VectorBot from '@/components/mission/VectorBot';
 import { isStructured } from '@/components/mission/chatText';
 import { stepSummary, useRunSteps } from '@/components/mission/steps';
-import { contentKey, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
+import { contentKey, useLiveThumbnail, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
 
 // -----------------------------------------------------------------------------
 // Live feed: one page socket carrying screens, steps, rounds and mission pushes
@@ -487,6 +487,12 @@ function PhoneZoom({ target, feed, onClose }: { target: PhoneZoomTarget | null; 
   );
 }
 
+/** A running phone's small switcher tile: a downscaled copy, never the full frame. */
+function LiveThumb({ hwId, frame }: { hwId: string | null; frame: { data: string; at: number } | undefined }) {
+  const src = useLiveThumbnail(hwId, frame);
+  return src ? <Box component="img" src={src} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : null;
+}
+
 /** How long each running phone stays on the big screen before the next one. */
 const ROTATE_MS = 4000;
 
@@ -566,7 +572,8 @@ function TileScreen({ item, feed }: { item: MissionItem; feed: LiveFeed }) {
   const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !finished || !item.agent_task_id || !!liveFrame || !seen });
   const stored = data?.data?.base64 ?? null;
   const thumb = useThumbnail(liveFrame || !stored ? null : `final:${item.id}`, stored);
-  const src = liveFrame ? frameSrc(liveFrame.data) : thumb;
+  const liveThumb = useLiveThumbnail(liveFrame ? item.device_hw_id : null, liveFrame);
+  const src = liveFrame ? liveThumb : thumb;
   // No screen kept for this phone: the tile stays text-only.
   if ((!finished && !liveFrame) || (isSuccess && !stored && !liveFrame)) return <Box ref={ref} sx={{ display: 'none' }} />;
   return (
@@ -688,7 +695,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
                   }}
                   aria-label={`Show ${item.device_name}`}
                 >
-                  {thumb && <Box component="img" src={frameSrc(thumb.data)} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
+                  <LiveThumb hwId={item.device_hw_id} frame={thumb} />
                 </Box>
               </Tooltip>
             );
@@ -885,7 +892,8 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
   const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !!liveFrame || !seen });
   const stored = data?.data?.base64 ?? null;
   const thumb = useThumbnail(liveFrame || !stored ? null : `final:${item.id}`, stored);
-  const src = liveFrame ? frameSrc(liveFrame.data) : thumb;
+  const liveThumb = useLiveThumbnail(liveFrame ? item.device_hw_id : null, liveFrame);
+  const src = liveFrame ? liveThumb : thumb;
   const settled = !!liveFrame || (isSuccess && (!stored || !!thumb));
   // A live phone keeps updating in the zoom; a settled still opens full size.
   const tap = useDoubleTap(() => {
@@ -982,7 +990,8 @@ function ScreenTile({ shot, feed, onZoom }: { shot: PhoneShot; feed: LiveFeed; o
   const still = shot.base64 ?? savedBase64;
   const stillKey = shot.base64 ? contentKey(`shot:${shot.device_name}`, shot.base64) : shot.shot_id ? `shot:${shot.shot_id}` : null;
   const thumb = useThumbnail(live || !still ? null : stillKey, still);
-  const src = live ? frameSrc(live.data) : thumb;
+  const liveThumb = useLiveThumbnail(live ? shot.hw_id : null, live);
+  const src = live ? liveThumb ?? thumb : thumb;
   const expired = !!shot.shot_id && stored.isError;
   const loading = !src && !expired && (!!shot.base64 || !!shot.shot_id);
   const target: PhoneZoomTarget = shot.base64
@@ -2697,7 +2706,7 @@ export default function MissionControlPage() {
         missions={liveMissions}
         onFix={fixFromAlert}
         onOpenAlerts={() => setAlertsOpen(true)}
-        frameFor={(hwId) => (feed.frames[hwId] ? frameSrc(feed.frames[hwId].data) : undefined)}
+        frameOf={(hwId) => feed.frames[hwId]}
       />
     )}
     </Box>
