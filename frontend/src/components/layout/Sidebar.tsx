@@ -34,7 +34,6 @@ const mainItems: NavItem[] = [
   { label: 'Device Fleet', icon: <PhoneAndroidIcon />, href: '/android-fleet', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#0891b2' },
   { label: 'Mission Control', icon: <RocketLaunchIcon />, href: '/mission-control', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#9333ea' },
   { label: 'Users', icon: <GroupIcon />, href: '/users', roles: ['admin'], badge: 'Admin', color: '#7c3aed' },
-  { label: 'Agent Tasks', icon: <SmartToyIcon />, href: '/agent-tasks', roles: ['admin', 'user', 'guest'], color: '#0f766e' },
   { label: 'AI Rules', icon: <PsychologyIcon />, href: '/ai-rules', roles: ['admin'], color: '#d97706' },
   { label: 'BrowserWorker Errors', icon: <BugReportIcon />, href: '/browserworker-errors', roles: ['admin'], badge: 'Admin', color: '#dc2626' },
   // My Rules (/my-rules) and Schedules (/schedules) are hidden for now; the

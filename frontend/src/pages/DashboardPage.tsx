@@ -141,7 +141,7 @@ export default function Dashboard() {
       icon: <BoltIcon />,
       color: '#6366f1',
       helperText: `${tasks.length} in recent history`,
-      path: '/agent-tasks',
+      path: '/mission-control',
     },
     {
       title: 'Success rate',
@@ -149,7 +149,7 @@ export default function Dashboard() {
       icon: <TrendingUpIcon />,
       color: '#2563eb',
       helperText: `Across ${metrics.finishedCount} finished task${metrics.finishedCount === 1 ? '' : 's'}`,
-      path: '/agent-tasks',
+      path: '/mission-control',
     },
   ];
 
@@ -382,7 +382,7 @@ export default function Dashboard() {
                       '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06) },
                     }}
                     onClick={() =>
-                      navigate(task.device_id ? `/android-agent?deviceId=${task.device_id}` : '/agent-tasks')
+                      navigate(task.device_id ? `/android-agent?deviceId=${task.device_id}` : '/mission-control')
                     }
                   >
                     {task.is_running ? (

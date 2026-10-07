@@ -55,7 +55,7 @@ const MINI_DRAWER_WIDTH = 68;
 
 const mobileNav = [
   { label: 'Home', value: '/dashboard', icon: <DashboardIcon /> },
-  { label: 'Tasks', value: '/agent-tasks', icon: <SmartToyIcon /> },
+  { label: 'Mission', value: '/mission-control', icon: <SmartToyIcon /> },
   { label: 'Rules', value: '/my-rules', icon: <ManageAccountsIcon /> },
   { label: 'Settings', value: '/settings', icon: <SettingsIcon /> },
 ];

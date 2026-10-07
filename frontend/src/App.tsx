@@ -140,7 +140,8 @@ const router = createBrowserRouter([
           { path: '/android-agent', lazy: lazy(pages.androidAgent) },
           { path: '/android-devices', lazy: lazy(pages.androidDevices) },
           { path: '/android-fleet', lazy: lazy(pages.androidFleet) },
-          { path: '/agent-tasks', lazy: lazy(pages.agentTasks) },
+          // Agent Tasks is hidden for now: old links land on Mission Control. The page is kept (pages.agentTasks).
+          { path: '/agent-tasks', element: <Navigate to="/mission-control" replace /> },
           { path: '/my-rules', lazy: lazy(pages.myRules) },
           { path: '/schedules', lazy: lazy(pages.schedules) },
           { path: '/mission-control', lazy: lazy(pages.missionControl) },
