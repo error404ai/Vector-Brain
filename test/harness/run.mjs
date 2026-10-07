@@ -194,8 +194,8 @@ const llmServer = http.createServer((req, res) => {
     const json = JSON.parse(body || '{}');
     const tools = (json.tools ?? []).map((t) => t.function?.name);
     const text = JSON.stringify(json.messages ?? []);
-    const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : 'plan';
-    llm.requests.push({ kind, tools, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
+    const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : text.includes('Reply with ONE line') ? 'lite' : 'plan';
+    llm.requests.push({ kind, tools, chars: text.length, stream: json.stream === true, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
     const reply = (status, payload) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
@@ -210,6 +210,23 @@ const llmServer = http.createServer((req, res) => {
     if (kind === 'agent' && llm.mode === 'rate-limit-once' && toolMessages >= 1 && !llm.limited) {
       llm.limited = true;
       return reply(429, { error: { message: 'Rate limit exceeded', type: 'rate_limit' } });
+    }
+    // Non-streaming calls (the Lite engine, the completion judge): one JSON answer.
+    if (json.stream !== true) {
+      const content =
+        kind === 'judge'
+          ? '{"verdict":"yes","reason":"YouTube is on screen"}'
+          : kind === 'lite'
+            ? text.includes('DONE SO FAR') ? 'D YouTube is open' : 'A com.google.android.youtube'
+            : EKO_PLAN;
+      return reply(200, {
+        id: `h${llm.requests.length}`,
+        object: 'chat.completion',
+        created: 1,
+        model: 'harness-llm',
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: Math.ceil(text.length / 4), completion_tokens: 6, total_tokens: Math.ceil(text.length / 4) + 6 },
+      });
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const base = { id: `h${llm.requests.length}`, object: 'chat.completion.chunk', created: 1, model: 'harness-llm' };
@@ -2658,6 +2675,35 @@ const scenarios = [
       if (!feed.task?.sight_line) return 'the run has no "screenshots seen" line';
       const sight = (await api('GET', '/android/agent/sight'))?.data;
       if (!['sees', 'helper', 'blind'].includes(sight?.capability)) return `pre-run sight status missing: ${JSON.stringify(sight)}`;
+    },
+  },
+  {
+    name: 'engines: Lite finishes a task with short text calls, no tool schemas',
+    async run() {
+      llm.mode = 'normal';
+      const lite = await runWithEngine('lite', 'free2', 'open youtube [llm]');
+      if (!lite.done) return 'lite run never finished';
+      if (lite.done.status !== 'SUCCEEDED') return `lite run ${lite.done.status}/${lite.done.reason_code}: ${String(lite.done.message).slice(0, 160)}`;
+      if (lite.done.engine !== 'lite') return `lite run recorded engine ${lite.done.engine}`;
+      const calls = llm.requests.filter((r) => r.kind === 'lite');
+      if (calls.length !== 2) return `expected 2 lite calls, got ${JSON.stringify(llm.requests.map((r) => r.kind))}`;
+      if (llm.requests.some((r) => r.kind === 'agent' || r.tools.length)) return 'lite sent tool schemas or used the Vector helper';
+      const biggest = Math.max(...calls.map((r) => r.chars));
+      if (biggest > 2500) return `a lite call was ${biggest} chars`;
+      if (lite.actions.filter((a) => a === 'OpenApp').length !== 1) return `lite sent OpenApp ${lite.actions.filter((a) => a === 'OpenApp').length} times`;
+      const verification = typeof lite.done.verification === 'string' ? JSON.parse(lite.done.verification) : lite.done.verification;
+      // The fake phone cannot answer ObserveScreen, so the check ends "unverified" here, as it does for Vector.
+      if (!verification?.status) return 'lite run has no verification recorded';
+      const diagnostics = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT diagnostics FROM agent_tasks WHERE id = ?', [lite.taskId]);
+        const d = typeof row?.diagnostics === 'string' ? JSON.parse(row.diagnostics) : row?.diagnostics;
+        return d?.steps ? d : null;
+      }, 10_000);
+      if (!diagnostics?.tokens_reported || diagnostics.llm_calls < 2) return `lite usage not recorded: ${JSON.stringify({ llm: diagnostics?.llm_calls, tokens: diagnostics?.prompt_tokens })}`;
+      const [[step]] = await db.query('SELECT prompt_tokens FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index LIMIT 1', [lite.taskId]);
+      if (!step?.prompt_tokens || step.prompt_tokens > 600) return `first lite step booked ${step?.prompt_tokens} prompt tokens`;
+      const settings = (await api('GET', '/android/agent/engine'))?.data;
+      if (settings?.kind === 'lite') return 'the engine setting was not reset';
     },
   },
   {

@@ -9,12 +9,12 @@ import type { AgentStreamMessage } from '@eko-ai/eko';
  * changes only how the model is driven.
  */
 
-export type EngineKind = 'eko' | 'vector';
+export type EngineKind = 'eko' | 'vector' | 'lite';
 
-export const ENGINE_KINDS: EngineKind[] = ['eko', 'vector'];
+export const ENGINE_KINDS: EngineKind[] = ['eko', 'vector', 'lite'];
 
 export function isEngineKind(value: unknown): value is EngineKind {
-  return value === 'eko' || value === 'vector';
+  return value === 'eko' || value === 'vector' || value === 'lite';
 }
 
 /** Outcome of the system's own check of a run the agent reported as done (Vector engine). */

@@ -29,6 +29,8 @@ export interface VectorEngineOptions {
   fallback?: { model: LanguageModel; label: string };
   /** A tap in the power menu that takes this long (ms) means the phone restarted. */
   restartGapMs?: number;
+  /** Prefix for the ids of tool calls this engine sends (Lite runs several of these in one task). */
+  callIdPrefix?: string;
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
@@ -118,18 +120,18 @@ Prefer open_url or a deep link over navigating menus when a URL exists.`;
 class RetryableModelError extends Error {}
 
 /** A limit that will not lift within this run: a daily cap, or no credit left. */
-function isQuota(error: unknown): boolean {
+export function isQuota(error: unknown): boolean {
   const e = error as { message?: string; responseBody?: string; statusCode?: number };
   const text = `${e?.message ?? ''} ${e?.responseBody ?? ''}`;
   return Number(e?.statusCode) === 402 || /per-day|per day|daily (?:limit|quota)|quota exceeded|insufficient credits?/i.test(text);
 }
 
-function isRateLimited(error: unknown): boolean {
+export function isRateLimited(error: unknown): boolean {
   const e = error as { statusCode?: number; status?: number; message?: string };
   return Number(e?.statusCode ?? e?.status) === 429 || /\b429\b|rate limit|too many requests/i.test(String(e?.message ?? ''));
 }
 
-function isRetryable(error: unknown): boolean {
+export function isRetryable(error: unknown): boolean {
   const e = error as { statusCode?: number; status?: number; message?: string; name?: string; cause?: unknown };
   if (e?.name === 'AbortError') return false;
   if (isQuota(error)) return false;
@@ -277,7 +279,7 @@ export class VectorEngine implements AgentEngine {
           done = { success: input.success === true || input.success === 'true', summary: String(input.summary ?? '').trim() || 'Done.' };
           break;
         }
-        const callId = `v${++this.callCounter}`;
+        const callId = `${this.options.callIdPrefix ?? 'v'}${++this.callCounter}`;
         const thought = [turn.reasoning, turn.text].filter(Boolean).join(' ').trim();
         await emit({ type: 'tool_use', toolCallId: callId, toolName: c.toolName, params: c.input ?? {} });
         await bookUsage();

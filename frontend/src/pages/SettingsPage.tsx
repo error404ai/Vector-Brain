@@ -220,7 +220,7 @@ export default function SettingsPage() {
               </Box>
               <Box sx={{ px: 2, py: 1.5, borderRadius: '16px', bgcolor: 'rgba(255,255,255,.75)', border: '1px solid rgba(20,26,46,.07)' }}>
                 <Typography sx={monoLabel}>Engine</Typography>
-                <Typography sx={{ fontSize: 14, fontWeight: 700, mt: 0.25 }}>{engineKind === 'vector' ? 'Vector · beta' : engineKind === 'eko' ? 'Eko · stable' : '…'}</Typography>
+                <Typography sx={{ fontSize: 14, fontWeight: 700, mt: 0.25 }}>{engineKind === 'vector' ? 'Vector · beta' : engineKind === 'lite' ? 'Lite · cheapest' : engineKind === 'eko' ? 'Eko · stable' : '…'}</Typography>
               </Box>
             </Stack>
           </Stack>

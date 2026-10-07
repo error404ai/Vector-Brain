@@ -54,7 +54,7 @@ const WASTE_SHORT: Record<string, string> = {
 };
 
 const SOURCE_LABEL: Record<string, string> = { ai: 'AI', replay: 'Replay', direct: 'Direct' };
-const ENGINE_LABEL: Record<string, string> = { eko: 'Eko', vector: 'Vector', replay: 'Replay' };
+const ENGINE_LABEL: Record<string, string> = { eko: 'Eko', vector: 'Vector', lite: 'Lite', replay: 'Replay' };
 const OUTCOME: Record<RunOutcome, { label: string; short: string; color: string; chip: 'success' | 'info' | 'warning' | 'error' | 'default' }> = {
   first_try: { label: 'Done first try', short: 'First try', color: 'success.main', chip: 'success' },
   recovered: { label: 'Done after recovery', short: 'Recovered', color: 'info.main', chip: 'info' },
@@ -735,7 +735,7 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
               <TableCell align="right">{show(e.avg_llm_calls)}</TableCell>
               <TableCell align="right">{e.avg_tokens === null ? '–' : fmtInt(e.avg_tokens)}</TableCell>
               <TableCell align="right">{show(e.avg_think_s, ' s')}</TableCell>
-              <TableCell align="right">{e.engine === 'vector' ? `${e.verified} / ${e.unverified} / ${e.failed_verification}` : '–'}</TableCell>
+              <TableCell align="right">{e.engine === 'vector' || e.engine === 'lite' ? `${e.verified} / ${e.unverified} / ${e.failed_verification}` : '–'}</TableCell>
             </TableRow>
           ))}
         </TableBody>

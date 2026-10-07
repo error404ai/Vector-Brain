@@ -23,6 +23,7 @@ import { modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
+import { LiteEngine } from './agent/LiteEngine';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
@@ -1036,7 +1037,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
   ): Promise<ApiResponse> {
     const patch: Partial<User> = {};
     if (input.engine !== undefined) {
-      if (input.engine !== null && !isEngineKind(input.engine)) throw new AppError('engine must be "eko", "vector" or null', 400);
+      if (input.engine !== null && !isEngineKind(input.engine)) throw new AppError('engine must be "eko", "vector", "lite" or null', 400);
       patch.agent_engine = input.engine;
     }
     if (input.planner !== undefined) patch.agent_planner = Boolean(input.planner);
@@ -1562,7 +1563,18 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // Which engine drives the model (see agent/AgentEngine). Both feed the
     // same handler above, so recording, guards and diagnostics are shared.
     engine =
-      engineSettings.kind === 'vector'
+      engineSettings.kind === 'lite'
+        ? new LiteEngine({
+            model: modelFor(aiConfig),
+            fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,
+            agent: androidAgent,
+            onMessage: handleMessage,
+            vision,
+            callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
+            callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
+            helperCallMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
+          })
+        : engineSettings.kind === 'vector'
         ? new VectorEngine({
             model: modelFor(aiConfig),
             fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,

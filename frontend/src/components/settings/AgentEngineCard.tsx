@@ -16,7 +16,7 @@ const SCREENSHOT_OPTIONS: { value: ScreenshotMode; label: string }[] = [
 /** Prism segmented control: the chosen option is a raised white tile. */
 const segmented = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
   gap: '6px',
   p: '6px',
   borderRadius: '16px',
@@ -25,6 +25,9 @@ const segmented = {
     border: 0,
     borderRadius: '12px !important',
     minHeight: 44,
+    px: 1,
+    flexDirection: 'column',
+    lineHeight: 1.25,
     textTransform: 'none',
     fontWeight: 600,
     fontSize: 14,
@@ -81,7 +84,7 @@ export default function AgentEngineCard() {
           {settings?.source === 'server' ? <Chip size="small" variant="outlined" label="Server default" /> : null}
         </Stack>
         <Typography variant="body2" sx={{ mb: 1.5, color: PRISM_MUTED }}>
-          How the AI is driven on your phones. Both engines use the same tools and safety checks; switch any time — it applies to the next run.
+          How the AI is driven on your phones. All engines use the same tools and safety checks; switch any time — it applies to the next run.
         </Typography>
         {isLoading || !settings ? (
           <LinearProgress sx={{ borderRadius: 2 }} />
@@ -97,16 +100,21 @@ export default function AgentEngineCard() {
               sx={segmented}
             >
               <ToggleButton value="eko">
-                Eko&nbsp;<Box component="span" sx={{ fontWeight: 500, opacity: 0.7 }}>stable</Box>
+                Eko<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>stable</Box>
               </ToggleButton>
               <ToggleButton value="vector">
-                Vector&nbsp;<Box component="span" sx={{ fontWeight: 500, opacity: 0.7 }}>beta</Box>
+                Vector<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>beta</Box>
+              </ToggleButton>
+              <ToggleButton value="lite">
+                Lite<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>cheapest</Box>
               </ToggleButton>
             </ToggleButtonGroup>
             <Typography variant="caption" color="text.secondary">
               {settings.kind === 'eko'
                 ? 'Eko: a planning call first, then step by step; long runs are compressed with extra AI calls.'
-                : 'Vector: acts from the first call, keeps history within a token budget without extra calls, finishes with task_done and a system check of the phone.'}
+                : settings.kind === 'lite'
+                  ? 'Lite: one short text call per step (about 200–450 tokens, no screenshots), the AI answers with a one-line command. When it gets stuck, Vector steps in for a few calls and hands back; screenshots below apply only then. Ends with the same system check.'
+                  : 'Vector: acts from the first call, keeps history within a token budget without extra calls, finishes with task_done and a system check of the phone.'}
             </Typography>
             {settings.kind === 'vector' ? (
               <FormControlLabel

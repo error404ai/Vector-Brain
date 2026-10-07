@@ -1,6 +1,6 @@
 import { baseApi } from '../baseApi';
 
-export type EngineKind = 'eko' | 'vector';
+export type EngineKind = 'eko' | 'vector' | 'lite';
 
 /** When the agent model is shown a screenshot: never beyond unreadable screens, when stuck, or every step. */
 export type ScreenshotMode = 'off' | 'stuck' | 'every_step';

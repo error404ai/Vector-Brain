@@ -100,7 +100,7 @@ export class AgentTask {
   @UpdateDateColumn()
   updated_at: Date;
 
-  /** Which engine drove the model: 'eko' or 'vector' (null for runs before engines existed). */
+  /** Which engine drove the model: 'eko', 'vector' or 'lite' (null for runs before engines existed). */
   @Column({ type: 'varchar', length: 12, nullable: true })
   engine: string | null;
 

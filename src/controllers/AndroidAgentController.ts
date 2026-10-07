@@ -22,7 +22,7 @@ export class AndroidAgentController {
 
   constructor(private plannerService: AndroidPlannerService) {}
 
-  /** Which agent engine this account's runs use (eko = stable, vector = Vector Brain's own loop). */
+  /** Which agent engine this account's runs use (eko = stable, vector = Vector Brain's own loop, lite = cheapest one-line loop). */
   @Get('/engine')
   async getEngine(@CurrentUser({ required: true }) user: { userId: number }) {
     return { data: await this.plannerService.engineSettings(user.userId) };
@@ -39,7 +39,7 @@ export class AndroidAgentController {
   }
 
   /**
-   * engine: 'eko' | 'vector' | null (null = server default); planner: Vector engine's optional planning call;
+   * engine: 'eko' | 'vector' | 'lite' | null (null = server default); planner: Vector engine's optional planning call;
    * vision_config_id / fallback_config_id: one of the account's AI configs, or null.
    * screenshots: when the agent model sees a screenshot — 'off' | 'stuck' | 'every_step' (null = 'stuck').
    */
