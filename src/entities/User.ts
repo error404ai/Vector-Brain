@@ -59,6 +59,23 @@ export class User {
   @Column({ type: 'varchar', length: 12, nullable: true })
   agent_screenshots: string | null;
 
+  // Saved flows (docs/REPLAY_ENGINE.md). All off until the user turns them on.
+  /** Save each successful run as a flow. */
+  @Column({ type: 'boolean', default: false })
+  flow_record: boolean;
+
+  /** Run a matching saved flow before the AI. */
+  @Column({ type: 'boolean', default: false })
+  flow_replay_first: boolean;
+
+  /** When a flow step breaks, the AI fixes that step only (off: the AI does the rest of the task). */
+  @Column({ type: 'boolean', default: false })
+  flow_ai_repair: boolean;
+
+  /** Use a step fix on the account's other phones once it has worked on 2 models 3 times. */
+  @Column({ type: 'boolean', default: false })
+  flow_share_fixes: boolean;
+
   @Column({ type: 'enum', enum: Role, default: Role.USER })
   role: Role;
 

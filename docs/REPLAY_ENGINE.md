@@ -1,9 +1,31 @@
 # Replay as the main engine — design
 
-Status: **proposal, not built.** Roadmap item 4. Judged against
+Status: **built (Oct 2026), all switches off by default.** Roadmap item 4. Judged against
 [RELIABILITY.md](RELIABILITY.md): this is levels 2 (selector-based action) and 3
 (rule-based recovery) of the hierarchy of methods, with AI (level 5) used only
 for the step that broke.
+
+## Switches (Settings → Saved flows)
+
+All four are per account and **off by default**; each Flows-page flow also has
+its own on/off.
+
+| Switch | On | Off |
+|---|---|---|
+| `flow_record` — save successful tasks as flows | every run that ends SUCCEEDED (and whose completion check did not fail) is saved as a checkable flow, once per task wording | flows only come from "Save as flow" |
+| `flow_replay_first` — use a saved flow first | a task whose wording matches an enabled flow replays it before any AI; missions run one phone first (below) | every run is AI from the first step |
+| `flow_ai_repair` — the AI fixes the broken step only | a broken step gets a scoped AI round; the flow resumes as soon as the phone is back on track | a broken step hands the rest of the task to the AI |
+| `flow_share_fixes` — use step fixes on my other phones | other phones try a saved fix before asking the AI; it joins the flow after 3 runs on 2 models | a fix is reused only on the phone that made it |
+
+Not switchable: a replayed flow is checked step by step and at the end; a flow
+that ran but fails the end check is a failed run, not a success.
+
+Code: `src/services/android/flowSteps.ts` (step model, recorder, matching),
+`flowRunner.ts` (replay), `FlowLibraryService.ts` (settings, matching, fixes,
+promotion, stats), `AndroidPlannerService.executeLoop` (replay first, repair,
+fallback), `MissionService` (first phone, then the rest). Tests:
+`flowSteps.test.ts`, `flowRunner.test.ts`, and the harness scenarios named
+"flows: …" (scripted app on a fake phone).
 
 ## Why
 
@@ -13,7 +35,7 @@ of thinking per step, and a fresh chance to get stuck. A recorded, checked path
 is cheaper, faster and more predictable. The AI is still needed, but only where
 the recorded path no longer fits the screen.
 
-## What exists today (verified in code, Oct 2026)
+## What existed before (verified in code, Oct 2026)
 
 - `SavedFlow` (`src/entities/SavedFlow.ts`): a list of `{ action_type, action_payload, label }`.
   No selectors, no expected screen, no checks.
@@ -30,10 +52,14 @@ the recorded path no longer fits the screen.
   to a flow; missions and chat never use flows.
 - Per flow: `run_count` and `last_run_at` only.
 
-So today's replay is a macro recorder, not an engine. Most of this design is
+So the old replay was a macro recorder, not an engine (format 1 flows still replay that way). Most of this design is
 making each step *checkable*; the AI repair is the smaller part.
 
 ## 1. A step that can be checked
+
+(The built shape is `FlowStepV2` in `flowSteps.ts`: the element list the agent
+sees has no resource ids, so a target is its label, type and grid position; the
+sketch below is the original proposal.)
 
 Recorded from the step log, which already stores `ui_tree_before`,
 `ui_tree_after`, `package_before`, `package_after` and the tapped pixel.
@@ -127,12 +153,15 @@ The run hands the AI a **scoped goal**, not the whole task:
 The actions the AI took to repair step *k* become a **candidate patch**
 `{ flow_id, flow_version, step k, replacement steps, device_model }`.
 
-- A candidate is used again only on the phone model it came from.
-- It is **promoted** into the flow (new `flow_version`) after it worked — replay
-  only, no AI, completion check passed — on **3 runs across at least 2 device
-  models**. RELIABILITY.md → Learning over time.
-- A promoted patch that then fails on 2 runs in a row is rolled back to the
-  previous version.
+- Sharing off: a candidate is reused only on the phone that made it. Sharing on:
+  the account's other phones try it before asking the AI (a failed try costs a
+  few seconds, then the AI repairs as usual). Without that, it could never prove
+  itself on a second model.
+- It is **promoted** into the flow (new `flow_version`) after **3 successful
+  runs across at least 2 device models** (the run that made it counts as the
+  first). RELIABILITY.md → Learning over time.
+- After a promotion, 2 runs in a row that fail or need the AI to finish roll the
+  flow back to its steps before the fix (another new version).
 - Old versions are kept; the Flows page shows the history.
 
 ## 7. What gets measured
@@ -153,17 +182,27 @@ benchmark (roadmap 5) runs each benchmark task both ways.
 3. **Automatic matching** from chat and missions.
 4. **Promotion** of repairs across phones, with rollback.
 
-Phase 1 alone fixes the worst problems in today's replay (pixel taps, skipped
-typing counted as ok, no checks) and needs no AI changes.
+All four phases are built; they ship behind the switches above, off by default,
+until the weekly benchmark (roadmap 5) shows they do not regress completion.
 
-## Open questions
+## Decisions taken
 
-- Auto-record every verified run, or only when the user taps "Save as flow"?
-  Auto is what makes replay the main engine; it also means more stored flows.
-- Missions across many phones: replay on all, or AI on the first phone and replay
-  on the rest once it succeeds? The second gives a fresh, verified flow per mission.
-- Anchors in other languages: a phone in Hindi records Hindi anchors. Flows
-  are matched per locale until there is a reason to do better.
+- Auto-recording is the `flow_record` switch, off by default.
+- Missions: with recording and replay-first on and no flow for the task yet, one
+  phone runs it with the AI; the others wait (`WAITING_PILOT`) and replay the flow
+  it produced. If the first phone fails, the rest run with the AI at once.
+- Anchors in other languages: a phone in Hindi records Hindi anchors; such a flow
+  breaks on an English phone and is repaired like any other break.
+- Typed text: only text that is part of the task's wording becomes a parameter
+  ("Search YouTube for {{p1}}"); anything else typed is never stored, and that
+  step is left to the AI on each run.
+
+## Not verified yet
+
+Everything above is tested against unit tests and a scripted fake app, not on a
+real phone. The anchor and target rules (stable labels, editable fields ignored,
+label-first targets) need checking against real apps before the switches are
+turned on for everyone.
 
 ## Risks
 

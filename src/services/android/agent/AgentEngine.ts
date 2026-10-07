@@ -20,8 +20,11 @@ export function isEngineKind(value: unknown): value is EngineKind {
 /** Outcome of the system's own check of a run the agent reported as done (Vector engine). */
 export interface VerificationOutcome {
   status: 'verified' | 'unverified' | 'failed';
-  /** 'rule' = checked on the phone without AI; 'judge' = a separate model call. */
-  method: 'rule' | 'judge' | 'none';
+  /**
+   * 'rule' = checked on the phone without AI; 'judge' = a separate model call;
+   * 'replay' = a saved flow whose every step reached the screen it was recorded on.
+   */
+  method: 'rule' | 'judge' | 'replay' | 'none';
   reason: string;
   /** How many times the agent was sent back after a failed check. */
   retries: number;

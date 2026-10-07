@@ -115,6 +115,14 @@ export class AgentTask {
   @Column({ type: 'varchar', length: 16, nullable: true })
   outcome: string | null;
 
+  /** The saved flow this run replayed, if any. */
+  @Column({ type: 'int', nullable: true })
+  flow_id: number | null;
+
+  /** How the flow went: 'replay' (no AI), 'repaired' (a step fixed), 'fallback' (AI finished it). */
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  flow_mode: string | null;
+
   /** Where the run's steps and time went; written when the run ends (RunDiagnosticsService). */
   @Column({ type: 'json', nullable: true })
   diagnostics: RunDiagnostics | null;

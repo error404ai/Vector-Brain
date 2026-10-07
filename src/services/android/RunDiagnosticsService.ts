@@ -195,7 +195,8 @@ export class RunDiagnosticsService {
     // Engine comparison: same measures per engine, over runs that reached the phone.
     const byEngine = new Map<string, AgentTask[]>();
     for (const task of tasks) {
-      const key = task.provider === 'replay' ? 'replay' : task.engine ?? 'eko';
+      // A run its saved flow finished with no AI counts as replay, like a Flows-page replay.
+      const key = task.provider === 'replay' || task.flow_mode === 'replay' ? 'replay' : task.engine ?? 'eko';
       byEngine.set(key, [...(byEngine.get(key) ?? []), task]);
     }
     const engines = [...byEngine.entries()].map(([engine, list]) => {
@@ -227,7 +228,13 @@ export class RunDiagnosticsService {
         measured_runs: withDiagnostics.length,
         succeeded: succeeded.length,
         failed: tasks.filter((t) => t.status === 'FAILED').length,
-        replay_runs: tasks.filter((t) => t.provider === 'replay').length,
+        replay_runs: tasks.filter((t) => t.provider === 'replay' || t.flow_mode === 'replay').length,
+        /** Runs that used a saved flow: done by it alone, after a step fix, or finished by the AI. */
+        flow_runs: {
+          replay: tasks.filter((t) => t.flow_mode === 'replay').length,
+          repaired: tasks.filter((t) => t.flow_mode === 'repaired').length,
+          fallback: tasks.filter((t) => t.flow_mode === 'fallback').length,
+        },
         outcomes,
         recoveries: Object.entries(recoveries)
           .map(([kind, count]) => ({ kind, label: RECOVERY_LABELS[kind as RecoveryKind] ?? kind, count }))
@@ -284,7 +291,8 @@ export class RunDiagnosticsService {
         total_steps: t.total_steps,
         duration_s: t.total_duration_seconds,
         created_at: t.created_at,
-        engine: t.provider === 'replay' ? 'replay' : t.engine ?? 'eko',
+        engine: t.provider === 'replay' || t.flow_mode === 'replay' ? 'replay' : t.engine ?? 'eko',
+        flow_mode: t.flow_mode,
         verification: t.verification,
         outcome: outcomeOf(t),
         failure_kind: outcomeOf(t) === 'failed' ? failureKind(t.reason_code, t.message) : null,
@@ -512,7 +520,7 @@ export class RunDiagnosticsService {
     const since = await this.toDbClock(new Date(Date.now() - clampDays(days) * 86_400_000));
     return this.taskRepo.find({
       where: { created_at: MoreThanOrEqual(since) },
-      select: ['id', 'prompt', 'status', 'reason_code', 'message', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification', 'outcome'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'message', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification', 'outcome', 'flow_id', 'flow_mode'],
       order: { id: 'DESC' },
       take: limit,
     });

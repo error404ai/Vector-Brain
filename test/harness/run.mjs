@@ -367,6 +367,38 @@ async function waitForMission(id, timeoutMs) {
   }, timeoutMs, 500);
 }
 
+
+// ---------------------------------------------------------------- saved flows
+/** A scripted app on the fake phone: home → search box → results. */
+const HARNESS_APP = {
+  pkg: 'com.harness.app',
+  start: 'home',
+  screens: {
+    home: [{ text: 'Harness Home', type: 'text' }, { text: 'Search', to: 'search' }],
+    search: [{ text: 'Search box', type: 'text' }, { text: 'Query', type: 'input', onEnter: 'results' }],
+    results: [{ text: 'Results', type: 'text' }],
+  },
+};
+
+/** The checkable flow for HARNESS_APP, as the recorder would save it (flowSteps.ts). */
+async function insertHarnessFlow(sim = '[sim steps=1 delay=50]') {
+  const pkg = HARNESS_APP.pkg;
+  const steps = [
+    { action: 'open_app', args: { packageName: pkg }, before: { package: null, anchors: [] }, after: { package: pkg, appear: ['Harness Home'] }, label: 'Open app' },
+    { action: 'tap', args: {}, target: { label: 'Search', type: 'btn', grid: { x: 500, y: 113 } }, before: { package: pkg, anchors: ['Harness Home', 'Search'] }, after: { package: pkg, appear: ['Search box'] }, label: 'Tap "Search"' },
+    { action: 'type', args: {}, value: { param: 'p1' }, before: { package: pkg, anchors: ['Search box'] }, after: { package: pkg, appear: [] }, label: 'Type the text from the task' },
+    { action: 'key', args: { key: 'ENTER' }, before: { package: pkg, anchors: ['Search box'] }, after: { package: pkg, appear: ['Results'] }, label: 'Press enter' },
+  ];
+  const template = `Search the harness app for {{p1}} ${sim}`;
+  await db.query('DELETE FROM saved_flows WHERE user_id = ? AND template = ?', [userId, template]);
+  const [row] = await db.query(
+    `INSERT INTO saved_flows (user_id, name, source_prompt, steps_json, step_count, format, enabled, version, prompt_key, template, params_json, package_name, checked, stats)
+     VALUES (?, 'Harness search', ?, ?, 4, 2, 1, 1, ?, ?, '[{"name":"p1"}]', ?, 1, NULL)`,
+    [userId, `Search the harness app for cats ${sim}`, JSON.stringify(steps), `search the harness app for cats ${sim}`.toLowerCase(), template, pkg],
+  );
+  return row.insertId;
+}
+
 // ---------------------------------------------------------------- scenarios
 const scenarios = [
   {
@@ -2660,6 +2692,185 @@ const scenarios = [
       const [[after]] = await db.query('SELECT status, reason_code FROM agent_tasks WHERE id = ?', [taskId]);
       if (after.status !== 'CANCELLED') return `cancel was overwritten: ${after.status}/${after.reason_code}`;
       if (took > 6000) return `cancel took ${took}ms — it waited for the model to answer`;
+    },
+  },
+  // ---------------------------------------------------------- saved flows (docs/REPLAY_ENGINE.md)
+  {
+    name: 'flows: a matching saved flow replays with no AI, acts on elements by label, and fills the typed value from the task',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      await api('PUT', '/android/flows/settings', { replay_first: true });
+      const phone = phones.free2.phone;
+      phone.setApp(HARNESS_APP);
+      const flowId = await insertHarnessFlow();
+      const t0 = Date.now();
+      await run('free2', 'Search the harness app for funny dogs [sim steps=1 delay=50]');
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free2']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 45_000);
+      const typed = [...phone.typedLog];
+      phone.setApp(null);
+      await api('PUT', '/android/flows/settings', { replay_first: false });
+      if (!done) return 'run never finished';
+      const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
+      if (task.status !== 'SUCCEEDED') return `run ${task.status}/${task.reason_code}: ${String(task.message).slice(0, 200)}`;
+      if (task.flow_id !== flowId || task.flow_mode !== 'replay') return `flow ${task.flow_id}/${task.flow_mode}, expected ${flowId}/replay`;
+      const [logs] = await db.query('SELECT action_type, source, action_payload, llm_call FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
+      const actions = logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
+      if (actions !== 'open_app/replay, tap_element/replay, type_text/replay, press_key/replay') return `steps: ${actions}`;
+      if (logs.some((l) => l.llm_call !== null)) return 'a replayed step was booked to a model call';
+      if (JSON.stringify(logs).includes('funny dogs')) return 'the typed text was stored in the step log';
+      if (!typed.includes('funny dogs')) return `typed ${JSON.stringify(typed)}, expected the value from the task`;
+      const [[flow]] = await db.query('SELECT stats, last_verified_at FROM saved_flows WHERE id = ?', [flowId]);
+      const stats = typeof flow.stats === 'string' ? JSON.parse(flow.stats) : flow.stats;
+      if (stats?.runs !== 1 || stats?.replay_only !== 1) return `flow stats ${JSON.stringify(stats)}`;
+      if (!flow.last_verified_at) return 'last_verified_at not set';
+    },
+  },
+  {
+    name: 'flows: a step whose button is gone is not tapped blind; with step fixes off the AI finishes the task',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      await api('PUT', '/android/flows/settings', { replay_first: true, ai_repair: false });
+      const phone = phones.free2.phone;
+      // The app changed: "Search" is now "Find".
+      phone.setApp({ ...HARNESS_APP, screens: { ...HARNESS_APP.screens, home: [{ text: 'Harness Home', type: 'text' }, { text: 'Find', to: 'search' }] } });
+      const flowId = await insertHarnessFlow();
+      const t0 = Date.now();
+      await run('free2', 'Search the harness app for cats [sim steps=1 delay=50]');
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free2']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 45_000);
+      phone.setApp(null);
+      await api('PUT', '/android/flows/settings', { replay_first: false });
+      if (!done) return 'run never finished';
+      const [[task]] = await db.query('SELECT status, reason_code, flow_id, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
+      if (task.flow_id !== flowId || task.flow_mode !== 'fallback') return `flow ${task.flow_id}/${task.flow_mode}, expected ${flowId}/fallback`;
+      if (task.status !== 'SUCCEEDED') return `run ${task.status}/${task.reason_code}`;
+      const [logs] = await db.query("SELECT action_type FROM android_task_logs WHERE agent_task_id = ? AND source = 'replay' ORDER BY step_index", [done.id]);
+      if (logs.some((l) => l.action_type === 'tap_element' || l.action_type === 'tap_coordinate')) return 'the flow tapped although "Search" was not on screen';
+      const [[flow]] = await db.query('SELECT stats FROM saved_flows WHERE id = ?', [flowId]);
+      const stats = typeof flow.stats === 'string' ? JSON.parse(flow.stats) : flow.stats;
+      if (stats?.fell_back !== 1) return `flow stats ${JSON.stringify(stats)}`;
+    },
+  },
+  {
+    name: 'flows: a mission runs one phone first, saves its run as a flow, and the other phone waits for it',
+    async run() {
+      for (const name of ['free1', 'free2']) if (!(await waitIdle(name))) return `${name} never became idle`;
+      await api('PUT', '/android/flows/settings', { record: true, replay_first: true, ai_repair: false });
+      const prompt = 'Open the pilot app [sim actions=open:com.harness.pilot,tap,tap delay=300]';
+      const created = await api('POST', '/android/missions', { request: prompt, device_ids: [phones.free1.dbId, phones.free2.dbId] });
+      const done = await waitForMission(created?.data?.id, 90_000);
+      await api('PUT', '/android/flows/settings', { record: false, replay_first: false });
+      if (!done) return 'mission never finished';
+      if (done.items.some((i) => i.status !== 'SUCCEEDED')) return `items ${JSON.stringify(done.items.map((i) => [i.status, i.last_reason]))}`;
+      const [items] = await db.query('SELECT i.id, i.dispatched_at, t.started_at, t.finished_at, t.flow_id FROM mission_items i JOIN agent_tasks t ON t.id = i.agent_task_id WHERE i.mission_id = ? ORDER BY t.started_at', [done.id]);
+      if (items.length !== 2) return `${items.length} runs`;
+      const [first, second] = items;
+      if (new Date(second.started_at) < new Date(first.finished_at)) return 'the second phone started before the first one finished';
+      const [flows] = await db.query("SELECT id, auto, format FROM saved_flows WHERE source_prompt = ?", [prompt]);
+      if (flows.length !== 1 || !flows[0].auto || flows[0].format !== 2) return `flows saved: ${JSON.stringify(flows)}`;
+      if (second.flow_id !== flows[0].id) return `second run used flow ${second.flow_id}, expected ${flows[0].id}`;
+    },
+  },
+  {
+    name: 'flows: the AI fixes only the broken step, the flow carries on, and the fix is reused next time with no AI',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      await api('PUT', '/android/flows/settings', { replay_first: true, ai_repair: true });
+      const phone = phones.free2.phone;
+      const changed = { ...HARNESS_APP, screens: { ...HARNESS_APP.screens, home: [{ text: 'Harness Home', type: 'text' }, { text: 'Find', to: 'search' }] } };
+      // The scripted "AI" clicks Find: the step the flow could not do.
+      const flowId = await insertHarnessFlow('[sim actions=click:Find delay=50]');
+      const runOnce = async (value) => {
+        phone.setApp(changed);
+        const t0 = Date.now();
+        await run('free2', `Search the harness app for ${value} [sim actions=click:Find delay=50]`);
+        const done = await waitFor(async () => {
+          const [task] = await tasksSince(t0, ['free2']);
+          return task && TERMINAL.has(task.status) ? task : null;
+        }, 45_000);
+        const typed = [...phone.typedLog];
+        phone.setApp(null);
+        if (!done) return { error: 'run never finished' };
+        const [[task]] = await db.query('SELECT id, status, reason_code, message, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
+        const [logs] = await db.query('SELECT action_type, source FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
+        return { task, logs, typed };
+      };
+      const first = await runOnce('cats');
+      if (first.error) return first.error;
+      if (first.task.status !== 'SUCCEEDED' || first.task.flow_mode !== 'repaired') return `first run ${first.task.status}/${first.task.flow_mode}: ${String(first.task.message).slice(0, 200)}`;
+      const firstSteps = first.logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
+      if (firstSteps !== 'open_app/replay, click_node/ai, type_text/replay, press_key/replay') return `first run steps: ${firstSteps}`;
+      if (!first.typed.includes('cats')) return `first run typed ${JSON.stringify(first.typed)}`;
+      const [patches] = await db.query('SELECT status, successes, step_index, resume_index FROM flow_patches WHERE flow_id = ?', [flowId]);
+      if (patches.length !== 1 || patches[0].successes !== 1 || patches[0].step_index !== 1 || patches[0].resume_index !== 2) return `fix saved as ${JSON.stringify(patches)}`;
+
+      const second = await runOnce('dogs');
+      await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false });
+      if (second.error) return second.error;
+      if (second.task.status !== 'SUCCEEDED' || second.task.flow_mode !== 'repaired') return `second run ${second.task.status}/${second.task.flow_mode}`;
+      const secondSteps = second.logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
+      if (secondSteps !== 'open_app/replay, click_node/replay, type_text/replay, press_key/replay') return `second run steps: ${secondSteps}`;
+      const [[patch]] = await db.query('SELECT successes FROM flow_patches WHERE flow_id = ?', [flowId]);
+      if (patch.successes !== 2) return `fix successes ${patch.successes}, expected 2`;
+    },
+  },
+  {
+    name: 'flows: a shared fix joins the flow after 3 runs on 2 phone models, and is rolled back after 2 failed runs',
+    async run() {
+      for (const name of ['free1', 'free2']) if (!(await waitIdle(name))) return `${name} never became idle`;
+      await api('PUT', '/android/flows/settings', { replay_first: true, ai_repair: true, share_fixes: true });
+      await db.query("UPDATE android_devices SET device_model = 'OtherPhone' WHERE id = ?", [phones.free1.dbId]);
+      const sim = '[sim actions=click:Find delay=50]';
+      const changed = { ...HARNESS_APP, screens: { ...HARNESS_APP.screens, home: [{ text: 'Harness Home', type: 'text' }, { text: 'Find', to: 'search' }] } };
+      const flowId = await insertHarnessFlow(sim);
+      const runOn = async (name, app, value) => {
+        if (!(await waitIdle(name))) return { error: `${name} never became idle` };
+        phones[name].phone.setApp(app);
+        const t0 = Date.now();
+        await run(name, `Search the harness app for ${value} ${sim}`);
+        const done = await waitFor(async () => {
+          const [task] = await tasksSince(t0, [name]);
+          return task && TERMINAL.has(task.status) ? task : null;
+        }, 45_000);
+        phones[name].phone.setApp(null);
+        if (!done) return { error: 'run never finished' };
+        // Bookkeeping runs just after the run ends.
+        await sleep(800);
+        const [[task]] = await db.query('SELECT status, flow_mode FROM agent_tasks WHERE id = ?', [done.id]);
+        return task;
+      };
+      const flowRow = async () => (await db.query('SELECT version, steps_json, previous_steps_json FROM saved_flows WHERE id = ?', [flowId]))[0][0];
+      try {
+        for (const [name, value] of [['free2', 'a'], ['free1', 'b'], ['free2', 'c']]) {
+          const r = await runOn(name, changed, value);
+          if (r.error) return r.error;
+          if (r.status !== 'SUCCEEDED' || r.flow_mode !== 'repaired') return `run on ${name}: ${r.status}/${r.flow_mode}`;
+        }
+        let flow = await flowRow();
+        if (flow.version !== 2 || !flow.steps_json.includes('"text":"Find"')) return `not promoted: version ${flow.version}`;
+        const [[patch]] = await db.query('SELECT status, successes, models FROM flow_patches WHERE flow_id = ? ORDER BY successes DESC LIMIT 1', [flowId]);
+        if (patch.status !== 'promoted') return `fix ${JSON.stringify(patch)}`;
+        const after = await runOn('free1', changed, 'd');
+        if (after.flow_mode !== 'replay') return `after promotion the flow ran as ${after.flow_mode}`;
+
+        // The app changes back: the promoted step now fails; with fixes off the AI finishes (a failed flow run).
+        await api('PUT', '/android/flows/settings', { ai_repair: false });
+        for (const value of ['e', 'f']) {
+          const r = await runOn('free2', HARNESS_APP, value);
+          if (r.error) return r.error;
+          if (r.flow_mode !== 'fallback') return `run with the old app: ${r.flow_mode}`;
+        }
+        flow = await flowRow();
+        if (flow.version !== 3 || flow.steps_json.includes('"text":"Find"') || flow.previous_steps_json) return `not rolled back: version ${flow.version}`;
+      } finally {
+        await db.query("UPDATE android_devices SET device_model = 'FakePhone' WHERE id = ?", [phones.free1.dbId]);
+        await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false, share_fixes: false });
+      }
     },
   },
 ];

@@ -104,7 +104,7 @@ export interface DiagnosticsRun {
 
 export interface Verification {
   status: 'verified' | 'unverified' | 'failed';
-  method: 'rule' | 'judge' | 'none';
+  method: 'rule' | 'judge' | 'replay' | 'none';
   reason: string;
   retries: number;
 }

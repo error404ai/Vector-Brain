@@ -603,7 +603,7 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
               {run.verification ? (
                 <Alert severity={run.verification.status === 'verified' ? 'success' : run.verification.status === 'failed' ? 'error' : 'warning'} sx={{ mt: 1 }}>
                   <strong>{VERIFICATION_LABEL[run.verification.status]}</strong>
-                  {` (${run.verification.method === 'rule' ? 'checked on the phone' : run.verification.method === 'judge' ? 'checked by a separate AI call' : 'no check applied'}${run.verification.retries ? `, agent sent back ${run.verification.retries}×` : ''}): `}
+                  {` (${run.verification.method === 'rule' ? 'checked on the phone' : run.verification.method === 'judge' ? 'checked by a separate AI call' : run.verification.method === 'replay' ? 'every saved-flow step reached its recorded screen' : 'no check applied'}${run.verification.retries ? `, agent sent back ${run.verification.retries}×` : ''}): `}
                   {run.verification.reason}
                 </Alert>
               ) : null}

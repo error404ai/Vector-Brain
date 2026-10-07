@@ -1,15 +1,39 @@
 import { zodValidationMiddleware } from '@/middleware/zodValidationMiddleware';
 import { FlowReplayService } from '@/services/android/FlowReplayService';
+import { FlowLibraryService } from '@/services/android/FlowLibraryService';
 import AppError from '@/helpers/AppError';
 import { RenameFlowValidation, RunFlowValidation, SaveFlowValidation } from '@/validations/FlowValidation';
-import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, UseBefore } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, Put, UseBefore } from 'routing-controllers';
 import { Service } from 'typedi';
 import z from 'zod';
 
 @Service()
 @JsonController('/android/flows')
 export class FlowController {
-  constructor(private flowReplayService: FlowReplayService) {}
+  constructor(
+    private flowReplayService: FlowReplayService,
+    private flowLibrary: FlowLibraryService,
+  ) {}
+
+  /** The account's saved-flow switches (Settings → Saved flows). */
+  @Authorized()
+  @Get('/settings')
+  async getSettings(@CurrentUser({ required: true }) user: { userId: number }) {
+    return { message: 'Saved-flow settings', data: await this.flowLibrary.settings(user.userId) };
+  }
+
+  @Authorized()
+  @Put('/settings')
+  async putSettings(
+    @Body() request: { record?: unknown; replay_first?: unknown; ai_repair?: unknown; share_fixes?: unknown },
+    @CurrentUser({ required: true }) user: { userId: number },
+  ) {
+    const body = request ?? {};
+    for (const key of ['record', 'replay_first', 'ai_repair', 'share_fixes'] as const) {
+      if (body[key] !== undefined && typeof body[key] !== 'boolean') throw new AppError(`${key} must be true or false`, 400);
+    }
+    return { message: 'Saved — applies to the next run', data: await this.flowLibrary.setSettings(user.userId, body) };
+  }
 
   @Authorized()
   @Get('/')
@@ -51,9 +75,14 @@ export class FlowController {
   @Patch('/:id')
   async rename(
     @Param('id') id: number,
-    @Body() request: { name?: string },
+    @Body() request: { name?: string; enabled?: boolean },
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
+    if (request?.enabled !== undefined) {
+      if (typeof request.enabled !== 'boolean') throw new AppError('enabled must be true or false', 400);
+      if (request.name === undefined) return this.flowReplayService.setEnabled(id, user.userId, request.enabled);
+      await this.flowReplayService.setEnabled(id, user.userId, request.enabled);
+    }
     const parsed = RenameFlowValidation.safeParse({ name: request?.name });
     if (!parsed.success) {
       throw new AppError('Name cannot be empty', 400);

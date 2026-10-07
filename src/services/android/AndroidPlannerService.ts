@@ -30,6 +30,10 @@ import { isScreenshotMode, type ScreenshotMode } from './eko/screenshotMode';
 import { deviceFactsText } from './deviceNetwork';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
+import { FlowLibraryService, type FlowMode, type FlowPlan } from './FlowLibraryService';
+import { FlowRunner } from './flowRunner';
+import { afterMet, parseTable, recordFlow, resyncIndex, type FlowStepV2 } from './flowSteps';
+import { parseAppList, verifyCompletion } from './agent/successVerifier';
 import crypto from 'node:crypto';
 
 // Configure Eko framework defaults for Android mobile automation
@@ -57,6 +61,8 @@ const MAX_UNCHANGED_OBSERVATIONS = 3;
  * The agent is shown the screen after two rounds; six rounds stops the run.
  */
 const OSCILLATION_WINDOW = 12;
+/** Actions the AI may take to fix one broken flow step before the rest of the task goes to it. */
+const FLOW_REPAIR_STEPS = 10;
 
 /** Step budget used when a caller does not supply one. */
 /** Time a sleeping phone gets to come up before its first action. */
@@ -147,7 +153,7 @@ function simulationOptions(prompt: string): {
     return found ? Number(found[1]) : fallback;
   };
   const report = /report="([^"]*)"/.exec(text)?.[1] ?? null;
-  // actions=open:com.app,read,tap,tap0,back,fail,wait — a scripted run that goes
+  // actions=open:com.app,read,tap,tap0,back,fail,wait,click:Text — a scripted run that goes
   // through the real step recording (tool_use / tool_result / finish).
   const actions = /actions=([\w.:,]+)/.exec(text)?.[1]?.split(',').filter(Boolean) ?? null;
   return {
@@ -517,6 +523,7 @@ export class AndroidPlannerService {
     private proxyRotationService: ProxyRotationService,
     private taskQueueService: TaskQueueService,
     private runDiagnosticsService: RunDiagnosticsService,
+    private flowLibrary: FlowLibraryService,
   ) {
     // The queue launches tasks through the planner, so it is handed the entry
     // point rather than injecting the planner back — that would be a cycle.
@@ -674,6 +681,8 @@ export class AndroidPlannerService {
      * same task until the time is up; the phone keeps its lane slot throughout.
      */
     runForSeconds?: number,
+    /** Replay this saved flow first (the Flows page's "Replay"), whatever the account switch says. */
+    opts: { flowId?: number } = {},
   ): Promise<ApiResponse> {
     // A task can pin a specific provider so different devices can run different
     // models simultaneously; otherwise fall back to the user's active config.
@@ -904,6 +913,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       initialScreenshot,
       record,
       runForSeconds && runForSeconds > 0 ? Date.now() + runForSeconds * 1000 : undefined,
+      { flowId: opts.flowId, followUp: Boolean(existingTaskId) },
     ).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
       this.gatewayService.setAutomationSession(device.device_id, false);
@@ -1105,6 +1115,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     record = false,
     /** Epoch ms. When set, the run keeps going in rounds until this moment. */
     runUntil?: number,
+    flowOptions: { flowId?: number; followUp?: boolean } = {},
   ) {
     const lastLog = await this.taskLogRepo.findOne({
       where: { agent_task_id: agentTask.id },
@@ -1134,6 +1145,29 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let lastObservationFingerprint: string | undefined;
     let pendingTapPx: { x: number; y: number } | null = null;
     let unchangedObservationCount = 0;
+
+    // Saved flows (docs/REPLAY_ENGINE.md). Who chose the step being logged.
+    let stepSource: 'ai' | 'replay' = 'ai';
+    /** What type_text really typed, by step (the log keeps "[REDACTED]"); memory only. */
+    const typedTexts = new Map<number, string>();
+    /** While the AI fixes one broken flow step: the step, its budget and where the flow resumes. */
+    let repair: {
+      plan: FlowPlan;
+      index: number;
+      /** Last step number before the AI started; its own steps follow. */
+      fromStep: number;
+      startKey: string;
+      used: number;
+      resumeAt: number;
+    } | null = null;
+    let flowSettings = { record: false, replay_first: false, ai_repair: false, share_fixes: false };
+    let flowPlan: FlowPlan | null = null;
+    let flowMode: FlowMode = 'replay';
+    /** An AI fix of a flow step, saved as a candidate if the run succeeds. */
+    let pendingFix: { index: number; resume: number; fromStep: number; toStep: number } | null = null;
+    /** Saved fixes this run used (their outcome is booked when it ends). */
+    const usedPatches: number[] = [];
+    let runSucceeded = false;
 
     // Run diagnostics: where this run's time and model usage go (RunDiagnosticsService).
     let lastResultAt = Date.now();
@@ -1408,12 +1442,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
               ui_tree_before: lastUiTree ?? null,
               package_before: lastForegroundApp ?? null,
               screen_before: screenFingerprint(lastUiTree, lastForegroundApp),
-              think_ms: Math.max(0, stepStartTime - lastResultAt),
-              llm_call: llmCalls + 1,
-              source: 'ai',
+              think_ms: stepSource === 'ai' ? Math.max(0, stepStartTime - lastResultAt) : 0,
+              llm_call: stepSource === 'ai' ? llmCalls + 1 : null,
+              source: stepSource,
             });
             await this.taskLogRepo.save(currentTaskLog);
-            callSteps.push(currentTaskLog);
+            if (stepSource === 'ai') callSteps.push(currentTaskLog);
+            if (toolName === 'type_text' && typeof toolParams.text === 'string') typedTexts.set(stepCount, toolParams.text);
+            if (repair && stepSource === 'ai') repair.used += 1;
 
             this.gatewayService.broadcastToUser(userId, 'task:step', {
               taskId: agentTask.id,
@@ -1478,6 +1514,23 @@ Use the current visible Android screen and UI state as context. Continue from wh
               runSight,
             });
             lastResultAt = Date.now();
+
+            // The AI is fixing one flow step: hand back to the flow as soon as the
+            // step's result is on screen, or the phone is on a later step's screen.
+            if (repair && stepSource === 'ai') {
+              const rows = parseTable(lastUiTree);
+              const pkg = lastForegroundApp && lastForegroundApp !== 'unknown' ? lastForegroundApp : null;
+              const broken = repair.plan.steps[repair.index];
+              const moved = this.hashText(`${pkg}\n${lastUiTree ?? ''}`) !== repair.startKey;
+              const didStep =
+                !isError &&
+                (broken.action === 'type' ? message.toolName === 'type_text' : moved && afterMet(broken, pkg, rows, moved));
+              const later = resyncIndex(repair.plan.steps, repair.index + 1, pkg, rows);
+              if (didStep) repair.resumeAt = repair.index + 1;
+              else if (later > repair.index) repair.resumeAt = later;
+              if (repair.resumeAt >= 0) engine?.abort('The saved flow is back on track');
+              else if (repair.used >= FLOW_REPAIR_STEPS) engine?.abort('The step fix used up its budget');
+            }
           } else if (message.type === 'agent_result') {
             finalMessage = message.result || '';
           } else if (message.type === 'finish') {
@@ -1559,8 +1612,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
           let screen = 0;
           let tick = 0;
           let pkg = 'com.android.launcher3';
-          lastUiTree = simulatedTree(screen, tick);
-          lastForegroundApp = pkg;
+          // A round after a saved flow starts where the flow left the phone.
+          if (!lastUiTree) {
+            lastUiTree = simulatedTree(screen, tick);
+            lastForegroundApp = pkg;
+          }
           const envelope = { streamType: 'agent', chatId: 'sim', taskId: ekoTaskId, agentName: 'Android' };
           for (const [index, step] of options.actions.entries()) {
             if (this.activeTasks.get(agentTask.id)?.cancelled) {
@@ -1582,8 +1638,19 @@ Use the current visible Android screen and UI state as context. Continue from wh
                         ? { toolName: 'tap_coordinate', params: { x: 5, y: 5 } }
                         : kind === 'fail'
                           ? { toolName: 'tap_coordinate', params: { x: 9, y: 9 } }
-                          : { toolName: 'tap_coordinate', params: { x: 100, y: 200 + index } };
+                          : kind === 'click'
+                            ? { toolName: 'click_node', params: { text: arg } }
+                            : { toolName: 'tap_coordinate', params: { x: 100, y: 200 + index } };
             await handleMessage({ ...envelope, type: 'tool_use', toolCallId: `sim-${index}`, ...tool } as unknown as AgentStreamMessage);
+            // click:<text> really clicks on the phone (a scripted fake app), and the
+            // agent reports the screen it lands on, as in a model run.
+            if (kind === 'click') {
+              const res = await androidAgent.runTool('click_node', { text: arg });
+              noteDeviceAction();
+              await handleMessage({ ...envelope, type: 'tool_result', toolCallId: `sim-${index}`, ...tool, toolResult: res } as unknown as AgentStreamMessage);
+              await handleMessage({ ...envelope, type: 'finish', finishReason: 'tool-calls', usage: { promptTokens: 1000 + index, completionTokens: 40, totalTokens: 1040 + index } } as unknown as AgentStreamMessage);
+              continue;
+            }
             const outcome = await this.gatewayService.executeAction(hardwareDeviceId, { type: 'CaptureScreen' });
             noteDeviceAction();
             const failed = kind === 'fail' || outcome.status !== 'SUCCESS';
@@ -1655,7 +1722,164 @@ Use the current visible Android screen and UI state as context. Continue from wh
           }, Math.max(0, runUntil - Date.now()))
         : undefined;
 
-      let result = await runRound(prompt);
+      // A saved flow first, when one fits (docs/REPLAY_ENGINE.md). Never for a
+      // timed run or a follow-up: neither has a recorded path to follow.
+      flowSettings = await this.flowLibrary.settings(userId);
+      flowPlan =
+        runUntil || flowOptions.followUp
+          ? null
+          : flowOptions.flowId
+            ? await this.flowLibrary.byId(userId, flowOptions.flowId)
+            : flowSettings.replay_first
+              ? await this.flowLibrary.match(userId, prompt)
+              : null;
+      if (flowPlan) {
+        agentTask.flow_id = flowPlan.flow.id;
+        void this.agentTaskRepo.update({ id: agentTask.id }, { flow_id: flowPlan.flow.id }).catch(() => undefined);
+        Logger.info(`[AndroidPlanner] Task ${agentTask.id}: replaying saved flow ${flowPlan.flow.id} (${flowPlan.steps.length} steps)`);
+      }
+
+      /** Log one flow step through the same handler as a model's step. */
+      let replayCall = 0;
+      const replayStep = async (toolName: string, args: Record<string, unknown>, label: string) => {
+        stepSource = 'replay';
+        currentThought = `Saved flow: ${label}`;
+        const envelope = { streamType: 'agent', chatId: 'flow', taskId: ekoTaskId, agentName: 'Android' };
+        const toolCallId = `flow-${(replayCall += 1)}`;
+        try {
+          await handleMessage({ ...envelope, type: 'tool_use', toolCallId, toolName, params: args } as unknown as AgentStreamMessage);
+          const toolResult = await androidAgent.runTool(toolName, args);
+          await handleMessage({ ...envelope, type: 'tool_result', toolCallId, toolName, params: args, toolResult } as unknown as AgentStreamMessage);
+          noteDeviceAction();
+          return toolResult;
+        } finally {
+          stepSource = 'ai';
+        }
+      };
+      const runner = new FlowRunner({
+        observe: async () => {
+          const seen = await androidAgent.observeForReplay();
+          if (!seen) return null;
+          noteActivity();
+          lastUiTree = seen.tree ?? undefined;
+          lastForegroundApp = seen.packageName ?? undefined;
+          return seen;
+        },
+        step: replayStep,
+        stopped: () => Boolean(guardStopReason) || wasCancelled || Boolean(this.activeTasks.get(agentTask.id)?.cancelled),
+      });
+
+      /** The flow ran to the end: the same rule checks as any run, else the steps' own checks. */
+      const finishFlow = async (plan: FlowPlan): Promise<EngineRunResult> => {
+        const check = await verifyCompletion({
+          goal: prompt,
+          summary: `Saved flow "${plan.flow.name}" finished`,
+          observe: () => androidAgent.observeForCheck(),
+          listApps: async () => parseAppList(await androidAgent.launcherAppsText()),
+        });
+        if (check.status === 'failed') return { success: false, stopReason: 'done', result: `The saved flow ran, but ${check.reason}.`, reasonCode: 'VERIFICATION_FAILED', verification: check };
+        const fixed = flowMode === 'repaired' ? ' (one step was fixed on the way)' : '';
+        return {
+          success: true,
+          stopReason: 'done',
+          result: `Done with the saved flow "${plan.flow.name}"${fixed}.`,
+          verification:
+            check.status === 'verified'
+              ? check
+              : { status: 'verified', method: 'replay', reason: 'Every step reached the screen it was recorded on', retries: 0 },
+        };
+      };
+
+      /** The AI does only the broken step; returns where the flow continues, or -1. */
+      const repairStep = async (plan: FlowPlan, index: number, reason: string): Promise<number> => {
+        const step = plan.steps[index];
+        repair = {
+          plan,
+          index,
+          fromStep: stepCount,
+          startKey: this.hashText(`${lastForegroundApp && lastForegroundApp !== 'unknown' ? lastForegroundApp : null}\n${lastUiTree ?? ''}`),
+          used: 0,
+          resumeAt: -1,
+        };
+        const typing = step.action === 'type' ? ' Type the text this task needs into the field.' : '';
+        round += 1;
+        ekoTaskId = `${baseEkoTaskId}-fix${index + 1}`;
+        ekoTaskIds.push(ekoTaskId);
+        finalMessage = '';
+        try {
+          await runRound(
+            `You are partway through this task: "${prompt}".\n` +
+              `A saved flow is doing it step by step, and this step did not work: "${step.label}" (${reason}).${typing}\n` +
+              'Do only what this step needs (deal with anything in the way first), then stop. The saved flow carries on by itself as soon as the phone is back on track — do not do the rest of the task.',
+          );
+        } catch (error) {
+          if (guardStopReason || this.activeTasks.get(agentTask.id)?.cancelled) throw error;
+          Logger.warn(`[AndroidPlanner] Task ${agentTask.id}: the step fix ended with an error: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
+        }
+        const out = repair as { resumeAt: number; fromStep: number } | null;
+        repair = null;
+        finalMessage = '';
+        if (!out || out.resumeAt < 0) return -1;
+        pendingFix = { index, resume: out.resumeAt, fromStep: out.fromStep, toStep: stepCount };
+        return out.resumeAt;
+      };
+
+      const runWithFlow = async (plan: FlowPlan): Promise<EngineRunResult> => {
+        let from = 0;
+        let lastBreak = '';
+        const tried = new Set<number>();
+        for (;;) {
+          const out = await runner.run(plan.steps, plan.params, plan.values, from);
+          if (out.status === 'stopped') return { success: false, stopReason: 'abort', result: guardStopReason ?? 'Cancelled' };
+          if (out.status === 'done') return finishFlow(plan);
+          const step = plan.steps[out.index];
+          lastBreak = `"${step.label}" (${out.reason})`;
+          Logger.info(`[AndroidPlanner] Task ${agentTask.id}: flow step ${out.index + 1} broke: ${out.reason}`);
+          // One fix per step: the same step breaking again goes to the AI for the rest.
+          if (tried.has(out.index)) break;
+          tried.add(out.index);
+
+          // 1. A fix that worked before on this phone (or, shared, on this model).
+          let resumed = -1;
+          const patches = await this.flowLibrary.patchesFor(plan.flow, out.index, deviceDbId ?? null, device?.device_model ?? null, flowSettings.share_fixes);
+          for (const patch of patches) {
+            const fixSteps = JSON.parse(patch.steps_json) as FlowStepV2[];
+            const fixed = await runner.run(fixSteps, plan.params, plan.values, 0);
+            if (fixed.status === 'stopped') return { success: false, stopReason: 'abort', result: guardStopReason ?? 'Cancelled' };
+            const seen = await androidAgent.observeForReplay();
+            const at = seen ? resyncIndex(plan.steps, out.index + 1, seen.packageName, parseTable(seen.tree)) : -1;
+            const next = fixed.status === 'done' ? (at > out.index ? at : patch.resume_index) : -1;
+            if (next >= 0) {
+              usedPatches.push(patch.id);
+              resumed = next;
+              break;
+            }
+            void this.flowLibrary.patchOutcome(patch.id, false, device?.device_model ?? null, flowSettings.share_fixes);
+          }
+
+          // 2. The AI, for this step only.
+          if (resumed < 0 && flowSettings.ai_repair) resumed = await repairStep(plan, out.index, out.reason);
+          if (guardStopReason || this.activeTasks.get(agentTask.id)?.cancelled) return { success: false, stopReason: 'abort', result: guardStopReason ?? 'Cancelled' };
+          if (resumed < 0) break;
+          flowMode = 'repaired';
+          if (resumed >= plan.steps.length) return finishFlow(plan);
+          from = resumed;
+        }
+
+        // 3. The AI finishes the task from where the phone is.
+        flowMode = 'fallback';
+        pendingFix = null;
+        round += 1;
+        ekoTaskId = `${baseEkoTaskId}-ai`;
+        ekoTaskIds.push(ekoTaskId);
+        finalMessage = '';
+        return runRound(
+          `${prompt}\n\nA saved flow did the first part of this task and stopped at ${lastBreak}. Look at the current screen and finish the task from here; start over only if the screen requires it.`,
+        );
+      };
+
+      // Raced with the watchdog like a model round, so a stalled phone still ends the run.
+      let result = flowPlan ? ((await Promise.race([runWithFlow(flowPlan), timeoutPromise])) as EngineRunResult) : await runRound(prompt);
       // Timed runs: the agent said it was done before the time was up — start
       // another round on the same task (same lane slot, same step budget).
       while (
@@ -1737,6 +1961,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
                 : { status: 'FAILED', reason: 'AGENT_REPORTED_FAILURE' };
       agentTask.status = terminal.status;
       agentTask.reason_code = terminal.reason;
+      if (flowPlan) agentTask.flow_mode = flowMode;
+      runSucceeded = isSuccess;
       agentTask.verification = result.verification ?? null;
       agentTask.finished_at = new Date();
       agentTask.lease_until = null;
@@ -1810,6 +2036,23 @@ Use the current visible Android screen and UI state as context. Continue from wh
       if (this.activeDeviceTasks.get(hardwareDeviceId) === agentTask.id) {
         this.activeDeviceTasks.delete(hardwareDeviceId);
       }
+      // Saved flows: book how the flow did, keep a step fix, or save this run as a flow.
+      if (!this.shuttingDown) {
+        void this.afterFlowRun({
+          task: agentTask,
+          settings: flowSettings,
+          plan: flowPlan,
+          mode: flowMode,
+          ok: runSucceeded,
+          deviceDbId: deviceDbId ?? null,
+          deviceModel: device?.device_model ?? null,
+          usedPatches,
+          pendingFix,
+          typed: typedTexts,
+          timed: Boolean(runUntil),
+          followUp: Boolean(flowOptions.followUp),
+        });
+      }
 
       // Give this phone's proxy a fresh IP for whatever runs next. Deliberately
       // not awaited: the run is over, and a slow provider must not hold the
@@ -1830,6 +2073,50 @@ Use the current visible Android screen and UI state as context. Continue from wh
         .catch((error) => Logger.warn('[AndroidPlanner] Proxy rotation or queue drain failed:', error));
     }
   }
+  /**
+   * After a run (never throws): with a flow, its stats, the fixes it used and
+   * a new fix the AI made; without one, the run saved as a flow when the
+   * account records runs (docs/REPLAY_ENGINE.md).
+   */
+  private async afterFlowRun(input: {
+    task: AgentTask;
+    settings: { record: boolean; share_fixes: boolean };
+    plan: FlowPlan | null;
+    mode: FlowMode;
+    ok: boolean;
+    deviceDbId: number | null;
+    deviceModel: string | null;
+    usedPatches: number[];
+    pendingFix: { index: number; resume: number; fromStep: number; toStep: number } | null;
+    typed: Map<number, string>;
+    timed: boolean;
+    followUp: boolean;
+  }): Promise<void> {
+    const { task, plan, settings } = input;
+    try {
+      // Only text that is part of the task's wording can become a flow parameter;
+      // nothing else typed (a password, a code) is kept, not even in memory.
+      const wording = (task.prompt ?? '').toLowerCase();
+      this.flowLibrary.rememberTyped(task.id, new Map([...input.typed].filter(([, text]) => text.trim().length >= 2 && wording.includes(text.trim().toLowerCase()))));
+      if (plan) {
+        await this.flowLibrary.recordOutcome(plan.flow.id, input.mode, input.ok, input.deviceModel);
+        for (const id of input.usedPatches) await this.flowLibrary.patchOutcome(id, input.ok, input.deviceModel, settings.share_fixes);
+        const fix = input.pendingFix;
+        if (fix && input.ok && input.mode === 'repaired' && task.prompt) {
+          const steps = recordFlow(task.prompt, await this.flowLibrary.recordedSteps(task.id, fix.fromStep, fix.toStep)).steps;
+          const patch = await this.flowLibrary.savePatch(plan.flow, fix.index, fix.resume, steps, input.deviceDbId, input.deviceModel);
+          if (patch) await this.flowLibrary.patchOutcome(patch.id, true, input.deviceModel, settings.share_fixes);
+        }
+        return;
+      }
+      if (input.ok && settings.record && !input.timed && !input.followUp && task.verification?.status !== 'failed') {
+        await this.flowLibrary.recordFromTask(task, { auto: true, deviceModel: input.deviceModel });
+      }
+    } catch (error) {
+      Logger.warn(`[AndroidPlanner] Saved-flow bookkeeping failed for task ${task.id}:`, error);
+    }
+  }
+
   private collapseRepeatingLoop(text: string, maxRepeats = 2): string {
     const words = text.split(/\s+/);
     if (words.length < 20) return text;

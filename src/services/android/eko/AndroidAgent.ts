@@ -934,6 +934,26 @@ export class AndroidAgent extends Agent {
     return { packageName: packageName && packageName !== 'unknown' ? packageName : null, tree: this.lastUiTree ?? '' };
   }
 
+  /**
+   * For flow replay (no model): read the screen and clear known popups by
+   * rule, without screenshots, a vision helper or a step being counted.
+   */
+  async observeForReplay(): Promise<{ packageName: string | null; tree: string | null; key: string } | null> {
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+    if (res.status !== 'SUCCESS' || !res.uiTree) return null;
+    this.absorb(res);
+    await this.clearObstacles();
+    const packageName = this.lastForegroundApp && this.lastForegroundApp !== 'unknown' ? this.lastForegroundApp : null;
+    return { packageName, tree: this.lastUiTree, key: this.currentKey() };
+  }
+
+  /** Runs one of the agent's own tools, exactly as the model would call it (flow replay). */
+  async runTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const tool = (this as unknown as { tools: Tool[] }).tools.find((t) => t.name === name);
+    if (!tool) return { content: [{ type: 'text', text: `No tool ${name}` }], isError: true };
+    return tool.execute(args, {} as AgentContext, {} as never);
+  }
+
   /** The phone's launchable apps as "Label | package" text (ListApps). */
   async launcherAppsText(): Promise<string> {
     const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ListApps' });

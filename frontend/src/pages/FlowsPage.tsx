@@ -5,6 +5,7 @@ import {
   useGetFlowsQuery,
   useRenameFlowMutation,
   useRunFlowMutation,
+  useSetFlowEnabledMutation,
 } from '@/RTKService/flowService/flowService';
 import PageHeader from '@/components/ui/PageHeader';
 import BoltIcon from '@mui/icons-material/Bolt';
@@ -28,6 +29,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -51,6 +53,16 @@ export default function FlowsPage() {
   const [runFlow, { isLoading: isRunning }] = useRunFlowMutation();
   const [renameFlow] = useRenameFlowMutation();
   const [deleteFlow] = useDeleteFlowMutation();
+  const [setEnabled] = useSetFlowEnabledMutation();
+
+  const handleEnabled = async (flow: SavedFlow, enabled: boolean) => {
+    try {
+      await setEnabled({ id: flow.id, enabled }).unwrap();
+      toast.success(enabled ? 'Flow on — used for matching tasks' : 'Flow off — only replayed by hand');
+    } catch (err) {
+      toast.error((err as { data?: { message?: string } })?.data?.message || 'Could not change the flow');
+    }
+  };
 
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
   const [deviceForFlow, setDeviceForFlow] = useState<Record<number, number>>({});
@@ -97,8 +109,15 @@ export default function FlowsPage() {
     <>
       <PageHeader
         title="Flows"
-        subtitle="Runs you have saved. Replaying one sends the recorded actions straight to the phone — no AI, no cost."
+        subtitle="Runs you have saved. A flow replays on the phone with no AI; each step checks it is on the right screen first."
       />
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 1000 }}>
+        Saving tasks automatically, using flows before the AI, and AI fixes for broken steps are switched on in{' '}
+        <Box component="a" href="/settings#saved-flows" sx={{ color: 'primary.main', fontWeight: 700 }}>
+          Settings → Saved flows
+        </Box>
+        .
+      </Typography>
 
       <Stack spacing={2.5} sx={{ maxWidth: 1000 }}>
         {isLoading ? (
@@ -124,10 +143,13 @@ export default function FlowsPage() {
         ) : (
           <Stack spacing={1.5}>
             {flows.map((flow) => {
+              const checkable = flow.format === 2;
               const fragile = flow.coordinate_step_count > 0;
+              const stats = flow.stats;
+              const enabled = flow.enabled !== false;
 
               return (
-                <Card key={flow.id} variant="outlined" sx={{ borderRadius: 2.5 }}>
+                <Card key={flow.id} variant="outlined" sx={{ borderRadius: 2.5, opacity: enabled ? 1 : 0.7 }}>
                   <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                     <Stack
                       direction={{ xs: 'column', md: 'row' }}
@@ -163,12 +185,54 @@ export default function FlowsPage() {
                               color: 'success.dark',
                             }}
                           />
-                          {flow.run_count > 0 && (
+                          {checkable ? (
+                            <Tooltip title="Each step checks the phone is on the screen it was recorded on, finds the button by its label, and checks the result.">
+                              <Chip label="Checks each step" size="small" variant="outlined" color="primary" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          ) : (
+                            <Tooltip title="Saved before flows checked their steps: it repeats the recorded taps at the same positions. Save the task again for a checkable flow.">
+                              <Chip label="Old recording" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          )}
+                          {checkable && flow.checked && (
+                            <Tooltip title="Recorded from a run the system checked on the phone, not only the agent's word.">
+                              <Chip label="Checked on phone" size="small" variant="outlined" color="success" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          )}
+                          {flow.auto && <Chip label="Saved automatically" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />}
+                          {flow.has_params && (
+                            <Tooltip title={`Also fits the same task with other values: ${flow.template ?? ''}`}>
+                              <Chip label="Works with other values" size="small" variant="outlined" color="info" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          )}
+                          {(flow.ai_steps ?? 0) > 0 && (
+                            <Tooltip title="Text that was typed but is not in the task's wording is never stored, so the AI types it each run.">
+                              <Chip label={`AI types ${flow.ai_steps} step${flow.ai_steps === 1 ? '' : 's'}`} size="small" variant="outlined" color="warning" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          )}
+                          {(flow.version ?? 1) > 1 && (
+                            <Tooltip title="A step fix was added to the flow (or a bad one rolled back) since it was saved.">
+                              <Chip label={`v${flow.version}`} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }} />
+                            </Tooltip>
+                          )}
+                          {!stats?.runs && flow.run_count > 0 && (
                             <Typography variant="caption" color="text.secondary">
                               Replayed {flow.run_count}×
                             </Typography>
                           )}
-                          {fragile && (
+                          {checkable && fragile && (
+                            <Tooltip title="One or more steps tap an unlabelled spot. It is only tapped when the rest of the screen matches, but it is the step most likely to break.">
+                              <Chip
+                                icon={<WarningAmberIcon sx={{ fontSize: 12 }} />}
+                                label="unlabelled taps"
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                sx={{ height: 20, fontSize: '0.6rem', fontWeight: 700 }}
+                              />
+                            </Tooltip>
+                          )}
+                          {!checkable && fragile && (
                             <Tooltip title="This flow taps fixed screen positions. If the app's layout changes, replay can land in the wrong place.">
                               <Chip
                                 icon={<WarningAmberIcon sx={{ fontSize: 12 }} />}
@@ -181,9 +245,21 @@ export default function FlowsPage() {
                             </Tooltip>
                           )}
                         </Stack>
+                        {stats && stats.runs > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75, fontVariantNumeric: 'tabular-nums' }}>
+                            {stats.runs} run{stats.runs === 1 ? '' : 's'} · {stats.replay_only} by the flow alone · {stats.repaired} after a step fix · {stats.fell_back} finished by the AI · {stats.failed} failed
+                            {Object.keys(stats.models).length > 1 ? ` · ${Object.keys(stats.models).length} phone models` : ''}
+                            {flow.last_verified_at ? ` · last checked ${new Date(flow.last_verified_at).toLocaleDateString()}` : ''}
+                          </Typography>
+                        )}
                       </Box>
 
-                      <Stack direction="row" spacing={1} alignItems="center" alignSelf={{ xs: 'flex-end', md: 'center' }}>
+                      <Stack direction="row" spacing={1} alignItems="center" alignSelf={{ xs: 'flex-end', md: 'center' }} flexWrap="wrap" useFlexGap>
+                        {checkable && (
+                          <Tooltip title={enabled ? 'On: used for tasks that match it. Turn off to only replay it by hand.' : 'Off: only replayed by hand.'}>
+                            <Switch size="small" checked={enabled} onChange={(_, value) => void handleEnabled(flow, value)} inputProps={{ 'aria-label': `Use ${flow.name} automatically` }} />
+                          </Tooltip>
+                        )}
                         {onlineDevices.length > 0 && (
                           <Select
                             size="small"

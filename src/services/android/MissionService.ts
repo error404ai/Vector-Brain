@@ -17,6 +17,7 @@ import { DeviceFactService } from './DeviceFactService';
 import { FleetStateService } from './FleetStateService';
 import { TaskQueueService } from './TaskQueueService';
 import { failureKind } from './failureKind';
+import { FlowLibraryService } from './FlowLibraryService';
 
 /** The request did not say which phones, and there was nothing to fall back on. */
 export class MissionTargetMissing extends AppError {
@@ -72,6 +73,7 @@ const RETRYABLE = new Set([
 const PLAIN_REASON: Record<string, string> = {
   DEVICE_OFFLINE: 'phone was offline',
   DEVICE_BUSY: 'phone was busy with another task',
+  WAITING_PILOT: 'waiting for the first phone — its run becomes a saved flow for the rest',
   TIMEOUT: 'phone did not answer in time',
   LLM_RATE_LIMIT: 'AI provider rate limit',
   LLM_SLOW: 'AI model was too slow to answer',
@@ -103,6 +105,8 @@ const PLAIN_REASON: Record<string, string> = {
 };
 
 const TERMINAL_ITEM = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+/** How long the other phones wait for the first phone's run to be saved as a flow. */
+const PILOT_FLOW_WAIT_MS = 30_000;
 /** Fleet states in which a phone can take a new run right now. */
 const READY_STATES = new Set(['idle', 'completed', 'failed', 'cancelled', 'interrupted']);
 
@@ -160,7 +164,43 @@ export class MissionService {
     private gatewayService: AndroidGatewayService,
     private taskQueueService: TaskQueueService,
     private deviceFactService: DeviceFactService,
+    private flowLibrary: FlowLibraryService,
   ) {}
+
+  /**
+   * "First phone, then the rest" (docs/REPLAY_ENGINE.md): with saved flows
+   * recorded and replayed first, and no flow yet for this task, one phone runs
+   * it with the AI; its run becomes the flow and the other phones replay it.
+   * Decided once per mission.
+   */
+  private pilotMode = new Map<number, boolean>();
+  /** When the first phone finished, so the others wait a moment for its flow to be saved. */
+  private pilotDoneAt = new Map<number, number>();
+
+  private async usesPilot(mission: Mission, items: MissionItem[]): Promise<boolean> {
+    const known = this.pilotMode.get(mission.id);
+    if (known !== undefined) return known;
+    let pilot = false;
+    if (!mission.duration_seconds && items.length > 1 && !items.some((i) => i.continue_from_task_id)) {
+      const settings = await this.flowLibrary.settings(mission.user_id);
+      const prompt = mission.prompt ?? mission.request;
+      pilot = settings.record && settings.replay_first && !(await this.flowLibrary.hasMatch(mission.user_id, prompt).catch(() => true));
+    }
+    this.pilotMode.set(mission.id, pilot);
+    return pilot;
+  }
+
+  /** Whether the other phones still wait for the first one. */
+  private async pilotHolds(mission: Mission, items: MissionItem[]): Promise<boolean> {
+    const finished = items.filter((i) => TERMINAL_ITEM.has(i.status));
+    if (!finished.length) return true;
+    // It failed: no flow will come of it, so the rest run with the AI now.
+    if (!finished.some((i) => i.status === 'SUCCEEDED')) return false;
+    if (await this.flowLibrary.hasMatch(mission.user_id, mission.prompt ?? mission.request).catch(() => false)) return false;
+    const doneAt = this.pilotDoneAt.get(mission.id) ?? Date.now();
+    this.pilotDoneAt.set(mission.id, doneAt);
+    return Date.now() - doneAt < PILOT_FLOW_WAIT_MS;
+  }
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -501,17 +541,32 @@ export class MissionService {
     let changed = false;
 
     const pendingHw = await this.hardwareIds(items.filter((i) => i.status === 'PENDING').map((i) => i.device_id));
+    const pilot = await this.usesPilot(mission, items);
+    let pilotStarted = items.some((i) => i.status === 'RUNNING' || i.status === 'QUEUED' || TERMINAL_ITEM.has(i.status));
+    // Started in an earlier tick: hold while it runs and briefly after (its flow is being saved).
+    const holding = pilot && pilotStarted ? await this.pilotHolds(mission, items) : true;
     for (const item of items) {
       const before = `${item.status}:${item.attempts}:${item.agent_task_id}:${item.waiting_since?.getTime() ?? ''}`;
       if (item.status === 'PENDING') {
         if (item.next_attempt_at && item.next_attempt_at.getTime() > Date.now()) continue;
+        // The first phone is dispatched; the others wait for it (and its flow).
+        if (pilot && pilotStarted && holding) {
+          if (item.last_reason !== 'WAITING_PILOT') {
+            item.last_reason = 'WAITING_PILOT';
+            await this.itemRepo.save(item);
+            changed = true;
+          }
+          continue;
+        }
         const hw = pendingHw.get(item.device_id);
         // An offline phone is waited for, not dispatched: starting a run on it
         // can only fail and would use up a retry.
         if (hw && !this.gatewayService.isDeviceConnected(hw)) {
           await this.waitForPhone(mission, item);
         } else {
+          if (item.last_reason === 'WAITING_PILOT') item.last_reason = null;
           await this.dispatch(mission, item);
+          if (pilot) pilotStarted = true;
         }
       } else if (item.status === 'QUEUED') {
         await this.followQueued(mission, item);
@@ -768,6 +823,8 @@ export class MissionService {
   }
 
   private async finish(mission: Mission, status: 'DONE' | 'CANCELLED'): Promise<void> {
+    this.pilotMode.delete(mission.id);
+    this.pilotDoneAt.delete(mission.id);
     const items = await this.itemRepo.find({ where: { mission_id: mission.id }, order: { id: 'ASC' } });
     const names = await this.deviceNames(items.map((i) => i.device_id));
     mission.status = status;

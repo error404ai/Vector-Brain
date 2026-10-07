@@ -11,6 +11,9 @@ import { Service } from 'typedi';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AutomationAction } from './AndroidProtocol';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
+import { AndroidPlannerService } from './AndroidPlannerService';
+import { FlowLibraryService } from './FlowLibraryService';
+import { FLOW_FORMAT } from './flowSteps';
 
 /** Lease for a replay run; renewed on every step (see AndroidPlannerService). */
 const REPLAY_LEASE_MS = 45_000;
@@ -40,6 +43,8 @@ export class FlowReplayService {
   constructor(
     private gatewayService: AndroidGatewayService,
     private runDiagnosticsService: RunDiagnosticsService,
+    private flowLibrary: FlowLibraryService,
+    private plannerService: AndroidPlannerService,
   ) {}
 
   async listFlows(userId: number): Promise<ApiResponse> {
@@ -55,6 +60,18 @@ export class FlowReplayService {
         run_count: flow.run_count,
         last_run_at: flow.last_run_at,
         created_at: flow.created_at,
+        /** 2 = checkable steps (acts on elements, checks each step); 1 = an old pixel recording. */
+        format: flow.format,
+        enabled: flow.enabled,
+        version: flow.version,
+        auto: flow.auto,
+        checked: flow.checked,
+        ai_steps: flow.ai_steps,
+        has_params: Boolean(flow.template?.includes('{{')),
+        template: flow.template,
+        stats: flow.stats,
+        last_verified_at: flow.last_verified_at,
+        fix_rolled_back_possible: Boolean(flow.previous_steps_json),
       })),
     };
   }
@@ -68,6 +85,16 @@ export class FlowReplayService {
   async saveFromTask(taskId: number, userId: number, name?: string): Promise<ApiResponse> {
     const task = await this.taskRepo.findOne({ where: { id: taskId, user_id: userId } });
     if (!task) throw new AppError('Task not found', 404);
+
+    // Checkable steps (docs/REPLAY_ENGINE.md); the old recording only when none could be made.
+    const device = task.device_id ? await this.deviceRepo.findOne({ where: { id: task.device_id }, select: ['id', 'device_model'] }) : null;
+    const flowV2 = await this.flowLibrary.recordFromTask(task, { auto: false, name, deviceModel: device?.device_model ?? null });
+    if (flowV2) {
+      return {
+        message: 'Flow saved',
+        data: { id: flowV2.id, step_count: flowV2.step_count, coordinate_step_count: flowV2.coordinate_step_count, needs_text: flowV2.ai_steps > 0, format: FLOW_FORMAT },
+      };
+    }
 
     const logs = await this.logRepo.find({
       where: { agent_task_id: task.id },
@@ -125,6 +152,15 @@ export class FlowReplayService {
     return { message: 'Flow deleted' };
   }
 
+  /** Off: the flow is never used automatically (it can still be replayed by hand). */
+  async setEnabled(id: number, userId: number, enabled: boolean): Promise<ApiResponse> {
+    const flow = await this.flowRepo.findOne({ where: { id, user_id: userId } });
+    if (!flow) throw new AppError('Flow not found', 404);
+    flow.enabled = enabled;
+    await this.flowRepo.save(flow);
+    return { message: enabled ? 'Flow on' : 'Flow off', data: { id: flow.id, enabled: flow.enabled } };
+  }
+
   async renameFlow(id: number, userId: number, name: string): Promise<ApiResponse> {
     const flow = await this.flowRepo.findOne({ where: { id, user_id: userId } });
     if (!flow) throw new AppError('Flow not found', 404);
@@ -145,6 +181,14 @@ export class FlowReplayService {
     if (!device) throw new AppError('Device not found', 404);
     if (device.status !== AndroidDeviceStatus.ONLINE) {
       throw new AppError('Device is offline', 400);
+    }
+
+    // A checkable flow runs through the agent (each step checked; a broken step
+    // is fixed by the AI when the account allows it), from its own wording.
+    if (flow.format === FLOW_FORMAT) {
+      const started = await this.plannerService.runTask(flow.source_prompt || flow.name, device.id, userId, undefined, undefined, undefined, false, false, undefined, { flowId: flow.id });
+      const data = (started.data ?? {}) as { taskId?: number };
+      return { message: 'Flow started', data: { taskId: data.taskId, steps: flow.step_count } };
     }
 
     const steps: FlowStep[] = JSON.parse(flow.steps_json);
