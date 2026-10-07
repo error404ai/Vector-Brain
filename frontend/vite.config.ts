@@ -38,6 +38,11 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // The prerender (scripts/prerender.mjs) runs the SSR build in Node; this
+  // package ships CommonJS that Node cannot import by name, so bundle it.
+  ssr: {
+    noExternal: ['react-helmet-async', /^@fontsource/],
+  },
   build: {
     outDir: '../public',
     emptyOutDir: true,

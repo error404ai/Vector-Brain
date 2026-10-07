@@ -2,8 +2,8 @@
 .fl{--paper:#F6F8FB; --ink:#111827; --graphite:#6B7280; --mute:#9CA3AF;
   --rule:rgba(17,24,39,.12); --clay:#2563EB; --teal:#0F766E; --ok:#059669; --black:#090D18; --bone:#E5E7EB;
   --hud:var(--ink); --hudmute:var(--graphite);
-  --display:'Archivo','Arial Narrow','Helvetica Neue',Arial,sans-serif;
-  --body:'Archivo','Helvetica Neue',Arial,sans-serif;
+  --display:'Archivo Variable','Archivo','Arial Narrow','Helvetica Neue',Arial,sans-serif;
+  --body:'Archivo Variable','Archivo','Helvetica Neue',Arial,sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
   --g:clamp(16px,3.2vw,40px);
   color-scheme:light;}
@@ -151,7 +151,7 @@
 .fl .auth .ctl.solid:hover{background:var(--clay);color:var(--paper)}
 .fl .auth .ctl:hover{color:var(--clay)}
 .fl .auth small{color:#64748B}
-.fl .foot-links{display:flex;gap:18px}
+.fl .foot-links{display:flex;flex-wrap:wrap;gap:8px 18px;max-width:640px}
 .fl .foot-links a{text-decoration:none}
 .fl .foot-links a:hover,.fl .foot-links a:focus-visible{color:var(--clay)}
 .fl .foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:110px;padding-top:16px;border-top:1px solid #1E293B;color:#64748B}

@@ -6,7 +6,7 @@ import { clamp, doneFrac, fleetCount, lerp, type FleetState } from './fleetState
 /**
  * Wires the FLEET landing page's scroll story to the markup under `root`:
  * per-chapter progress (`--p` on each pinned chapter), the running side label
- * and index, the UTC clock, the 1 → ∞ counter, the "Watch 12s" guided
+ * and index, the UTC clock, the 1 → 1,000 counter, the "Watch 12s" guided
  * scroll, the canvas screens in the cards, and — loaded on demand so the
  * three.js bundle never blocks first paint — the WebGL scene.
  *
@@ -120,18 +120,18 @@ export function startFleetLanding(root: HTMLElement): () => void {
     [1, 'One phone. Try the instruction here first.'],
     [10, 'Ten. A shelf of test devices.'],
     [100, 'A hundred. A whole QA lab.'],
-    [1000, 'A thousand. Same instruction, no rewrite.'],
+    [1000, 'A thousand. One fleet, same instruction, no rewrite.'],
   ];
   let raf = 0, frameNo = 0;
   const loop = () => {
     raf = requestAnimationFrame(loop);
     if (document.hidden) return;
-    const n = fleetCount(state.p3), inf = state.p3 > 0.86;
-    const html = `${inf ? '∞' : n.toLocaleString('en-GB')}<small>${inf ? 'no cap' : n === 1 ? 'phone' : 'phones'}</small>`;
+    // Tops out at 1,000: the fleet size the product supports today.
+    const n = fleetCount(state.p3);
+    const html = `${n.toLocaleString('en-GB')}<small>${n === 1 ? 'phone' : 'phones'}</small>`;
     if (countEl && countEl.innerHTML !== html) countEl.innerHTML = html;
     let cap = STEPS[0][1];
     for (const [min, text] of STEPS) if (n >= min) cap = text;
-    if (inf) cap = 'Unlimited. Add phones, keep the same instruction.';
     if (capEl && capEl.textContent !== cap) capEl.textContent = cap;
     const d = Math.floor(n * doneFrac(state.p3));
     if (nRun) nRun.textContent = (n - d).toLocaleString('en-GB');

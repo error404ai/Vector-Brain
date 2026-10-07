@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
 import { Provider } from 'react-redux';
-import App from './App';
+import App, { router } from './App';
 import authManager from './_helpers/authManager';
 import { registerAuthProbe, startClientDiagnostics } from './_helpers/clientDiagnostics';
 import { MUIProvider } from './components/providers/MUIProvider';
@@ -27,7 +27,24 @@ registerAuthProbe(
   () => authManager.getAccessToken()
 );
 
-createRoot(document.getElementById('root')!).render(
+const container = document.getElementById('root')!;
+
+// A public page arrives already rendered (scripts/prerender.mjs). Mount only
+// once the router has loaded that page's code, so React swaps in identical
+// markup in one go instead of flashing the loading fallback over it.
+function whenRouterReady(): Promise<void> {
+  if (!container.dataset.prerendered || router.state.initialized) return Promise.resolve();
+  return new Promise((resolve) => {
+    const stop = router.subscribe((state) => {
+      if (state.initialized) {
+        stop();
+        resolve();
+      }
+    });
+  });
+}
+
+void whenRouterReady().then(() => createRoot(container).render(
   <StrictMode>
     <HelmetProvider>
       <Provider store={store}>
@@ -37,4 +54,4 @@ createRoot(document.getElementById('root')!).render(
       </Provider>
     </HelmetProvider>
   </StrictMode>
-);
+));

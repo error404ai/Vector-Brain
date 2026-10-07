@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
 import { startFleetLanding } from '@/components/landing/fleetLanding';
+import Seo from '@/seo/Seo';
+import '@/seo/fonts';
+import { FOOTER_GROUPS, SITE } from '@/seo/site';
 import type { ScreenKind } from '@/components/landing/screens';
 import '@/components/landing/fleet.css';
 
@@ -53,6 +55,14 @@ const LIVE: { id: string; task: string; status: 'Playing' | 'Scrolling' | 'Check
 /** FAQ: only answers the product actually backs (see the pairing, BYOK, flows and proxy code). */
 const FAQ: { q: string; a: string }[] = [
   {
+    q: 'What is FLEET?',
+    a: SITE.definition + ' It works through the Vector app on each phone, with no root, ADB or USB cable, and you watch every screen live from the dashboard.',
+  },
+  {
+    q: 'Is FLEET free?',
+    a: 'Yes, FLEET is free to use. You bring your own AI model key and pay your provider directly for the model calls.',
+  },
+  {
     q: 'Why real phones instead of emulators or a cloud device farm?',
     a: 'Apps that refuse to run on emulators work normally on a real phone, and the accounts already signed in on it stay signed in. The phones are yours, so there are no rented seats and nothing is billed per minute.',
   },
@@ -66,7 +76,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'Do I need ADB, USB debugging or a computer next to the phones?',
-    a: 'No. The FLEET app on each phone connects to the cloud over Wi-Fi or mobile data. There is no ADB, no USB cable and no PC to keep plugged in; the phones can sit anywhere with a connection.',
+    a: 'No. The Vector app on each phone connects to the cloud over Wi-Fi or mobile data. There is no ADB, no USB cable and no PC to keep plugged in; the phones can sit anywhere with a connection.',
   },
   {
     q: 'Which apps can it use?',
@@ -78,15 +88,15 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'How many phones can I run?',
-    a: 'As many as you pair. There is no per-device limit; the ceiling is the number of phones you have connected.',
+    a: 'Up to 1,000 phones in one fleet. A single mission can include up to 50 phones, and several missions can run at the same time.',
   },
   {
     q: 'Which AI models does it use?',
-    a: 'Your own. Add a key from OpenAI, Anthropic, Google, DeepSeek, Groq or OpenRouter; you pay your provider directly and can run a different model on each phone.',
+    a: 'Your own. Add a key from OpenAI, Anthropic, Google, DeepSeek, Groq or OpenRouter; or any OpenAI-compatible API. You pay your provider directly for the model calls.',
   },
   {
     q: 'What happens when an app updates and the screen changes?',
-    a: 'An AI run reads whatever is on screen right now, so a moved button does not break it. A saved flow replays fixed steps, so a changed screen is caught there and can be handed back to the AI.',
+    a: 'An AI run reads whatever is on screen right now, so a moved button does not break it. A saved flow replays fixed steps, so a changed screen can make it fail; run the instruction with the AI again and save a new flow.',
   },
   {
     q: 'Can I watch a run and stop it?',
@@ -159,26 +169,7 @@ export default function HomePage() {
 
   return (
     <div className="fl" ref={rootRef}>
-      <Helmet>
-        <title>FLEET by Vector Brain — AI that automates unlimited Android phones</title>
-        <meta
-          name="description"
-          content="Type one instruction in plain words and an AI carries it out on every Android phone you connect: opening apps, tapping, typing and swiping. One phone or 10,000. Bring your own API key."
-        />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap"
-        />
-        <script type="application/ld+json">
-          {JSON.stringify({
-            '@context': 'https://schema.org',
-            '@type': 'FAQPage',
-            mainEntity: FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
-          })}
-        </script>
-      </Helmet>
+      <Seo path="/" faq={FAQ} />
 
       <div className="fl-aurora" aria-hidden="true" />
       <canvas className="fl-gl" aria-hidden="true" />
@@ -222,11 +213,12 @@ export default function HomePage() {
             <div className="hero-in">
               <p className="mono kicker">No ADB · No USB cable · No root</p>
               <h1 className="display h-word">
-                AI that automates <em>unlimited</em> Android phones.
+                AI that automates <em>real</em> Android phones.
               </h1>
               <p className="h-sub">
-                Install our app on any Android phone, add your own AI key and type what you want done. The AI opens
-                apps, taps, types and swipes on every connected phone, the way a person would. One phone or 10,000.
+                FLEET is an AI Android automation platform. Install our app on any Android phone, add your own AI key and
+                type what you want done. The AI opens apps, taps, types and swipes on every connected phone, the way a
+                person would. One phone or up to 1,000.
               </p>
               <div className="hctl">
                 <Link className="ctl solid cta" to="/signup">Start automating</Link>
@@ -328,10 +320,10 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="ch" id="c3" data-ch="3" data-label="Unlimited devices" aria-label="One instruction, every phone">
+        <section className="ch" id="c3" data-ch="3" data-label="Up to 1,000 devices" aria-label="One instruction, every phone">
           <div className="stage cmd">
             <div className="cmd-top">
-              <p className="mono" style={{ color: 'var(--graphite)' }}>Unlimited devices</p>
+              <p className="mono" style={{ color: 'var(--graphite)' }}>Up to 1,000 devices</p>
               <h2 className="display">One instruction runs on every phone.</h2>
               <div className="prompt">
                 <span>run checkout test on all devices</span>
@@ -642,10 +634,19 @@ export default function HomePage() {
           </div>
           <div className="foot mono">
             <span>FLEET · by Vector Brain</span>
-            <span className="foot-links">
-              <Link to="/docs">Docs</Link>
-              <a href="/llms.txt">llms.txt</a>
-            </span>
+            <nav className="foot-links" aria-label="Footer">
+              {FOOTER_GROUPS.flatMap((g) => g.links).map((l) =>
+                /\.\w+$/.test(l.path) ? (
+                  <a key={l.path} href={l.path}>
+                    {l.name}
+                  </a>
+                ) : (
+                  <Link key={l.path} to={l.path}>
+                    {l.name}
+                  </Link>
+                ),
+              )}
+            </nav>
             <span>Worldwide</span>
             <span>English + multilingual</span>
             <span>© {new Date().getFullYear()}</span>

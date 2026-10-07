@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/check-production-build.mjs && node scripts/compress-assets.mjs",
+    "build": "tsc -b && vite build && vite build --ssr src/entry-server.tsx --outDir .ssr && node scripts/prerender.mjs && node scripts/check-production-build.mjs && node scripts/compress-assets.mjs",
     "generate": "tsr generate",
     "watch": "tsr watch",
     "lint": "eslint .",
@@ -15,6 +15,9 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
     "@reduxjs/toolkit": "^2.9.0",

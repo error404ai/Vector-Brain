@@ -5,6 +5,7 @@ import type { RootState } from '@/store/store';
 import { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { PUBLIC_PAGES } from '@/seo/site';
 
 const publicRoutes = ['/login', '/signup', '/'];
 
@@ -16,7 +17,7 @@ const HIDE_DELAY_MS = 150;
  * link has to open for a stranger with no session, and for a signed-in owner
  * without being pushed to the dashboard.
  */
-const openRoutePrefixes: string[] = ['/docs'];
+const openRoutePrefixes: string[] = PUBLIC_PAGES.map((p) => p.path).filter((p) => p !== '/');
 
 export default function useAuthRedirect(skip: boolean = false) {
   const navigate = useNavigate();
@@ -95,7 +96,7 @@ export default function useAuthRedirect(skip: boolean = false) {
     []
   );
 
-  const loading = Boolean(isProfileLoading || (!authInitialized && !isPublicRoute));
+  const loading = !skip && Boolean(isProfileLoading || (!authInitialized && !isPublicRoute));
 
   const currentLoadingState = loading || isRedirecting;
 

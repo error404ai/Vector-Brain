@@ -50,3 +50,12 @@ public/brand/
 
 # Test harness run logs
 test/harness/logs/
+
+# Build-time prerender output (frontend/scripts/prerender.mjs)
+frontend/.ssr/
+public/__pre/
+public/robots.txt
+public/sitemap.xml
+public/og/
+public/llms.txt
+public/llms-full.txt

@@ -6,7 +6,7 @@
 export interface FleetState {
   /** 0–4: sum of the four pinned chapters' progress (hero, sheet, manifesto, scale). */
   phase: number;
-  /** Progress through the scale chapter (1 → ∞ phones), 0–1. */
+  /** Progress through the scale chapter (1 → 1,000 phones), 0–1. */
   p3: number;
   /** True while an opaque section fills the viewport, so the scene can skip rendering. */
   covered: boolean;

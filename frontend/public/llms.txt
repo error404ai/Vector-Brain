@@ -1,11 +1,12 @@
 # FLEET by Vector Brain
 
-> FLEET runs tasks on real Android phones with AI. A user writes a task in plain words; an AI model (the user's own API key) reads each phone's screen through the Vector companion app (Android Accessibility) and does the taps, across one phone or a whole fleet, watched live from the dashboard at https://app.vectoragent.in.
+> FLEET is an AI Android automation platform: you describe a task in plain words and an AI agent carries it out on real Android phones, from one phone to a fleet of up to 1,000. Made by Vector AI Agent (support@vectoragent.in). Free to use. A user writes a task in plain words; an AI model (the user's own API key) reads each phone's screen through the Vector companion app (Android Accessibility) and does the taps, across one phone or a whole fleet, watched live from the dashboard at https://app.vectoragent.in.
 
 Key facts:
 
 - Phones: Android 10 or newer, any brand. No root, no ADB, no USB cable. Each phone runs the Vector app and is paired with a 6-character code from the dashboard (valid 10 minutes).
 - AI: bring your own key. Supported providers: OpenAI, Google Gemini, Anthropic, DeepSeek, Groq, OpenRouter, and any OpenAI-compatible API at a public address. Keys are stored encrypted (AES-256-GCM). An optional backup model takes over on rate limits.
+- Scale: up to 1,000 phones in one fleet.
 - Mission Control: a chat that starts missions on phones named with @phone, #tag, "all phones" or "on N phones"; up to 50 phones per mission; timed runs up to 12 hours; confirmation required for more than 5 phones or 10+ minutes; pause, resume, stop; automatic retries (3 tries) for temporary failures; an answer card summarising what each phone reported; file sending to many phones (up to 100 MB).
 - Proxy lanes: phones sharing one proxy form a lane with a "phones at once" limit. FLEET rotates the lane's IP by calling the provider's rotation URL after every N tasks; it does not install proxies on phones.
 - Network info: each phone reports public, direct and WebRTC IPs, DNS, language, region, SIM country, timezone and clock; mismatches are flagged as alerts.
@@ -14,9 +15,15 @@ Key facts:
 ## Docs
 
 - [Documentation](https://app.vectoragent.in/docs): getting started, Mission Control, tags and lanes, proxy rotation, network info, screenshots and the vision helper, flows, troubleshooting, limits
+- [How it works](https://app.vectoragent.in/how-it-works): the Vector app, the AI model and the check after every action
+- [Android fleet automation](https://app.vectoragent.in/android-fleet-automation): one instruction across many phones
+- [Phone farm automation](https://app.vectoragent.in/phone-farm-automation): running your own phone farm, network checks and proxy lanes
+- [AI mobile app testing](https://app.vectoragent.in/use-cases/mobile-app-testing): the same check on every Android model
+- [FLEET vs Appium](https://app.vectoragent.in/compare/appium): plain-language AI agent vs test scripts
 - [Full documentation as plain text](https://app.vectoragent.in/llms-full.txt): the complete docs in one Markdown file
 
 ## Optional
 
 - [Website](https://app.vectoragent.in): product overview
 - [Sign up](https://app.vectoragent.in/signup)
+- [Contact](https://app.vectoragent.in/contact), [Privacy](https://app.vectoragent.in/privacy), [Terms](https://app.vectoragent.in/terms)

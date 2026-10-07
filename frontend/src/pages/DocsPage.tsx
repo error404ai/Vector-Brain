@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
 import source from '@/docs/docs.md?raw';
 import { inline, parseDocs, type DocBlock } from '@/docs/parseDocs';
 import '@/docs/docs.css';
+import { SiteFooter } from '@/components/site/SiteChrome';
+import Seo from '@/seo/Seo';
+import '@/seo/fonts';
 
 const docs = parseDocs(source);
 
@@ -155,20 +157,7 @@ export default function DocsPage() {
 
   return (
     <div className="dx">
-      <Helmet>
-        <title>Docs — FLEET by Vector Brain</title>
-        <meta
-          name="description"
-          content="How to pair Android phones, run missions, use tags, proxy lanes and rotation, read network info, set up screenshots and flows, and fix common problems in FLEET by Vector Brain."
-        />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500&display=swap"
-        />
-        <link rel="alternate" type="text/plain" href="/llms-full.txt" title="Full docs for AI tools" />
-      </Helmet>
+      <Seo path="/docs" />
 
       <a className="dx-skip" href="#content">
         Skip to the docs
@@ -190,7 +179,7 @@ export default function DocsPage() {
 
       <section className="dx-hero">
         <h1>
-          <span>Run your phones</span>
+          <span>Run your phones</span>{' '}
           <span>with FLEET</span>
         </h1>
         <div className="dx-lede">
@@ -233,16 +222,14 @@ export default function DocsPage() {
             </section>
           ))}
 
-          <footer className="dx-foot">
-            <p>
-              These docs are written from the product's own code. The same text is available to AI assistants as{' '}
-              <a href="/llms-full.txt">llms-full.txt</a>, with a short index at <a href="/llms.txt">llms.txt</a>.
-            </p>
-            <p>
-              <Link to="/">FLEET by Vector Brain</Link> · © {new Date().getFullYear()}
-            </p>
-          </footer>
+          <p className="dx-foot">
+            The same text is available to AI assistants as <a href="/llms-full.txt">llms-full.txt</a>, with a short index at{' '}
+            <a href="/llms.txt">llms.txt</a>.
+          </p>
         </main>
+      </div>
+      <div className="st st-inline">
+        <SiteFooter />
       </div>
     </div>
   );

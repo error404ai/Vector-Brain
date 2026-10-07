@@ -17,6 +17,7 @@ import { ClientReportService } from './services/ClientReportService';
 import { AppDataSource } from './loaders/database';
 import Logger from './logger/index';
 import { GlobalErrorHandler } from './middleware/errorHandler.middleware';
+import { createPageRouter, loadManifest } from './helpers/publicPages';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -188,8 +189,30 @@ app.use('/assets', (req, res, next) => {
   return next();
 });
 
+// Public pages are prerendered at build time (frontend/scripts/prerender.mjs);
+// the manifest says which path is which file and which paths are app routes.
+const PRE_DIR = join(PUBLIC_DIR, '__pre');
+const routePage = createPageRouter(loadManifest(PRE_DIR));
+
+app.use((req, res, next) => {
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api') || req.path.startsWith('/assets')) return next();
+  const decision = routePage(req.path);
+  if (decision.kind === 'page') {
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.sendFile(join(PRE_DIR, decision.file));
+  }
+  if (decision.kind === 'redirect') {
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    return res.redirect(301, decision.to + query);
+  }
+  return next();
+});
+
+// The prerendered files are only reachable at their real URLs.
+app.use('/__pre', (_req, res) => res.status(404).end());
+
 // index.html is never cached, so a deploy is picked up on the next load.
-app.use(express.static(PUBLIC_DIR, { setHeaders: (res, path) => path.endsWith('.html') && res.setHeader('Cache-Control', 'no-cache') }));
+app.use(express.static(PUBLIC_DIR, { index: false, setHeaders: (res, path) => path.endsWith('.html') && res.setHeader('Cache-Control', 'no-cache') }));
 
 app.get('*', (req, res, next) => {
   if (res.headersSent) {
@@ -199,6 +222,12 @@ app.get('*', (req, res, next) => {
     return res.status(404).json({ message: 'API endpoint not found' });
   }
   res.setHeader('Cache-Control', 'no-cache');
+  const decision = routePage(req.path);
+  if (decision.kind === 'notFound') {
+    return res.status(404).sendFile(join(PRE_DIR, decision.file));
+  }
+  // The signed-in app: served to browsers, kept out of search results.
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.sendFile(join(PUBLIC_DIR, 'index.html'));
 });
 

@@ -2,7 +2,7 @@ import ErrorModal from '@/components/ui/ErrorModal';
 import { store, useAppSelector } from '@/store';
 import { Toaster } from 'react-hot-toast';
 import { useEffect, type ComponentType, type ReactNode } from 'react';
-import { createBrowserRouter, isRouteErrorResponse, Navigate, Outlet, RouterProvider, useRouteError } from 'react-router-dom';
+import { createBrowserRouter, isRouteErrorResponse, Navigate, Outlet, RouterProvider, useMatches, useRouteError } from 'react-router-dom';
 import { report } from './_helpers/clientDiagnostics';
 import { AuthLayout } from './components/layout/AuthLayout';
 import { GuestLayout } from './components/layout/GuestLayout';
@@ -13,7 +13,9 @@ import { isOwner } from './_helpers/ownerAccess';
 import { loadPage, pages, prefetchAppPages } from './pages/lazyPages';
 
 function RootShell() {
-  const loading = useAuthRedirect();
+  // The not-found page is for everyone: no bounce to /login or /dashboard.
+  const notFound = useMatches().some((m) => m.id === 'not-found');
+  const loading = useAuthRedirect(notFound);
 
   return (
     <>
@@ -113,7 +115,9 @@ const lazy = (load: () => Promise<{ default: ComponentType }>, Guarded?: Guard) 
   return Guarded ? { element: <Guarded><Page /></Guarded> } : { Component: Page };
 };
 
-const router = createBrowserRouter([
+// main.tsx waits on this router before mounting over a prerendered page.
+// eslint-disable-next-line react-refresh/only-export-components
+export const router = createBrowserRouter([
   {
     Component: RootShell,
     ErrorBoundary: RootError,
@@ -124,8 +128,16 @@ const router = createBrowserRouter([
       // GuestShell — that wraps its children in the narrow light card the
       // sign-in and sign-up forms are built around.
       { path: '/', lazy: lazy(pages.home) },
-      // Public docs, readable without an account.
+      // Public pages, readable without an account (see seo/site.ts).
       { path: '/docs', lazy: lazy(pages.docs) },
+      { path: '/how-it-works', lazy: lazy(pages.howItWorks) },
+      { path: '/android-fleet-automation', lazy: lazy(pages.fleetAutomation) },
+      { path: '/phone-farm-automation', lazy: lazy(pages.phoneFarm) },
+      { path: '/use-cases/mobile-app-testing', lazy: lazy(pages.mobileTesting) },
+      { path: '/compare/appium', lazy: lazy(pages.compareAppium) },
+      { path: '/contact', lazy: lazy(pages.contact) },
+      { path: '/privacy', lazy: lazy(pages.privacy) },
+      { path: '/terms', lazy: lazy(pages.terms) },
       {
         Component: GuestShell,
         children: [
@@ -154,7 +166,8 @@ const router = createBrowserRouter([
           { path: '/browserworker-errors', lazy: lazy(pages.browserWorkerErrors, AdminOnly) },
         ],
       },
-      { path: '*', element: <Navigate to="/dashboard" replace /> },
+      // The server answers unknown URLs with 404 and this page.
+      { id: 'not-found', path: '*', lazy: lazy(pages.notFound) },
     ],
   },
 ]);

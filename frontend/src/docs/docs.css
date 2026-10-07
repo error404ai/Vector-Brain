@@ -10,8 +10,8 @@
   --teal: #0f766e;
   --wait: #cbd5e1;
   --code-bg: #eef2f8;
-  --display: 'Archivo', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
-  --text: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --display: 'Archivo Variable', 'Archivo', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --text: 'Archivo Variable', 'Archivo', 'Helvetica Neue', Arial, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --g: clamp(16px, 4vw, 48px);
   color-scheme: light;
