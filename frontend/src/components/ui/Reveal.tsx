@@ -1,4 +1,4 @@
-import { Box } from '@mui/material';
+import { Box, type SxProps, type Theme } from '@mui/material';
 import type { ReactNode } from 'react';
 
 interface RevealProps {
@@ -7,6 +7,8 @@ interface RevealProps {
   index?: number;
   /** Milliseconds between consecutive items. */
   stagger?: number;
+  /** Extra layout styles for the wrapper (e.g. a grid span). */
+  sx?: SxProps<Theme>;
 }
 
 /**
@@ -20,10 +22,10 @@ interface RevealProps {
  * lingering transform once the animation finishes, so nothing here creates a
  * containing block that would break a sticky or fixed child later.
  */
-export default function Reveal({ children, index = 0, stagger = 70 }: RevealProps) {
+export default function Reveal({ children, index = 0, stagger = 70, sx }: RevealProps) {
   return (
     <Box
-      sx={{
+      sx={[{
         '@keyframes vbReveal': {
           from: { opacity: 0, transform: 'translateY(10px)' },
           to: { opacity: 1, transform: 'none' },
@@ -36,7 +38,7 @@ export default function Reveal({ children, index = 0, stagger = 70 }: RevealProp
           animation: 'none',
           opacity: 1,
         },
-      }}
+      }, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}
     >
       {children}
     </Box>

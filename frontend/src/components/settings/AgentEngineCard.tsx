@@ -5,6 +5,33 @@ import { isFreeModel } from '@/utils/modelMeta';
 import MemoryIcon from '@mui/icons-material/Memory';
 import { Alert, Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import toast from 'react-hot-toast';
+import { monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, prismSwitch, sectionTitle } from './settingsStyle';
+
+const SCREENSHOT_OPTIONS: { value: ScreenshotMode; label: string }[] = [
+  { value: 'stuck', label: 'When stuck' },
+  { value: 'every_step', label: 'Every step' },
+  { value: 'off', label: 'Off' },
+];
+
+/** Prism segmented control: the chosen option is a raised white tile. */
+const segmented = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: '6px',
+  p: '6px',
+  borderRadius: '16px',
+  bgcolor: '#eceef8',
+  '& .MuiToggleButton-root': {
+    border: 0,
+    borderRadius: '12px !important',
+    minHeight: 44,
+    textTransform: 'none',
+    fontWeight: 600,
+    fontSize: 14,
+    color: PRISM_MUTED,
+    '&.Mui-selected, &.Mui-selected:hover': { bgcolor: '#fff', color: PRISM_INK, boxShadow: '0 6px 18px rgba(30,40,90,.12)' },
+  },
+} as const;
 
 const SCREENSHOT_HELP: Record<ScreenshotMode, string> = {
   stuck:
@@ -46,14 +73,14 @@ export default function AgentEngineCard() {
     <Card id="agent-engine" variant="outlined" sx={{ borderRadius: 3, scrollMarginTop: 80 }}>
       <CardContent>
         <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
-          <MemoryIcon fontSize="small" color="action" />
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          <MemoryIcon fontSize="small" sx={{ color: '#a855f7' }} />
+          <Typography component="h2" sx={sectionTitle}>
             Agent engine
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
           {settings?.source === 'server' ? <Chip size="small" variant="outlined" label="Server default" /> : null}
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        <Typography variant="body2" sx={{ mb: 1.5, color: PRISM_MUTED }}>
           How the AI is driven on your phones. Both engines use the same tools and safety checks; switch any time — it applies to the next run.
         </Typography>
         {isLoading || !settings ? (
@@ -67,10 +94,14 @@ export default function AgentEngineCard() {
               disabled={saving}
               onChange={(_, value: EngineKind | null) => value && value !== settings.kind && void update({ engine: value })}
               aria-label="Agent engine"
-              sx={{ flexWrap: 'wrap' }}
+              sx={segmented}
             >
-              <ToggleButton value="eko">Eko (stable)</ToggleButton>
-              <ToggleButton value="vector">Vector (beta)</ToggleButton>
+              <ToggleButton value="eko">
+                Eko&nbsp;<Box component="span" sx={{ fontWeight: 500, opacity: 0.7 }}>stable</Box>
+              </ToggleButton>
+              <ToggleButton value="vector">
+                Vector&nbsp;<Box component="span" sx={{ fontWeight: 500, opacity: 0.7 }}>beta</Box>
+              </ToggleButton>
             </ToggleButtonGroup>
             <Typography variant="caption" color="text.secondary">
               {settings.kind === 'eko'
@@ -79,7 +110,7 @@ export default function AgentEngineCard() {
             </Typography>
             {settings.kind === 'vector' ? (
               <FormControlLabel
-                control={<Switch checked={settings.planner} disabled={saving} onChange={(e) => void update({ planner: e.target.checked })} />}
+                control={<Switch checked={settings.planner} disabled={saving} onChange={(e) => void update({ planner: e.target.checked })} sx={prismSwitch} />}
                 label={
                   <Box>
                     <Typography variant="body2">Plan before acting</Typography>
@@ -91,19 +122,44 @@ export default function AgentEngineCard() {
               />
             ) : null}
 
-            <TextField
-              select
-              size="small"
-              label="Screenshots to the AI"
-              value={settings.screenshots ?? 'stuck'}
-              disabled={saving}
-              onChange={(e) => void update({ screenshots: e.target.value as ScreenshotMode })}
-              helperText={SCREENSHOT_HELP[settings.screenshots ?? 'stuck']}
-            >
-              <MenuItem value="stuck">When it gets stuck (recommended)</MenuItem>
-              <MenuItem value="every_step">Every step</MenuItem>
-              <MenuItem value="off">Off</MenuItem>
-            </TextField>
+            <Box role="group" aria-labelledby="screenshots-label">
+              <Typography id="screenshots-label" sx={{ ...monoLabel, mb: 1 }}>
+                Screenshots to the AI
+              </Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px' }}>
+                {SCREENSHOT_OPTIONS.map((o) => {
+                  const on = (settings.screenshots ?? 'stuck') === o.value;
+                  return (
+                    <Box
+                      key={o.value}
+                      component="button"
+                      type="button"
+                      aria-pressed={on}
+                      disabled={saving}
+                      onClick={() => !on && void update({ screenshots: o.value })}
+                      sx={{
+                        minHeight: 44,
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        border: on ? `1.5px solid ${PRISM_ACCENT}` : '1px solid #dfe2ef',
+                        bgcolor: on ? `${PRISM_ACCENT}14` : '#fff',
+                        color: on ? PRISM_ACCENT : '#4b5270',
+                        transition: 'background 200ms ease, border-color 200ms ease',
+                      }}
+                    >
+                      {o.label}
+                      {o.value === 'stuck' ? ' ★' : ''}
+                    </Box>
+                  );
+                })}
+              </Box>
+              <Typography variant="caption" sx={{ display: 'block', mt: 0.75, color: PRISM_MUTED, lineHeight: 1.5 }}>
+                {SCREENSHOT_HELP[settings.screenshots ?? 'stuck']}
+              </Typography>
+            </Box>
             {active && active.sees_images === false ? (
               <Alert severity="info" variant="outlined" sx={{ py: 0 }}>
                 Your main model, {active.label || active.model}, cannot read screenshots itself. Choose a model marked “Sees screenshots”, or set a

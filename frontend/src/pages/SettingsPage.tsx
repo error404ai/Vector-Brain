@@ -15,7 +15,9 @@ import ActiveProviderHero, { isFreeModel } from '@/components/ai-config/ActivePr
 import ScreenshotCapabilityChip from '@/components/ai-config/ScreenshotCapabilityChip';
 import { FREE_MODEL_NOTE, getModelMeta, sortModelsForDisplay } from '@/utils/modelMeta';
 import Reveal from '@/components/ui/Reveal';
-import PageHeader from '@/components/ui/PageHeader';
+import PrismBackground from '@/components/ui/PrismBackground';
+import { useGetAgentEngineQuery } from '@/RTKService/androidService/engineService';
+import { glassSection, monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, PRISM_PINK, sectionTitle } from '@/components/settings/settingsStyle';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -40,7 +42,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
 
@@ -49,8 +51,41 @@ import toast from 'react-hot-toast';
  * Expanding a request into a multi-page research plan is what makes runs
  * exhaust their step budget.
  */
+/** The page's sections, in order; the rail links to them and follows the scroll. */
+const SECTIONS = [
+  { id: 'models', label: 'AI models', dot: PRISM_ACCENT },
+  { id: 'agent-engine', label: 'Agent engine', dot: '#a855f7' },
+  { id: 'saved-flows', label: 'Saved flows', dot: PRISM_PINK },
+  { id: 'telegram', label: 'Telegram', dot: '#0ea5e9' },
+  { id: 'storage', label: 'Storage', dot: '#94a3b8' },
+] as const;
+
+/** Which section is in view, for the rail. */
+function useSectionInView(): string {
+  const [current, setCurrent] = useState<string>(SECTIONS[0].id);
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible?.target.id) setCurrent(visible.target.id);
+      },
+      { rootMargin: '-96px 0px -55% 0px' },
+    );
+    for (const s of SECTIONS) {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
+  return current;
+}
+
 export default function SettingsPage() {
   const theme = useTheme();
+  const inView = useSectionInView();
+  const { data: engineData } = useGetAgentEngineQuery();
+  const engineKind = engineData?.data?.kind;
 
 
   // AI Configurations
@@ -150,30 +185,108 @@ export default function SettingsPage() {
     <>
       <Helmet>
         <title>Settings & AI Providers - Vector Brain</title>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600&display=swap" />
       </Helmet>
 
-      <PageHeader
-        title="Settings & AI Providers"
-        subtitle="Manage your personal AI model configurations and agent settings."
-      />
+      {/* Prism Control Room: glass sections over the app's prism, a rail of sections. */}
+      <Box
+        sx={{
+          position: 'relative',
+          mx: { xs: -1.5, sm: -2, md: -3 },
+          mt: { xs: '-12px', md: '-24px' },
+          mb: { xs: -10, md: -3 },
+          minHeight: 'calc(100vh - 64px)',
+          overflow: 'hidden',
+          color: PRISM_INK,
+        }}
+      >
+        <PrismBackground />
+        <Box sx={{ position: 'relative', zIndex: 1, maxWidth: 1376, mx: 'auto', px: { xs: 2, md: 4 }, pt: { xs: 3, md: 4 }, pb: { xs: 12, md: 6 } }}>
+          <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={3} sx={{ mb: 3.5 }}>
+            <Box sx={{ flex: 1, minWidth: 260 }}>
+              <Typography component="h1" sx={{ m: 0, fontSize: { xs: 40, md: 54 }, lineHeight: 1, fontWeight: 800, letterSpacing: '-0.045em', color: PRISM_INK }}>
+                Settings
+              </Typography>
+              <Typography sx={{ mt: 1.5, fontSize: 15, color: '#4b5270', maxWidth: 560, lineHeight: 1.55 }}>
+                Your AI models, how the agent drives your phones, and how much of each task can run without the AI at all.
+              </Typography>
+            </Box>
+            <Stack direction="row" gap={1.25} flexWrap="wrap">
+              <Box sx={{ px: 2, py: 1.5, borderRadius: '16px', bgcolor: 'rgba(255,255,255,.75)', border: '1px solid rgba(20,26,46,.07)', minWidth: 0 }}>
+                <Typography sx={monoLabel}>Active model</Typography>
+                <Typography sx={{ fontSize: 14, fontWeight: 700, mt: 0.25, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {aiConfigs.find((c) => c.is_active)?.model ?? 'None yet'}
+                </Typography>
+              </Box>
+              <Box sx={{ px: 2, py: 1.5, borderRadius: '16px', bgcolor: 'rgba(255,255,255,.75)', border: '1px solid rgba(20,26,46,.07)' }}>
+                <Typography sx={monoLabel}>Engine</Typography>
+                <Typography sx={{ fontSize: 14, fontWeight: 700, mt: 0.25 }}>{engineKind === 'vector' ? 'Vector · beta' : engineKind === 'eko' ? 'Eko · stable' : '…'}</Typography>
+              </Box>
+            </Stack>
+          </Stack>
 
-      <Stack spacing={3.5} sx={{ maxWidth: 1000 }}>
-        {/* Section 1: User's AI Providers & Credentials */}
-        <Reveal index={0}>
-        <Paper
-          elevation={0}
-          sx={{
-            p: { xs: 2, md: 3 },
-            borderRadius: 3,
-            border: '1px solid',
-            borderColor: 'divider',
-            transition: 'border-color 220ms ease, box-shadow 220ms ease',
-            '&:hover': {
-              borderColor: alpha(theme.palette.primary.main, 0.35),
-              boxShadow: `0 10px 30px ${alpha(theme.palette.primary.main, 0.08)}`,
-            },
-          }}
-        >
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3.5, alignItems: 'flex-start' }}>
+            <Box
+              component="nav"
+              aria-label="Settings sections"
+              sx={{
+                display: { xs: 'none', md: 'flex' },
+                flex: '0 0 212px',
+                flexDirection: 'column',
+                gap: 0.5,
+                position: 'sticky',
+                top: 88,
+                p: 1.5,
+                borderRadius: '22px',
+                bgcolor: 'rgba(255,255,255,.62)',
+                border: '1px solid rgba(255,255,255,.9)',
+                backdropFilter: 'blur(18px)',
+                boxShadow: '0 20px 50px rgba(30,40,90,.08)',
+              }}
+            >
+              <Typography sx={{ ...monoLabel, px: 1.5, pt: 0.75, pb: 1.25, letterSpacing: '0.14em' }}>Settings</Typography>
+              {SECTIONS.map((section) => {
+                const current = inView === section.id;
+                return (
+                  <Box
+                    key={section.id}
+                    component="a"
+                    href={`#${section.id}`}
+                    aria-current={current ? 'true' : undefined}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.25,
+                      minHeight: 44,
+                      px: 1.5,
+                      borderRadius: '12px',
+                      textDecoration: 'none',
+                      fontSize: 13.5,
+                      fontWeight: current ? 700 : 500,
+                      color: PRISM_INK,
+                      bgcolor: current ? '#fff' : 'transparent',
+                      boxShadow: current ? '0 6px 16px rgba(30,40,90,.08)' : 'none',
+                      transition: 'background 200ms ease, box-shadow 200ms ease',
+                      '&:hover': { bgcolor: current ? '#fff' : 'rgba(255,255,255,.6)' },
+                    }}
+                  >
+                    <Box component="span" sx={{ width: 7, height: 7, borderRadius: '2px', bgcolor: section.dot }} />
+                    {section.label}
+                  </Box>
+                );
+              })}
+              <Box sx={{ mt: 1.75, p: 1.5, borderRadius: '14px', background: 'linear-gradient(135deg, rgba(59,76,255,.1), rgba(236,72,153,.1))', fontSize: 12, lineHeight: 1.5, color: '#3b3f5c' }}>
+                <Box component="b" sx={{ display: 'block', fontSize: 12.5, color: PRISM_INK, mb: 0.25 }}>
+                  Applies to the next run
+                </Box>
+                Runs already on a phone keep the settings they started with.
+              </Box>
+            </Box>
+
+            <Box component="main" sx={{ flex: '999 1 560px', minWidth: 0, display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2.75, alignItems: 'start' }}>
+        {/* AI models */}
+        <Reveal index={0} sx={{ gridColumn: '1 / -1' }}>
+        <Paper id="models" elevation={0} sx={glassSection}>
           <Stack spacing={2.5}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1.5}>
               <Stack direction="row" spacing={1.5} alignItems="center">
@@ -193,10 +306,10 @@ export default function SettingsPage() {
                   <PsychologyIcon />
                 </Box>
                 <Box>
-                  <Typography variant="h6" fontWeight={600}>
-                    AI Provider Configurations
+                  <Typography component="h2" sx={sectionTitle}>
+                    AI models
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="body2" sx={{ color: PRISM_MUTED }}>
                     {activeConfig
                       ? `Currently active: ${activeConfig.model}`
                       : 'Add your personal API keys (OpenAI, Gemini, Anthropic, DeepSeek, Groq, OpenRouter).'}
@@ -209,12 +322,15 @@ export default function SettingsPage() {
                 startIcon={<AddIcon />}
                 onClick={handleOpenAdd}
                 sx={{
-                  borderRadius: 2,
+                  borderRadius: '12px',
+                  minHeight: 44,
                   fontWeight: 700,
                   px: 2.25,
+                  bgcolor: PRISM_INK,
                   boxShadow: 'none',
                   transition: 'transform 180ms ease, box-shadow 180ms ease',
                   '&:hover': {
+                    bgcolor: '#252d4d',
                     transform: 'translateY(-2px)',
                     boxShadow: `0 8px 20px ${alpha(theme.palette.primary.main, 0.35)}`,
                   },
@@ -458,22 +574,32 @@ export default function SettingsPage() {
         </Reveal>
 
         <Reveal index={1}>
-          <AgentEngineCard />
+          <Box sx={glassSection}>
+            <AgentEngineCard />
+          </Box>
         </Reveal>
 
-        <Reveal index={1}>
-          <FlowSettingsCard />
+        <Reveal index={2}>
+          <Box sx={glassSection}>
+            <FlowSettingsCard />
+          </Box>
         </Reveal>
 
-        {/* Section 2: Telegram bot */}
-        <Reveal index={1}>
-          <TelegramLinkCard />
+        <Reveal index={3}>
+          <Box id="telegram" sx={glassSection}>
+            <TelegramLinkCard />
+          </Box>
         </Reveal>
 
-        <Reveal>
-          <StorageCard />
+        <Reveal index={4}>
+          <Box id="storage" sx={glassSection}>
+            <StorageCard />
+          </Box>
         </Reveal>
-      </Stack>
+            </Box>
+          </Box>
+        </Box>
+      </Box>
 
       {/* AI Config Modal */}
       <AiConfigModal

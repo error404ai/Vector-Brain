@@ -1,5 +1,5 @@
 import type { ToolResult } from '@eko-ai/eko';
-import { afterMet, fillUrl, findTarget, type FlowParam, type FlowStepV2, parseTable, resyncIndex, type Row, screenMatches } from './flowSteps';
+import { afterMet, fillUrl, findTarget, type FlowParam, type FlowStepV2, parseTable, resyncIndex, type Row, screenMatches, startsAnywhere } from './flowSteps';
 
 /**
  * Replays checkable flow steps through the agent's own tools, with no model
@@ -49,7 +49,7 @@ export class FlowRunner {
       const step = steps[i];
 
       // 1. The screen this step starts from.
-      const placed = !step.before.package && !step.before.anchors.length;
+      const placed = startsAnywhere(step);
       const start = await this.waitFor(this.deps.syncMs ?? SYNC_MS, (s, rows) => placed || screenMatches(step.before, s.packageName, rows));
       if (!start) return { status: 'broken', index: i, reason: 'The phone did not answer', acted: false };
       if (!start.ok) {

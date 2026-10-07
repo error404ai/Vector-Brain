@@ -399,6 +399,39 @@ async function insertHarnessFlow(sim = '[sim steps=1 delay=50]') {
   return row.insertId;
 }
 
+
+/** A fake Play Store: a link opens the listing, Install puts the app on the phone. */
+const PLAY_APP_INSTALLS = {
+  pkg: 'com.android.vending',
+  start: 'listing',
+  onUrl: 'listing',
+  screens: {
+    listing: [{ text: 'Harness Messenger', type: 'text' }, { text: 'Install', to: 'installed', installs: 'com.harness.messenger' }],
+    installed: [{ text: 'Harness Messenger', type: 'text' }, { text: 'Open', to: 'installed' }],
+  },
+};
+
+/** A one-step install flow, recorded (the old way) as starting on a Motorola home screen. */
+async function insertInstallFlow(prompt) {
+  const steps = [
+    {
+      action: 'install_app',
+      args: { packageName: 'com.harness.messenger', appName: 'Harness Messenger' },
+      before: { package: 'com.motorola.launcher3', anchors: ['Phone', 'Messages', 'Chrome'] },
+      after: { package: null, appear: [] },
+      label: 'Install Harness Messenger',
+    },
+  ];
+  const key = prompt.replace(/\s+/g, ' ').trim().toLowerCase();
+  await db.query('DELETE FROM saved_flows WHERE user_id = ? AND prompt_key = ?', [userId, key]);
+  const [row] = await db.query(
+    `INSERT INTO saved_flows (user_id, name, source_prompt, steps_json, step_count, format, enabled, version, prompt_key, template, params_json, package_name, checked, stats)
+     VALUES (?, 'Harness install', ?, ?, 1, 2, 1, 1, ?, ?, '[]', 'com.harness.messenger', 1, NULL)`,
+    [userId, prompt, JSON.stringify(steps), key, prompt],
+  );
+  return row.insertId;
+}
+
 // ---------------------------------------------------------------- scenarios
 const scenarios = [
   {
@@ -2871,6 +2904,57 @@ const scenarios = [
         await db.query("UPDATE android_devices SET device_model = 'FakePhone' WHERE id = ?", [phones.free1.dbId]);
         await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false, share_fixes: false });
       }
+    },
+  },
+  {
+    name: 'flows: an install flow recorded on another phone\'s home screen installs with no AI, checked on the app list',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      await api('PUT', '/android/flows/settings', { replay_first: true, ai_repair: true });
+      const phone = phones.free2.phone;
+      phone.setApp(PLAY_APP_INSTALLS);
+      const prompt = 'Install the harness messenger [sim actions=read delay=50]';
+      const flowId = await insertInstallFlow(prompt);
+      const t0 = Date.now();
+      await run('free2', prompt);
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free2']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 60_000);
+      phone.setApp(null);
+      await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false });
+      if (!done) return 'run never finished';
+      const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
+      if (task.status !== 'SUCCEEDED' || task.flow_mode !== 'replay' || task.flow_id !== flowId) return `run ${task.status}/${task.reason_code}/${task.flow_mode}: ${String(task.message).slice(0, 200)}`;
+      const [logs] = await db.query('SELECT action_type, source FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
+      const steps = logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
+      if (steps !== 'install_app/replay') return `steps: ${steps}`;
+      const verification = typeof task.verification === 'string' ? JSON.parse(task.verification) : task.verification;
+      if (verification?.method !== 'rule' || verification?.status !== 'verified') return `verification ${JSON.stringify(verification)}`;
+    },
+  },
+  {
+    name: 'flows: an install that fails is not reported as done when the AI only looks at the screen (Oct 7: 3081, 3090, 3095, 3096)',
+    async run() {
+      if (!(await waitIdle('free2'))) return 'free2 never became idle';
+      await api('PUT', '/android/flows/settings', { replay_first: true, ai_repair: true });
+      const phone = phones.free2.phone;
+      // The Play Store wants a sign-in: no Install button.
+      phone.setApp({ ...PLAY_APP_INSTALLS, screens: { listing: [{ text: 'Sign in', type: 'text' }, { text: 'Use your Google Account', to: 'listing' }] } });
+      const prompt = 'Install the harness messenger [sim actions=read delay=50]';
+      await insertInstallFlow(prompt);
+      const t0 = Date.now();
+      await run('free2', prompt);
+      const done = await waitFor(async () => {
+        const [task] = await tasksSince(t0, ['free2']);
+        return task && TERMINAL.has(task.status) ? task : null;
+      }, 90_000);
+      phone.setApp(null);
+      await api('PUT', '/android/flows/settings', { replay_first: false, ai_repair: false });
+      if (!done) return 'run never finished';
+      const [[task]] = await db.query('SELECT status, reason_code, message, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
+      if (task.status !== 'FAILED' || task.reason_code !== 'VERIFICATION_FAILED') return `run ${task.status}/${task.reason_code}/${task.flow_mode}: ${String(task.message).slice(0, 200)}`;
+      if (!/not installed/.test(task.message)) return `message: ${task.message}`;
     },
   },
 ];

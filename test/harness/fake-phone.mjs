@@ -53,7 +53,7 @@ export class FakePhone {
    * an input moves to its `onType`, ENTER to its `onEnter`.
    */
   setApp(app) {
-    this.app = app ? { ...app, current: null } : null;
+    this.app = app ? { ...app, current: null, installed: new Set(app.installed ?? []) } : null;
     this.typedLog = [];
   }
 
@@ -88,13 +88,20 @@ export class FakePhone {
         app.typed = null;
       }
     };
-    if (action.type === 'OpenApp' && action.packageName === app.pkg) {
+    if (action.type === 'OpenUrl' && app.onUrl) {
+      // A Play Store link lands on the app's listing.
+      app.current = app.onUrl;
+      app.typed = null;
+    } else if (action.type === 'OpenApp' && action.packageName === app.pkg) {
       app.current = app.start;
       app.typed = null;
     } else if (action.type === 'Tap') {
       const i = Math.floor((action.y - 100) / 200);
       const el = elements[i];
-      if (el && action.y >= 100 + i * 200 && action.y <= 220 + i * 200) go(el.to);
+      if (el && action.y >= 100 + i * 200 && action.y <= 220 + i * 200) {
+        if (el.installs) app.installed.add(el.installs);
+        go(el.to);
+      }
     } else if (action.type === 'ClickNode') {
       go(elements.find((el) => el.text === action.text)?.to);
     } else if (action.type === 'SetText') {
@@ -203,6 +210,10 @@ export class FakePhone {
           screenCapture: { base64Data: TINY_PNG, width: 1, height: 1 },
           foregroundApp: screen ? screen.packageName : 'com.android.chrome',
           ...(screen ? { uiTree: { packageName: screen.packageName, root: screen.root } } : {}),
+          // The phone's launchable apps ("Label | package"), as the companion lists them.
+          ...(this.app && msg.payload?.action?.type === 'ListApps'
+            ? { summary: ['Chrome | com.android.chrome', ...[...this.app.installed].map((p) => `${p.split('.').pop()} | ${p}`)].join('\n') }
+            : {}),
         };
     this.ws.send(JSON.stringify({ event: 'device:action_response', requestId: msg.requestId, payload }));
   }

@@ -32,7 +32,7 @@ import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
 import { FlowLibraryService, type FlowMode, type FlowPlan } from './FlowLibraryService';
 import { FlowRunner } from './flowRunner';
-import { afterMet, parseTable, recordFlow, resyncIndex, type FlowStepV2 } from './flowSteps';
+import { aiDidStep, LOOK_ONLY_TOOLS, parseTable, recordFlow, resyncIndex, type FlowStepV2 } from './flowSteps';
 import { parseAppList, verifyCompletion } from './agent/successVerifier';
 import crypto from 'node:crypto';
 
@@ -1522,10 +1522,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
               const pkg = lastForegroundApp && lastForegroundApp !== 'unknown' ? lastForegroundApp : null;
               const broken = repair.plan.steps[repair.index];
               const moved = this.hashText(`${pkg}\n${lastUiTree ?? ''}`) !== repair.startKey;
-              const didStep =
-                !isError &&
-                (broken.action === 'type' ? message.toolName === 'type_text' : moved && afterMet(broken, pkg, rows, moved));
-              const later = resyncIndex(repair.plan.steps, repair.index + 1, pkg, rows);
+              const tool = String(message.toolName ?? '');
+              // Looking (read_ui_tree, list_apps…) never counts: in the Oct 7 export a
+              // screen read after a failed install was taken as the install done.
+              const didStep = aiDidStep(broken, tool, Boolean(isError), pkg, rows, moved);
+              const acted = !isError && !LOOK_ONLY_TOOLS.has(tool) && moved;
+              // A later step's screen only counts after a real action, and never past
+              // a broken step whose work cannot be seen (typing, an install).
+              const later = acted && !['type', 'install_app'].includes(broken.action) ? resyncIndex(repair.plan.steps, repair.index + 1, pkg, rows) : -1;
               if (didStep) repair.resumeAt = repair.index + 1;
               else if (later > repair.index) repair.resumeAt = later;
               if (repair.resumeAt >= 0) engine?.abort('The saved flow is back on track');
@@ -1770,7 +1774,22 @@ Use the current visible Android screen and UI state as context. Continue from wh
       });
 
       /** The flow ran to the end: the same rule checks as any run, else the steps' own checks. */
-      const finishFlow = async (plan: FlowPlan): Promise<EngineRunResult> => {
+      /**
+       * The flow got to the end. Every app it installs must be on the phone's
+       * app list; then the usual rule check. "Checked by replay" only when the
+       * flow itself did the last step and saw its result.
+       */
+      const finishFlow = async (plan: FlowPlan, lastByFlow: boolean): Promise<EngineRunResult> => {
+        const installs = plan.steps.filter((s) => s.action === 'install_app').map((s) => String(s.args.packageName ?? '')).filter(Boolean);
+        if (installs.length) {
+          const apps = parseAppList(await androidAgent.launcherAppsText());
+          const listed = new Set(apps.map((a) => a.packageName));
+          const missing = installs.filter((p) => !listed.has(p));
+          if (!apps.length || missing.length) {
+            const reason = !apps.length ? 'the phone did not list its apps, so the install could not be checked' : `${missing.join(', ')} is not installed on the phone`;
+            return { success: false, stopReason: 'done', result: `The saved flow ran, but ${reason}.`, reasonCode: 'VERIFICATION_FAILED', verification: { status: 'failed', method: 'rule', reason, retries: 0 } };
+          }
+        }
         const check = await verifyCompletion({
           goal: prompt,
           summary: `Saved flow "${plan.flow.name}" finished`,
@@ -1779,19 +1798,21 @@ Use the current visible Android screen and UI state as context. Continue from wh
         });
         if (check.status === 'failed') return { success: false, stopReason: 'done', result: `The saved flow ran, but ${check.reason}.`, reasonCode: 'VERIFICATION_FAILED', verification: check };
         const fixed = flowMode === 'repaired' ? ' (one step was fixed on the way)' : '';
-        return {
-          success: true,
-          stopReason: 'done',
-          result: `Done with the saved flow "${plan.flow.name}"${fixed}.`,
-          verification:
-            check.status === 'verified'
-              ? check
-              : { status: 'verified', method: 'replay', reason: 'Every step reached the screen it was recorded on', retries: 0 },
-        };
+        const verification =
+          check.status === 'verified'
+            ? check
+            : installs.length
+              ? { status: 'verified' as const, method: 'rule' as const, reason: `${installs.join(', ')} is installed (the phone lists it)`, retries: 0 }
+              : lastByFlow
+                ? { status: 'verified' as const, method: 'replay' as const, reason: 'Every step reached the screen it was recorded on', retries: 0 }
+                : { status: 'unverified' as const, method: 'none' as const, reason: 'The AI did the last step; no check applies to this task', retries: 0 };
+        return { success: true, stopReason: 'done', result: `Done with the saved flow "${plan.flow.name}"${fixed}.`, verification };
       };
 
       /** The AI does only the broken step; returns where the flow continues, or -1. */
+      let repairSaidDone = false;
       const repairStep = async (plan: FlowPlan, index: number, reason: string): Promise<number> => {
+        repairSaidDone = false;
         const step = plan.steps[index];
         repair = {
           plan,
@@ -1807,11 +1828,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
         ekoTaskIds.push(ekoTaskId);
         finalMessage = '';
         try {
-          await runRound(
+          const fixRound = await runRound(
             `You are partway through this task: "${prompt}".\n` +
               `A saved flow is doing it step by step, and this step did not work: "${step.label}" (${reason}).${typing}\n` +
               'Do only what this step needs (deal with anything in the way first), then stop. The saved flow carries on by itself as soon as the phone is back on track — do not do the rest of the task.',
           );
+          repairSaidDone = fixRound.success && fixRound.stopReason === 'done';
         } catch (error) {
           if (guardStopReason || this.activeTasks.get(agentTask.id)?.cancelled) throw error;
           Logger.warn(`[AndroidPlanner] Task ${agentTask.id}: the step fix ended with an error: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
@@ -1819,7 +1841,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         const out = repair as { resumeAt: number; fromStep: number } | null;
         repair = null;
         finalMessage = '';
-        if (!out || out.resumeAt < 0) return -1;
+        if (!out) return -1;
+        // The broken step was the last one and the AI says it is done: the end check decides.
+        if (out.resumeAt < 0 && repairSaidDone && index === plan.steps.length - 1) out.resumeAt = plan.steps.length;
+        if (out.resumeAt < 0) return -1;
         pendingFix = { index, resume: out.resumeAt, fromStep: out.fromStep, toStep: stepCount };
         return out.resumeAt;
       };
@@ -1831,7 +1856,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         for (;;) {
           const out = await runner.run(plan.steps, plan.params, plan.values, from);
           if (out.status === 'stopped') return { success: false, stopReason: 'abort', result: guardStopReason ?? 'Cancelled' };
-          if (out.status === 'done') return finishFlow(plan);
+          if (out.status === 'done') return finishFlow(plan, true);
           const step = plan.steps[out.index];
           lastBreak = `"${step.label}" (${out.reason})`;
           Logger.info(`[AndroidPlanner] Task ${agentTask.id}: flow step ${out.index + 1} broke: ${out.reason}`);
@@ -1862,7 +1887,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
           if (guardStopReason || this.activeTasks.get(agentTask.id)?.cancelled) return { success: false, stopReason: 'abort', result: guardStopReason ?? 'Cancelled' };
           if (resumed < 0) break;
           flowMode = 'repaired';
-          if (resumed >= plan.steps.length) return finishFlow(plan);
+          // The AI (or a saved fix) did the last step: never "checked by replay".
+          if (resumed >= plan.steps.length) return finishFlow(plan, false);
           from = resumed;
         }
 

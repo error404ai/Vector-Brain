@@ -1,6 +1,7 @@
 import { useGetFlowSettingsQuery, useSetFlowSettingsMutation, type FlowSettings } from '@/RTKService/flowService/flowService';
 import BoltIcon from '@mui/icons-material/Bolt';
-import { Box, Card, CardContent, Divider, LinearProgress, Stack, Switch, Typography } from '@mui/material';
+import { Box, Card, CardContent, LinearProgress, Stack, Switch, Typography } from '@mui/material';
+import { monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, PRISM_PINK, prismSwitch, sectionTitle } from './settingsStyle';
 import toast from 'react-hot-toast';
 
 interface Row {
@@ -51,32 +52,72 @@ export default function FlowSettingsCard() {
     }
   };
 
+  const on = settings ? ROWS.filter((row) => settings[row.key] && !(row.needs && !settings[row.needs])).length : 0;
+
   return (
-    <Card id="saved-flows" variant="outlined" sx={{ borderRadius: 3, scrollMarginTop: 80 }}>
+    <Card id="saved-flows" variant="outlined" sx={{ borderRadius: 3, scrollMarginTop: 88 }}>
       <CardContent>
-        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
-          <BoltIcon fontSize="small" color="action" />
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            Saved flows
-          </Typography>
+        <Stack direction="row" alignItems="flex-start" gap={1.5} sx={{ mb: 1.5 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Stack direction="row" alignItems="center" gap={1}>
+              <BoltIcon fontSize="small" sx={{ color: PRISM_PINK }} />
+              <Typography component="h2" sx={sectionTitle}>
+                Saved flows
+              </Typography>
+            </Stack>
+            <Typography variant="body2" sx={{ color: PRISM_MUTED, mt: 0.5 }}>
+              Repeat tasks without paying for the AI every time. All off by default; turn them on one by one.
+            </Typography>
+          </Box>
+          {settings ? (
+            <Box sx={{ textAlign: 'right', flex: 'none' }}>
+              <Typography
+                sx={{
+                  fontSize: 30,
+                  fontWeight: 800,
+                  letterSpacing: '-0.04em',
+                  lineHeight: 1,
+                  background: `linear-gradient(90deg, ${PRISM_ACCENT}, ${PRISM_PINK})`,
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {on}/4
+              </Typography>
+              <Typography sx={monoLabel}>On</Typography>
+            </Box>
+          ) : null}
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Repeat tasks without paying for the AI every time. All off by default; turn them on one by one.
-        </Typography>
         {isLoading || !settings ? (
           <LinearProgress sx={{ borderRadius: 2 }} />
         ) : (
-          <Stack divider={<Divider flexItem />} spacing={1.25}>
+          <Stack spacing={0.75}>
             {ROWS.map((row) => {
               const blocked = row.needs ? !settings[row.needs] : false;
+              const active = settings[row.key] && !blocked;
               const id = `flow-setting-${row.key}`;
               return (
-                <Stack key={row.key} direction="row" alignItems="flex-start" gap={1.5} sx={{ opacity: blocked ? 0.55 : 1 }}>
+                <Stack
+                  key={row.key}
+                  direction="row"
+                  alignItems="center"
+                  gap={1.5}
+                  sx={{
+                    px: 1.75,
+                    py: 1.5,
+                    borderRadius: '16px',
+                    opacity: blocked ? 0.5 : 1,
+                    background: active ? `linear-gradient(90deg, ${PRISM_ACCENT}14, rgba(236,72,153,.06))` : 'transparent',
+                    transition: 'background 300ms ease',
+                  }}
+                >
                   <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography component="label" htmlFor={id} variant="body2" sx={{ fontWeight: 700, display: 'block', cursor: blocked ? 'default' : 'pointer' }}>
+                    <Typography component="label" htmlFor={id} variant="body2" sx={{ fontWeight: 700, display: 'block', color: PRISM_INK, cursor: blocked ? 'default' : 'pointer' }}>
                       {row.title}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.25, color: PRISM_MUTED, lineHeight: 1.45 }}>
                       {row.help}
                       {blocked ? ` Needs “${ROWS.find((r) => r.key === row.needs)?.title}”.` : ''}
                     </Typography>
@@ -87,13 +128,14 @@ export default function FlowSettingsCard() {
                     disabled={saving || blocked}
                     onChange={(_, value) => void toggle(row.key, value)}
                     inputProps={{ 'aria-label': row.title }}
+                    sx={prismSwitch}
                   />
                 </Stack>
               );
             })}
           </Stack>
         )}
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+        <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: PRISM_MUTED }}>
           A replayed flow is always checked step by step and at the end; a flow that ran but whose result does not check out is reported as failed, not done.
         </Typography>
       </CardContent>

@@ -57,6 +57,49 @@ export interface FlowStepV2 {
   label: string;
 }
 
+/**
+ * Steps that work from any screen (they launch or install something). Their
+ * start screen is never checked, even in flows recorded before this rule: a
+ * recorded launcher (com.motorola.launcher3) broke an install flow on every
+ * other phone in the Oct 7 export.
+ */
+const STARTS_ANYWHERE = new Set<FlowAction>(['open_app', 'open_url', 'install_app', 'open_settings']);
+export const startsAnywhere = (step: FlowStepV2) => STARTS_ANYWHERE.has(step.action) || (!step.before.package && !step.before.anchors.length);
+
+/** Steps a resync may never jump over: skipping them skips what the task is for. */
+const MUST_DO = new Set<FlowAction>(['type', 'install_app']);
+
+/** Agent tools that only look; they never count as doing a step. */
+export const LOOK_ONLY_TOOLS = new Set(['read_ui_tree', 'capture_screen', 'list_apps', 'read_clipboard', 'read_notifications', 'wait', 'wait_for_element']);
+
+/** The agent tools that perform each kind of step (used to tell that the AI did it). */
+const TOOLS_FOR: Record<FlowAction, string[]> = {
+  open_app: ['open_app'],
+  open_url: ['open_url'],
+  tap: ['tap_element', 'tap_coordinate', 'click_node'],
+  click_text: ['tap_element', 'tap_coordinate', 'click_node'],
+  type: ['type_text', 'paste'],
+  key: ['press_key'],
+  global: ['global_action'],
+  swipe: ['swipe', 'scroll_element'],
+  scroll: ['scroll_element', 'swipe'],
+  long_press: ['long_press'],
+  install_app: ['install_app'],
+  open_settings: ['open_settings'],
+};
+
+/**
+ * Whether an AI action did the broken step. Looking never counts. A step with
+ * labels to wait for is done when they appear; one without (install, type,
+ * key …) only when the AI performed that same kind of action and it worked.
+ */
+export function aiDidStep(step: FlowStepV2, tool: string, failed: boolean, pkg: string | null, rows: Row[], moved: boolean): boolean {
+  if (failed || LOOK_ONLY_TOOLS.has(tool)) return false;
+  if (step.after.appear.length) return moved && afterMet(step, pkg, rows, moved);
+  if (!TOOLS_FOR[step.action]?.includes(tool)) return false;
+  return step.action === 'tap' || step.action === 'click_text' ? moved && afterMet(step, pkg, rows, moved) : afterMet(step, pkg, rows, moved);
+}
+
 export interface FlowParam {
   name: string;
   /** How a URL carries it: encodeURIComponent, spaces as "+", or as typed. */
@@ -403,7 +446,7 @@ export function recordFlow(prompt: string, logged: RecordedStep[]): RecordedFlow
         steps.push({ ...base, action: 'long_press', args: { text: p.text, x: p.x, y: p.y, durationMillis: p.durationMillis }, label: `Long-press ${p.text ? `"${String(p.text)}"` : ''}`.trim() });
         break;
       case 'install_app':
-        steps.push({ ...base, after: { package: null, appear: [] }, action: 'install_app', args: { packageName: p.packageName, appName: p.appName }, label: `Install ${String(p.appName ?? p.packageName ?? '')}` });
+        steps.push({ ...base, before: { package: null, anchors: [] }, after: { package: null, appear: [] }, action: 'install_app', args: { packageName: p.packageName, appName: p.appName }, label: `Install ${String(p.appName ?? p.packageName ?? '')}` });
         break;
       case 'open_settings':
         steps.push({ ...base, before: { package: null, anchors: [] }, action: 'open_settings', args: { screen: p.screen }, label: `Open settings ${String(p.screen ?? '').toLowerCase()}` });
@@ -423,8 +466,10 @@ export function resyncIndex(steps: FlowStepV2[], from: number, pkg: string | nul
   for (let j = from; j < steps.length; j += 1) {
     const s = steps[j];
     // Steps that launch something start anywhere; they cannot place the phone.
-    if (!s.before.package && !s.before.anchors.length) continue;
+    if (startsAnywhere(s)) continue;
     if (screenMatches(s.before, pkg, rows)) return j;
+    // Never land past a step whose work cannot be seen on a later screen.
+    if (MUST_DO.has(s.action)) return -1;
   }
   return -1;
 }

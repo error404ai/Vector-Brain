@@ -1,4 +1,4 @@
-import { afterMet, anchorsOf, fillUrl, findTarget, matchTemplate, parseTable, promptTemplate, recordFlow, resyncIndex, screenMatches, stableLabel, type RecordedStep } from './flowSteps';
+import { afterMet, aiDidStep, anchorsOf, fillUrl, findTarget, matchTemplate, parseTable, promptTemplate, recordFlow, resyncIndex, screenMatches, stableLabel, startsAnywhere, type RecordedStep } from './flowSteps';
 
 const table = (rows: string[]) => ['idx|type|label|flags|tap_at', ...rows].join('\n');
 
@@ -121,5 +121,43 @@ describe('replay checks', () => {
     ]);
     expect(resyncIndex(flow.steps, 1, 'com.google.android.youtube', parseTable(SEARCH))).toBe(2);
     expect(resyncIndex(flow.steps, 1, 'com.android.chrome', parseTable(SEARCH))).toBe(-1);
+  });
+});
+
+describe('what counts as the AI doing a broken step (Oct 7 export)', () => {
+  const install = recordFlow('Install WhatsApp', [
+    step('install_app', { packageName: 'com.whatsapp', appName: 'WhatsApp' }, HOME, RESULTS, { pkgBefore: 'com.motorola.launcher3' }),
+  ]).steps[0];
+
+  it('records an install as starting on any screen, not on the recording phone\'s launcher', () => {
+    expect(install.before).toEqual({ package: null, anchors: [] });
+    expect(startsAnywhere(install)).toBe(true);
+    // A flow saved before this rule still starts anywhere.
+    expect(startsAnywhere({ ...install, before: { package: 'com.motorola.launcher3', anchors: ['Phone'] } })).toBe(true);
+  });
+
+  it('never counts looking at the screen as the step done', () => {
+    const rows = parseTable(RESULTS);
+    expect(aiDidStep(install, 'read_ui_tree', false, 'com.android.vending', rows, true)).toBe(false);
+    expect(aiDidStep(install, 'list_apps', false, 'com.android.vending', rows, true)).toBe(false);
+    expect(aiDidStep(install, 'install_app', true, 'com.android.vending', rows, true)).toBe(false);
+    expect(aiDidStep(install, 'install_app', false, 'com.android.vending', rows, true)).toBe(true);
+  });
+
+  it('a tap with labels to wait for is done only when they appear', () => {
+    const tap = recordFlow('Open YouTube search', [step('tap_element', { idx: '1' }, HOME, SEARCH)]).steps[0];
+    expect(aiDidStep(tap, 'click_node', false, 'com.google.android.youtube', parseTable(SEARCH), true)).toBe(true);
+    expect(aiDidStep(tap, 'click_node', false, 'com.google.android.youtube', parseTable(HOME), false)).toBe(false);
+  });
+
+  it('a resync never jumps past a typing step', () => {
+    const flow = recordFlow('Search YouTube for cats', [
+      step('tap_element', { idx: '1' }, HOME, SEARCH),
+      step('type_text', { text: '[REDACTED]' }, SEARCH, TYPED, { typed: 'cats' }),
+      step('press_key', { key: 'ENTER' }, TYPED, RESULTS),
+    ]);
+    // On the results screen: the step after typing would match, but typing was never done.
+    expect(resyncIndex(flow.steps, 0, 'com.google.android.youtube', parseTable(TYPED))).toBe(1);
+    expect(resyncIndex(flow.steps, 0, 'com.google.android.youtube', parseTable(RESULTS))).toBe(-1);
   });
 });

@@ -56,7 +56,6 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Badge, Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
-import { keyframes } from '@mui/material/styles';
 import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
 import FleetPanel from '@/components/mission/FleetPanel';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -77,6 +76,7 @@ import FileDropCard from '@/components/mission/FileDropCard';
 import AnswerCard from '@/components/mission/AnswerCard';
 import { AlertsSheet } from '@/components/mission/AlertsSheet';
 import { fleetAlerts } from '@/components/mission/alertRules';
+import PrismBackground from '@/components/ui/PrismBackground';
 import { MentionHighlighter, MentionMenu, MentionText } from '@/components/mission/MentionUI';
 import { mentionOptions, typedMention } from '@/components/mission/mentions';
 import { PauseButton, PausedGlyph, PausedProgress, ResumeButton } from '@/components/mission/MissionPause';
@@ -1931,57 +1931,6 @@ function writeDraft(key: string, text: string): void {
   } catch {
     // ignore
   }
-}
-
-const prismSpin = keyframes`to { transform: rotate(360deg); }`;
-const prismSweep = keyframes`
-  0%   { transform: translateX(0) rotate(24deg); }
-  100% { transform: translateX(260vw) rotate(24deg); }
-`;
-
-/**
- * Prism: a colour wheel turning very slowly behind frosted glass, with a soft
- * sweep of light every few seconds. CSS only — no script, no canvas — and the
- * wheel is its own layer, so the browser blurs it once and only rotates it.
- * Holds still for anyone who asks their OS for reduced motion.
- */
-function PrismBackground() {
-  return (
-    <Box aria-hidden sx={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none', bgcolor: '#f4f5fb' }}>
-      <Box
-        sx={{
-          position: 'absolute',
-          left: '22%',
-          top: '-28%',
-          width: '80vmax',
-          height: '80vmax',
-          borderRadius: '50%',
-          background: 'conic-gradient(from 0deg, #6aa8ff, #a78bfa, #f472b6, #fbbf24, #34d399, #6aa8ff)',
-          filter: 'blur(90px)',
-          opacity: 0.42,
-          willChange: 'transform',
-          animation: `${prismSpin} 40s linear infinite`,
-          ...reducedMotion,
-        }}
-      />
-      <Box
-        sx={{
-          position: 'absolute',
-          left: '-30vw',
-          top: '-20%',
-          width: 260,
-          height: '140%',
-          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent)',
-          transform: 'rotate(24deg)',
-          willChange: 'transform',
-          animation: `${prismSweep} 9s cubic-bezier(.5,0,.5,1) infinite`,
-          ...reducedMotion,
-          '@media (prefers-reduced-motion: reduce)': { display: 'none' },
-        }}
-      />
-      <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,.05))' }} />
-    </Box>
-  );
 }
 
 // --- Voice dictation: the browser's built-in speech recognition, no backend. ---
