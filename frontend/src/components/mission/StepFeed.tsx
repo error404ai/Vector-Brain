@@ -77,6 +77,50 @@ function clock(at: number | null): string {
 
 const SHOWN = 60;
 
+/** Opening sentences that only restate the task ("The user wants me to…"). */
+const RESTATES = /^(the user (wants|asked|has asked|would like)|the task (is|asks)|i('m| am) (asked|told)|i need to)\b/i;
+const CLAMP_AT = 160;
+
+/**
+ * The model's reason, readable: drop opening sentences that only repeat the
+ * task, show two lines, and the whole of it on request. The text is unchanged
+ * otherwise — nothing is rewritten or summarised.
+ */
+export function tidyReason(text: string): string {
+  const sentences = text.trim().match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g) ?? [text];
+  let i = 0;
+  while (i < sentences.length - 1 && RESTATES.test(sentences[i].trim())) i++;
+  return sentences.slice(i).join('').trim() || text.trim();
+}
+
+function Reason({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return <>—</>;
+  const tidy = tidyReason(text);
+  const long = tidy.length > CLAMP_AT;
+  return (
+    <>
+      <Box
+        component="span"
+        title={open ? undefined : text}
+        sx={open || !long ? undefined : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+      >
+        {open ? text : tidy}
+      </Box>
+      {long && (
+        <Box
+          component="button"
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          sx={{ all: 'unset', cursor: 'pointer', display: 'inline-block', mt: 0.25, fontSize: 12, fontWeight: 700, color: '#4f46e5', '&:focus-visible': { outline: '2px solid #4f46e5', outlineOffset: 2 } }}
+        >
+          {open ? 'Show less' : 'Full reasoning'}
+        </Box>
+      )}
+    </>
+  );
+}
+
 /**
  * The list itself. `order="live"` puts the newest on top and animates each
  * one in; `order="story"` reads top to bottom, as a finished run's record.
@@ -187,7 +231,7 @@ export function StepFeed({
                   <Box component="span" sx={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', color: '#6366f1', mr: 0.75 }}>
                     WHY
                   </Box>
-                  {step.thought || '—'}
+                  <Reason text={step.thought} />
                   {step.failed && step.error && (
                     <Box component="span" sx={{ display: 'block', mt: 0.5, color: '#b91c1c' }}>
                       {step.error}

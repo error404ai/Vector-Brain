@@ -91,3 +91,10 @@ export const reducedMotion = {
 } as const;
 
 export const ease = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+/** Where the agent just tapped: a ring that lands on the point and fades. */
+export const tapRipple = keyframes`
+  0%   { opacity: 0; transform: scale(0.3); }
+  15%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2.4); }
+`;

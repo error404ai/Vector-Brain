@@ -36,6 +36,7 @@ import {
   screenFade,
   shake,
   shimmer,
+  tapRipple,
   micPulse,
   slideStep,
   typingDot,
@@ -54,7 +55,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, LinearProgress, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
@@ -486,6 +487,92 @@ function PhoneZoom({ target, feed, onClose }: { target: PhoneZoomTarget | null; 
 /** How long each running phone stays on the big screen before the next one. */
 const ROTATE_MS = 4000;
 
+/** A tap stays marked on the live screen this long, then the mark is gone. */
+const TAP_SHOWN_MS = 4000;
+
+/**
+ * The agent's latest tap, if it was recent and carried a point. Only
+ * tap_coordinate sends x,y (0–1000 over the screen); taps by element or text
+ * are resolved on the server or the phone, so they leave no point here.
+ */
+function lastTapPoint(steps: LiveStep[] | undefined): { x: number; y: number; key: string } | null {
+  const last = steps?.[steps.length - 1];
+  if (!last?.raw || Date.now() - last.at > TAP_SHOWN_MS) return null;
+  const type = String(last.raw.type ?? '');
+  if (type !== 'tap_coordinate' && type !== 'long_press') return null;
+  const x = Number(last.raw.x);
+  const y = Number(last.raw.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 1000 || y > 1000) return null;
+  return { x, y, key: `${last.index}-${x}-${y}` };
+}
+
+/** The ring drawn where the agent tapped. */
+function TapMark({ x, y }: { x: number; y: number }) {
+  return (
+    <Box
+      aria-hidden
+      sx={{
+        position: 'absolute',
+        left: `${x / 10}%`,
+        top: `${y / 10}%`,
+        width: 26,
+        height: 26,
+        ml: '-13px',
+        mt: '-13px',
+        borderRadius: '50%',
+        border: '3px solid rgba(37,99,235,.95)',
+        bgcolor: 'rgba(37,99,235,.25)',
+        pointerEvents: 'none',
+        opacity: 0,
+        animation: `${tapRipple} 1.4s ${ease} 2`,
+        '@media (prefers-reduced-motion: reduce)': { animation: 'none', opacity: 1 },
+      }}
+    />
+  );
+}
+
+/** Done, failed, running and still-to-go as one bar, so the mix reads at a glance. */
+function StatusBar({ items }: { items: MissionItem[] }) {
+  const count = (pred: (i: MissionItem) => boolean) => items.filter(pred).length;
+  const parts = [
+    { n: count((i) => i.status === 'SUCCEEDED'), color: '#16a34a', label: 'done' },
+    { n: count((i) => i.status === 'FAILED'), color: '#dc2626', label: 'failed' },
+    { n: count((i) => i.status === 'RUNNING'), color: '#0284c7', label: 'running' },
+    { n: count((i) => i.status === 'PENDING' || i.status === 'QUEUED'), color: '#e2e8f0', label: 'to go' },
+    { n: count((i) => i.status === 'CANCELLED'), color: '#94a3b8', label: 'cancelled' },
+  ].filter((p) => p.n > 0);
+  return (
+    <Box
+      role="img"
+      aria-label={parts.map((p) => `${p.n} ${p.label}`).join(', ')}
+      sx={{ position: 'relative', display: 'flex', gap: '2px', height: 8, borderRadius: 1, overflow: 'hidden' }}
+    >
+      {parts.map((p) => (
+        <Box key={p.label} sx={{ flexGrow: p.n, flexBasis: 0, bgcolor: p.color, transition: `flex-grow 600ms ${ease}`, ...reducedMotion }} />
+      ))}
+      <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)', animation: `${shimmer} 1.8s linear infinite`, ...reducedMotion }} />
+    </Box>
+  );
+}
+
+/** A phone's screen in its tile: live while it runs, its last screen once finished. */
+function TileScreen({ item, feed }: { item: MissionItem; feed: LiveFeed }) {
+  const liveFrame = item.status === 'RUNNING' && item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
+  const finished = item.status === 'SUCCEEDED' || item.status === 'FAILED' || item.status === 'CANCELLED';
+  const { ref, near, seen } = useNearViewport<HTMLDivElement>();
+  const { data, isSuccess } = useGetFinalScreenQuery(item.id, { skip: !finished || !item.agent_task_id || !!liveFrame || !seen });
+  const stored = data?.data?.base64 ?? null;
+  const thumb = useThumbnail(liveFrame || !stored ? null : `final:${item.id}`, stored);
+  const src = liveFrame ? frameSrc(liveFrame.data) : thumb;
+  // No screen kept for this phone: the tile stays text-only.
+  if ((!finished && !liveFrame) || (isSuccess && !stored && !liveFrame)) return <Box ref={ref} sx={{ display: 'none' }} />;
+  return (
+    <Box ref={ref} sx={{ width: 46, flexShrink: 0, aspectRatio: '9 / 19.5', borderRadius: 1.5, overflow: 'hidden', bgcolor: 'action.hover', border: '2px solid', borderColor: item.status === 'SUCCEEDED' ? '#bbf7d0' : item.status === 'FAILED' ? '#fecaca' : 'divider' }}>
+      {src && near && <Box component="img" src={src} alt={`${item.device_name} ${finished ? 'last' : 'live'} screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />}
+    </Box>
+  );
+}
+
 function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
   const live = items.filter((item) => item.status === 'RUNNING' && item.device_hw_id);
   const [tick, setTick] = useState(0);
@@ -523,6 +610,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
 
   if (live.length === 0 || !current) return null;
   const frame = current.device_hw_id ? feed.frames[current.device_hw_id] : undefined;
+  const tap = lastTapPoint(liveSteps);
 
   return (
     <Box sx={{ display: 'flex', gap: 2.5, alignItems: 'flex-start', mt: 1.5, mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, animation: `${riseIn} 320ms ${ease}`, ...reducedMotion }}>
@@ -540,6 +628,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            position: 'relative',
             boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)',
             cursor: frame ? 'zoom-in' : 'default',
             transition: `transform 160ms ${ease}`,
@@ -560,6 +649,7 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
               Waiting for the first screen…
             </Typography>
           )}
+          {frame && tap && <TapMark key={tap.key} x={tap.x} y={tap.y} />}
         </Box>
         </Tooltip>
         <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, fontWeight: 600 }} noWrap>
@@ -608,8 +698,6 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
           <Typography sx={{ fontSize: 15.5, fontWeight: 800 }}>What {live.length > 1 ? current.device_name : 'the agent'} is doing</Typography>
           <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>{run.steps.length ? stepSummary(run.steps) : ''}</Typography>
-          <Box sx={{ flex: 1 }} />
-          <SightCounter run={(current.agent_task_id ? feed.sight[current.agent_task_id] : null) ?? current.sight ?? run.sight} />
         </Box>
         {run.loading && run.steps.length === 0 ? (
           <CircularProgress size={18} sx={{ alignSelf: 'flex-start', mt: 1 }} />
@@ -702,7 +790,7 @@ function FailureGroups({ items }: { items: MissionItem[] }) {
 }
 
 /** A small tile for one phone: name, status, and its latest step or result. */
-function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number } }) {
+function PhoneTile({ item, steps, round, feed }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number }; feed: LiveFeed }) {
   const latest = steps[steps.length - 1];
   const finished = item.status === 'SUCCEEDED' || item.status === 'FAILED' || item.status === 'CANCELLED';
   const [open, setOpen] = useState(false);
@@ -724,13 +812,16 @@ function PhoneTile({ item, steps, round }: { item: MissionItem; steps: LiveStep[
         </Typography>
         <StatusChip item={item} />
       </Box>
-      <Typography
-        key={latest?.index}
-        sx={{ fontSize: 14, lineHeight: 1.45, color: 'text.secondary', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}
-      >
-        {item.status === 'RUNNING' && round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}
-        {line}
-      </Typography>
+      <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', minWidth: 0 }}>
+        <TileScreen item={item} feed={feed} />
+        <Typography
+          key={latest?.index}
+          sx={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 1.45, color: 'text.secondary', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}
+        >
+          {item.status === 'RUNNING' && round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}
+          {line}
+        </Typography>
+      </Box>
       {finished && item.agent_task_id && (
         <Button size="small" onClick={() => setOpen((v) => !v)} endIcon={open ? <ExpandLessIcon /> : <ExpandMoreIcon />} sx={{ alignSelf: 'flex-start', textTransform: 'none', px: 0.5 }}>
           {open ? 'Hide steps' : 'Show steps'}
@@ -825,7 +916,7 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
           ...reducedMotion,
         }}
       >
-        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: 'divider', bgcolor: 'action.hover', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Box sx={{ aspectRatio: '9 / 19.5', borderRadius: 2, border: '3px solid', borderColor: item.status === 'RUNNING' ? '#38bdf8' : item.status === 'SUCCEEDED' ? '#bbf7d0' : item.status === 'FAILED' ? '#fecaca' : 'divider', bgcolor: 'action.hover', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {src && near ? (
             <Box component="img" src={src} alt={`${item.device_name} final screen`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
           ) : src ? null : (
@@ -842,7 +933,7 @@ function FinalScreenThumb({ item, feed, onOpen, onResolved }: { item: MissionIte
 }
 
 /** The row of final screens for a finished mission — only phones that actually have a last screen. */
-function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) {
+function FinalScreens({ items, feed, live = false }: { items: MissionItem[]; feed: LiveFeed; live?: boolean }) {
   const [zoom, setZoom] = useState<PhoneZoomTarget | null>(null);
   const [withImage, setWithImage] = useState<Record<number, boolean>>({});
   const onResolved = useCallback((id: number, hasImage: boolean) => {
@@ -855,7 +946,7 @@ function FinalScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed })
     <Box>
       {anyShown && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-          Last screen on each phone · double-click to zoom
+          {live ? 'Every phone so far — live while running, last screen once done' : 'Last screen on each phone'} · double-click to zoom
         </Typography>
       )}
       <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: anyShown ? 0.5 : 0 }}>
@@ -991,7 +1082,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
     ? open.length === 0
       ? 'Finishing…'
       : runningItems.length > 0
-      ? `Running on ${phonesWord(runningItems.length)}${open.length > runningItems.length ? ` · ${open.length - runningItems.length} waiting` : ''}`
+      ? `Running — ${progress.succeeded} of ${progress.total} done`
       : busyCount > 0 && busyCount === open.length
         ? `Waiting — ${phonesWord(busyCount)} busy with another task`
         : open.every((i) => i.status === 'QUEUED')
@@ -1093,8 +1184,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
         )}
         {running && (
           <Box sx={{ position: 'relative', overflow: 'hidden', borderRadius: 1 }}>
-            <LinearProgress variant="determinate" value={percent} sx={{ height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { transition: `transform 600ms ${ease}` } }} />
-            <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)', animation: `${shimmer} 1.8s linear infinite`, ...reducedMotion }} />
+            <StatusBar items={items} />
           </Box>
         )}
       </Box>
@@ -1102,13 +1192,13 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
       {/* Body: secondary detail. */}
       <Box sx={{ px: 2.5, pb: 2, pt: 0.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {running && showLive && <LiveScreens items={items} feed={feed} />}
-        {!running && <FinalScreens items={items} feed={feed} />}
+        <FinalScreens items={items} feed={feed} live={running} />
         {!running && items.length === 1 && items[0].agent_task_id && <SinglePhoneRecord item={items[0]} steps={stepsFor(items[0])} />}
 
         {running && runningItems.length > 0 && !showAll && (
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1 }}>
             {runningItems.slice(0, RUNNING_SHOWN).map((item) => (
-              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} />
+              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} feed={feed} />
             ))}
           </Box>
         )}
@@ -1124,7 +1214,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
         {showAll && (
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 1, animation: `${riseIn} 220ms ${ease}`, ...reducedMotion }}>
             {items.map((item) => (
-              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} />
+              <PhoneTile key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} feed={feed} />
             ))}
           </Box>
         )}
