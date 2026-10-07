@@ -287,6 +287,9 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
+          if (!this.imagesToAi) {
+            return { content: [{ type: 'text', text: 'Screenshots are off for this account: the screen is never sent as an image. Use read_ui_tree — it lists every visible element with its tap coordinates.' }] };
+          }
           // Weak models ask for screenshots compulsively; cap the spend instead
           // of refusing outright so the run keeps moving.
           if (this.screenshotsUsed >= this.screenshotBudget) {
@@ -381,7 +384,7 @@ export class AndroidAgent extends Agent {
             const warnKey = `${this.currentKey()}|${grid.x},${grid.y}`;
             if (this.blindTapWarned !== warnKey) {
               this.blindTapWarned = warnKey;
-              const look = this.options.vision
+              const look = this.imagesToAi
                 ? ' If what you want is not in the list, call capture_screen and look first.'
                 : '';
               return {
@@ -895,7 +898,9 @@ export class AndroidAgent extends Agent {
       name: 'AndroidAgent',
       description: 'An expert AI agent that inspects and interacts with an Android mobile device to accomplish user tasks step-by-step.',
       // A model that cannot see images gets no screenshot tool at all.
-      tools: options.vision ? tools : tools.filter((tool) => tool.name !== 'capture_screen'),
+      // No screenshot tool for a model that cannot see images, or when the
+      // account turned screenshots off (off means none at all).
+      tools: options.vision && options.screenshots !== 'off' ? tools : tools.filter((tool) => tool.name !== 'capture_screen'),
       // The backup model (when the account set one) takes over if the main one fails.
       llms: ['default', 'fallback'],
     });
@@ -914,6 +919,19 @@ export class AndroidAgent extends Agent {
     await super.handleMessages(agentContext, messages, tools);
     pruneStaleScreens(messages as unknown as Parameters<typeof pruneStaleScreens>[0]);
     keepOnlyFreshImage(messages as unknown as Parameters<typeof keepOnlyFreshImage>[0], Boolean(this.options.vision));
+  }
+
+  /**
+   * Whether a screenshot may reach the AI at all. "Off" in Settings means
+   * never: no thin-screen image, no stuck look, no vision helper, no
+   * capture_screen (Oct 7: "Off" still sent images on unreadable screens).
+   */
+  private get imagesToAi(): boolean {
+    return Boolean(this.options.vision) && this.options.screenshots !== 'off';
+  }
+
+  private get screenReader(): ScreenGrounder | undefined {
+    return this.options.screenshots === 'off' ? undefined : this.options.grounder;
   }
 
   /** The prompt this agent runs with; the Vector engine sends the same one. */
@@ -961,9 +979,11 @@ export class AndroidAgent extends Agent {
   }
 
   protected async buildSystemPrompt(): Promise<string> {
-    const vision = this.options.vision
+    const vision = this.imagesToAi
       ? '\n\nSCREENSHOTS: capture_screen shows you the screen as an image. It is expensive; use it only when the element list cannot describe what you need.'
-      : '\n\nSCREENSHOTS: this model cannot see images, so there is no screenshot tool. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".';
+      : this.options.vision
+        ? '\n\nSCREENSHOTS: screenshots are off for this account, so there is no screenshot tool and you never see the screen as an image. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".'
+        : '\n\nSCREENSHOTS: this model cannot see images, so there is no screenshot tool. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".';
     // What this phone last reported about its network and locale: a task that
     // only asks for its IP, DNS, language or timezone is answered from here.
     const facts = this.options.deviceFacts
@@ -1231,7 +1251,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // observation goes to the model too. Only the newest image stays in the
     // context, so the cost is one image per call, not a growing pile.
     const everyStepShot = freshShot ?? this.lastScreenshotBase64 ?? undefined;
-    if (this.options.vision && this.options.screenshots === 'every_step' && !skipObservation && everyStepShot) {
+    if (this.imagesToAi && this.options.screenshots === 'every_step' && !skipObservation && everyStepShot) {
       return { content: [textPart, { type: 'image', data: everyStepShot, mimeType: 'image/jpeg' }], isError };
     }
 
@@ -1245,7 +1265,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // waiting because the tree is not telling it whether the page loaded, and
     // more waiting will not fix that. Show it the screen once.
     if (
-      this.options.vision &&
+      this.imagesToAi &&
       action.type === 'Wait' &&
       this.consecutiveWaits >= 2 &&
       this.lastScreenshotBase64 &&
@@ -1361,8 +1381,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         : stuck === 'no_effect'
         ? '\n\nSTUCK: your last actions changed nothing on the screen. Do not repeat them. Take a completely different route, or finish and report the reason.'
         : '';
-    // "Off" in settings: say it is stuck, but show nothing beyond thin screens.
-    if (stuck && !thin && this.options.screenshots === 'off') return { note: stuckNote };
+    // "Off" in settings: never an image or a helper reading; say so in words.
+    if (this.options.screenshots === 'off') {
+      if (stuck) return { note: stuckNote };
+      return {
+        note: '\n\nNOTE: this screen exposes very little to the element list, and screenshots are off for this account. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element — or finish and report that the screen could not be read.',
+      };
+    }
     // Stuck on a screen the list does describe: one look per screen, not per step.
     if (stuck && !thin) {
       const key = this.currentKey();
@@ -1370,7 +1395,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       this.lastStuckLookKey = key;
     }
     const image = shot ?? this.lastScreenshotBase64 ?? undefined;
-    if (this.options.vision && image && this.autoVisionUsed < this.autoVisionBudget) {
+    if (this.imagesToAi && image && this.autoVisionUsed < this.autoVisionBudget) {
       this.autoVisionUsed += 1;
       return {
         note: stuck
@@ -1379,14 +1404,15 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         image,
       };
     }
-    if (this.options.grounder && image) {
+    const reader = this.screenReader;
+    if (reader && image) {
       const key = this.currentKey();
       if (key !== this.groundedKey && this.groundingUsed < GROUNDING_BUDGET) {
         this.groundedKey = key;
         this.groundingUsed += 1;
         this.groundedSeen = [];
         try {
-          this.groundedSeen = await this.options.grounder(image);
+          this.groundedSeen = await reader(image);
         } catch {
           // The helper is a bonus; the list alone still works.
         }

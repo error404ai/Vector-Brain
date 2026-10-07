@@ -41,7 +41,7 @@ const SCREENSHOT_HELP: Record<ScreenshotMode, string> = {
     'The AI works from the list of on-screen elements, and is shown a screenshot when it gets stuck: going back and forth, or actions that change nothing. Good results at little extra cost.',
   every_step:
     'The AI sees a screenshot after every action as well as the element list. Best understanding of icons and web pages; each step costs roughly 10–15% more.',
-  off: 'Screenshots only on screens the element list cannot describe at all. Cheapest; the AI can miss unlabelled icons.',
+  off: 'Never: no screenshot reaches the AI or the screen reader, on any screen. Cheapest; on screens the element list cannot describe (Play Store sign-in, web views, games) the AI works blind and may stop there.',
 };
 
 /**

@@ -203,4 +203,28 @@ describe('screenshots to the model', () => {
     expect(text(fourth)).toMatch(/STUCK/);
     expect(hasImage(fourth)).toBe(false);
   });
+
+  // Oct 7: "Off" still sent the screen on unreadable screens (Facebook update, Play sign-in).
+  it('sends nothing at all when screenshots are off — not on a thin screen, not to a helper, no screenshot tool', async () => {
+    const blank = node({ bounds: [0, 0, 1080, 2400], children: Array.from({ length: 5 }, (_, i) => node({ clickable: true, bounds: [0, i * 300, 1080, i * 300 + 200] })) });
+    const phone = fakePhone([blank, blank, blank]);
+    const grounder = jest.fn(async () => [{ label: 'Accept all', x: 500, y: 900, kind: 'button' }]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, grounder, screenshots: 'off' });
+    const listing = await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    expect(hasImage(listing)).toBe(false);
+    expect(text(listing)).toMatch(/screenshots are off/);
+    expect(grounder).not.toHaveBeenCalled();
+    await tool(agent, 'wait').execute({ durationMillis: 1000 }, {}, {});
+    const again = await tool(agent, 'wait').execute({ durationMillis: 1000 }, {}, {});
+    expect(hasImage(again)).toBe(false);
+    expect((agent as unknown as { tools: { name: string }[] }).tools.some((t) => t.name === 'capture_screen')).toBe(false);
+    expect(await agent.systemPrompt()).toMatch(/screenshots are off for this account/);
+  });
+
+  it('still shows a thin screen when screenshots are "when stuck"', async () => {
+    const blank = node({ bounds: [0, 0, 1080, 2400], children: Array.from({ length: 5 }, (_, i) => node({ clickable: true, bounds: [0, i * 300, 1080, i * 300 + 200] })) });
+    const phone = fakePhone([blank]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'stuck' });
+    expect(hasImage(await tool(agent, 'read_ui_tree').execute({}, {}, {}))).toBe(true);
+  });
 });

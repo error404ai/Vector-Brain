@@ -1243,8 +1243,9 @@ Use the current visible Android screen and UI state as context. Continue from wh
       });
     // A text-only model gets a small vision model to read the screens its
     // element list cannot describe, instead of tapping blind.
+    // Screenshots off: no helper either (off means no image is read by any model).
     const helperConfig =
-      !vision && engineSettings.vision_config_id ? await this.aiConfigService.resolveConfigById(userId, engineSettings.vision_config_id).catch(() => null) : null;
+      !vision && engineSettings.screenshots !== 'off' && engineSettings.vision_config_id ? await this.aiConfigService.resolveConfigById(userId, engineSettings.vision_config_id).catch(() => null) : null;
     const grounder =
       helperConfig && (await modelSeesImages(helperConfig.provider, helperConfig.model))
         ? createScreenGrounder(modelFor(helperConfig), (usage) => {
