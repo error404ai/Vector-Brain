@@ -30,6 +30,12 @@ const envConfig = {
   // Database
   mysqlHost: process.env.MYSQLHOST,
   mysqlPort: Number(process.env.MYSQLPORT ?? 3306),
+  /**
+   * Database connections the server may hold. Ten was shared by twenty phones'
+   * runs, the chat and every page's polling, and requests queued for a free one
+   * (trivial calls like refresh-token took up to 10s). MariaDB allows 151 by default.
+   */
+  dbPoolSize: Math.max(5, Number(process.env.DB_POOL_SIZE ?? 30) || 30),
   mysqlUsername: process.env.MYSQLUSERNAME,
   mysqlPassword: process.env.MYSQLPASSWORD,
   database: process.env.DATABASE,

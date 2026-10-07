@@ -211,10 +211,12 @@ const SETTINGS_SHORTCUTS: { screen: string; label: string }[] = [
 export default function AndroidFleetPage() {
   const navigate = useNavigate();
 
+  // This page also has its own socket for live device and task events, so the
+  // lists below are only a fallback for what the socket missed.
   const { data: devicesData, isLoading, refetch } = useGetAndroidDevicesQuery(undefined, {
-    pollingInterval: 20_000,
+    pollingInterval: 60_000,
   });
-  const { data: tasksData } = useGetAndroidTasksQuery({ limit: 100 }, { pollingInterval: 8_000 });
+  const { data: tasksData } = useGetAndroidTasksQuery({ limit: 100 }, { pollingInterval: 30_000 });
   const { data: aiConfigsData } = useGetAiConfigsQuery();
 
   const [runTask] = useRunAndroidTaskMutation();
@@ -226,7 +228,7 @@ export default function AndroidFleetPage() {
   // What the server says every phone is doing. The page used to work this out
   // from three separate lists and forgot all of it on reload; this survives a
   // refresh and cannot disagree with the agent page or Telegram.
-  const { data: fleetStateData } = useGetFleetStateQuery(undefined, { pollingInterval: 5_000 });
+  const { data: fleetStateData } = useGetFleetStateQuery(undefined, { pollingInterval: 10_000 });
   /** Compares dotted versions numerically: 0.10.0 is newer than 0.9.0. */
   const compareVersions = (a: string, b: string): number => {
     const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
@@ -277,7 +279,7 @@ export default function AndroidFleetPage() {
   const { data: proxyData, refetch: refetchProxies } = useGetDeviceProxiesQuery();
   // Polled: entries leave the queue on the server when a lane frees up, with no
   // socket event of their own.
-  const { data: queueData, refetch: refetchQueue } = useGetTaskQueueQuery(undefined, { pollingInterval: 10000 });
+  const { data: queueData, refetch: refetchQueue } = useGetTaskQueueQuery(undefined, { pollingInterval: 15_000 });
   const [clearAllQueued] = useClearAllQueuedMutation();
   const [cancelQueued] = useCancelQueuedTaskMutation();
   const queuedByDevice = new Map((queueData?.data ?? []).map((entry) => [entry.device_id, entry]));

@@ -1286,7 +1286,10 @@ function SinglePhoneRecord({ item, steps }: { item: MissionItem; steps: LiveStep
  */
 function LiveMissionCard({ initial, feed, onRerun, showLive = true }: { initial: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [status, setStatus] = useState(initial.status);
-  const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 2000 : 0 });
+  // The server pushes mission:update on every phone's change and on finish, and
+  // the card refetches on it (below); polling is only the fallback for a missed
+  // push. Every 2s it was the busiest call the app made (1,181 in a week).
+  const { data, isError, refetch } = useGetMissionQuery(initial.id, { pollingInterval: status === 'RUNNING' ? 10_000 : 0 });
   const mission = data?.data ?? initial;
   if (mission.status !== status) setStatus(mission.status);
   const push = feed.missionPush[initial.id] ?? 0;

@@ -37,10 +37,10 @@ if (!dataSource) {
       logging: false,
       timezone: 'Z',
       extra: {
-        connectionLimit: 10,
+        connectionLimit: envConfig.dbPoolSize,
         connectTimeout: 30000,
       },
-      poolSize: 10,
+      poolSize: envConfig.dbPoolSize,
       maxQueryExecutionTime: 30000,
       entities: [entitiesGlob],
       migrations: [migrationsGlob],
