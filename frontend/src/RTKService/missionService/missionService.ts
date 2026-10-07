@@ -1,4 +1,5 @@
 import type { RunSight } from '@/components/mission/sight';
+import type { FailureKind } from '@/utils/failureKind';
 import { baseApi, TAGS } from '../baseApi';
 
 export type MissionStatus = 'RUNNING' | 'PAUSED' | 'DONE' | 'CANCELLED';
@@ -18,6 +19,8 @@ export interface MissionItem {
   last_reason: string | null;
   reason_text: string | null;
   last_message: string | null;
+  /** Whose problem a failure was; null unless FAILED. */
+  failure_kind?: FailureKind | null;
   next_attempt_at: string | null;
   /** While the phone is offline: until when the mission waits for it to reconnect. */
   waiting_until?: string | null;

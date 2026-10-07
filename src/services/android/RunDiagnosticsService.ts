@@ -27,6 +27,7 @@ import {
   summarizeRun,
   tagWaste,
 } from './runDiagnostics';
+import { failureKind } from './failureKind';
 
 /** Columns a diagnostics pass reads; never the screenshot. */
 const STEP_COLUMNS: (keyof AndroidTaskLog)[] = [
@@ -286,6 +287,7 @@ export class RunDiagnosticsService {
         engine: t.provider === 'replay' ? 'replay' : t.engine ?? 'eko',
         verification: t.verification,
         outcome: outcomeOf(t),
+        failure_kind: outcomeOf(t) === 'failed' ? failureKind(t.reason_code, t.message) : null,
         diagnostics: t.diagnostics,
       })),
     };
@@ -510,7 +512,7 @@ export class RunDiagnosticsService {
     const since = await this.toDbClock(new Date(Date.now() - clampDays(days) * 86_400_000));
     return this.taskRepo.find({
       where: { created_at: MoreThanOrEqual(since) },
-      select: ['id', 'prompt', 'status', 'reason_code', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification', 'outcome'],
+      select: ['id', 'prompt', 'status', 'reason_code', 'message', 'provider', 'model', 'device_id', 'total_steps', 'total_duration_seconds', 'created_at', 'diagnostics', 'engine', 'verification', 'outcome'],
       order: { id: 'DESC' },
       take: limit,
     });

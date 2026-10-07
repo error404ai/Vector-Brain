@@ -39,6 +39,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import { FAILURE_KIND, FAILURE_KIND_ORDER } from '@/utils/failureKind';
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
@@ -342,6 +343,16 @@ function OutcomeCard({ outcomes, recoveries }: { outcomes: OutcomeBreakdown; rec
             of {fmtInt(ended)} finished runs · {fmtInt(outcomes.verified)} checked on the phone
             {outcomes.cancelled ? ` · ${fmtInt(outcomes.cancelled)} cancelled not counted` : ''}
           </Typography>
+          {outcomes.agent_completion_pct != null ? (
+            <Tooltip title="Completion counting only the agent's own failures: runs lost to the phone, the AI provider, our server or a step only you can do are left out.">
+              <Typography variant="body2" sx={{ mt: 0.75, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                {`${Math.round(outcomes.agent_completion_pct)}%`}{' '}
+                <Typography component="span" variant="caption" color="text.secondary">
+                  agent success (own mistakes only)
+                </Typography>
+              </Typography>
+            </Tooltip>
+          ) : null}
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Box
@@ -374,6 +385,7 @@ function OutcomeCard({ outcomes, recoveries }: { outcomes: OutcomeBreakdown; rec
           </Box>
         </Box>
       </Stack>
+      {outcomes.failure_kinds && outcomes.failed > 0 ? <FailureKinds kinds={outcomes.failure_kinds} failed={outcomes.failed} /> : null}
       {outcomes.failure_reasons.length || recoveries.length ? (
         <Box sx={{ mt: 2, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
           <Box sx={{ minWidth: 0 }}>
@@ -413,6 +425,41 @@ function OutcomeCard({ outcomes, recoveries }: { outcomes: OutcomeBreakdown; rec
         </Box>
       ) : null}
     </Card>
+  );
+}
+
+/** Failed runs split by whose problem they were (agent, user, phone, AI service, server). */
+function FailureKinds({ kinds, failed }: { kinds: NonNullable<OutcomeBreakdown['failure_kinds']>; failed: number }) {
+  const present = FAILURE_KIND_ORDER.filter((k) => kinds[k] > 0);
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="body2" sx={{ fontWeight: 800, mb: 0.75 }}>
+        Whose problem the {fmtInt(failed)} failures were
+      </Typography>
+      <Box
+        role="img"
+        aria-label={present.map((k) => `${FAILURE_KIND[k].label} ${kinds[k]}`).join(', ')}
+        sx={{ display: 'flex', height: 8, borderRadius: 1, overflow: 'hidden', bgcolor: 'action.hover', gap: '2px' }}
+      >
+        {present.map((k) => (
+          <Tooltip key={k} title={`${FAILURE_KIND[k].label}: ${kinds[k]} (${pct(kinds[k], failed)})`}>
+            <Box sx={{ width: `${(kinds[k] / failed) * 100}%`, bgcolor: FAILURE_KIND[k].color, minWidth: 4 }} />
+          </Tooltip>
+        ))}
+      </Box>
+      <Stack direction="row" useFlexGap flexWrap="wrap" spacing={0.75} sx={{ mt: 1 }}>
+        {present.map((k) => (
+          <Tooltip key={k} title={FAILURE_KIND[k].hint}>
+            <Chip
+              size="small"
+              variant="outlined"
+              icon={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: FAILURE_KIND[k].color, ml: '8px !important' }} />}
+              label={`${FAILURE_KIND[k].label} · ${kinds[k]}`}
+            />
+          </Tooltip>
+        ))}
+      </Stack>
+    </Box>
   );
 }
 
@@ -503,12 +550,14 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
               <TableCell sx={{ whiteSpace: 'nowrap' }}>{ENGINE_LABEL[r.engine] ?? r.engine}</TableCell>
               <TableCell>
                 {r.outcome ? (
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    color={OUTCOME[r.outcome].chip}
-                    label={r.outcome === 'failed' ? r.reason ?? 'Failed' : OUTCOME[r.outcome].short}
-                  />
+                  <Tooltip title={r.failure_kind ? `${FAILURE_KIND[r.failure_kind].label}: ${FAILURE_KIND[r.failure_kind].hint}` : ''}>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={OUTCOME[r.outcome].chip}
+                      label={r.outcome === 'failed' ? `${r.failure_kind ? `${FAILURE_KIND[r.failure_kind].short} · ` : ''}${r.reason ?? 'Failed'}` : OUTCOME[r.outcome].short}
+                    />
+                  </Tooltip>
                 ) : (
                   <Chip size="small" variant="outlined" label={r.status} />
                 )}

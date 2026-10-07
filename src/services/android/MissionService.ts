@@ -16,6 +16,7 @@ import { AndroidPlannerService } from './AndroidPlannerService';
 import { DeviceFactService } from './DeviceFactService';
 import { FleetStateService } from './FleetStateService';
 import { TaskQueueService } from './TaskQueueService';
+import { failureKind } from './failureKind';
 
 /** The request did not say which phones, and there was nothing to fall back on. */
 export class MissionTargetMissing extends AppError {
@@ -852,6 +853,8 @@ export class MissionService {
         last_reason: item.last_reason,
         reason_text: item.last_reason ? PLAIN_REASON[item.last_reason] ?? 'failed' : null,
         last_message: item.last_message,
+        /** Whose problem a failure was (failureKind.ts); null unless FAILED. */
+        failure_kind: item.status === 'FAILED' ? failureKind(item.last_reason, item.last_message) : null,
         sight: item.sight ?? null,
         sight_line: runSightLine(item.sight),
         next_attempt_at: item.next_attempt_at,

@@ -69,6 +69,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
+import { FAILURE_KIND, FAILURE_KIND_ORDER, type FailureKind } from '@/utils/failureKind';
 import { StepFeed } from '@/components/mission/StepFeed';
 import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
@@ -756,16 +757,25 @@ function SummaryLine({ items }: { items: MissionItem[] }) {
   );
 }
 
-/** Failed phones grouped by why they failed; details on demand. */
+/**
+ * Failed phones grouped by whose problem it was (agent, user, phone, AI
+ * service, our server), then why; details on demand. With failures that were
+ * not the agent's, the agent's own success rate is shown next to the overall one.
+ */
 function FailureGroups({ items }: { items: MissionItem[] }) {
   const failed = items.filter((i) => i.status === 'FAILED');
   const [open, setOpen] = useState(false);
   if (!failed.length) return null;
-  const groups = new Map<string, MissionItem[]>();
+  const groups = new Map<FailureKind, MissionItem[]>();
   for (const item of failed) {
-    const key = item.reason_text ?? 'failed';
-    groups.set(key, [...(groups.get(key) ?? []), item]);
+    const kind = item.failure_kind ?? 'agent';
+    groups.set(kind, [...(groups.get(kind) ?? []), item]);
   }
+  const ordered = FAILURE_KIND_ORDER.filter((k) => groups.has(k)).map((k) => [k, groups.get(k) as MissionItem[]] as const);
+  const succeeded = items.filter((i) => i.status === 'SUCCEEDED').length;
+  const agentFailed = groups.get('agent')?.length ?? 0;
+  const ended = succeeded + failed.length;
+  const showAgentRate = agentFailed < failed.length && succeeded + agentFailed > 0;
   return (
     <Box sx={{ border: '1px solid', borderColor: 'error.light', bgcolor: 'rgba(220,38,38,0.04)', borderRadius: 2, px: 1.5, py: 1 }}>
       <Box component="button" type="button" onClick={() => setOpen((v) => !v)} sx={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 1, width: '100%' }} aria-expanded={open}>
@@ -773,21 +783,34 @@ function FailureGroups({ items }: { items: MissionItem[] }) {
         <Typography variant="body2" sx={{ fontWeight: 700, flex: 1 }}>
           {failed.length} failed —{' '}
           <Box component="span" sx={{ fontWeight: 400, color: 'text.secondary' }}>
-            {[...groups.entries()].map(([why, list]) => `${list.length} ${why}`).join(' · ')}
+            {ordered.map(([kind, list]) => `${list.length} ${FAILURE_KIND[kind].label.toLowerCase()}`).join(' · ')}
           </Box>
         </Typography>
         {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
       </Box>
+      {showAgentRate && (
+        <Tooltip title="Agent success leaves out phones that failed for reasons that were not the agent's: the phone, the AI provider, our server, or a step only you can do.">
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pl: 3.5, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>
+            Agent success {Math.round((succeeded / (succeeded + agentFailed)) * 100)}% · overall {Math.round((succeeded / ended) * 100)}%
+          </Typography>
+        </Tooltip>
+      )}
       {open && (
         <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {[...groups.entries()].map(([why, list]) => (
-            <Box key={why}>
-              <Typography variant="caption" sx={{ fontWeight: 700, color: 'error.main' }}>
-                {why}
-              </Typography>
+          {ordered.map(([kind, list]) => (
+            <Box key={kind}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                <Box sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: FAILURE_KIND[kind].color }} />
+                <Tooltip title={FAILURE_KIND[kind].hint}>
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    {FAILURE_KIND[kind].label} · {list.length}
+                  </Typography>
+                </Tooltip>
+              </Box>
               {list.map((item) => (
-                <Typography key={item.id} variant="caption" component="p" color="text.secondary" sx={{ pl: 1.5 }}>
+                <Typography key={item.id} variant="caption" component="p" color="text.secondary" sx={{ pl: 1.75 }}>
                   {item.device_name}
+                  {item.reason_text ? ` (${item.reason_text})` : ''}
                   {item.last_message ? ` — ${item.last_message.slice(0, 160)}` : ''}
                 </Typography>
               ))}

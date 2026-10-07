@@ -1,3 +1,4 @@
+import type { FailureKind } from '@/utils/failureKind';
 import authManager from '@/_helpers/authManager';
 import Global from '@/_helpers/global';
 import { baseApi } from '../baseApi';
@@ -33,6 +34,10 @@ export interface OutcomeBreakdown {
   /** Runs that ended (cancelled excluded). */
   ended: number;
   completion_pct: number | null;
+  /** Completion counting only the agent's own failures (shown next to completion_pct). */
+  agent_completion_pct?: number | null;
+  /** Failed runs by whose problem they were. */
+  failure_kinds?: Record<FailureKind, number>;
   /** Successes the system checked on the phone. */
   verified: number;
   failure_reasons: { reason: string; count: number }[];
@@ -93,6 +98,7 @@ export interface DiagnosticsRun {
   engine: string;
   verification: Verification | null;
   outcome: RunOutcome | null;
+  failure_kind?: FailureKind | null;
   diagnostics: RunDiagnostics | null;
 }
 

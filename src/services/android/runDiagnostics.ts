@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { failureKind, type FailureKind } from './failureKind';
 
 /**
  * Run diagnostics: pure functions that explain where a run's steps went.
@@ -282,6 +283,8 @@ export interface OutcomeTask {
   status: string;
   outcome?: string | null;
   reason_code?: string | null;
+  /** The run's final message; read for the failure kind (failureKind.ts). */
+  message?: string | null;
   verification?: { status?: string; retries?: number } | null;
   diagnostics?: Pick<RunDiagnostics, 'failed' | 'recoveries'> | null;
 }
@@ -306,6 +309,7 @@ export function outcomeOf(task: OutcomeTask): RunOutcome | null {
 export function outcomeBreakdown(tasks: OutcomeTask[]) {
   const counts: Record<RunOutcome, number> = { first_try: 0, recovered: 0, human_assisted: 0, failed: 0, cancelled: 0 };
   const reasons = new Map<string, number>();
+  const kinds: Record<FailureKind, number> = { agent: 0, needs_user: 0, phone: 0, ai_service: 0, platform: 0 };
   let verified = 0;
   for (const task of tasks) {
     const outcome = outcomeOf(task);
@@ -314,6 +318,7 @@ export function outcomeBreakdown(tasks: OutcomeTask[]) {
     if (outcome === 'failed') {
       const reason = task.reason_code || 'UNKNOWN';
       reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+      kinds[failureKind(task.reason_code, task.message)] += 1;
     }
     if (outcome !== 'failed' && outcome !== 'cancelled' && task.verification?.status === 'verified') verified += 1;
   }
@@ -323,6 +328,13 @@ export function outcomeBreakdown(tasks: OutcomeTask[]) {
     ...counts,
     ended,
     completion_pct: ended ? roundTenth((done / ended) * 100) : null,
+    /**
+     * Completion counting only the agent's own failures: runs lost to the
+     * phone, the AI provider, our server or a step only the user can do are
+     * left out. Always shown next to completion_pct, never instead of it.
+     */
+    agent_completion_pct: done + kinds.agent ? roundTenth((done / (done + kinds.agent)) * 100) : null,
+    failure_kinds: kinds,
     verified,
     failure_reasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 10),
   };
