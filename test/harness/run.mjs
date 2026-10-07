@@ -1993,6 +1993,22 @@ const scenarios = [
     },
   },
   {
+    name: 'agent: a question written as text still comes with buttons — phones from the fleet, other options from the bullets',
+    async run() {
+      const phones = { turns: [{ text: "I'd be happy to open that page. Which phones should I do this on?\n- **All online phones** (all lanes)\n- **A specific lane**\n- **Specific phone(s)** (name them)\nLet me know!" }] };
+      const a = (await api('POST', '/android/chat', { message: `open chrome and go to example.com [agent:${JSON.stringify(phones)}]` }))?.data;
+      if (a?.kind !== 'clarify') return `no buttons for a text question: kind ${a?.kind}: ${String(a?.text).slice(0, 120)}`;
+      if (!a.quick_replies?.some((o) => /^All online phones \(\d+\)$/.test(o))) return `phone buttons not from the fleet: ${JSON.stringify(a.quick_replies)}`;
+      if (!/Which phones should I do this on\?/.test(a.text)) return `question lost: ${a.text}`;
+      const other = { turns: [{ text: 'Which browser should I use?\n- Chrome\n- Firefox' }] };
+      const b = (await api('POST', '/android/chat', { message: `open a browser [agent:${JSON.stringify(other)}]` }))?.data;
+      if (b?.kind !== 'clarify' || JSON.stringify(b.quick_replies) !== JSON.stringify(['Chrome', 'Firefox'])) return `bullet options not turned into buttons: ${JSON.stringify(b).slice(0, 160)}`;
+      const report = { turns: [{ text: 'Status:\n- 18 done\n- 2 failed\nAccessibility was off on the failed ones.\nWant me to retry them?' }] };
+      const c = (await api('POST', '/android/chat', { message: `how did it go [agent:${JSON.stringify(report)}]` }))?.data;
+      if (c?.kind === 'clarify') return 'a status report was turned into buttons';
+    },
+  },
+  {
     name: 'agent: fleet_status gives exact counts that match the fleet page',
     async run() {
       const script = { turns: [{ calls: [{ name: 'fleet_status', args: {} }] }, { text: 'ok' }] };

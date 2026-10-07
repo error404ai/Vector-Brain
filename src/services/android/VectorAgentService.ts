@@ -1,4 +1,5 @@
 import { networkForChat, type DeviceNetworkInfo } from './deviceNetwork';
+import { askFromText, asksForPhones, phoneOptions } from './askButtons';
 import { claimsActivity, claimsStart, stripRecords, type HistoryEntry } from './chatClaims';
 import { modelErrorText } from '@/services/ai/modelErrors';
 import { EMAIL_REPORT_INSTRUCTION, type EmailFactView } from './DeviceFactService';
@@ -569,6 +570,13 @@ export class VectorAgentService {
           break;
         }
         const clean = stripRecords(turn.text);
+        // A question written as text instead of ask_user still gets buttons.
+        const asked = !result.ask && !onlyToolless(clean, result) ? await this.buttonsFor(clean, ctx) : null;
+        if (asked) {
+          result.ask = asked;
+          result.text = asked.question;
+          break;
+        }
         result.text = onlyToolless(clean, result) ? oneLineRefusal(clean) : clean;
         break;
       }
@@ -971,6 +979,30 @@ export class VectorAgentService {
     } catch (error) {
       return JSON.stringify({ error: (error as Error)?.message ?? 'failed' });
     }
+  }
+
+  /**
+   * Buttons for a question the model wrote as plain text: "which phones" gets
+   * options from the fleet itself; any other question with 2–6 bullet options
+   * gets those options. Null when the reply is not such a question.
+   */
+  private async buttonsFor(text: string, ctx: AgentContext): Promise<{ question: string; options: string[] } | null> {
+    const parsed = askFromText(text);
+    if (asksForPhones(text)) {
+      const snapshot = await this.fleetSnapshot(ctx.userId).catch(() => null);
+      const options = snapshot
+        ? phoneOptions({
+            online: snapshot.counts.online,
+            lanes: snapshot.by_lane.map((l) => ({ lane: l.lane, online: l.online_count })),
+            hasLast: ctx.lastMissionDevices.length > 0,
+          })
+        : [];
+      if (options.length >= 2) {
+        const question = parsed?.question ?? text.split('\n').find((l) => l.includes('?'))?.replace(/\*\*/g, '').trim() ?? 'Which phones should I use?';
+        return { question, options };
+      }
+    }
+    return parsed;
   }
 
   /** Applies a confirmed proposal. */
