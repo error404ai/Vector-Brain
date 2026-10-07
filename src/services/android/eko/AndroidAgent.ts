@@ -43,7 +43,15 @@ const PRICE = /^(₹|\$|€|£|rs\.?\s?)\s?\d|^\d+([.,]\d{2})\s?(₹|\$|€|£)?
 const INSTALL_FAILED = /(can['’]t install|couldn['’]t install|can['’]t download|not enough (storage|space)|insufficient storage|isn['’]t compatible|not compatible with your device|not available (in your country|for your device|in your region)|item not found|this item isn['’]t available)/i;
 /** Xiaomi's full-screen pocket-mode warning: nothing opens until the sensor is uncovered. */
 const SENSOR_COVERED = /don['’]t cover the earphone area|do not cover the earpiece|proximity sensor (is )?covered/i;
-const NEEDS_USER = /(complete account setup|add (a )?payment method|verify it['’]s you|sign in to (continue|google play)|choose an account|parental (approval|controls))/i;
+/**
+ * Play's "Complete account setup" sheet (Continue → a payment page with Skip)
+ * shows up on the first install on an account. It is not a sign-in: Continue,
+ * then Skip, and the install goes on (seen on real phones, Oct 2026). It used
+ * to stop install_app as "needs the user", which failed 37 of 74 runs in one
+ * day's export.
+ */
+const ACCOUNT_SETUP = /complete account setup|review your account/i;
+const PAYMENT_PAGE = /add (a )?payment method|add card|add paypal|redeem code/i;
 
 /**
  * Which browser open_url uses.
@@ -1527,7 +1535,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (!install) {
         const wrongPackage = await wrongPackageHint(packageName, name);
         if (wrongPackage) return finish(false, wrongPackage);
-        return finish(false, `The Play Store page for ${packageName} has no Install button${NEEDS_USER.test(pageText()) ? ' — it is asking for something only the user can do (sign-in, account setup or payment)' : ''}. Read the screen: the app may not exist under that package name, or the page needs the user.`);
+        return finish(false, `The Play Store page for ${packageName} has no Install button. Read the screen: the app may not exist under that package name, or the page shows something to deal with first.`);
       }
       const tapped = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: install.px.x, y: install.px.y });
       if (tapped.status !== 'SUCCESS') return finish(false, `Could not press Install: ${tapped.status === 'FAILURE' ? tapped.message : 'cancelled'}.`);
@@ -1536,6 +1544,9 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // Wait on the outcome, not on a guess: the phone's own app list.
     let retappedInstall = false;
     let lastProgress = '';
+    // Each step of the account-setup sheet is pressed at most twice per install.
+    let setupTaps = 0;
+    let skipTaps = 0;
     for (let poll = 0; Date.now() - started < INSTALL_WAIT_MS; poll += 1) {
       await sleep(4000);
       this.callbacks?.onHeartbeat?.();
@@ -1548,7 +1559,22 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       const text = pageText();
       const failed = INSTALL_FAILED.exec(text);
       if (failed) return finish(false, `The Play Store says: "${failed[0]}". ${name} was not installed.`);
-      if (NEEDS_USER.test(text)) return finish(false, `The Play Store is asking for something only the user can do (sign-in, account setup or payment) before installing ${name}. Hand this step to the user.`);
+      if (ACCOUNT_SETUP.test(text) && setupTaps < 2) {
+        const go = this.findButton(/^continue$/i);
+        if (go) {
+          setupTaps += 1;
+          await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: go.px.x, y: go.px.y });
+          continue;
+        }
+      }
+      if (PAYMENT_PAGE.test(text) && skipTaps < 2) {
+        const skip = this.findButton(/^skip$/i);
+        if (skip) {
+          skipTaps += 1;
+          await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Tap', x: skip.px.x, y: skip.px.y });
+          continue;
+        }
+      }
       const progress = /\b\d{1,3}\s?%/.exec(text)?.[0] ?? '';
       if (progress) lastProgress = progress;
       if (poll % 2 === 1 || this.findButton(/^(open|play)$/i)) {

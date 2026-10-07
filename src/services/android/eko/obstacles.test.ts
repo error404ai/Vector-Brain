@@ -173,6 +173,26 @@ describe('install_app', () => {
     expect(phone.actions.filter((a) => a.type === 'Tap')).toHaveLength(1);
   }, 20_000);
 
+  it('gets past Play\'s "Complete account setup" sheet (Continue, then Skip) instead of handing off', async () => {
+    const phone: ReturnType<typeof scriptedPhone> = scriptedPhone({
+      screens: [
+        { pkg: 'com.android.launcher3', root: screen(['Home'], []) },
+        { pkg: 'com.android.vending', root: listing('Install') },
+        { pkg: 'com.android.vending', root: screen(['Complete account setup', 'Review your account to continue installing apps on Google Play'], ['Continue']) },
+        { pkg: 'com.android.vending', root: screen(['Add card', 'Add PayPal', 'Redeem code'], ['Skip']) },
+        { pkg: 'com.android.vending', root: listing('Cancel') },
+      ],
+      // Installed only once Install, Continue and Skip have all been pressed.
+      apps: () => (phone.actions.filter((a) => a.type === 'Tap').length >= 3 ? 'Reddit | com.reddit.frontpage' : ''),
+    });
+    const agent = new AndroidAgent(phone.gateway as never, 'hw');
+    const res = await tool(agent, 'install_app').execute({ packageName: 'com.reddit.frontpage', appName: 'Reddit' }, {}, {});
+    expect(text(res)).not.toMatch(/hand this step to the user/i);
+    expect(res.isError).toBeFalsy();
+    expect(text(res)).toMatch(/VERIFIED: Reddit/);
+    expect(phone.actions.filter((a) => a.type === 'Tap')).toHaveLength(3);
+  }, 60_000);
+
   it('does nothing when the app is already installed', async () => {
     const phone = scriptedPhone({ screens: [{ pkg: 'com.android.launcher3', root: screen(['Home'], []) }], apps: () => 'Reddit | com.reddit.frontpage' });
     const agent = new AndroidAgent(phone.gateway as never, 'hw');
