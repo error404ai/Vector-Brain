@@ -86,10 +86,20 @@ const CLAMP_AT = 160;
  * task, show two lines, and the whole of it on request. The text is unchanged
  * otherwise — nothing is rewritten or summarised.
  */
-export function tidyReason(text: string): string {
-  const sentences = text.trim().match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g) ?? [text];
+function tidyReason(text: string): string {
+  // A closing quote after the full stop belongs to that sentence (…new.").
+  const sentences = text.trim().match(/[^.!?]+[.!?]+["”']*(\s+|$)|[^.!?]+$/g) ?? [text];
+  // A restated task often quotes the prompt, and the prompt has full stops of
+  // its own: keep dropping until the quote that opened is closed again, so the
+  // reason never starts halfway through the quoted task.
+  const quotes = (s: string) => (s.match(/["“”]/g) ?? []).length;
   let i = 0;
-  while (i < sentences.length - 1 && RESTATES.test(sentences[i].trim())) i++;
+  let open = false;
+  while (i < sentences.length - 1 && (open || RESTATES.test(sentences[i].trim()))) {
+    if (quotes(sentences[i]) % 2 === 1) open = !open;
+    i++;
+  }
+  if (open) return text.trim();
   return sentences.slice(i).join('').trim() || text.trim();
 }
 

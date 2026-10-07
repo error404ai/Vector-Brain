@@ -20,7 +20,7 @@ import {
   useCancelMissionMutation,
   usePauseMissionMutation,
   useResumeMissionMutation,
-  useGetMissionQuery, useGetFinalScreenQuery,
+  useGetMissionQuery, useGetMissionsQuery, useGetFinalScreenQuery,
   type Mission,
   type MissionItem,
   type MissionItemStatus,
@@ -55,7 +55,10 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { Badge, Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { keyframes } from '@mui/material/styles';
+import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
+import FleetPanel from '@/components/mission/FleetPanel';
 import MenuIcon from '@mui/icons-material/Menu';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
@@ -71,7 +74,7 @@ import MissionBoardReply from '@/components/mission/MissionBoardReply';
 import MissionHero from '@/components/mission/MissionHero';
 import FileDropCard from '@/components/mission/FileDropCard';
 import AnswerCard from '@/components/mission/AnswerCard';
-import { AlertsChip, AlertsSheet } from '@/components/mission/AlertsSheet';
+import { AlertsSheet } from '@/components/mission/AlertsSheet';
 import { fleetAlerts } from '@/components/mission/alertRules';
 import { MentionHighlighter, MentionMenu, MentionText } from '@/components/mission/MentionUI';
 import { mentionOptions, typedMention } from '@/components/mission/mentions';
@@ -1128,6 +1131,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
     <Paper
       // Replays the finish glow once, when the status flips.
       key={mission.status}
+      id={`mission-${mission.id}`}
       variant="outlined"
       sx={{
         width: '100%',
@@ -1894,89 +1898,54 @@ function writeDraft(key: string, text: string): void {
   }
 }
 
+const prismSpin = keyframes`to { transform: rotate(360deg); }`;
+const prismSweep = keyframes`
+  0%   { transform: translateX(0) rotate(24deg); }
+  100% { transform: translateX(260vw) rotate(24deg); }
+`;
+
 /**
- * A soft, slowly drifting aurora behind the whole page: four blurred colour
- * blobs on a canvas, scaled up and CSS-blurred so it reads as ambient light,
- * not shapes. Sits under everything, ignores the pointer, and holds still for
- * anyone who asks their OS for reduced motion.
+ * Prism: a colour wheel turning very slowly behind frosted glass, with a soft
+ * sweep of light every few seconds. CSS only — no script, no canvas — and the
+ * wheel is its own layer, so the browser blurs it once and only rotates it.
+ * Holds still for anyone who asks their OS for reduced motion.
  */
-function AuroraBackground() {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const cv = ref.current;
-    const parent = cv?.parentElement;
-    const ctx = cv?.getContext('2d');
-    if (!cv || !parent || !ctx) return;
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // Drawn small and stretched by CSS: it is blurred into soft light anyway,
-    // so a quarter-size canvas looks the same and costs a fraction of the
-    // memory and GPU time (the full-size one, at 2x on retina, was heavy).
-    const SCALE = 0.25;
-    // A slow drift needs no 60fps.
-    const FRAME_MS = 1000 / 15;
-    let W = 0;
-    let H = 0;
-    let raf = 0;
-    let last = -Infinity;
-    const blobs = [
-      { x: 0.12, y: 0.16, r: 0.42, c: '#93c5fd', sx: 0.00006, sy: 0.00008, p: 0 },
-      { x: 0.86, y: 0.14, r: 0.4, c: '#a5f3ec', sx: 0.00008, sy: 0.00005, p: 2 },
-      { x: 0.72, y: 0.86, r: 0.46, c: '#c7b8f5', sx: 0.00005, sy: 0.00007, p: 4 },
-      { x: 0.24, y: 0.84, r: 0.4, c: '#bae6fd', sx: 0.00007, sy: 0.00006, p: 1 },
-    ];
-    const size = () => {
-      W = cv.width = Math.max(1, Math.floor(parent.clientWidth * SCALE));
-      H = cv.height = Math.max(1, Math.floor(parent.clientHeight * SCALE));
-    };
-    const tick = (t: number) => {
-      raf = 0;
-      if (document.hidden) return; // resumed by visibilitychange
-      if (t - last >= FRAME_MS) {
-        last = t;
-        paint(t);
-      }
-      if (!reduce) raf = requestAnimationFrame(tick);
-    };
-    const paint = (t: number) => {
-      ctx.clearRect(0, 0, W, H);
-      for (const b of blobs) {
-        const x = (b.x + Math.sin(t * b.sx + b.p) * 0.05) * W;
-        const y = (b.y + Math.cos(t * b.sy + b.p) * 0.05) * H;
-        const r = b.r * Math.max(W, H);
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-        g.addColorStop(0, b.c);
-        g.addColorStop(1, 'transparent');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    };
-    const onVisibility = () => {
-      if (!document.hidden && !reduce && !raf) raf = requestAnimationFrame(tick);
-    };
-    size();
-    paint(0);
-    if (!reduce) raf = requestAnimationFrame(tick);
-    document.addEventListener('visibilitychange', onVisibility);
-    const ro = new ResizeObserver(() => {
-      size();
-      paint(last > 0 ? last : 0);
-    });
-    ro.observe(parent);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      document.removeEventListener('visibilitychange', onVisibility);
-      ro.disconnect();
-    };
-  }, []);
+function PrismBackground() {
   return (
-    <Box
-      component="canvas"
-      ref={ref}
-      aria-hidden
-      sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 0, opacity: 0.5, filter: 'blur(50px) saturate(1.1)', pointerEvents: 'none' }}
-    />
+    <Box aria-hidden sx={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none', bgcolor: '#f4f5fb' }}>
+      <Box
+        sx={{
+          position: 'absolute',
+          left: '22%',
+          top: '-28%',
+          width: '80vmax',
+          height: '80vmax',
+          borderRadius: '50%',
+          background: 'conic-gradient(from 0deg, #6aa8ff, #a78bfa, #f472b6, #fbbf24, #34d399, #6aa8ff)',
+          filter: 'blur(90px)',
+          opacity: 0.42,
+          willChange: 'transform',
+          animation: `${prismSpin} 40s linear infinite`,
+          ...reducedMotion,
+        }}
+      />
+      <Box
+        sx={{
+          position: 'absolute',
+          left: '-30vw',
+          top: '-20%',
+          width: 260,
+          height: '140%',
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent)',
+          transform: 'rotate(24deg)',
+          willChange: 'transform',
+          animation: `${prismSweep} 9s cubic-bezier(.5,0,.5,1) infinite`,
+          ...reducedMotion,
+          '@media (prefers-reduced-motion: reduce)': { display: 'none' },
+        }}
+      />
+      <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,.05))' }} />
+    </Box>
   );
 }
 
@@ -2133,6 +2102,10 @@ export default function MissionControlPage() {
   // On phones the sidebar is a temporary overlay and starts closed so the chat
   // gets the full width; on wider screens it sits beside the chat, open.
   const isMobile = useMediaQuery('(max-width:900px)');
+  // The Fleet panel needs room beside a full-width chat; below this it folds into a bell in the header.
+  const wide = useMediaQuery('(min-width:1500px)');
+  const { data: missionList } = useGetMissionsQuery(5, { skip: !wide, pollingInterval: wide ? 10_000 : 0 });
+  const liveMissions = (missionList?.data ?? []).filter((m) => m.status === 'RUNNING' || m.status === 'PAUSED');
   const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth > 900));
   const { data: convData, refetch: refetchConversations } = useGetConversationsQuery();
   const [newConversation] = useNewConversationMutation();
@@ -2180,6 +2153,12 @@ export default function MissionControlPage() {
   // Phones whose IP, language, timezone, clock or SIM needs a look.
   const alerts = useMemo(() => fleetAlerts(fleetData?.data?.devices ?? []), [fleetData]);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const alertPhones = new Set(alerts.map((a) => a.phone)).size;
+  const fixFromAlert = (command: string) => {
+    setInput(`${command} `);
+    setAlertsOpen(false);
+    inputRef.current?.focus();
+  };
   const [refreshNetwork, { isLoading: askingNetwork }] = useRefreshDeviceNetworkMutation();
   // Readings arrive over the next seconds; the sheet updates itself as they do.
   const [awaitingReadings, setAwaitingReadings] = useState(false);
@@ -2451,7 +2430,7 @@ export default function MissionControlPage() {
 
   return (
     <Box sx={{ position: 'relative', display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0, overflow: 'hidden' }}>
-    <AuroraBackground />
+    <PrismBackground />
     {isMobile ? (
       <Drawer
         open={sidebarOpen}
@@ -2492,6 +2471,16 @@ export default function MissionControlPage() {
             Android mobile automation — run tasks across phones, check status, manage proxy rotation. Setting changes ask you first.
           </Typography>
         </Box>
+        <Box sx={{ flex: 1 }} />
+        {!wide && (
+          <Tooltip title="Fleet alerts">
+            <IconButton aria-label={`Fleet alerts: ${alertPhones}`} aria-expanded={alertsOpen} onClick={() => setAlertsOpen((v) => !v)}>
+              <Badge badgeContent={alertPhones} color="error" max={99}>
+                <NotificationsRoundedIcon sx={{ color: alertPhones ? '#f59e0b' : 'text.secondary' }} />
+              </Badge>
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
 
       <Box sx={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
@@ -2575,11 +2564,7 @@ export default function MissionControlPage() {
               toast.error(errorMessage(error));
             }
           }}
-          onFix={(command) => {
-            setInput(`${command} `);
-            setAlertsOpen(false);
-            inputRef.current?.focus();
-          }}
+          onFix={fixFromAlert}
         />
       )}
 
@@ -2634,7 +2619,6 @@ export default function MissionControlPage() {
         <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
           <AttachChip onPick={attachFile} />
-          <AlertsChip count={new Set(alerts.map((a) => a.phone)).size} open={alertsOpen} onClick={() => setAlertsOpen((v) => !v)} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
           <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
           <RotationSwitch />
@@ -2706,6 +2690,16 @@ export default function MissionControlPage() {
         </Box>
       </Paper>
     </Box>
+    {wide && (
+      <FleetPanel
+        devices={fleetData?.data?.devices ?? []}
+        alerts={alerts}
+        missions={liveMissions}
+        onFix={fixFromAlert}
+        onOpenAlerts={() => setAlertsOpen(true)}
+        frameFor={(hwId) => (feed.frames[hwId] ? frameSrc(feed.frames[hwId].data) : undefined)}
+      />
+    )}
     </Box>
   );
 }
