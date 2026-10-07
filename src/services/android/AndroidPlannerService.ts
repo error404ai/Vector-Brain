@@ -1470,7 +1470,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
             const textPart = toolResult?.content?.find((c) => c.type === 'text');
             const textContent = (textPart && 'text' in textPart ? textPart.text : '') || '';
             // Read once per result; replayed steps (no model) carry none.
-            const stepSight = androidAgent.sight;
+            // A saved-flow step has no AI looking: an image its tool attached
+            // (a thin screen) was seen by nobody, so it is not counted (Oct 7:
+            // "Screens seen by AI: 15" on a mission the flow did alone).
+            const stepSight = stepSource === 'ai' ? androidAgent.sight : null;
             androidAgent.sight = null;
             if (stepSight) addSight(runSight, stepSight, sightWhys);
 

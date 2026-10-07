@@ -2797,9 +2797,12 @@ const scenarios = [
       await api('PUT', '/android/flows/settings', { replay_first: false });
       if (!done) return 'run never finished';
       await waitIdle('free2'); // the flow's bookkeeping finishes before the phone is free
-      const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification FROM agent_tasks WHERE id = ?', [done.id]);
+      const [[task]] = await db.query('SELECT status, reason_code, message, flow_id, flow_mode, verification, sight FROM agent_tasks WHERE id = ?', [done.id]);
       if (task.status !== 'SUCCEEDED') return `run ${task.status}/${task.reason_code}: ${String(task.message).slice(0, 200)}`;
       if (task.flow_id !== flowId || task.flow_mode !== 'replay') return `flow ${task.flow_id}/${task.flow_mode}, expected ${flowId}/replay`;
+      // No AI looked at anything (Oct 7: "Screens seen by AI: 15" on a flow-only mission).
+      const sight = typeof task.sight === 'string' ? JSON.parse(task.sight) : task.sight;
+      if ((sight?.ai ?? 0) > 0 || (sight?.helper ?? 0) > 0) return `screens counted as seen by the AI on a replay: ${JSON.stringify(sight)}`;
       const [logs] = await db.query('SELECT action_type, source, action_payload, llm_call FROM android_task_logs WHERE agent_task_id = ? ORDER BY step_index', [done.id]);
       const actions = logs.map((l) => `${l.action_type}/${l.source}`).join(', ');
       if (actions !== 'open_app/replay, tap_element/replay, type_text/replay, press_key/replay') return `steps: ${actions}`;
