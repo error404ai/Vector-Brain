@@ -38,6 +38,20 @@ export function usageDetails(usage: Usage, providerMetadata: Metadata): UsageDet
 /** Ask OpenRouter to return the call's cost; other providers ignore this key. */
 export const USAGE_REPORT_OPTIONS = { openrouter: { usage: { include: true } } } as const;
 
+/**
+ * Lite: also ask for no hidden reasoning. On Claude, OpenRouter maps
+ * reasoning.enabled=false to thinking disabled (effort "none" is rejected there).
+ * A model that refuses it is retried without it (see isReasoningRejected).
+ */
+export const NO_REASONING_OPTIONS = { openrouter: { usage: { include: true }, reasoning: { enabled: false } } } as const;
+
+/** The provider refused the reasoning setting (a model whose reasoning cannot be turned off). */
+export function isReasoningRejected(error: unknown): boolean {
+  const e = error as { statusCode?: number; status?: number; message?: string; responseBody?: string };
+  const status = Number(e?.statusCode ?? e?.status);
+  return status === 400 && /reason|thinking/i.test(`${e?.message ?? ''} ${e?.responseBody ?? ''}`);
+}
+
 /** Prompt-cache breakpoint: everything up to and including the marked message is cached. */
 export const CACHE_BREAKPOINT = {
   openrouter: { cacheControl: { type: 'ephemeral' } },

@@ -271,6 +271,44 @@ describe('VectorEngine', () => {
     expect(usage).toMatchObject({ promptTokens: 5000, completionTokens: 60, cachedTokens: 4600, reasoningTokens: 20, costUsd: 0.0012, cacheWriteTokens: null });
   });
 
+  it('Lite asks for no hidden reasoning and short answers; Vector does not', async () => {
+    const seen: { providerOptions?: { openrouter?: Record<string, unknown> }; prompt: { role: string; content: unknown }[] }[] = [];
+    const lite = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, { compact: true });
+    const full = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')]);
+    for (const e of [lite, full]) {
+      const model = (e.engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
+      const original = model.doStream.bind(model);
+      model.doStream = (o: unknown) => {
+        seen.push(o as never);
+        return original(o);
+      };
+    }
+    await lite.engine.run('open YouTube', 'n1');
+    await full.engine.run('open YouTube', 'n2');
+    expect(seen[0].providerOptions?.openrouter).toMatchObject({ reasoning: { enabled: false } });
+    expect(seen[2].providerOptions?.openrouter?.reasoning).toBeUndefined();
+    const system = (o: (typeof seen)[number]) => String(seen.length && o.prompt.find((m) => m.role === 'system')?.content);
+    expect(system(seen[0])).toContain('KEEP IT SHORT');
+    expect(system(seen[2])).not.toContain('KEEP IT SHORT');
+  });
+
+  it('Lite carries on with default reasoning when the model refuses reasoning off', async () => {
+    const refused = Object.assign(new Error('Reasoning is mandatory for this model'), { statusCode: 400 });
+    const { engine, calls } = engineWith([refused, toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, { compact: true });
+    const seen: { providerOptions?: { openrouter?: Record<string, unknown> } }[] = [];
+    const model = (engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
+    const original = model.doStream.bind(model);
+    model.doStream = (o: unknown) => {
+      seen.push(o as never);
+      return original(o);
+    };
+    const result = await engine.run('open YouTube', 'n3');
+    expect(result.success).toBe(true);
+    expect(calls.open_app).toBe(1);
+    expect(seen[0].providerOptions?.openrouter).toMatchObject({ reasoning: { enabled: false } });
+    expect(seen[1].providerOptions?.openrouter?.reasoning).toBeUndefined();
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');

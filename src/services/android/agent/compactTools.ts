@@ -16,7 +16,7 @@ export interface ToolSpec {
 
 /** One line per tool: what it does and the rule that keeps it from being misused. */
 export const SHORT_DESCRIPTIONS: Record<string, string> = {
-  read_ui_tree: 'Read the current screen: every element with its idx and tap_at.',
+  read_ui_tree: 'Read the screen. Only when no screen list was shown yet: every action result already includes it.',
   capture_screen: 'Screenshot for the model. Expensive: only when the element list cannot describe the screen.',
   tap_element: 'Tap an element by idx from the latest screen list. Preferred way to tap.',
   tap_coordinate: 'Tap x,y on the 0–1000 grid (tap_at). Only for points the list does not name.',

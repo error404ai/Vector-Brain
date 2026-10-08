@@ -113,7 +113,7 @@ export default function AgentEngineCard() {
               {settings.kind === 'eko'
                 ? 'Eko: a planning call first, then step by step; long runs are compressed with extra AI calls.'
                 : settings.kind === 'lite'
-                  ? 'Lite: the Vector engine with less sent per AI call — short tool descriptions and a shorter step history. Same tools, screenshots and system check; roughly 40–50% fewer input tokens.'
+                  ? 'Lite: the Vector engine at a fraction of the cost — short tool descriptions, a shorter step history, the repeated part of each call cached, and no hidden reasoning. Same tools, screenshots and system check. See Diagnostics for what each run cost.'
                   : 'Vector: acts from the first call, keeps history within a token budget without extra calls, finishes with task_done and a system check of the phone.'}
             </Typography>
             {settings.kind !== 'eko' ? (

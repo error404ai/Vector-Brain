@@ -6,7 +6,7 @@ import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOu
 import { compactTool, type ToolSpec } from './compactTools';
 import { buildContext, summaryLine, type StepRecord } from './contextBuilder';
 import { parseAppList, verifyCompletion } from './successVerifier';
-import { CACHE_BREAKPOINT, USAGE_REPORT_OPTIONS, usageDetails, type UsageDetails } from './usageDetails';
+import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
 
 export interface VectorEngineOptions {
   model: LanguageModel;
@@ -41,7 +41,9 @@ export interface VectorEngineOptions {
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
 /** Lite's history budget: older steps stay one line each, the latest few in full. */
-export const COMPACT_HISTORY_BUDGET = 1500;
+export const COMPACT_HISTORY_BUDGET = 800;
+/** Lite sends the last two steps in full; older ones are one line each. */
+const COMPACT_MIN_RECENT = 2;
 
 /** Taps answer in 1–3 s; a tap in the power menu that takes longer than this rebooted the phone. */
 const RESTART_GAP_MS = 8000;
@@ -121,6 +123,13 @@ FINISHING THE TASK:
 UNCONFIRMED ACTIONS:
 - If a result says the phone did not confirm an action, it may already have happened. Look at the screen in that result before repeating it.`;
 
+/** Lite only: every word the model writes is billed as output, and every extra call as a whole prompt. */
+const LITE_RULES = `
+
+KEEP IT SHORT:
+- Call the tool directly. No explanation before it; at most a few words.
+- Every action's result already contains the current screen list. Do not call read_ui_tree after an action; use the list you were given.`;
+
 const PLANNER_PROMPT = `You plan tasks for an agent that controls an Android phone through tools (open_app, open_url, tap, type, scroll, back/home).
 Write the shortest plan that does exactly what the user asked: numbered steps, one action each, at most 8 lines, no preamble.
 Prefer open_url or a deep link over navigating menus when a URL exists.`;
@@ -183,6 +192,8 @@ export class VectorEngine implements AgentEngine {
   private powerMenuOpen = false;
   private model: LanguageModel;
   private onFallback = false;
+  /** Lite asks for no hidden reasoning until a model refuses that once. */
+  private reasoningOff: boolean;
 
   /** True once the run switched to the backup model (counted as a recovery in the run's outcome). */
   get usedBackupModel(): boolean {
@@ -191,6 +202,7 @@ export class VectorEngine implements AgentEngine {
 
   constructor(private readonly options: VectorEngineOptions) {
     this.kind = options.compact ? 'lite' : 'vector';
+    this.reasoningOff = Boolean(options.compact);
     this.model = options.model;
     this.tools = options.agent.Tools;
     const set: ToolSet = {};
@@ -230,7 +242,7 @@ export class VectorEngine implements AgentEngine {
     const envelope = { streamType: 'agent', chatId: runId, taskId: runId, agentName: 'AndroidAgent' };
     const emit = (message: Record<string, unknown>) => this.options.onMessage({ ...envelope, ...message } as unknown as AgentStreamMessage);
 
-    const system = `${await this.options.agent.systemPrompt()}${VECTOR_RULES}`;
+    const system = `${await this.options.agent.systemPrompt()}${VECTOR_RULES}${this.options.compact ? LITE_RULES : ''}`;
     const plan = this.options.planner ? await this.makePlan(prompt, signal, emit) : null;
     const steps: StepRecord[] = [];
     const notes: string[] = [];
@@ -245,7 +257,7 @@ export class VectorEngine implements AgentEngine {
         plan,
         steps,
         budgetTokens: this.options.historyBudgetTokens ?? (this.options.compact ? COMPACT_HISTORY_BUDGET : DEFAULT_HISTORY_BUDGET),
-        minRecent: MIN_RECENT_STEPS,
+        minRecent: this.options.compact ? COMPACT_MIN_RECENT : MIN_RECENT_STEPS,
         vision: this.options.vision,
         notes,
         taskFirst: Boolean(this.options.compact),
@@ -391,6 +403,13 @@ export class VectorEngine implements AgentEngine {
           await emit({ type: 'thinking', text: `${error.message}. Asking again…` });
           continue;
         }
+        // The model refuses to run without reasoning: ask again with it, and stop asking for that.
+        if (this.reasoningOff && isReasoningRejected(error)) {
+          this.reasoningOff = false;
+          Logger.warn('[VectorEngine] The model refused reasoning off; continuing with its default reasoning.');
+          attempt -= 1;
+          continue;
+        }
         // Rate-limited even after waiting (the fetch layer already waited out
         // short limits), or out of daily quota: carry on with the backup model.
         if ((isQuota(error) || isRateLimited(error)) && this.options.fallback && !this.onFallback) {
@@ -462,7 +481,7 @@ export class VectorEngine implements AgentEngine {
       // Lite: cache everything up to the task message (tools → system → task), which
       // is identical on every call of the run. Providers without caching ignore it.
       messages: this.options.compact && messages.length ? [{ ...messages[0], providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number], ...messages.slice(1)] : messages,
-      providerOptions: USAGE_REPORT_OPTIONS,
+      providerOptions: this.reasoningOff ? NO_REASONING_OPTIONS : USAGE_REPORT_OPTIONS,
       tools: this.toolSet,
       toolChoice: 'auto',
       maxOutputTokens: this.options.maxOutputTokens ?? 16000,
@@ -598,16 +617,26 @@ export class VectorEngine implements AgentEngine {
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {
-          const { text: answer, usage, providerMetadata } = await generateText({
-            model: this.model,
-            providerOptions: USAGE_REPORT_OPTIONS,
-            prompt: text,
-            // At 300, models that reason first often spent it all thinking and answered nothing ("No reason given").
-            maxOutputTokens: 1000,
-            temperature: 0,
-            maxRetries: 2,
-            abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
-          });
+          const ask = (providerOptions: typeof USAGE_REPORT_OPTIONS | typeof NO_REASONING_OPTIONS) =>
+            generateText({
+              model: this.model,
+              providerOptions,
+              prompt: text,
+              // At 300, models that reason first often spent it all thinking and answered nothing ("No reason given").
+              maxOutputTokens: 1000,
+              temperature: 0,
+              maxRetries: 2,
+              abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
+            });
+          let reply;
+          try {
+            reply = await ask(this.reasoningOff ? NO_REASONING_OPTIONS : USAGE_REPORT_OPTIONS);
+          } catch (error) {
+            if (!(this.reasoningOff && isReasoningRejected(error))) throw error;
+            this.reasoningOff = false;
+            reply = await ask(USAGE_REPORT_OPTIONS);
+          }
+          const { text: answer, usage, providerMetadata } = reply;
           // The check's own model call counts in the run's totals.
           await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0, ...usageDetails(usage, providerMetadata as never) } });
           return answer;
