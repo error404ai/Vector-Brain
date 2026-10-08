@@ -12,6 +12,7 @@ import {
   type DiagnosticsStep,
   type DiagnosticsSummary,
   type OutcomeBreakdown,
+  type RunDiagnostics,
   type RunOutcome,
 } from '@/RTKService/diagnosticsService/diagnosticsService';
 import CloudSyncIcon from '@mui/icons-material/CloudSync';
@@ -66,6 +67,8 @@ const ENDED_OUTCOMES: RunOutcome[] = ['first_try', 'recovered', 'human_assisted'
 const VERIFICATION_LABEL: Record<string, string> = { verified: 'Verified', unverified: 'Not verified', failed: 'Verification failed' };
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('en-IN');
+/** USD with enough decimals to tell fractions of a cent apart. */
+const fmtUsd = (n: number) => (n === 0 ? '$0' : n < 0.01 ? `$${n.toFixed(4)}` : n < 1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
 const fmtSeconds = (ms: number) => {
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
@@ -533,6 +536,7 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
           <TableCell align="right">Wasted</TableCell>
           <TableCell align="right">AI calls</TableCell>
           <TableCell align="right">Tokens</TableCell>
+          <TableCell align="right">Cost</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>
@@ -566,6 +570,7 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
               <TableCell align="right">{d ? `${d.wasted} (${pct(d.wasted, d.steps)})` : '–'}</TableCell>
               <TableCell align="right">{d ? d.llm_calls : '–'}</TableCell>
               <TableCell align="right">{d?.tokens_reported ? fmtInt(d.prompt_tokens + d.completion_tokens) : '–'}</TableCell>
+              <TableCell align="right">{d?.cost_usd != null ? fmtUsd(d.cost_usd) : '–'}</TableCell>
             </TableRow>
           );
         })}
@@ -623,8 +628,9 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
             ) : (
               <Alert severity="info">This run was recorded before step diagnostics existed.</Alert>
             )}
+            {d && d.tokens_reported ? <TokenBreakdown d={d} /> : null}
             <Box sx={{ overflowX: 'auto' }}>
-              <Table size="small" sx={{ minWidth: 820 }}>
+              <Table size="small" sx={{ minWidth: 980 }}>
                 <TableHead>
                   <TableRow>
                     <TableCell>#</TableCell>
@@ -633,7 +639,10 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
                     <TableCell>App</TableCell>
                     <TableCell align="right">AI think</TableCell>
                     <TableCell align="right">Phone</TableCell>
-                    <TableCell align="right">Tokens</TableCell>
+                    <TableCell align="right">Input</TableCell>
+                    <TableCell align="right">Cached</TableCell>
+                    <TableCell align="right">Output</TableCell>
+                    <TableCell align="right">Cost</TableCell>
                     <TableCell>Wasted</TableCell>
                     <TableCell>Why (AI)</TableCell>
                   </TableRow>
@@ -649,6 +658,78 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Where one run's tokens went: input read fresh vs from the prompt cache,
+ * cache writes, output (with hidden reasoning) and what the provider billed.
+ */
+function TokenBreakdown({ d }: { d: RunDiagnostics }) {
+  const cached = Math.min(d.cache_read_tokens ?? 0, d.prompt_tokens);
+  const fresh = Math.max(0, d.prompt_tokens - cached);
+  const output = d.completion_tokens;
+  const total = Math.max(1, fresh + cached + output);
+  const parts = [
+    { key: 'fresh', label: 'Input, sent fresh', value: fresh, color: '#5b6cff', note: 'Billed at the full input price' },
+    { key: 'cached', label: 'Input, from cache', value: cached, color: '#18a874', note: cached ? `${pct(cached, d.prompt_tokens)} of input · billed at ~10% on Claude` : 'Nothing was read from the cache' },
+    {
+      key: 'output',
+      label: 'Output',
+      value: output,
+      color: '#f08a24',
+      note: d.reasoning_tokens ? `${fmtInt(d.reasoning_tokens)} of it hidden reasoning` : 'Usually the priciest tokens per unit',
+    },
+  ];
+  return (
+    <Card variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+      <Stack direction="row" alignItems="baseline" justifyContent="space-between" flexWrap="wrap" useFlexGap spacing={1} sx={{ mb: 1.25 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+          Where the tokens went
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {fmtInt(d.prompt_tokens + output)} tokens over {d.llm_calls} AI calls
+          {d.cost_usd != null ? (
+            <>
+              {' · billed '}
+              <Box component="strong" sx={{ color: 'text.primary' }}>
+                {fmtUsd(d.cost_usd)}
+              </Box>
+            </>
+          ) : (
+            ' · cost not reported by this provider'
+          )}
+        </Typography>
+      </Stack>
+      <Box role="img" aria-label="Share of fresh input, cached input and output tokens" sx={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', bgcolor: 'action.hover', mb: 1.5 }}>
+        {parts.map((p) => (p.value ? <Box key={p.key} sx={{ width: `${(p.value / total) * 100}%`, bgcolor: p.color, transition: 'width 400ms ease' }} /> : null))}
+      </Box>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
+        {parts.map((p) => (
+          <Box key={p.key}>
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.color, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary">
+                {p.label}
+              </Typography>
+            </Stack>
+            <Typography sx={{ fontWeight: 800, fontSize: 18, fontVariantNumeric: 'tabular-nums' }}>{fmtInt(p.value)}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {p.note}
+            </Typography>
+          </Box>
+        ))}
+        <Box>
+          <Typography variant="caption" color="text.secondary">
+            Written to cache
+          </Typography>
+          <Typography sx={{ fontWeight: 800, fontSize: 18, fontVariantNumeric: 'tabular-nums' }}>{d.cache_write_tokens != null ? fmtInt(d.cache_write_tokens) : '–'}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {d.cache_write_tokens != null ? 'Billed at 1.25× once, then read cheaply' : 'Not reported by OpenRouter; included in the billed cost'}
+          </Typography>
+        </Box>
+      </Box>
+    </Card>
   );
 }
 
@@ -678,7 +759,20 @@ function StepRow({ step, labels }: { step: DiagnosticsStep; labels: Record<strin
       </TableCell>
       <TableCell align="right">{step.think_ms !== null ? fmtSeconds(step.think_ms) : '–'}</TableCell>
       <TableCell align="right">{fmtSeconds(step.duration_ms ?? 0)}</TableCell>
-      <TableCell align="right">{step.prompt_tokens ? fmtInt(step.prompt_tokens + (step.completion_tokens ?? 0)) : ''}</TableCell>
+      <TableCell align="right">{step.prompt_tokens ? fmtInt(step.prompt_tokens) : ''}</TableCell>
+      <TableCell align="right" sx={{ color: 'success.main' }}>
+        {step.prompt_tokens && step.cache_read_tokens ? fmtInt(step.cache_read_tokens) : step.prompt_tokens ? '0' : ''}
+      </TableCell>
+      <TableCell align="right">
+        {step.prompt_tokens ? (
+          <Tooltip title={step.reasoning_tokens ? `${fmtInt(step.reasoning_tokens)} of them hidden reasoning` : ''}>
+            <span>{fmtInt(step.completion_tokens ?? 0)}</span>
+          </Tooltip>
+        ) : (
+          ''
+        )}
+      </TableCell>
+      <TableCell align="right">{step.cost_usd != null ? fmtUsd(step.cost_usd) : ''}</TableCell>
       <TableCell>
         {step.waste ? (
           <Tooltip title={labels[step.waste] ?? step.waste}>
@@ -716,6 +810,8 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
             <TableCell align="right">Avg wasted</TableCell>
             <TableCell align="right">Avg AI calls</TableCell>
             <TableCell align="right">Avg tokens</TableCell>
+            <TableCell align="right">Avg cached</TableCell>
+            <TableCell align="right">Avg cost</TableCell>
             <TableCell align="right">Avg AI thinking</TableCell>
             <TableCell align="right">Verified / not / failed</TableCell>
           </TableRow>
@@ -734,6 +830,8 @@ function EngineComparison({ engines }: { engines: DiagnosticsSummary['engines'] 
               <TableCell align="right">{show(e.avg_wasted)}</TableCell>
               <TableCell align="right">{show(e.avg_llm_calls)}</TableCell>
               <TableCell align="right">{e.avg_tokens === null ? '–' : fmtInt(e.avg_tokens)}</TableCell>
+              <TableCell align="right">{e.avg_cached_tokens == null ? '–' : fmtInt(e.avg_cached_tokens)}</TableCell>
+              <TableCell align="right">{e.avg_cost_usd == null ? '–' : fmtUsd(e.avg_cost_usd)}</TableCell>
               <TableCell align="right">{show(e.avg_think_s, ' s')}</TableCell>
               <TableCell align="right">{e.engine === 'vector' || e.engine === 'lite' ? `${e.verified} / ${e.unverified} / ${e.failed_verification}` : '–'}</TableCell>
             </TableRow>

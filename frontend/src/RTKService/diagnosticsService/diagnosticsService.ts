@@ -11,6 +11,14 @@ export interface RunDiagnostics {
   tokens_reported: boolean;
   prompt_tokens: number;
   completion_tokens: number;
+  /** Of prompt_tokens: read from the prompt cache. Absent on older runs. */
+  cache_read_tokens?: number;
+  /** Written to the prompt cache; null when the provider does not report it. */
+  cache_write_tokens?: number | null;
+  /** Of completion_tokens: hidden reasoning. */
+  reasoning_tokens?: number;
+  /** Billed cost of the run's model calls in USD; null when not reported. */
+  cost_usd?: number | null;
   think_ms: number;
   phone_ms: number;
   wait_ms: number;
@@ -62,6 +70,8 @@ export interface DiagnosticsSummary {
     avg_llm_calls: number | null;
     avg_tokens: number | null;
     avg_think_s: number | null;
+    avg_cached_tokens?: number | null;
+    avg_cost_usd?: number | null;
     verified: number;
     unverified: number;
     failed_verification: number;
@@ -76,6 +86,9 @@ export interface DiagnosticsSummary {
   token_runs: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens?: number;
+  cost_usd?: number;
+  cost_runs?: number;
   think_ms: number;
   phone_ms: number;
   wait_ms: number;
@@ -123,6 +136,10 @@ export interface DiagnosticsStep {
   llm_call: number | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  cost_usd?: number | null;
   waste: string | null;
   thought_reasoning: string;
   result_message: string;

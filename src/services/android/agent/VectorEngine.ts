@@ -6,6 +6,7 @@ import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOu
 import { compactTool, type ToolSpec } from './compactTools';
 import { buildContext, summaryLine, type StepRecord } from './contextBuilder';
 import { parseAppList, verifyCompletion } from './successVerifier';
+import { CACHE_BREAKPOINT, USAGE_REPORT_OPTIONS, usageDetails, type UsageDetails } from './usageDetails';
 
 export interface VectorEngineOptions {
   model: LanguageModel;
@@ -33,6 +34,7 @@ export interface VectorEngineOptions {
   /**
    * Lite: the same engine with less input per call — short tool descriptions
    * (compactTools) and a smaller history budget. Same tools, prompt, loop and checks.
+   * Lite also caches the part every call repeats (tools, system prompt, task).
    */
   compact?: boolean;
 }
@@ -155,6 +157,7 @@ interface ModelTurn {
   toolCalls: { toolCallId: string; toolName: string; input: unknown }[];
   inputTokens: number;
   outputTokens: number;
+  details: UsageDetails;
 }
 
 /**
@@ -245,6 +248,7 @@ export class VectorEngine implements AgentEngine {
         minRecent: MIN_RECENT_STEPS,
         vision: this.options.vision,
         notes,
+        taskFirst: Boolean(this.options.compact),
       });
       notes.length = 0;
 
@@ -274,7 +278,7 @@ export class VectorEngine implements AgentEngine {
         await emit({
           type: 'finish',
           finishReason: calls.length ? 'tool-calls' : 'stop',
-          usage: { promptTokens: turn.inputTokens, completionTokens: turn.outputTokens, totalTokens: turn.inputTokens + turn.outputTokens },
+          usage: { promptTokens: turn.inputTokens, completionTokens: turn.outputTokens, totalTokens: turn.inputTokens + turn.outputTokens, ...turn.details },
         });
       };
 
@@ -455,7 +459,10 @@ export class VectorEngine implements AgentEngine {
     const result = streamText({
       model: this.model,
       system,
-      messages,
+      // Lite: cache everything up to the task message (tools → system → task), which
+      // is identical on every call of the run. Providers without caching ignore it.
+      messages: this.options.compact && messages.length ? [{ ...messages[0], providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number], ...messages.slice(1)] : messages,
+      providerOptions: USAGE_REPORT_OPTIONS,
       tools: this.toolSet,
       toolChoice: 'auto',
       maxOutputTokens: this.options.maxOutputTokens ?? 16000,
@@ -465,7 +472,8 @@ export class VectorEngine implements AgentEngine {
       // Errors are handled (and logged once) by callModel; the default handler would print each one again.
       onError: () => undefined,
     });
-    const turn: ModelTurn = { text: '', reasoning: '', toolCalls: [], inputTokens: 0, outputTokens: 0 };
+    const turn: ModelTurn = { text: '', reasoning: '', toolCalls: [], inputTokens: 0, outputTokens: 0, details: usageDetails(undefined, undefined) };
+    let stepMetadata: unknown;
     let lastEmit = 0;
     const flush = async (force = false) => {
       if (!force && Date.now() - lastEmit < 400) return;
@@ -487,9 +495,14 @@ export class VectorEngine implements AgentEngine {
         case 'tool-call':
           turn.toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
           break;
+        case 'finish-step':
+          // One step per call (tools are run by this engine, not the SDK): its metadata carries the cost.
+          stepMetadata = part.providerMetadata;
+          break;
         case 'finish':
           turn.inputTokens = part.totalUsage?.inputTokens ?? 0;
           turn.outputTokens = part.totalUsage?.outputTokens ?? 0;
+          turn.details = usageDetails(part.totalUsage, stepMetadata as never);
           break;
         case 'error':
           throw part.error instanceof Error ? part.error : new RetryableModelError(String((part.error as { message?: string })?.message ?? part.error));
@@ -542,8 +555,9 @@ export class VectorEngine implements AgentEngine {
 
   private async makePlan(prompt: string, signal: AbortSignal, emit: (message: Record<string, unknown>) => Promise<void>): Promise<string | null> {
     try {
-      const { text, usage } = await generateText({
+      const { text, usage, providerMetadata } = await generateText({
         model: this.model,
+        providerOptions: USAGE_REPORT_OPTIONS,
         system: PLANNER_PROMPT,
         prompt,
         maxOutputTokens: 600,
@@ -551,7 +565,7 @@ export class VectorEngine implements AgentEngine {
         maxRetries: 2,
         abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
       });
-      await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0 } });
+      await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0, ...usageDetails(usage, providerMetadata as never) } });
       const nodes = text
         .split('\n')
         .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*])\s*/, '').trim())
@@ -584,8 +598,9 @@ export class VectorEngine implements AgentEngine {
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {
-          const { text: answer, usage } = await generateText({
+          const { text: answer, usage, providerMetadata } = await generateText({
             model: this.model,
+            providerOptions: USAGE_REPORT_OPTIONS,
             prompt: text,
             // At 300, models that reason first often spent it all thinking and answered nothing ("No reason given").
             maxOutputTokens: 1000,
@@ -594,7 +609,7 @@ export class VectorEngine implements AgentEngine {
             abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
           });
           // The check's own model call counts in the run's totals.
-          await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0 } });
+          await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0, ...usageDetails(usage, providerMetadata as never) } });
           return answer;
         },
       },

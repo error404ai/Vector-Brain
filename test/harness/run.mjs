@@ -195,7 +195,8 @@ const llmServer = http.createServer((req, res) => {
     const tools = (json.tools ?? []).map((t) => t.function?.name);
     const text = JSON.stringify(json.messages ?? []);
     const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : 'plan';
-    llm.requests.push({ kind, tools, chars: text.length, toolChars: JSON.stringify(json.tools ?? []).length, stream: json.stream === true, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
+    const cacheMarked = (json.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((c) => c && c.cache_control));
+    llm.requests.push({ kind, tools, chars: text.length, cacheMarked, askedUsage: Boolean(json.usage?.include), toolChars: JSON.stringify(json.tools ?? []).length, stream: json.stream === true, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
     const reply = (status, payload) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
@@ -232,24 +233,25 @@ const llmServer = http.createServer((req, res) => {
     else if (toolMessages === 0) call('open_app', { packageName: 'com.google.android.youtube' });
     else if (tools.includes('task_done')) call('task_done', { success: true, summary: 'YouTube is open' });
     else send({ role: 'assistant', content: 'YouTube is open.' });
-    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: kind === 'agent' && toolMessages === 0 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 900, completion_tokens: 30, total_tokens: 930 } })}\n\n`);
+    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: kind === 'agent' && toolMessages === 0 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 900, completion_tokens: 30, total_tokens: 930, ...(cacheMarked ? { prompt_tokens_details: { cached_tokens: toolMessages ? 800 : 0 } } : {}), ...(json.usage?.include ? { cost: 0.0005 } : {}) } })}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
   });
 });
 
 /** An AI config pointing at the fake model (inserted directly: the API refuses local URLs). */
-let llmConfigId = null;
-async function ensureLlmConfig() {
-  if (llmConfigId) return llmConfigId;
+const llmConfigIds = {};
+/** provider 'openrouter' goes through the OpenRouter SDK (cache_control, cost), as in production. */
+async function ensureLlmConfig(provider = 'custom') {
+  if (llmConfigIds[provider]) return llmConfigIds[provider];
   for (const [key, value] of Object.entries(env)) process.env[key] ??= value;
   const { CryptoHelper } = await import(path.join(root, 'dist/helpers/CryptoHelper.js'));
   const [row] = await db.query(
-    "INSERT INTO ai_configs (user_id, provider, model, encrypted_api_key, base_url, is_active, is_chat_default, label, config_type) VALUES (?, 'custom', 'harness-llm', ?, 'http://127.0.0.1:4702/v1', 0, 0, 'harness llm', 'text')",
-    [userId, CryptoHelper.encryptAesGcm('harness-llm-key')],
+    "INSERT INTO ai_configs (user_id, provider, model, encrypted_api_key, base_url, is_active, is_chat_default, label, config_type) VALUES (?, ?, 'harness-llm', ?, 'http://127.0.0.1:4702/v1', 0, 0, ?, 'text')",
+    [userId, provider, CryptoHelper.encryptAesGcm('harness-llm-key'), `harness llm (${provider})`],
   );
-  llmConfigId = row.insertId;
-  return llmConfigId;
+  llmConfigIds[provider] = row.insertId;
+  return row.insertId;
 }
 
 /** Earlier scenarios can leave a phone mid-run; wait until nothing runs on it. */
@@ -275,10 +277,10 @@ async function startRun(body) {
   }
 }
 
-async function runWithEngine(engine, name, prompt) {
+async function runWithEngine(engine, name, prompt, provider = 'custom') {
   if (!(await waitIdle(name))) throw new Error(`${name} never became idle`);
   await api('PUT', '/android/agent/engine', { engine });
-  const configId = await ensureLlmConfig();
+  const configId = await ensureLlmConfig(provider);
   llm.requests = [];
   llm.limited = false;
   const t0 = Date.now();
@@ -2676,9 +2678,9 @@ const scenarios = [
     name: 'engines: Lite is the Vector loop with short tool descriptions and a smaller history',
     async run() {
       llm.mode = 'normal';
-      const vector = await runWithEngine('vector', 'free2', 'open youtube [llm]');
+      const vector = await runWithEngine('vector', 'free2', 'open youtube [llm]', 'openrouter');
       const vectorTools = llm.requests.find((r) => r.kind === 'agent');
-      const lite = await runWithEngine('lite', 'free2', 'open youtube [llm]');
+      const lite = await runWithEngine('lite', 'free2', 'open youtube [llm]', 'openrouter');
       const liteTools = llm.requests.find((r) => r.kind === 'agent');
       if (!lite.done) return 'lite run never finished';
       if (lite.done.status !== 'SUCCEEDED') return `lite run ${lite.done.status}/${lite.done.reason_code}: ${String(lite.done.message).slice(0, 160)}`;
@@ -2690,6 +2692,20 @@ const scenarios = [
       const verification = typeof lite.done.verification === 'string' ? JSON.parse(lite.done.verification) : lite.done.verification;
       if (!verification?.status) return 'lite run has no verification recorded';
       if (vector.done?.status !== 'SUCCEEDED') return `vector run ${vector.done?.status}`;
+      // Lite caches the repeated part; Vector does not. Both ask for the cost.
+      if (!liteTools.cacheMarked) return 'lite did not mark a cache breakpoint';
+      if (vectorTools.cacheMarked) return 'vector marked a cache breakpoint';
+      if (!liteTools.askedUsage) return 'lite did not ask OpenRouter for the cost';
+      const diagnostics = await waitFor(async () => {
+        const [[row]] = await db.query('SELECT diagnostics FROM agent_tasks WHERE id = ?', [lite.taskId]);
+        const d = typeof row?.diagnostics === 'string' ? JSON.parse(row.diagnostics) : row?.diagnostics;
+        return d?.steps ? d : null;
+      }, 10_000);
+      if (!diagnostics) return 'lite run has no diagnostics';
+      if (!(diagnostics.cache_read_tokens > 0)) return `cached tokens not recorded: ${JSON.stringify(diagnostics)}`.slice(0, 300);
+      if (!(diagnostics.cost_usd > 0)) return `cost not recorded: ${diagnostics.cost_usd}`;
+      const [[step]] = await db.query('SELECT prompt_tokens, cache_read_tokens, cost_usd FROM android_task_logs WHERE agent_task_id = ? AND prompt_tokens IS NOT NULL ORDER BY step_index LIMIT 1', [lite.taskId]);
+      if (step?.cost_usd == null) return `step cost not stored: ${JSON.stringify(step)}`;
     },
   },
   {

@@ -47,8 +47,17 @@ const STEP_COLUMNS: (keyof AndroidTaskLog)[] = [
   'llm_call',
   'prompt_tokens',
   'completion_tokens',
+  'cache_read_tokens',
+  'cache_write_tokens',
+  'reasoning_tokens',
+  'cost_usd',
   'waste',
 ];
+
+/** Sum of two amounts where null means "not reported": known if either side is. */
+function addKnown(a: number | null | undefined, b: number | null | undefined): number | null {
+  return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
+}
 
 const MAX_REPORT_RUNS = 2000;
 
@@ -106,6 +115,10 @@ export class RunDiagnosticsService {
             promptTokens: (previous.prompt_tokens ?? 0) + totals.promptTokens,
             completionTokens: (previous.completion_tokens ?? 0) + totals.completionTokens,
             tokensReported: Boolean(previous.tokens_reported) || totals.tokensReported,
+            cacheReadTokens: (previous.cache_read_tokens ?? 0) + (totals.cacheReadTokens ?? 0),
+            cacheWriteTokens: addKnown(previous.cache_write_tokens, totals.cacheWriteTokens),
+            reasoningTokens: (previous.reasoning_tokens ?? 0) + (totals.reasoningTokens ?? 0),
+            costUsd: addKnown(previous.cost_usd, totals.costUsd),
             recoveries: engineRecoveries,
           }
         : { ...totals, recoveries: engineRecoveries };
@@ -136,6 +149,9 @@ export class RunDiagnosticsService {
     let promptTokens = 0;
     let completionTokens = 0;
     let tokenRuns = 0;
+    let cacheReadTokens = 0;
+    let costUsd = 0;
+    let costRuns = 0;
     let thinkMs = 0;
     let phoneMs = 0;
     let waitMs = 0;
@@ -151,6 +167,11 @@ export class RunDiagnosticsService {
         tokenRuns += 1;
         promptTokens += d.prompt_tokens;
         completionTokens += d.completion_tokens;
+        cacheReadTokens += d.cache_read_tokens ?? 0;
+      }
+      if (d.cost_usd != null) {
+        costRuns += 1;
+        costUsd += d.cost_usd;
       }
       thinkMs += d.think_ms;
       phoneMs += d.phone_ms;
@@ -214,6 +235,12 @@ export class RunDiagnosticsService {
         avg_llm_calls: avg((d) => d.llm_calls),
         avg_tokens: avg((d) => (d.tokens_reported ? d.prompt_tokens + d.completion_tokens : 0)),
         avg_think_s: avg((d) => d.think_ms / 1000),
+        avg_cached_tokens: avg((d) => (d.tokens_reported ? d.cache_read_tokens ?? 0 : 0)),
+        // Over the runs whose provider reported a cost; precise to a hundredth of a cent.
+        avg_cost_usd: (() => {
+          const costed = measured.filter((t) => (t.diagnostics as RunDiagnostics).cost_usd != null);
+          return costed.length ? Math.round((costed.reduce((sum, t) => sum + ((t.diagnostics as RunDiagnostics).cost_usd ?? 0), 0) / costed.length) * 1e6) / 1e6 : null;
+        })(),
         verified: list.filter((t) => t.verification?.status === 'verified').length,
         unverified: list.filter((t) => t.verification?.status === 'unverified').length,
         failed_verification: list.filter((t) => t.verification?.status === 'failed').length,
@@ -253,6 +280,9 @@ export class RunDiagnosticsService {
         token_runs: tokenRuns,
         prompt_tokens: promptTokens,
         completion_tokens: completionTokens,
+        cache_read_tokens: cacheReadTokens,
+        cost_usd: Math.round(costUsd * 1e6) / 1e6,
+        cost_runs: costRuns,
         think_ms: thinkMs,
         phone_ms: phoneMs,
         wait_ms: waitMs,
@@ -415,7 +445,7 @@ export class RunDiagnosticsService {
           's.id', 's.agent_task_id', 's.device_id', 's.step_index', 's.action_type', 's.action_payload', 's.thought_reasoning',
           's.status', 's.ui_tree_snapshot', 's.ui_tree_before', 's.duration_ms', 's.result_message', 's.error_message', 's.created_at',
           's.package_before', 's.package_after', 's.screen_before', 's.screen_after', 's.think_ms', 's.llm_call',
-          's.prompt_tokens', 's.completion_tokens', 's.source', 's.waste',
+          's.prompt_tokens', 's.completion_tokens', 's.cache_read_tokens', 's.cache_write_tokens', 's.reasoning_tokens', 's.cost_usd', 's.source', 's.waste',
         ])
         .where('s.agent_task_id IN (:...ids)', { ids })
         .orderBy('s.agent_task_id', 'ASC')
@@ -427,6 +457,7 @@ export class RunDiagnosticsService {
           t: 'step', id: s.id, task_id: s.agent_task_id, device_id: s.device_id, idx: s.step_index, action: s.action_type,
           payload: clean.payload(s.action_payload), status: s.status, source: s.source, waste: s.waste,
           ms: s.duration_ms, think_ms: s.think_ms, llm_call: s.llm_call, prompt_tokens: s.prompt_tokens, completion_tokens: s.completion_tokens,
+          cache_read_tokens: s.cache_read_tokens, cache_write_tokens: s.cache_write_tokens, reasoning_tokens: s.reasoning_tokens, cost_usd: s.cost_usd,
           package_before: s.package_before, package_after: s.package_after, screen_before: s.screen_before, screen_after: s.screen_after,
           // Runs recorded before diagnostics existed have no "before" tree; their
           // ui_tree_snapshot is the screen AFTER the step.

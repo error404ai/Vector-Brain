@@ -23,6 +23,7 @@ import { modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
+import type { UsageDetails } from './agent/usageDetails';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
@@ -1175,6 +1176,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let promptTokens = 0;
     let completionTokens = 0;
     let tokensReported = false;
+    /** Where the tokens went, as far as the provider reports it (agent/usageDetails). */
+    const usageTotals = { cacheRead: 0, cacheWrite: 0, cacheWriteReported: false, reasoning: 0, costUsd: 0, costReported: false };
     /** Steps the current model call has produced so far (its usage is booked on the first). */
     let callSteps: AndroidTaskLog[] = [];
 
@@ -1545,18 +1548,34 @@ Use the current visible Android screen and UI state as context. Continue from wh
             // One model call ended. Its usage belongs to the first step it chose;
             // a call that chose no step (planning, final answer) only counts in the totals.
             llmCalls += 1;
-            const usage = (message as { usage?: { promptTokens?: number; completionTokens?: number } }).usage;
+            const usage = (message as { usage?: { promptTokens?: number; completionTokens?: number } & Partial<UsageDetails> }).usage;
             const inTokens = Math.max(0, Number(usage?.promptTokens) || 0);
             const outTokens = Math.max(0, Number(usage?.completionTokens) || 0);
+            const cacheRead = Math.max(0, Number(usage?.cachedTokens) || 0);
+            const cacheWrite = usage?.cacheWriteTokens == null ? null : Math.max(0, Number(usage.cacheWriteTokens) || 0);
+            const reasoning = Math.max(0, Number(usage?.reasoningTokens) || 0);
+            const cost = usage?.costUsd == null || !Number.isFinite(Number(usage.costUsd)) ? null : Number(usage.costUsd);
             if (inTokens || outTokens) tokensReported = true;
             promptTokens += inTokens;
             completionTokens += outTokens;
+            usageTotals.cacheRead += cacheRead;
+            usageTotals.reasoning += reasoning;
+            if (cacheWrite !== null) {
+              usageTotals.cacheWrite += cacheWrite;
+              usageTotals.cacheWriteReported = true;
+            }
+            if (cost !== null) {
+              usageTotals.costUsd += cost;
+              usageTotals.costReported = true;
+            }
             const first = callSteps[0];
             if (first?.id && (inTokens || outTokens)) {
+              const breakdown = { cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite, reasoning_tokens: reasoning, cost_usd: cost };
               first.prompt_tokens = inTokens;
               first.completion_tokens = outTokens;
+              Object.assign(first, breakdown);
               await this.taskLogRepo
-                .update({ id: first.id }, { prompt_tokens: inTokens, completion_tokens: outTokens })
+                .update({ id: first.id }, { prompt_tokens: inTokens, completion_tokens: outTokens, ...breakdown })
                 .catch((error) => Logger.warn(`[AndroidPlanner] Could not store token usage for step ${first.id}:`, error));
             }
             callSteps = [];
@@ -2062,6 +2081,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         promptTokens,
         completionTokens,
         tokensReported,
+        cacheReadTokens: usageTotals.cacheRead,
+        cacheWriteTokens: usageTotals.cacheWriteReported ? usageTotals.cacheWrite : null,
+        reasoningTokens: usageTotals.reasoning,
+        costUsd: usageTotals.costReported ? usageTotals.costUsd : null,
         recoveries: [...ruleRecoveries, ...(activeEngine.usedBackupModel ? (['backup_model'] as const) : [])],
       });
       // Saved flows: book how the flow did, keep a step fix, or save this run as a

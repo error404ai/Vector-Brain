@@ -31,6 +31,14 @@ export interface RunDiagnostics {
   tokens_reported: boolean;
   prompt_tokens: number;
   completion_tokens: number;
+  /** Of prompt_tokens: read from the prompt cache. Absent on runs before this was recorded. */
+  cache_read_tokens?: number;
+  /** Written to the prompt cache; null when the provider does not report it. */
+  cache_write_tokens?: number | null;
+  /** Of completion_tokens: hidden reasoning. */
+  reasoning_tokens?: number;
+  /** What the provider billed for the run's model calls, in USD; null when not reported. */
+  cost_usd?: number | null;
   think_ms: number;
   phone_ms: number;
   wait_ms: number;
@@ -156,6 +164,10 @@ export interface RunTotals {
   promptTokens: number;
   completionTokens: number;
   tokensReported: boolean;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number | null;
+  reasoningTokens?: number;
+  costUsd?: number | null;
   /** Recoveries only the engine knows about (e.g. 'backup_model'). */
   recoveries?: RecoveryKind[];
 }
@@ -194,6 +206,10 @@ export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], total
     tokens_reported: totals.tokensReported,
     prompt_tokens: totals.promptTokens,
     completion_tokens: totals.completionTokens,
+    cache_read_tokens: totals.cacheReadTokens ?? 0,
+    cache_write_tokens: totals.cacheWriteTokens ?? null,
+    reasoning_tokens: totals.reasoningTokens ?? 0,
+    cost_usd: totals.costUsd ?? null,
     think_ms: thinkMs,
     phone_ms: phoneMs,
     wait_ms: waitMs,

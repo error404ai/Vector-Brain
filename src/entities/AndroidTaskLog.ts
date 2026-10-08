@@ -85,6 +85,22 @@ export class AndroidTaskLog {
   @Column({ type: 'int', nullable: true })
   completion_tokens: number | null;
 
+  /** Of prompt_tokens: read from the prompt cache (billed at a fraction). */
+  @Column({ type: 'int', nullable: true })
+  cache_read_tokens: number | null;
+
+  /** Written to the prompt cache; null when the provider does not report it (OpenRouter). */
+  @Column({ type: 'int', nullable: true })
+  cache_write_tokens: number | null;
+
+  /** Of completion_tokens: hidden reasoning. */
+  @Column({ type: 'int', nullable: true })
+  reasoning_tokens: number | null;
+
+  /** What the provider billed for the call, in USD; null when not reported. */
+  @Column({ type: 'double', nullable: true })
+  cost_usd: number | null;
+
   /** Who decided this step: 'ai', 'replay' or 'direct'. */
   @Column({ type: 'varchar', length: 12, default: 'ai' })
   source: string;

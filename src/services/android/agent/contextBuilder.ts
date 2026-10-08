@@ -36,6 +36,11 @@ export interface ContextOptions {
   vision: boolean;
   /** System notes added at the end (e.g. a failed verification). */
   notes?: string[];
+  /**
+   * Send the task (and plan) as a message of its own, before the step summary.
+   * It is then identical on every call, so a prompt cache can end right after it.
+   */
+  taskFirst?: boolean;
 }
 
 export interface BuiltContext {
@@ -124,17 +129,14 @@ export function buildContext(options: ContextOptions): BuiltContext {
     dropped += 1;
   }
 
-  const intro = [
-    `TASK: ${options.task}`,
-    options.plan ? `\nPLAN (a guide, not a script):\n${options.plan}` : '',
-    older.length
-      ? `\nSTEPS ALREADY DONE (${older.length}${dropped ? `, the oldest ${dropped} not shown` : ''}; the full detail of the last ${steps.length - firstFull} follows):\n${summary.join('\n')}`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const task = [`TASK: ${options.task}`, options.plan ? `\nPLAN (a guide, not a script):\n${options.plan}` : ''].filter(Boolean).join('\n');
+  const done = older.length
+    ? `STEPS ALREADY DONE (${older.length}${dropped ? `, the oldest ${dropped} not shown` : ''}; the full detail of the last ${steps.length - firstFull} follows):\n${summary.join('\n')}`
+    : '';
 
-  const messages: ModelMessage[] = [{ role: 'user', content: intro }];
+  const messages: ModelMessage[] = options.taskFirst
+    ? [{ role: 'user', content: task }, ...(done ? [{ role: 'user' as const, content: done }] : [])]
+    : [{ role: 'user', content: [task, done ? `\n${done}` : ''].filter(Boolean).join('\n') }];
   for (let i = firstFull; i < steps.length; i += 1) {
     messages.push(...stepMessages(steps[i], i === steps.length - 1));
   }

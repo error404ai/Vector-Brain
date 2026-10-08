@@ -236,6 +236,41 @@ describe('VectorEngine', () => {
     expect(liteTools.find((t) => t.name === 'open_app')?.description).toBe(SHORT_DESCRIPTIONS.open_app);
   });
 
+  it('Lite caches the repeated part and reports cached tokens, reasoning and cost per call', async () => {
+    const cachedFinish = (toolName: string, input: unknown): Chunk[] => [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'c', toolName, input: JSON.stringify(input) },
+      {
+        type: 'finish',
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 5000, outputTokens: 60, totalTokens: 5060, cachedInputTokens: 4600, reasoningTokens: 20 },
+        providerMetadata: { openrouter: { usage: { cost: 0.0012 } } },
+      },
+    ];
+    const lite = engineWith([cachedFinish('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, { compact: true });
+    const full = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')]);
+    const seen: { prompt: { role: string; providerOptions?: Record<string, unknown> }[]; providerOptions?: Record<string, unknown> }[] = [];
+    for (const e of [lite, full]) {
+      const model = (e.engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
+      const original = model.doStream.bind(model);
+      model.doStream = (o: unknown) => {
+        seen.push(o as never);
+        return original(o);
+      };
+    }
+    await lite.engine.run('open YouTube', 'c1');
+    await full.engine.run('open YouTube', 'c2');
+    // Lite: the task message carries the cache breakpoint; Vector does not cache.
+    const liteFirstUser = seen[0].prompt.find((m) => m.role === 'user');
+    expect(liteFirstUser?.providerOptions).toMatchObject({ openrouter: { cacheControl: { type: 'ephemeral' } } });
+    const fullFirstUser = seen[2].prompt.find((m) => m.role === 'user');
+    expect(fullFirstUser?.providerOptions?.openrouter).toBeUndefined();
+    // Both ask OpenRouter for the cost.
+    expect(seen[0].providerOptions).toMatchObject({ openrouter: { usage: { include: true } } });
+    const usage = lite.messages.find((m) => m.type === 'finish')?.usage;
+    expect(usage).toMatchObject({ promptTokens: 5000, completionTokens: 60, cachedTokens: 4600, reasoningTokens: 20, costUsd: 0.0012, cacheWriteTokens: null });
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');
