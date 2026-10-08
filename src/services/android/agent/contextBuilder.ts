@@ -65,7 +65,8 @@ function compactInput(input: unknown): string {
   }
 }
 
-function summaryLine(step: StepRecord, index: number): string {
+/** One line for a step: tool, input, outcome. Also what the completion judge reads. */
+export function summaryLine(step: StepRecord, index: number): string {
   const firstLine = stripScreen(step.resultText).split('\n').find((line) => line.trim()) ?? '';
   const outcome = firstLine.length > 110 ? `${firstLine.slice(0, 110)}…` : firstLine;
   return `${index + 1}. ${step.toolName}${compactInput(step.input) ? ` ${compactInput(step.input)}` : ''} → ${step.isError ? 'FAILED' : 'ok'}: ${outcome}`;

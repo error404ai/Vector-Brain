@@ -27,6 +27,8 @@ export interface VerifyInput {
   /** "Label | package" pairs of the phone's launchable apps. */
   listApps: () => Promise<{ label: string; packageName: string }[]>;
   judge?: (prompt: string) => Promise<string>;
+  /** The run's steps as one line each, for goals the final screen alone cannot prove (visit 10 sites, send then close). */
+  steps?: string[];
 }
 
 const INSTALL = /\b(install|download|daal(?:o|do)?|dalo)\b/i;
@@ -88,16 +90,19 @@ export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   return null;
 }
 
-export function judgePrompt(goal: string, summary: string, screen: ScreenState): string {
+export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = []): string {
+  const shown = steps.slice(-40);
   return [
-    'You check whether an Android phone task was really completed. You see the final screen as a list of UI elements.',
+    'You check whether an Android phone task was really completed. You see the final screen as a list of UI elements' + (shown.length ? ', and the steps the phone actually performed.' : '.'),
     'Answer with ONLY minified JSON: {"verdict":"yes"|"no"|"unsure","reason":"<one short sentence>"}',
-    '"yes" only if the final screen shows the goal achieved (or the goal needed no lasting screen, like closing an app, and nothing contradicts it).',
-    '"no" if the screen shows it was not achieved (wrong app or page, an error, a login wall, the thing still missing).',
-    '"unsure" if the screen cannot tell either way.',
+    '"yes" only if the final screen shows the goal achieved (or the goal needed no lasting screen, like closing an app, and nothing contradicts it).' +
+      (shown.length ? ' For goals made of several actions the final screen cannot show (visit several sites, send then go back), the STEPS are the evidence: count them against the goal.' : ''),
+    '"no" if the screen or the steps show it was not achieved (wrong app or page, an error, a login wall, fewer actions than asked, the thing still missing).',
+    '"unsure" if neither can tell.',
     '',
     `GOAL: ${goal}`,
     `AGENT SAYS: ${summary}`,
+    ...(shown.length ? [`STEPS (${steps.length > shown.length ? `last ${shown.length} of ${steps.length}` : steps.length}):`, ...shown] : []),
     `FOREGROUND APP: ${screen.packageName ?? 'unknown'}`,
     'FINAL SCREEN:',
     screen.tree.slice(0, 6000),
@@ -149,7 +154,7 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
 
   if (!input.judge) return { status: 'unverified', method: 'none', reason: 'No check applies to this task', retries };
   try {
-    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen)));
+    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps)));
     return {
       status: verdict.verdict === 'yes' ? 'verified' : verdict.verdict === 'no' ? 'failed' : 'unverified',
       method: 'judge',

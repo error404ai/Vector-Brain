@@ -3,7 +3,8 @@ import type { AgentContext, AgentStreamMessage, Tool } from '@eko-ai/eko';
 import { generateText, jsonSchema, streamText, tool, type LanguageModel, type ToolSet } from 'ai';
 import type { AndroidAgent } from '../eko/AndroidAgent';
 import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOutcome } from './AgentEngine';
-import { buildContext, type StepRecord } from './contextBuilder';
+import { compactTool, type ToolSpec } from './compactTools';
+import { buildContext, summaryLine, type StepRecord } from './contextBuilder';
 import { parseAppList, verifyCompletion } from './successVerifier';
 
 export interface VectorEngineOptions {
@@ -29,11 +30,16 @@ export interface VectorEngineOptions {
   fallback?: { model: LanguageModel; label: string };
   /** A tap in the power menu that takes this long (ms) means the phone restarted. */
   restartGapMs?: number;
-  /** Prefix for the ids of tool calls this engine sends (Lite runs several of these in one task). */
-  callIdPrefix?: string;
+  /**
+   * Lite: the same engine with less input per call — short tool descriptions
+   * (compactTools) and a smaller history budget. Same tools, prompt, loop and checks.
+   */
+  compact?: boolean;
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
+/** Lite's history budget: older steps stay one line each, the latest few in full. */
+export const COMPACT_HISTORY_BUDGET = 1500;
 
 /** Taps answer in 1–3 s; a tap in the power menu that takes longer than this rebooted the phone. */
 const RESTART_GAP_MS = 8000;
@@ -120,18 +126,18 @@ Prefer open_url or a deep link over navigating menus when a URL exists.`;
 class RetryableModelError extends Error {}
 
 /** A limit that will not lift within this run: a daily cap, or no credit left. */
-export function isQuota(error: unknown): boolean {
+function isQuota(error: unknown): boolean {
   const e = error as { message?: string; responseBody?: string; statusCode?: number };
   const text = `${e?.message ?? ''} ${e?.responseBody ?? ''}`;
   return Number(e?.statusCode) === 402 || /per-day|per day|daily (?:limit|quota)|quota exceeded|insufficient credits?/i.test(text);
 }
 
-export function isRateLimited(error: unknown): boolean {
+function isRateLimited(error: unknown): boolean {
   const e = error as { statusCode?: number; status?: number; message?: string };
   return Number(e?.statusCode ?? e?.status) === 429 || /\b429\b|rate limit|too many requests/i.test(String(e?.message ?? ''));
 }
 
-export function isRetryable(error: unknown): boolean {
+function isRetryable(error: unknown): boolean {
   const e = error as { statusCode?: number; status?: number; message?: string; name?: string; cause?: unknown };
   if (e?.name === 'AbortError') return false;
   if (isQuota(error)) return false;
@@ -164,7 +170,7 @@ interface ModelTurn {
  * - only model requests are retried; a phone action is sent at most once.
  */
 export class VectorEngine implements AgentEngine {
-  readonly kind = 'vector' as const;
+  readonly kind: 'vector' | 'lite';
   private controller: AbortController | null = null;
   private abortReason: string | null = null;
   private readonly tools: Tool[];
@@ -181,11 +187,13 @@ export class VectorEngine implements AgentEngine {
   }
 
   constructor(private readonly options: VectorEngineOptions) {
+    this.kind = options.compact ? 'lite' : 'vector';
     this.model = options.model;
     this.tools = options.agent.Tools;
     const set: ToolSet = {};
     for (const t of this.tools) {
-      set[t.name] = tool({ description: t.description ?? '', inputSchema: jsonSchema(t.parameters as never) });
+      const spec = options.compact ? compactTool(t as unknown as ToolSpec) : t;
+      set[t.name] = tool({ description: spec.description ?? '', inputSchema: jsonSchema(spec.parameters as never) });
     }
     set[TASK_DONE] = tool({
       description: 'Finish the task. success=true when the goal is achieved, false when it cannot be done. summary: one short sentence.',
@@ -233,7 +241,7 @@ export class VectorEngine implements AgentEngine {
         task: prompt,
         plan,
         steps,
-        budgetTokens: this.options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET,
+        budgetTokens: this.options.historyBudgetTokens ?? (this.options.compact ? COMPACT_HISTORY_BUDGET : DEFAULT_HISTORY_BUDGET),
         minRecent: MIN_RECENT_STEPS,
         vision: this.options.vision,
         notes,
@@ -279,7 +287,7 @@ export class VectorEngine implements AgentEngine {
           done = { success: input.success === true || input.success === 'true', summary: String(input.summary ?? '').trim() || 'Done.' };
           break;
         }
-        const callId = `${this.options.callIdPrefix ?? 'v'}${++this.callCounter}`;
+        const callId = `v${++this.callCounter}`;
         const thought = [turn.reasoning, turn.text].filter(Boolean).join(' ').trim();
         await emit({ type: 'tool_use', toolCallId: callId, toolName: c.toolName, params: c.input ?? {} });
         await bookUsage();
@@ -334,7 +342,7 @@ export class VectorEngine implements AgentEngine {
         return { success: true, stopReason: 'done', result: done.summary, verification: { status: 'unverified', method: 'none', reason: 'Verification is off', retries: 0 } };
       }
 
-      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit);
+      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine));
       if (outcome.status === 'failed' && verificationRetries < MAX_VERIFICATION_RETRIES) {
         verificationRetries += 1;
         notes.push(`SYSTEM CHECK FAILED: ${outcome.reason}. The task is not finished — look at the current screen, carry on, and call task_done again when it is really done.`);
@@ -565,19 +573,22 @@ export class VectorEngine implements AgentEngine {
     retries: number,
     signal: AbortSignal,
     emit: (message: Record<string, unknown>) => Promise<void>,
+    steps: string[] = [],
   ): Promise<VerificationOutcome> {
     const agent = this.options.agent;
     return verifyCompletion(
       {
         goal,
         summary,
+        steps,
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {
           const { text: answer, usage } = await generateText({
             model: this.model,
             prompt: text,
-            maxOutputTokens: 300,
+            // At 300, models that reason first often spent it all thinking and answered nothing ("No reason given").
+            maxOutputTokens: 1000,
             temperature: 0,
             maxRetries: 2,
             abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),

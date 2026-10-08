@@ -23,7 +23,6 @@ import { modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
-import { LiteEngine } from './agent/LiteEngine';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
@@ -1567,19 +1566,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
     // Which engine drives the model (see agent/AgentEngine). Both feed the
     // same handler above, so recording, guards and diagnostics are shared.
     engine =
-      engineSettings.kind === 'lite'
-        ? new LiteEngine({
-            model: modelFor(aiConfig),
-            fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,
-            agent: androidAgent,
-            onMessage: handleMessage,
-            vision,
-            callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
-            callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
-            helperCallMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
-          })
-        : engineSettings.kind === 'vector'
+      engineSettings.kind === 'vector' || engineSettings.kind === 'lite'
         ? new VectorEngine({
+            // Lite: the same engine with short tool descriptions and a smaller history budget.
+            compact: engineSettings.kind === 'lite',
             model: modelFor(aiConfig),
             fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,
             agent: androidAgent,
@@ -1594,7 +1584,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     const activeEngine = engine;
     agentTask.engine = engineSettings.kind;
     void this.agentTaskRepo.update({ id: agentTask.id }, { engine: engineSettings.kind }).catch(() => undefined);
-    Logger.info(`[AndroidPlanner] Task ${agentTask.id}: engine ${engineSettings.kind}${engineSettings.kind === 'vector' ? ` (planner ${engineSettings.planner ? 'on' : 'off'})` : ''}`);
+    Logger.info(`[AndroidPlanner] Task ${agentTask.id}: engine ${engineSettings.kind}${engineSettings.kind !== 'eko' ? ` (planner ${engineSettings.planner ? 'on' : 'off'})` : ''}`);
 
     const activeTaskEntry = this.activeTasks.get(agentTask.id);
     if (activeTaskEntry) activeTaskEntry.engine = activeEngine;

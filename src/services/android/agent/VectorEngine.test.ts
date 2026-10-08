@@ -1,6 +1,7 @@
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV2 } from 'ai/test';
 import type { AndroidAgent } from '../eko/AndroidAgent';
+import { SHORT_DESCRIPTIONS } from './compactTools';
 import { RESTART_SUMMARY, VectorEngine, restartedByTap } from './VectorEngine';
 
 type Chunk = Record<string, unknown>;
@@ -210,6 +211,35 @@ describe('VectorEngine', () => {
     const result = await engine.run('open YouTube', 'r6'); // foreground stays on the launcher
     expect(result).toMatchObject({ success: false, reasonCode: 'VERIFICATION_FAILED', verification: { status: 'failed', method: 'rule', retries: 1 } });
     expect(JSON.stringify(prompts[1])).toContain('SYSTEM CHECK FAILED');
+  });
+
+  it('Lite (compact) runs the same loop with short tool descriptions', async () => {
+    const seen: { tools: { name: string; description?: string }[] }[] = [];
+    const full = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')]);
+    const lite = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, { compact: true });
+    for (const e of [full, lite]) {
+      const model = (e.engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
+      const original = model.doStream.bind(model);
+      model.doStream = (o: unknown) => {
+        seen.push(o as never);
+        return original(o);
+      };
+    }
+    const a = await full.engine.run('open YouTube', 'f');
+    const b = await lite.engine.run('open YouTube', 'l');
+    expect(lite.engine.kind).toBe('lite');
+    expect(b).toMatchObject({ success: a.success, stopReason: a.stopReason, verification: { status: 'verified', method: 'rule' } });
+    expect(lite.calls.open_app).toBe(1);
+    const fullTools = seen[0].tools;
+    const liteTools = seen[2].tools;
+    expect(liteTools.map((t) => t.name)).toEqual(fullTools.map((t) => t.name));
+    expect(liteTools.find((t) => t.name === 'open_app')?.description).toBe(SHORT_DESCRIPTIONS.open_app);
+  });
+
+  it('gives the judge the steps the phone performed', async () => {
+    const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
+    await engine.run('open Chrome and visit 2 sites', 'r9');
+    expect(JSON.stringify(prompts.at(-1))).toContain('STEPS (1):');
   });
 
   it('asks the judge when no rule fits and records its verdict', async () => {

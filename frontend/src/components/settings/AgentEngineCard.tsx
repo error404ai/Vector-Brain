@@ -113,10 +113,10 @@ export default function AgentEngineCard() {
               {settings.kind === 'eko'
                 ? 'Eko: a planning call first, then step by step; long runs are compressed with extra AI calls.'
                 : settings.kind === 'lite'
-                  ? 'Lite: one short text call per step (about 200–450 tokens, no screenshots), the AI answers with a one-line command. When it gets stuck, Vector steps in for a few calls and hands back; screenshots below apply only then. Ends with the same system check.'
+                  ? 'Lite: the Vector engine with less sent per AI call — short tool descriptions and a shorter step history. Same tools, screenshots and system check; roughly 40–50% fewer input tokens.'
                   : 'Vector: acts from the first call, keeps history within a token budget without extra calls, finishes with task_done and a system check of the phone.'}
             </Typography>
-            {settings.kind === 'vector' ? (
+            {settings.kind !== 'eko' ? (
               <FormControlLabel
                 control={<Switch checked={settings.planner} disabled={saving} onChange={(e) => void update({ planner: e.target.checked })} sx={prismSwitch} />}
                 label={
