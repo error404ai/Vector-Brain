@@ -309,6 +309,43 @@ describe('VectorEngine', () => {
     expect(seen[1].providerOptions?.openrouter?.reasoning).toBeUndefined();
   });
 
+  it('Lite keeps phone facts out of the cached prompt and asks for a sticky session', async () => {
+    const { agent } = fakeAgent();
+    const withFacts = Object.assign(Object.create(Object.getPrototypeOf(agent)), agent, {
+      systemPrompt: async (o?: { withFacts?: boolean }) => (o?.withFacts === false ? 'You control a phone.' : 'You control a phone.\n\nTHIS PHONE: ip 1.2.3.4'),
+      deviceFactsText: () => 'THIS PHONE: ip 1.2.3.4',
+    });
+    const seen: { prompt: { role: string; content: unknown; providerOptions?: unknown }[]; providerOptions?: { openrouter?: Record<string, unknown> } }[] = [];
+    const run = async (compact: boolean) => {
+      const e = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, {
+        compact,
+        agent: withFacts as never,
+        cacheSession: compact ? 'vb-u1-c2' : undefined,
+      });
+      const model = (e.engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
+      const original = model.doStream.bind(model);
+      model.doStream = (o: unknown) => {
+        seen.push(o as never);
+        return original(o);
+      };
+      await e.engine.run('open YouTube', compact ? 's1' : 's2');
+    };
+    await run(true);
+    await run(false);
+    const text = (m: { content: unknown }) => JSON.stringify(m.content);
+    const lite = seen[0].prompt;
+    expect(text(lite.find((m) => m.role === 'system')!)).not.toContain('1.2.3.4');
+    const users = lite.filter((m) => m.role === 'user');
+    expect(text(users[0])).toContain('TASK: open YouTube');
+    expect(users[0].providerOptions).toBeDefined(); // the cache ends at the task
+    expect(text(users[1])).toContain('1.2.3.4'); // facts come after it, uncached
+    expect(users[1].providerOptions).toBeUndefined();
+    expect(seen[0].providerOptions?.openrouter).toMatchObject({ session_id: 'vb-u1-c2' });
+    // Vector keeps the facts in its system prompt and sends no session.
+    expect(text(seen[2].prompt.find((m) => m.role === 'system')!)).toContain('1.2.3.4');
+    expect(seen[2].providerOptions?.openrouter?.session_id).toBeUndefined();
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');

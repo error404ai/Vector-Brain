@@ -445,7 +445,7 @@ export class RunDiagnosticsService {
           's.id', 's.agent_task_id', 's.device_id', 's.step_index', 's.action_type', 's.action_payload', 's.thought_reasoning',
           's.status', 's.ui_tree_snapshot', 's.ui_tree_before', 's.duration_ms', 's.result_message', 's.error_message', 's.created_at',
           's.package_before', 's.package_after', 's.screen_before', 's.screen_after', 's.think_ms', 's.llm_call',
-          's.prompt_tokens', 's.completion_tokens', 's.cache_read_tokens', 's.cache_write_tokens', 's.reasoning_tokens', 's.cost_usd', 's.source', 's.waste',
+          's.prompt_tokens', 's.completion_tokens', 's.cache_read_tokens', 's.cache_write_tokens', 's.reasoning_tokens', 's.cost_usd', 's.source', 's.waste', 's.sight',
         ])
         .where('s.agent_task_id IN (:...ids)', { ids })
         .orderBy('s.agent_task_id', 'ASC')
@@ -458,6 +458,8 @@ export class RunDiagnosticsService {
           payload: clean.payload(s.action_payload), status: s.status, source: s.source, waste: s.waste,
           ms: s.duration_ms, think_ms: s.think_ms, llm_call: s.llm_call, prompt_tokens: s.prompt_tokens, completion_tokens: s.completion_tokens,
           cache_read_tokens: s.cache_read_tokens, cache_write_tokens: s.cache_write_tokens, reasoning_tokens: s.reasoning_tokens, cost_usd: s.cost_usd,
+          // Whether the AI saw this step's screen as an image ('ai'), through a helper, or not at all.
+          sight: s.sight,
           package_before: s.package_before, package_after: s.package_after, screen_before: s.screen_before, screen_after: s.screen_after,
           // Runs recorded before diagnostics existed have no "before" tree; their
           // ui_tree_snapshot is the screen AFTER the step.

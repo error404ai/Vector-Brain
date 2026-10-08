@@ -37,6 +37,12 @@ export interface VectorEngineOptions {
    * Lite also caches the part every call repeats (tools, system prompt, task).
    */
   compact?: boolean;
+  /**
+   * Lite: OpenRouter session for sticky routing, so the calls that share a cached
+   * prompt keep landing on the provider that holds the cache. One per account
+   * and model: with the phone's facts outside the prompt, a mission's phones share it.
+   */
+  cacheSession?: string;
 }
 
 export const DEFAULT_HISTORY_BUDGET = 6000;
@@ -225,6 +231,13 @@ export class VectorEngine implements AgentEngine {
     this.toolSet = set;
   }
 
+  /** Per-call provider options: cost report, Lite's reasoning-off and sticky session. */
+  private callOptions(reasoningOff = this.reasoningOff) {
+    const base = reasoningOff ? NO_REASONING_OPTIONS : USAGE_REPORT_OPTIONS;
+    if (!this.options.cacheSession) return base;
+    return { openrouter: { ...base.openrouter, session_id: this.options.cacheSession } };
+  }
+
   abort(reason: string): void {
     this.abortReason = reason;
     this.controller?.abort(reason);
@@ -242,7 +255,12 @@ export class VectorEngine implements AgentEngine {
     const envelope = { streamType: 'agent', chatId: runId, taskId: runId, agentName: 'AndroidAgent' };
     const emit = (message: Record<string, unknown>) => this.options.onMessage({ ...envelope, ...message } as unknown as AgentStreamMessage);
 
-    const system = `${await this.options.agent.systemPrompt()}${VECTOR_RULES}${this.options.compact ? LITE_RULES : ''}`;
+    // Lite: nothing phone-specific in the system prompt, so every phone shares one cached prefix.
+    const agent = this.options.agent as AndroidAgent & { deviceFactsText?: () => string | null };
+    const system = this.options.compact
+      ? `${await agent.systemPrompt({ withFacts: false })}${VECTOR_RULES}${LITE_RULES}`
+      : `${await agent.systemPrompt()}${VECTOR_RULES}`;
+    const facts = this.options.compact ? agent.deviceFactsText?.() ?? null : null;
     const plan = this.options.planner ? await this.makePlan(prompt, signal, emit) : null;
     const steps: StepRecord[] = [];
     const notes: string[] = [];
@@ -261,6 +279,7 @@ export class VectorEngine implements AgentEngine {
         vision: this.options.vision,
         notes,
         taskFirst: Boolean(this.options.compact),
+        afterTask: facts,
       });
       notes.length = 0;
 
@@ -481,7 +500,7 @@ export class VectorEngine implements AgentEngine {
       // Lite: cache everything up to the task message (tools → system → task), which
       // is identical on every call of the run. Providers without caching ignore it.
       messages: this.options.compact && messages.length ? [{ ...messages[0], providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number], ...messages.slice(1)] : messages,
-      providerOptions: this.reasoningOff ? NO_REASONING_OPTIONS : USAGE_REPORT_OPTIONS,
+      providerOptions: this.callOptions(),
       tools: this.toolSet,
       toolChoice: 'auto',
       maxOutputTokens: this.options.maxOutputTokens ?? 16000,
@@ -617,7 +636,7 @@ export class VectorEngine implements AgentEngine {
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {
-          const ask = (providerOptions: typeof USAGE_REPORT_OPTIONS | typeof NO_REASONING_OPTIONS) =>
+          const ask = (providerOptions: ReturnType<VectorEngine['callOptions']>) =>
             generateText({
               model: this.model,
               providerOptions,
@@ -630,11 +649,11 @@ export class VectorEngine implements AgentEngine {
             });
           let reply;
           try {
-            reply = await ask(this.reasoningOff ? NO_REASONING_OPTIONS : USAGE_REPORT_OPTIONS);
+            reply = await ask(this.callOptions());
           } catch (error) {
             if (!(this.reasoningOff && isReasoningRejected(error))) throw error;
             this.reasoningOff = false;
-            reply = await ask(USAGE_REPORT_OPTIONS);
+            reply = await ask(this.callOptions(false));
           }
           const { text: answer, usage, providerMetadata } = reply;
           // The check's own model call counts in the run's totals.

@@ -1589,6 +1589,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         ? new VectorEngine({
             // Lite: the same engine with short tool descriptions and a smaller history budget.
             compact: engineSettings.kind === 'lite',
+            cacheSession: engineSettings.kind === 'lite' ? `vb-u${userId}-c${aiConfig.id}` : undefined,
             model: modelFor(aiConfig),
             fallback: fallbackConfig ? { model: modelFor(fallbackConfig), label: fallbackConfig.model } : undefined,
             agent: androidAgent,

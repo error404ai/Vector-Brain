@@ -41,6 +41,8 @@ export interface ContextOptions {
    * It is then identical on every call, so a prompt cache can end right after it.
    */
   taskFirst?: boolean;
+  /** With taskFirst: a message sent right after the task (outside the cache), e.g. this phone's facts. */
+  afterTask?: string | null;
 }
 
 export interface BuiltContext {
@@ -135,7 +137,11 @@ export function buildContext(options: ContextOptions): BuiltContext {
     : '';
 
   const messages: ModelMessage[] = options.taskFirst
-    ? [{ role: 'user', content: task }, ...(done ? [{ role: 'user' as const, content: done }] : [])]
+    ? [
+        { role: 'user', content: task },
+        ...(options.afterTask ? [{ role: 'user' as const, content: options.afterTask }] : []),
+        ...(done ? [{ role: 'user' as const, content: done }] : []),
+      ]
     : [{ role: 'user', content: [task, done ? `\n${done}` : ''].filter(Boolean).join('\n') }];
   for (let i = firstFull; i < steps.length; i += 1) {
     messages.push(...stepMessages(steps[i], i === steps.length - 1));

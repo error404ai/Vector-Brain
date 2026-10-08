@@ -934,9 +934,25 @@ export class AndroidAgent extends Agent {
     return this.options.screenshots === 'off' ? undefined : this.options.grounder;
   }
 
-  /** The prompt this agent runs with; the Vector engine sends the same one. */
-  async systemPrompt(): Promise<string> {
+  /**
+   * The prompt this agent runs with; the Vector engine sends the same one.
+   * withFacts=false leaves out this phone's network and locale facts (Lite
+   * sends them after the task instead, so every phone shares one cached prompt).
+   */
+  async systemPrompt(options: { withFacts?: boolean } = {}): Promise<string> {
+    if (options.withFacts === false) return this.baseSystemPrompt() + this.screenshotRule();
     return this.buildSystemPrompt();
+  }
+
+  /**
+   * What this phone last reported about its network and locale, as sent to the
+   * model: a task that only asks for its IP, DNS, language or timezone is
+   * answered from here. Null when there are none.
+   */
+  deviceFactsText(): string | null {
+    const facts = this.options.deviceFacts;
+    if (!facts) return null;
+    return `THIS PHONE (read by the phone itself, ${facts.split('\n')[0]}):\n${facts.split('\n').slice(1).join('\n')}\nIf the task only asks for any of these (IP, proxy, DNS, language, region, timezone, time), answer from this and finish at once — do not open Settings or a website for it.`;
   }
 
   /**
@@ -979,17 +995,16 @@ export class AndroidAgent extends Agent {
   }
 
   protected async buildSystemPrompt(): Promise<string> {
-    const vision = this.imagesToAi
+    const facts = this.deviceFactsText();
+    return this.baseSystemPrompt() + this.screenshotRule() + (facts ? `\n\n${facts}` : '');
+  }
+
+  private screenshotRule(): string {
+    return this.imagesToAi
       ? '\n\nSCREENSHOTS: capture_screen shows you the screen as an image. It is expensive; use it only when the element list cannot describe what you need.'
       : this.options.vision
         ? '\n\nSCREENSHOTS: screenshots are off for this account, so there is no screenshot tool and you never see the screen as an image. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".'
         : '\n\nSCREENSHOTS: this model cannot see images, so there is no screenshot tool. Everything you know about the screen comes from the element list in each result — never plan to "take a screenshot".';
-    // What this phone last reported about its network and locale: a task that
-    // only asks for its IP, DNS, language or timezone is answered from here.
-    const facts = this.options.deviceFacts
-      ? `\n\nTHIS PHONE (read by the phone itself, ${this.options.deviceFacts.split('\n')[0]}):\n${this.options.deviceFacts.split('\n').slice(1).join('\n')}\nIf the task only asks for any of these (IP, proxy, DNS, language, region, timezone, time), answer from this and finish at once — do not open Settings or a website for it.`
-      : '';
-    return this.baseSystemPrompt() + vision + facts;
   }
 
   private baseSystemPrompt(): string {
