@@ -356,6 +356,23 @@ describe('VectorEngine', () => {
     expect(JSON.stringify(result)).toContain('has not reported');
   });
 
+  it('Lite: in a reply with several actions, the ones after a failure are not sent', async () => {
+    const two: Chunk[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'a', toolName: 'tap_coordinate', input: JSON.stringify({ x: 1, y: 1 }) },
+      { type: 'tool-call', toolCallId: 'b', toolName: 'global_action', input: JSON.stringify({ action: 'BACK' }) },
+      { type: 'finish', finishReason: 'tool-calls', usage },
+    ];
+    const lite = engineWith([two, done(false, 'gave up')], { tapResult: () => ({ text: 'Action failed: NODE_NOT_FOUND', isError: true }) }, { compact: true });
+    await lite.engine.run('tap then back', 'b1');
+    expect(lite.calls.tap_coordinate).toBe(1);
+    expect(lite.calls.global_action ?? 0).toBe(0);
+    // Vector keeps sending every action of the reply, as before.
+    const full = engineWith([two, done(false, 'gave up')], { tapResult: () => ({ text: 'Action failed: NODE_NOT_FOUND', isError: true }) });
+    await full.engine.run('tap then back', 'b2');
+    expect(full.calls.global_action).toBe(1);
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');

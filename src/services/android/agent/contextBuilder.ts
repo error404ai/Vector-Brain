@@ -43,6 +43,17 @@ export interface ContextOptions {
   taskFirst?: boolean;
   /** With taskFirst: a message sent right after the task (outside the cache), e.g. this phone's facts. */
   afterTask?: string | null;
+  /**
+   * Lite: at most this many recent steps in full, whatever the budget allows; the
+   * rest are one line each. (With only a budget, short steps filled it 10 deep.)
+   */
+  maxRecent?: number;
+  /**
+   * Lite: older full steps drop their screen dump without the "(older screen
+   * omitted)" marker, and the notes that described that screen ("a screenshot is
+   * attached", "rows v1… were read from a screenshot"): stale once it is gone.
+   */
+  cleanOld?: boolean;
 }
 
 export interface BuiltContext {
@@ -63,6 +74,14 @@ function stripScreen(text: string): string {
   return text.replace(SCREEN_DUMP, STALE_SCREEN);
 }
 
+/** Notes AndroidAgent adds about the screen it just returned; they only apply to that screen. */
+const SCREEN_NOTE = /\n\nNOTE: (?:this screen exposes|you have waited twice|rows v1)[^\n]*/g;
+
+/** An older step for Lite: no screen, no marker, no notes about that screen. */
+export function cleanOldResult(text: string): string {
+  return text.replace(SCREEN_DUMP, '').replace(SCREEN_NOTE, '').trim();
+}
+
 function compactInput(input: unknown): string {
   try {
     const text = JSON.stringify(input ?? {});
@@ -79,9 +98,9 @@ export function summaryLine(step: StepRecord, index: number): string {
   return `${index + 1}. ${step.toolName}${compactInput(step.input) ? ` ${compactInput(step.input)}` : ''} → ${step.isError ? 'FAILED' : 'ok'}: ${outcome}`;
 }
 
-function stepMessages(step: StepRecord, keepScreen: boolean): ModelMessage[] {
+function stepMessages(step: StepRecord, keepScreen: boolean, clean = false): ModelMessage[] {
   const thought = step.thought.trim();
-  const text = keepScreen ? step.resultText : stripScreen(step.resultText);
+  const text = keepScreen ? step.resultText : clean ? cleanOldResult(step.resultText) : stripScreen(step.resultText);
   return [
     {
       role: 'assistant',
@@ -116,6 +135,7 @@ export function buildContext(options: ContextOptions): BuiltContext {
     // screen is sent regardless, so it does not count against the budget.
     const cost = estimateTokens(step2text(steps[i], false));
     const mustKeep = steps.length - i <= minRecent;
+    if (options.maxRecent && steps.length - i > options.maxRecent) break;
     if (!mustKeep && used + cost > options.budgetTokens) break;
     used += cost;
     firstFull = i;
@@ -144,7 +164,7 @@ export function buildContext(options: ContextOptions): BuiltContext {
       ]
     : [{ role: 'user', content: [task, done ? `\n${done}` : ''].filter(Boolean).join('\n') }];
   for (let i = firstFull; i < steps.length; i += 1) {
-    messages.push(...stepMessages(steps[i], i === steps.length - 1));
+    messages.push(...stepMessages(steps[i], i === steps.length - 1, Boolean(options.cleanOld)));
   }
 
   const last = steps[steps.length - 1];

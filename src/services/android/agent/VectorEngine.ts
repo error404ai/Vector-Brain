@@ -288,6 +288,8 @@ export class VectorEngine implements AgentEngine {
         vision: this.options.vision,
         notes,
         taskFirst: Boolean(this.options.compact),
+        maxRecent: this.options.compact ? COMPACT_MIN_RECENT : undefined,
+        cleanOld: Boolean(this.options.compact),
       });
       notes.length = 0;
 
@@ -350,6 +352,9 @@ export class VectorEngine implements AgentEngine {
         });
         steps.push(record);
         if (restarted) break;
+        // Lite may send several actions in one reply; after one fails, the rest were
+        // planned on a screen that did not come about, so they are not sent.
+        if (this.options.compact && record.isError) break;
       }
       await bookUsage();
 

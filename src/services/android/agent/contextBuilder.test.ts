@@ -1,4 +1,4 @@
-import { buildContext, estimateTokens, type StepRecord } from './contextBuilder';
+import { buildContext, cleanOldResult, estimateTokens, type StepRecord } from './contextBuilder';
 import { appNamedIn, parseAppList, parseVerdict, ruleFor } from './successVerifier';
 
 const screen = (n: number) => `Action succeeded: step ${n}\n\nUPDATED SCREEN ELEMENTS:\nidx|type|label|flags|tap_at\n${`0|btn|Button ${n}|t|1,1\n`.repeat(40)}`;
@@ -13,6 +13,28 @@ const step = (n: number, extra: Partial<StepRecord> = {}): StepRecord => ({
 });
 
 describe('buildContext', () => {
+  it('Lite: at most maxRecent steps in full, however much budget is left', () => {
+    const steps = Array.from({ length: 20 }, (_, i) => step(i + 1, { thought: 'short', resultText: `Action succeeded: Opened site ${i + 1}` }));
+    const built = buildContext({ task: 't', steps, budgetTokens: 800, minRecent: 2, maxRecent: 2, vision: false, taskFirst: true });
+    expect(built.fullSteps).toBe(2);
+    expect(built.summarisedSteps).toBe(18);
+    // Without the cap the same short steps fill the budget well past 2.
+    expect(buildContext({ task: 't', steps, budgetTokens: 800, minRecent: 2, vision: false }).fullSteps).toBeGreaterThan(2);
+  });
+
+  it('Lite: older steps lose their screen, the omitted marker and the notes about that screen', () => {
+    const old =
+      'Action succeeded: Opened https://a.com\n\nCURRENT APP: com.android.chrome\n\nUPDATED SCREEN ELEMENTS:\nidx|type|label|flags|tap_at\n0|view|x||1,1\n\nNOTE: this screen exposes little to the element list, so a screenshot is attached. Read it.';
+    expect(cleanOldResult(old)).toBe('Action succeeded: Opened https://a.com\n\nCURRENT APP: com.android.chrome');
+    const steps = [step(1, { resultText: old }), step(2), step(3)];
+    const built = buildContext({ task: 't', steps, budgetTokens: 5000, minRecent: 2, maxRecent: 3, vision: false, taskFirst: true, cleanOld: true });
+    const text = JSON.stringify(built.messages);
+    expect(text).not.toContain('older screen omitted');
+    expect(text).not.toContain('screenshot is attached');
+    expect(text).toContain('Opened https://a.com');
+    expect(text).toContain('Button 3'); // the newest screen stays
+  });
+
   it('keeps recent steps in full within the budget and summarises the rest in one line each', () => {
     const steps = Array.from({ length: 30 }, (_, i) => step(i + 1));
     const built = buildContext({ task: 'do it', steps, budgetTokens: 1500, minRecent: 3, vision: false });

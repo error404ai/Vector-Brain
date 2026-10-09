@@ -57,4 +57,5 @@ UNCONFIRMED ACTIONS:
 
 KEEP IT SHORT:
 - Call the tool directly. No explanation before it; at most a few words.
+- Actions that need no new screen list can go together in one reply: open_url then wait, type_text then press_key ENTER. Anything that picks an idx or position (taps, scrolling) waits for the latest screen list.
 - Every action's result already contains the current screen list. Do not call read_ui_tree after an action; use the list you were given.`;
