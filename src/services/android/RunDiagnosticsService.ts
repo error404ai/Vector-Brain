@@ -55,6 +55,16 @@ const STEP_COLUMNS: (keyof AndroidTaskLog)[] = [
   'waste',
 ];
 
+/**
+ * Diagnostics as the page and the export see them: the generation ids stay on
+ * the server (only their count goes out); they are only used to ask the provider.
+ */
+export function publicDiagnostics(d: RunDiagnostics | null | undefined): (Omit<RunDiagnostics, 'generations'> & { generation_count?: number }) | null {
+  if (!d) return d ?? null;
+  const { generations, ...rest } = d;
+  return generations ? { ...rest, generation_count: generations.length } : rest;
+}
+
 /** Sum of two amounts where null means "not reported": known if either side is. */
 function addKnown(a: number | null | undefined, b: number | null | undefined): number | null {
   return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
@@ -124,6 +134,9 @@ export class RunDiagnosticsService {
           }
         : { ...totals, recoveries: engineRecoveries };
       const diagnostics = summarizeRun(steps as StepLite[], tags, merged);
+      // A continued task keeps the earlier runs' requests; any earlier bill check is now incomplete.
+      const generations = [...(previous?.generations ?? []), ...(totals.generations ?? [])];
+      if (generations.length) diagnostics.generations = generations;
       const outcome = classifyOutcome({ status: task.status, recoveries: diagnostics.recoveries, verification: task.verification });
       await this.taskRepo.update({ id: taskId }, { diagnostics, outcome });
       return diagnostics;
@@ -327,7 +340,7 @@ export class RunDiagnosticsService {
         verification: t.verification,
         outcome: outcomeOf(t),
         failure_kind: outcomeOf(t) === 'failed' ? failureKind(t.reason_code, t.message) : null,
-        diagnostics: t.diagnostics,
+        diagnostics: publicDiagnostics(t.diagnostics),
       })),
     };
   }
@@ -347,6 +360,7 @@ export class RunDiagnosticsService {
     return {
       data: {
         ...task,
+        diagnostics: publicDiagnostics(task.diagnostics),
         device: devices.get(task.device_id) ?? null,
         waste_labels: WASTE_LABELS,
         steps: steps.map(({ ui_tree_snapshot, ...s }) => ({
@@ -419,7 +433,7 @@ export class RunDiagnosticsService {
         prompt: clean.scrub(task.prompt, 500), prompt_h: clean.hash(normalisePrompt(task.prompt)),
         provider: task.provider, model: task.model, success: Boolean(task.success), status: task.status, reason: task.reason_code,
         started_at: task.started_at, finished_at: task.finished_at, created_at: task.created_at,
-        total_steps: task.total_steps, duration_s: task.total_duration_seconds, diagnostics: task.diagnostics,
+        total_steps: task.total_steps, duration_s: task.total_duration_seconds, diagnostics: publicDiagnostics(task.diagnostics),
         engine: task.engine, verification: task.verification ? { ...task.verification, reason: clean.scrub(task.verification.reason, 200) } : null,
         outcome: outcomeOf(task),
       });

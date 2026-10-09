@@ -1,6 +1,6 @@
 import Logger from '@/logger/index';
 import type { AgentContext, AgentStreamMessage, Tool } from '@eko-ai/eko';
-import { generateText, jsonSchema, streamText, tool, type LanguageModel, type ToolSet } from 'ai';
+import { generateText, jsonSchema, streamText, tool, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai';
 import type { AndroidAgent } from '../eko/AndroidAgent';
 import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOutcome } from './AgentEngine';
 import { compactTool, type ToolSpec } from './compactTools';
@@ -202,6 +202,12 @@ export class VectorEngine implements AgentEngine {
   private onFallback = false;
   /** Lite asks for no hidden reasoning until a model refuses that once. */
   private reasoningOff: boolean;
+  /**
+   * Every model request's generation id (agent turns, retried or abandoned
+   * attempts, plan and judge), and whether the backup model made it. The
+   * Diagnostics page asks the provider what each one was billed.
+   */
+  readonly generations: { id: string; fallback: boolean }[] = [];
 
   /** True once the run switched to the backup model (counted as a recovery in the run's outcome). */
   get usedBackupModel(): boolean {
@@ -241,6 +247,40 @@ export class VectorEngine implements AgentEngine {
       } as never),
     });
     this.toolSet = set;
+  }
+
+  /**
+   * The current model, noting each request's generation id as soon as the
+   * provider sends it — before the answer streams, so an attempt that is cut
+   * off or fails later is still on the list.
+   */
+  private tracked(): LanguageModel {
+    const model = this.model;
+    if (typeof model === 'string') return model;
+    const fallback = this.onFallback;
+    const note = (id?: string) => {
+      if (id && !this.generations.some((g) => g.id === id)) this.generations.push({ id, fallback });
+    };
+    return wrapLanguageModel({
+      model,
+      middleware: {
+        wrapStream: async ({ doStream }) => {
+          const response = await doStream();
+          const watch = new TransformStream({
+            transform(chunk: { type: string; id?: string }, controller) {
+              if (chunk.type === 'response-metadata') note(chunk.id);
+              controller.enqueue(chunk);
+            },
+          });
+          return { ...response, stream: response.stream.pipeThrough(watch as never) };
+        },
+        wrapGenerate: async ({ doGenerate }) => {
+          const response = await doGenerate();
+          note(response.response?.id);
+          return response;
+        },
+      },
+    });
   }
 
   /** Per-call provider options: cost report, Lite's reasoning-off and sticky session. */
@@ -511,7 +551,7 @@ export class VectorEngine implements AgentEngine {
     alive: () => void,
   ): Promise<ModelTurn> {
     const result = streamText({
-      model: this.model,
+      model: this.tracked(),
       system,
       // Lite: cache everything up to the task message (tools → system → task), which
       // is identical on every call of the run. Providers without caching ignore it.
@@ -614,7 +654,7 @@ export class VectorEngine implements AgentEngine {
   private async makePlan(prompt: string, signal: AbortSignal, emit: (message: Record<string, unknown>) => Promise<void>): Promise<string | null> {
     try {
       const { text, usage, providerMetadata } = await generateText({
-        model: this.model,
+        model: this.tracked(),
         providerOptions: USAGE_REPORT_OPTIONS,
         system: PLANNER_PROMPT,
         prompt,
@@ -658,7 +698,7 @@ export class VectorEngine implements AgentEngine {
         judge: async (text) => {
           const ask = (providerOptions: ReturnType<VectorEngine['callOptions']>) =>
             generateText({
-              model: this.model,
+              model: this.tracked(),
               providerOptions,
               prompt: text,
               // At 300, models that reason first often spent it all thinking and answered nothing ("No reason given").

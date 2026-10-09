@@ -1,4 +1,5 @@
 import { assertOwner, AuthUser } from '@/helpers/ownerAccess';
+import { BilledCostService } from '@/services/android/BilledCostService';
 import { DiagnosticsSyncService } from '@/services/android/DiagnosticsSyncService';
 import { ClientReportService } from '@/services/ClientReportService';
 import { clampDays, RunDiagnosticsService } from '@/services/android/RunDiagnosticsService';
@@ -20,6 +21,7 @@ export class DiagnosticsController {
     private diagnostics: RunDiagnosticsService,
     private sync: DiagnosticsSyncService,
     private clientReports: ClientReportService,
+    private billedCost: BilledCostService,
   ) {}
 
   /** What browsers reported about themselves: unclean exits, stuck loaders, JS/render errors. */
@@ -45,6 +47,13 @@ export class DiagnosticsController {
   async run(@Param('id') id: number, @CurrentUser({ required: true }) user: AuthUser) {
     assertOwner(user, 'Run diagnostics');
     return this.diagnostics.run(Number(id));
+  }
+
+  /** Ask the AI provider what it billed for each of the run's model requests (OpenRouter keys only). */
+  @Post('/runs/:id/billed')
+  async checkBilled(@Param('id') id: number, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.billedCost.check(Number(id)) };
   }
 
   /** Sanitized export (gzip JSONL) of the last N days; no screenshots, no personal text. */

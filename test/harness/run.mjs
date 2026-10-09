@@ -2707,6 +2707,8 @@ const scenarios = [
       if (!diagnostics) return 'lite run has no diagnostics';
       if (!(diagnostics.cache_read_tokens > 0)) return `cached tokens not recorded: ${JSON.stringify(diagnostics)}`.slice(0, 300);
       if (!(diagnostics.cost_usd > 0)) return `cost not recorded: ${diagnostics.cost_usd}`;
+      // Every model request's generation id is kept for the "billed by OpenRouter" check.
+      if (!(diagnostics.generations?.length >= 2) || !diagnostics.generations.every((g) => /^h\d+$/.test(g.id) && g.c)) return `generation ids not recorded: ${JSON.stringify(diagnostics.generations)}`.slice(0, 300);
       const [[step]] = await db.query('SELECT prompt_tokens, cache_read_tokens, cost_usd FROM android_task_logs WHERE agent_task_id = ? AND prompt_tokens IS NOT NULL ORDER BY step_index LIMIT 1', [lite.taskId]);
       if (step?.cost_usd == null) return `step cost not stored: ${JSON.stringify(step)}`;
     },

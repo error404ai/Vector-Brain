@@ -29,6 +29,18 @@ export interface RunDiagnostics {
   vision: number;
   packages: string[];
   recoveries?: Record<string, number>;
+  /** Model requests recorded with a provider generation id (Vector/Lite runs). */
+  generation_count?: number;
+  /** What OpenRouter itself billed for those requests, once checked. */
+  billed?: BilledCost;
+}
+
+export interface BilledCost {
+  usd: number;
+  found: number;
+  requested: number;
+  not_checkable: number;
+  checked_at: string;
 }
 
 export type RunOutcome = 'first_try' | 'recovered' | 'human_assisted' | 'failed' | 'cancelled';
@@ -203,6 +215,9 @@ export const diagnosticsService = baseApi.injectEndpoints({
       query: (days) => ({ url: `/diagnostics/client-reports?days=${days}`, method: 'GET' }),
       providesTags: [TAG],
     }),
+    checkBilledCost: builder.mutation<{ data: BilledCost }, number>({
+      query: (id) => ({ url: `/diagnostics/runs/${id}/billed`, method: 'POST' }),
+    }),
     syncDiagnosticsNow: builder.mutation<{ data: SyncState }, void>({
       query: () => ({ url: '/diagnostics/sync', method: 'POST' }),
       invalidatesTags: [TAG],
@@ -217,6 +232,7 @@ export const {
   useGetDiagnosticsSyncQuery,
   useSyncDiagnosticsNowMutation,
   useGetClientReportsQuery,
+  useCheckBilledCostMutation,
 } = diagnosticsService;
 
 /** The export needs the bearer token, so it is fetched as a blob and saved. */

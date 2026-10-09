@@ -7,6 +7,7 @@ import {
   useGetDiagnosticsSummaryQuery,
   useGetDiagnosticsSyncQuery,
   useSyncDiagnosticsNowMutation,
+  useCheckBilledCostMutation,
   type ClientReport,
   type DiagnosticsRun,
   type DiagnosticsStep,
@@ -629,6 +630,7 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
               <Alert severity="info">This run was recorded before step diagnostics existed.</Alert>
             )}
             {d && d.tokens_reported ? <TokenBreakdown d={d} screenTokens={avgScreenTokens(run.steps)} /> : null}
+            {d && d.generation_count ? <BilledCheck runId={run.id} d={d} /> : null}
             <Box sx={{ overflowX: 'auto' }}>
               <Table size="small" sx={{ minWidth: 980 }}>
                 <TableHead>
@@ -751,6 +753,60 @@ function TokenBreakdown({ d, screenTokens }: { d: RunDiagnostics; screenTokens: 
           </Box>
         ) : null}
       </Box>
+    </Card>
+  );
+}
+
+/**
+ * The provider's own bill for the run, next to what the run recorded. OpenRouter
+ * is asked for every request the engine made, including retried or cut-off
+ * attempts and the plan and completion-check calls, which the recorded cost misses.
+ */
+function BilledCheck({ runId, d }: { runId: number; d: RunDiagnostics }) {
+  const [check, { data, isLoading }] = useCheckBilledCostMutation();
+  const billed = data?.data ?? d.billed ?? null;
+  const recorded = d.cost_usd ?? null;
+  const gap = billed && recorded != null ? billed.usd - recorded : null;
+  const run = async () => {
+    try {
+      await check(runId).unwrap();
+    } catch (error) {
+      toast.error((error as { data?: { message?: string } })?.data?.message ?? 'Could not reach OpenRouter');
+    }
+  };
+  return (
+    <Card variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between">
+        <Box>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+            Billed by OpenRouter
+          </Typography>
+          {billed ? (
+            <>
+              <Typography sx={{ fontWeight: 800, fontSize: 22, fontVariantNumeric: 'tabular-nums' }}>{fmtUsd(billed.usd)}</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                {billed.found} of {billed.requested} requests found
+                {billed.not_checkable ? ` · ${billed.not_checkable} made through a provider that cannot be asked` : ''} · checked{' '}
+                {new Date(billed.checked_at).toLocaleTimeString()}
+              </Typography>
+              {gap != null ? (
+                <Typography variant="caption" sx={{ display: 'block', color: Math.abs(gap) < 0.000005 ? 'success.main' : 'warning.main' }}>
+                  {Math.abs(gap) < 0.000005
+                    ? `Matches the recorded ${fmtUsd(recorded ?? 0)}`
+                    : `Recorded ${fmtUsd(recorded ?? 0)} · ${gap > 0 ? `${fmtUsd(gap)} more was billed (retries, cut-off calls)` : `${fmtUsd(-gap)} less was billed`}`}
+                </Typography>
+              ) : null}
+            </>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {d.generation_count} model requests recorded. Ask OpenRouter what each one was actually billed.
+            </Typography>
+          )}
+        </Box>
+        <Button variant={billed ? 'outlined' : 'contained'} size="small" onClick={run} disabled={isLoading} sx={{ flexShrink: 0 }}>
+          {isLoading ? 'Asking OpenRouter…' : billed ? 'Check again' : 'Check with OpenRouter'}
+        </Button>
+      </Stack>
     </Card>
   );
 }

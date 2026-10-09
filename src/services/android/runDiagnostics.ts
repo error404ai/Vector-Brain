@@ -55,6 +55,10 @@ export interface RunDiagnostics {
    * verify_retry, backup_model, obstacle.
    */
   recoveries?: Partial<Record<RecoveryKind, number>>;
+  /** Generation ids of every model request (Vector/Lite runs); stripped from exports and lists. */
+  generations?: RunGeneration[];
+  /** The provider's own bill for those requests, once checked from Diagnostics. */
+  billed?: BilledCost;
 }
 
 /** The subset of a step row these functions need. */
@@ -170,6 +174,24 @@ export interface RunTotals {
   costUsd?: number | null;
   /** Recoveries only the engine knows about (e.g. 'backup_model'). */
   recoveries?: RecoveryKind[];
+  /** Provider generation ids of the run's model requests and the AI config that made each (c). */
+  generations?: RunGeneration[];
+}
+
+export interface RunGeneration {
+  id: string;
+  c: number | null;
+}
+
+/** What the provider says it billed for a run's requests (OpenRouter's /generation), fetched on demand. */
+export interface BilledCost {
+  usd: number;
+  /** Requests the provider returned a cost for, of `requested`. */
+  found: number;
+  requested: number;
+  /** Requests made through a provider that cannot be asked (not OpenRouter). */
+  not_checkable: number;
+  checked_at: string;
 }
 
 export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], totals: RunTotals): RunDiagnostics {

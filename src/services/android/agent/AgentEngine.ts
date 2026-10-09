@@ -53,4 +53,6 @@ export interface AgentEngine {
   dispose(): void;
   /** True when the run had to switch to the backup model. */
   readonly usedBackupModel?: boolean;
+  /** Provider generation ids of every model request, for checking what was billed (Vector/Lite). */
+  readonly generations?: { id: string; fallback: boolean }[];
 }

@@ -373,6 +373,15 @@ describe('VectorEngine', () => {
     expect(full.calls.global_action).toBe(1);
   });
 
+  it('records every request\'s generation id, the judge\'s too', async () => {
+    const withId = (id: string, chunks: Chunk[]): Chunk[] => [chunks[0], { type: 'response-metadata', id } as never, ...chunks.slice(1)];
+    const e = engineWith([withId('gen-a', toolCall('open_app', { packageName: 'com.android.chrome' })), withId('gen-b', done(true, 'Visited the sites'))], undefined, { compact: true });
+    await e.engine.run('open Chrome and visit 2 sites', 'g1');
+    const ids = e.engine.generations.map((g) => g.id);
+    expect(ids).toEqual(expect.arrayContaining(['gen-a', 'gen-b']));
+    expect(e.engine.generations.every((g) => g.fallback === false)).toBe(true);
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');

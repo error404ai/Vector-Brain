@@ -2087,6 +2087,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
         reasoningTokens: usageTotals.reasoning,
         costUsd: usageTotals.costReported ? usageTotals.costUsd : null,
         recoveries: [...ruleRecoveries, ...(activeEngine.usedBackupModel ? (['backup_model'] as const) : [])],
+        // Which AI config made each request, so Diagnostics can ask that account what it was billed.
+        generations: (activeEngine.generations ?? []).map((g) => ({ id: g.id, c: g.fallback ? fallbackConfig?.id ?? null : aiConfig.id })),
       });
       // Saved flows: book how the flow did, keep a step fix, or save this run as a
       // flow — before the phone is free, so its next run sees the result. Never throws.
