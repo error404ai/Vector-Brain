@@ -1346,35 +1346,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       return { content: [textPart, { type: 'image', data: everyStepShot, mimeType: 'image/jpeg' }], isError };
     }
 
-    // Screenshot is intentionally NOT attached to regular action results.
-    // The text UI tree already contains everything needed (elements + center
-    // coordinates). Images on every step multiply tokens/latency/cost.
-    // The model can call read_ui_tree or capture_screen whenever it
-    // genuinely needs visual context.
-    //
-    // The exception is a second consecutive wait: at that point the model is
-    // waiting because the tree is not telling it whether the page loaded, and
-    // more waiting will not fix that. Show it the screen once.
-    if (
-      this.imagesToAi &&
-      action.type === 'Wait' &&
-      this.consecutiveWaits >= 2 &&
-      this.lastScreenshotBase64 &&
-      this.autoVisionUsed < this.autoVisionBudget
-    ) {
-      this.autoVisionUsed += 1;
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `${textPart.text}\n\nNOTE: you have waited twice in a row. A screenshot of the current screen is attached — read it directly instead of waiting again. If the content is already there, continue with the task.`,
-          },
-          { type: 'image', data: this.lastScreenshotBase64, mimeType: 'image/jpeg' },
-        ],
-        isError,
-      };
-    }
-
+    // No other automatic screenshot: "When stuck" means stuck (screenExtras), and
+    // "Every step" is handled above. (A second wait in a row used to attach one too.)
     return {
       content: [textPart],
       isError,
@@ -1477,6 +1450,15 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (stuck) return { note: stuckNote };
       return {
         note: '\n\nNOTE: this screen exposes very little to the element list, and screenshots are off for this account. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element — or finish and report that the screen could not be read.',
+      };
+    }
+    // "When stuck" in settings: the AI sees the screen only when it is stuck (a loop,
+    // actions that change nothing). A thin list alone is not stuck — on Oct 9 this
+    // sent an image after nearly every open_url. (A text-only model still gets the
+    // screen reader below; that is its own setting.)
+    if (this.options.screenshots !== 'every_step' && !stuck && this.imagesToAi) {
+      return {
+        note: '\n\nNOTE: this screen exposes little to the element list. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element. If you get stuck, you will be shown a screenshot.',
       };
     }
     // Stuck on a screen the list does describe: one look per screen, not per step.
