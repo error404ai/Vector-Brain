@@ -382,6 +382,19 @@ describe('VectorEngine', () => {
     expect(e.engine.generations.every((g) => g.fallback === false)).toBe(true);
   });
 
+  it('Lite: after 25 steps the first one is still in the model\'s view, and the judge gets the counts', async () => {
+    const script = [
+      ...Array.from({ length: 25 }, (_, i) => toolCall('tap_coordinate', { x: i, y: i }, `t${i}`)),
+      done(true, 'Tapped 25 times'),
+    ];
+    const e = engineWith(script, undefined, { compact: true });
+    await e.engine.run('tap 25 times then open the sites', 'long1');
+    const lastAgentPrompt = JSON.stringify(e.prompts.filter((p) => JSON.stringify(p).includes('TASK:')).at(-1));
+    expect(lastAgentPrompt).toContain('1. tap_coordinate');
+    expect(lastAgentPrompt).not.toContain('not shown');
+    expect(JSON.stringify(e.prompts.at(-1))).toContain('COUNTED BY THE SYSTEM');
+  });
+
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
     await engine.run('open Chrome and visit 2 sites', 'r9');

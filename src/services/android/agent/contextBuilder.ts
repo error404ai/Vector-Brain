@@ -98,6 +98,51 @@ export function summaryLine(step: StepRecord, index: number): string {
   return `${index + 1}. ${step.toolName}${compactInput(step.input) ? ` ${compactInput(step.input)}` : ''} → ${step.isError ? 'FAILED' : 'ok'}: ${outcome}`;
 }
 
+/** The argument that tells steps apart, short: a URL without its scheme, a package, typed text, an idx. */
+function keyArg(input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>;
+  const pick = i.url ?? i.packageName ?? (i.text != null ? `"${String(i.text)}"` : null) ?? (i.idx != null ? `#${String(i.idx).replace(/"/g, '')}` : null) ?? i.action ?? i.direction ?? i.key;
+  const text = pick != null ? String(pick).replace(/^https?:\/\/(www\.)?/, '') : compactInput(input);
+  return text.length > 50 ? `${text.slice(0, 50)}…` : text;
+}
+
+/**
+ * Lite's line for an older step: number, tool, what it acted on, ✓ or ✗ with
+ * the reason. ~10 tokens, so every step of a long run stays in view — the
+ * model counts from these ("visit 10 sites"); dropping the oldest made it lose
+ * count (Oct 9, runs #3224/#3225).
+ */
+export function shortLine(step: StepRecord, index: number): string {
+  const arg = keyArg(step.input);
+  const head = `${index + 1}. ${step.toolName}${arg ? ` ${arg}` : ''}`;
+  if (!step.isError) return `${head} ✓`;
+  const reason = (stripScreen(step.resultText).split('\n').find((line) => line.trim()) ?? '').slice(0, 70);
+  return `${head} ✗ ${reason}`;
+}
+
+/**
+ * What the run did, counted by code for the completion judge: successful
+ * actions per tool and how many distinct targets (URLs, apps, texts). A model
+ * counting 40 step lines itself said "14 visits, short of the 10 required".
+ */
+export function countActions(steps: StepRecord[]): string {
+  const per = new Map<string, { ok: number; failed: number; distinct: Set<string> }>();
+  for (const step of steps) {
+    const entry = per.get(step.toolName) ?? { ok: 0, failed: 0, distinct: new Set<string>() };
+    if (step.isError) entry.failed += 1;
+    else {
+      entry.ok += 1;
+      const i = (step.input ?? {}) as Record<string, unknown>;
+      const target = i.url ?? i.packageName ?? i.text;
+      if (target != null) entry.distinct.add(String(target));
+    }
+    per.set(step.toolName, entry);
+  }
+  return [...per]
+    .map(([tool, e]) => `${tool}: ${e.ok} succeeded${e.distinct.size ? ` (${e.distinct.size} different)` : ''}${e.failed ? `, ${e.failed} failed` : ''}`)
+    .join('; ');
+}
+
 function stepMessages(step: StepRecord, keepScreen: boolean, clean = false): ModelMessage[] {
   const thought = step.thought.trim();
   const text = keepScreen ? step.resultText : clean ? cleanOldResult(step.resultText) : stripScreen(step.resultText);
@@ -142,11 +187,12 @@ export function buildContext(options: ContextOptions): BuiltContext {
   }
 
   // Older steps become one line each; if even that overflows, the oldest lines go.
-  const older = steps.slice(0, firstFull).map(summaryLine);
+  // Lite (maxRecent) keeps every line, in the short form: the model counts from them.
+  const older = steps.slice(0, firstFull).map(options.maxRecent ? shortLine : summaryLine);
   const summaryBudget = Math.max(200, options.budgetTokens - used);
   let summary = older;
   let dropped = 0;
-  while (summary.length && estimateTokens(summary.join('\n')) > summaryBudget) {
+  while (!options.maxRecent && summary.length && estimateTokens(summary.join('\n')) > summaryBudget) {
     summary = summary.slice(1);
     dropped += 1;
   }

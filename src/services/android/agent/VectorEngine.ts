@@ -4,7 +4,7 @@ import { generateText, jsonSchema, streamText, tool, wrapLanguageModel, type Lan
 import type { AndroidAgent } from '../eko/AndroidAgent';
 import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOutcome } from './AgentEngine';
 import { compactTool, type ToolSpec } from './compactTools';
-import { buildContext, summaryLine, type StepRecord } from './contextBuilder';
+import { buildContext, countActions, summaryLine, type StepRecord } from './contextBuilder';
 import { LITE_ENGINE_RULES } from '../eko/compactPrompt';
 import { parseAppList, verifyCompletion } from './successVerifier';
 import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
@@ -430,7 +430,7 @@ export class VectorEngine implements AgentEngine {
         return { success: true, stopReason: 'done', result: done.summary, verification: { status: 'unverified', method: 'none', reason: 'Verification is off', retries: 0 } };
       }
 
-      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine));
+      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine), countActions(steps));
       if (outcome.status === 'failed' && verificationRetries < MAX_VERIFICATION_RETRIES) {
         verificationRetries += 1;
         // Oct 9: after "carry on" alone, 2 of 3 Chrome runs gave up with success=false although only the check's wording was at issue.
@@ -686,6 +686,7 @@ export class VectorEngine implements AgentEngine {
     signal: AbortSignal,
     emit: (message: Record<string, unknown>) => Promise<void>,
     steps: string[] = [],
+    counts = '',
   ): Promise<VerificationOutcome> {
     const agent = this.options.agent;
     return verifyCompletion(
@@ -693,6 +694,7 @@ export class VectorEngine implements AgentEngine {
         goal,
         summary,
         steps,
+        counts,
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {

@@ -29,6 +29,8 @@ export interface VerifyInput {
   judge?: (prompt: string) => Promise<string>;
   /** The run's steps as one line each, for goals the final screen alone cannot prove (visit 10 sites, send then close). */
   steps?: string[];
+  /** Actions counted by code (countActions): the judge uses these instead of counting lines itself. */
+  counts?: string;
 }
 
 const INSTALL = /\b(install|download|daal(?:o|do)?|dalo)\b/i;
@@ -90,7 +92,7 @@ export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   return null;
 }
 
-export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = []): string {
+export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = ''): string {
   const shown = steps.slice(-40);
   return [
     'You check whether an Android phone task was really completed. You see the final screen as a list of UI elements' + (shown.length ? ', and the steps the phone actually performed.' : '.'),
@@ -103,6 +105,7 @@ export function judgePrompt(goal: string, summary: string, screen: ScreenState, 
     '',
     `GOAL: ${goal}`,
     `AGENT SAYS: ${summary}`,
+    ...(counts ? [`COUNTED BY THE SYSTEM (exact, for the whole run; use these numbers, do not recount): ${counts}`] : []),
     ...(shown.length ? [`STEPS (${steps.length > shown.length ? `last ${shown.length} of ${steps.length}` : steps.length}):`, ...shown] : []),
     `FOREGROUND APP: ${screen.packageName ?? 'unknown'}`,
     'FINAL SCREEN:',
@@ -155,7 +158,7 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
 
   if (!input.judge) return { status: 'unverified', method: 'none', reason: 'No check applies to this task', retries };
   try {
-    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps)));
+    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps, input.counts)));
     return {
       status: verdict.verdict === 'yes' ? 'verified' : verdict.verdict === 'no' ? 'failed' : 'unverified',
       method: 'judge',

@@ -44,4 +44,10 @@ describe('judge prompt', () => {
     expect(p).toContain('Loose words in the goal');
     expect(p).toContain('counts once per visit');
   });
+
+  it('gives the judge the counts made by code, ahead of the step lines', () => {
+    const p = judgePrompt('visit 10 sites', 'done', { packageName: 'com.android.chrome', tree: 'x' }, ['1. open_url → ok'], 'open_url: 14 succeeded (11 different)');
+    expect(p).toContain('COUNTED BY THE SYSTEM (exact, for the whole run; use these numbers, do not recount): open_url: 14 succeeded (11 different)');
+    expect(p.indexOf('COUNTED BY THE SYSTEM')).toBeLessThan(p.indexOf('STEPS (1)'));
+  });
 });

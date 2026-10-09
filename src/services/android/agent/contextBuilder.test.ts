@@ -1,4 +1,4 @@
-import { buildContext, cleanOldResult, estimateTokens, type StepRecord } from './contextBuilder';
+import { buildContext, cleanOldResult, countActions, estimateTokens, shortLine, type StepRecord } from './contextBuilder';
 import { appNamedIn, parseAppList, parseVerdict, ruleFor } from './successVerifier';
 
 const screen = (n: number) => `Action succeeded: step ${n}\n\nUPDATED SCREEN ELEMENTS:\nidx|type|label|flags|tap_at\n${`0|btn|Button ${n}|t|1,1\n`.repeat(40)}`;
@@ -13,6 +13,31 @@ const step = (n: number, extra: Partial<StepRecord> = {}): StepRecord => ({
 });
 
 describe('buildContext', () => {
+  it('Lite: every older step stays as a short line, however long the run (the model counts from them)', () => {
+    const steps = Array.from({ length: 60 }, (_, i) => step(i + 1, { toolName: 'open_url', input: { url: `https://www.site${i + 1}.com/` }, resultText: `Action succeeded: Opened https://www.site${i + 1}.com/` }));
+    const built = buildContext({ task: 'visit 60 sites', steps, budgetTokens: 800, minRecent: 2, maxRecent: 2, vision: false, taskFirst: true, cleanOld: true });
+    const intro = JSON.stringify(built.messages);
+    expect(intro).toContain('1. open_url site1.com/ ✓');
+    expect(intro).toContain('58. open_url site58.com/ ✓');
+    expect(intro).not.toContain('not shown');
+    // Short: 58 lines in well under 2,000 estimated tokens.
+    expect(estimateTokens(intro)).toBeLessThan(2000);
+  });
+
+  it('short lines show what was acted on, and the reason when it failed', () => {
+    expect(shortLine(step(1, { toolName: 'tap_element', input: { idx: '"12"' }, resultText: 'Action succeeded: Tapped' }), 0)).toBe('1. tap_element #12 ✓');
+    expect(shortLine(step(2, { toolName: 'type_text', input: { text: 'lofi' }, isError: true, resultText: 'Action failed: NODE_NOT_FOUND: no field' }), 1)).toBe('2. type_text "lofi" ✗ Action failed: NODE_NOT_FOUND: no field');
+  });
+
+  it('counts successful actions and distinct targets for the judge', () => {
+    const steps = [
+      ...['a', 'b', 'a'].map((u, i) => step(i, { toolName: 'open_url', input: { url: `https://${u}.com` } })),
+      step(9, { toolName: 'open_url', input: { url: 'https://c.com' }, isError: true }),
+      step(10, { toolName: 'wait', input: {} }),
+    ];
+    expect(countActions(steps)).toBe('open_url: 3 succeeded (2 different), 1 failed; wait: 1 succeeded');
+  });
+
   it('Lite: at most maxRecent steps in full, however much budget is left', () => {
     const steps = Array.from({ length: 20 }, (_, i) => step(i + 1, { thought: 'short', resultText: `Action succeeded: Opened site ${i + 1}` }));
     const built = buildContext({ task: 't', steps, budgetTokens: 800, minRecent: 2, maxRecent: 2, vision: false, taskFirst: true });
