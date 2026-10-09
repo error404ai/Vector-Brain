@@ -552,10 +552,18 @@ export class VectorEngine implements AgentEngine {
   ): Promise<ModelTurn> {
     const result = streamText({
       model: this.tracked(),
-      system,
-      // Lite: cache everything up to the task message (tools → system → task), which
-      // is identical on every call of the run. Providers without caching ignore it.
-      messages: this.options.compact && messages.length ? [{ ...messages[0], providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number], ...messages.slice(1)] : messages,
+      // Lite sends the system prompt as a message so it can carry its own cache mark.
+      system: this.options.compact ? undefined : system,
+      // Lite caches in two layers. Mark 1 ends after tools + system prompt, which are
+      // the same for every task, so a new task reuses them warm instead of writing
+      // ~4,900 tokens again (run #3232's first call: 0 cached, $0.0007). Mark 2 ends
+      // after the task message, identical on every call of the run.
+      messages: this.options.compact
+        ? [
+            { role: 'system', content: system, providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number],
+            ...(messages.length ? [{ ...messages[0], providerOptions: CACHE_BREAKPOINT } as (typeof messages)[number], ...messages.slice(1)] : []),
+          ]
+        : messages,
       providerOptions: this.callOptions(),
       tools: this.toolSet,
       toolChoice: 'auto',

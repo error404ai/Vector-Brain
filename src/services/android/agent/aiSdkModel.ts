@@ -30,7 +30,7 @@ export function createLanguageModel(config: ModelConfig): LanguageModel {
     case AiProvider.GOOGLE:
       return createGoogleGenerativeAI({ apiKey, baseURL, fetch }).languageModel(model);
     case AiProvider.OPENROUTER:
-      return createOpenRouter({ apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1', fetch }).languageModel(model);
+      return createOpenRouter({ apiKey, baseURL: baseURL || 'https://openrouter.ai/api/v1', fetch: withSystemCacheParts(fetch) }).languageModel(model);
     case AiProvider.DEEPSEEK:
     case AiProvider.GROQ:
     case AiProvider.CUSTOM:
@@ -42,4 +42,33 @@ export function createLanguageModel(config: ModelConfig): LanguageModel {
       if (!baseURL || baseURL.includes('openai.com')) return createOpenAI({ apiKey, baseURL, fetch }).languageModel(model);
       return createOpenAICompatible({ name: model, apiKey, baseURL, fetch }).languageModel(model);
   }
+}
+
+/**
+ * The OpenRouter provider puts a system message's cache mark on the message
+ * ({role, content: "text", cache_control}). OpenRouter documents it on a text
+ * part instead ({role, content: [{type: "text", text, cache_control}]}), so the
+ * mark is moved there before the request leaves. Nothing else in the body changes.
+ */
+export function moveSystemCacheMark(body: string): string {
+  let json: { messages?: { role?: string; content?: unknown; cache_control?: unknown }[] };
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  let changed = false;
+  for (const m of json.messages ?? []) {
+    if (m.role === 'system' && typeof m.content === 'string' && m.cache_control) {
+      m.content = [{ type: 'text', text: m.content, cache_control: m.cache_control }];
+      delete m.cache_control;
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(json) : body;
+}
+
+function withSystemCacheParts(fetch: typeof globalThis.fetch): typeof globalThis.fetch {
+  return (input, init) =>
+    fetch(input, init && typeof init.body === 'string' ? { ...init, body: moveSystemCacheMark(init.body) } : init);
 }

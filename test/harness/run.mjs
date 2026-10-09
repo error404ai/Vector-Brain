@@ -196,7 +196,9 @@ const llmServer = http.createServer((req, res) => {
     const text = JSON.stringify(json.messages ?? []);
     const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : 'plan';
     const cacheMarked = (json.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((c) => c && c.cache_control));
-    llm.requests.push({ kind, tools, chars: text.length, cacheMarked, askedUsage: Boolean(json.usage?.include), toolChars: JSON.stringify(json.tools ?? []).length, stream: json.stream === true, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
+    const systemMsg = (json.messages ?? []).find((m) => m.role === 'system');
+    const systemMarked = Boolean(systemMsg && (systemMsg.cache_control || (Array.isArray(systemMsg.content) && systemMsg.content.some((c) => c && c.cache_control))));
+    llm.requests.push({ kind, tools, chars: text.length, cacheMarked, systemMarked, systemShape: systemMsg ? JSON.stringify({ ...systemMsg, content: typeof systemMsg.content === 'string' ? '<text>' : '<parts>' }) : null, askedUsage: Boolean(json.usage?.include), toolChars: JSON.stringify(json.tools ?? []).length, stream: json.stream === true, toolMessages: (json.messages ?? []).filter((m) => m.role === 'tool').length });
     const reply = (status, payload) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
@@ -2697,6 +2699,10 @@ const scenarios = [
       if (vector.done?.status !== 'SUCCEEDED') return `vector run ${vector.done?.status}`;
       // Lite caches the repeated part; Vector does not. Both ask for the cost.
       if (!liteTools.cacheMarked) return 'lite did not mark a cache breakpoint';
+      // Second mark after tools + system, so a new task reuses the warm prefix.
+      if (!liteTools.systemMarked) return `lite system prompt carries no cache mark: ${liteTools.systemShape}`;
+      if (!/"content":"<parts>"/.test(liteTools.systemShape ?? '')) return `lite system cache mark is not on a text part: ${liteTools.systemShape}`;
+      console.log(`      lite system message as sent: ${liteTools.systemShape}`);
       if (vectorTools.cacheMarked) return 'vector marked a cache breakpoint';
       if (!liteTools.askedUsage) return 'lite did not ask OpenRouter for the cost';
       const diagnostics = await waitFor(async () => {

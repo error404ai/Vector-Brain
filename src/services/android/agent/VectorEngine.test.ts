@@ -263,9 +263,13 @@ describe('VectorEngine', () => {
     }
     await lite.engine.run('open YouTube', 'c1');
     await full.engine.run('open YouTube', 'c2');
-    // Lite: the task message carries the cache breakpoint; Vector does not cache.
+    // Lite: two cache marks — after tools + system (shared by every task) and after the task. Vector does not cache.
+    const liteSystem = seen[0].prompt.find((m) => m.role === 'system');
+    expect(liteSystem?.providerOptions).toMatchObject({ openrouter: { cacheControl: { type: 'ephemeral' } } });
+    expect(seen[0].prompt.filter((m) => m.role === 'system')).toHaveLength(1);
     const liteFirstUser = seen[0].prompt.find((m) => m.role === 'user');
     expect(liteFirstUser?.providerOptions).toMatchObject({ openrouter: { cacheControl: { type: 'ephemeral' } } });
+    expect(seen[2].prompt.find((m) => m.role === 'system')?.providerOptions?.openrouter).toBeUndefined();
     const fullFirstUser = seen[2].prompt.find((m) => m.role === 'user');
     expect(fullFirstUser?.providerOptions?.openrouter).toBeUndefined();
     // Both ask OpenRouter for the cost.
