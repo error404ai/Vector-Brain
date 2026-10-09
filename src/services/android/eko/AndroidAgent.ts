@@ -409,7 +409,10 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
-          return this.runDeviceAction(
+          // An idx from the screen list passed as a viewId or node path: tap that element.
+          const idx = this.idxInSelector(args);
+          if (idx) return this.withNote(await this.runTool('tap_element', { idx }), `("${idx}" is an idx from the screen list, so element ${idx} was tapped.)`);
+          const result = await this.runDeviceAction(
             {
               type: 'ClickNode',
               nodePath: args.nodePath as string | undefined,
@@ -419,6 +422,14 @@ export class AndroidAgent extends Agent {
             'click_node',
             args,
           );
+          // The phone matches text exactly; a curly apostrophe or different case misses
+          // a label that is on screen. Tap the one element whose label matches loosely.
+          const text = typeof args.text === 'string' ? args.text : '';
+          if (result.isError && text && /NODE_NOT_FOUND/.test((result.content ?? []).map((c) => ('text' in c ? c.text : '')).join(' '))) {
+            const match = this.uniqueLabelMatch(text);
+            if (match) return this.withNote(await this.runTool('tap_element', { idx: match.idx }), `(No exact match for "${text.slice(0, 60)}"; tapped "${match.label.slice(0, 60)}", element ${match.idx}.)`);
+          }
+          return result;
         },
       },
       {
@@ -438,16 +449,24 @@ export class AndroidAgent extends Agent {
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
           // Reset loop counter on new text input
           this.consecutiveFailures = 0;
-          return this.runDeviceAction(
+          // An idx from the screen list passed as a viewId or node path never matches a
+          // view: tap that element so it has focus, then type into the focused field.
+          const idx = this.idxInSelector(args);
+          if (idx) {
+            const tapped = await this.runTool('tap_element', { idx });
+            if (tapped.isError) return tapped;
+          }
+          const result = await this.runDeviceAction(
             {
               type: 'SetText',
               text: String(args.text || ''),
-              nodePath: args.nodePath as string | undefined,
-              viewId: args.viewId as string | undefined,
+              nodePath: idx ? undefined : (args.nodePath as string | undefined),
+              viewId: idx ? undefined : (args.viewId as string | undefined),
             },
             'type_text',
             args,
           );
+          return idx ? this.withNote(result, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : result;
         },
       },
       {
@@ -981,6 +1000,41 @@ export class AndroidAgent extends Agent {
     return { packageName, tree: this.lastUiTree, key: this.currentKey() };
   }
 
+  /** An idx from the current screen list that the model put in viewId or nodePath (real ones contain ":" or "/"). */
+  private idxInSelector(args: Record<string, unknown>): string | null {
+    for (const value of [args.viewId, args.nodePath]) {
+      const v = typeof value === 'string' ? value.trim() : '';
+      if (/^v?\d+$/.test(v) && this.screen?.elements.some((e) => e.idx === v)) return v;
+    }
+    return null;
+  }
+
+  /** The single element on screen whose label matches text once case, quotes and spacing are ignored. */
+  private uniqueLabelMatch(text: string): { idx: string; label: string } | null {
+    const norm = (t: string) =>
+      t
+        .normalize('NFKC')
+        .replace(/[\u2018\u2019\u201B\u2032`´]/g, "'")
+        .replace(/[\u201C\u201D\u2033]/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    const want = norm(text);
+    if (want.length < 2) return null;
+    const elements = (this.screen?.elements ?? []).filter((e) => e.label && !e.disabled);
+    const exact = elements.filter((e) => norm(e.label) === want);
+    const pick = exact.length ? exact : elements.filter((e) => norm(e.label).startsWith(want) && (e.tappable || e.editable));
+    return pick.length === 1 ? { idx: pick[0].idx, label: pick[0].label } : null;
+  }
+
+  private withNote(result: ToolResult, note: string): ToolResult {
+    const content = [...(result.content ?? [])];
+    const first = content.findIndex((c) => c.type === 'text');
+    if (first >= 0) content[first] = { ...content[first], text: `${(content[first] as { text: string }).text}\n\n${note}` } as never;
+    else content.unshift({ type: 'text', text: note });
+    return { ...result, content } as ToolResult;
+  }
+
   /** Runs one of the agent's own tools, exactly as the model would call it (flow replay). */
   async runTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const tool = (this as unknown as { tools: Tool[] }).tools.find((t) => t.name === name);
@@ -1157,6 +1211,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
         `${summary}${alsoTried} Do NOT guess more package names — none of the usual ones exist here. ` +
         'Use global_action HOME, then read_ui_tree to find the app by the name shown under its icon, ' +
         'and open it with click_node instead.';
+    }
+
+    // Android refused to bring the app forward from the background. Calling open_app
+    // again is refused the same way; the home-screen icon or a link is what works.
+    if (action.type === 'OpenApp' && isError && res.status === 'FAILURE' && /from the background/i.test(String(res.message ?? ''))) {
+      summary +=
+        ' Do not call open_app for it again — it will be blocked the same way. Press HOME (global_action) and tap the app\'s icon, or open its website or a deep link with open_url.';
     }
 
     // A launch only reports that the intent was dispatched, not that the app is

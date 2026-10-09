@@ -53,9 +53,19 @@ const PARAM_HINTS: Record<string, Record<string, string>> = {
   install_app: { packageName: 'e.g. "com.whatsapp"' },
 };
 
+/**
+ * Kept on every tool. Without them the model put an element's idx in viewId or
+ * nodePath (type_text viewId "1"): 11 times in the first compact runs, 8 failed;
+ * the full descriptions never led to it.
+ */
+const SELECTOR_HINTS: Record<string, string> = {
+  viewId: 'resource id like "com.app:id/search", never an idx',
+  nodePath: 'tree path like "0/1/3", never an idx',
+};
+
 function compactParameters(toolName: string, parameters: Record<string, unknown>): Record<string, unknown> {
   const props = (parameters?.properties ?? {}) as Record<string, Record<string, unknown>>;
-  const hints = PARAM_HINTS[toolName] ?? {};
+  const hints = { ...SELECTOR_HINTS, ...(PARAM_HINTS[toolName] ?? {}) };
   const out: Record<string, Record<string, unknown>> = {};
   for (const [key, schema] of Object.entries(props)) {
     const { description: _drop, ...rest } = schema ?? {};
