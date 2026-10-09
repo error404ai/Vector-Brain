@@ -628,7 +628,7 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
             ) : (
               <Alert severity="info">This run was recorded before step diagnostics existed.</Alert>
             )}
-            {d && d.tokens_reported ? <TokenBreakdown d={d} /> : null}
+            {d && d.tokens_reported ? <TokenBreakdown d={d} screenTokens={avgScreenTokens(run.steps)} /> : null}
             <Box sx={{ overflowX: 'auto' }}>
               <Table size="small" sx={{ minWidth: 980 }}>
                 <TableHead>
@@ -641,6 +641,11 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
                     <TableCell align="right">Phone</TableCell>
                     <TableCell align="right">Input</TableCell>
                     <TableCell align="right">Cached</TableCell>
+                    <TableCell align="right">
+                      <Tooltip title="Estimated tokens of the screen list this step returned. The next AI call reads it in full, uncached.">
+                        <span>Screen</span>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell align="right">Output</TableCell>
                     <TableCell align="right">Cost</TableCell>
                     <TableCell>Wasted</TableCell>
@@ -665,7 +670,13 @@ function RunDialog({ id, onClose }: { id: number | null; onClose: () => void }) 
  * Where one run's tokens went: input read fresh vs from the prompt cache,
  * cache writes, output (with hidden reasoning) and what the provider billed.
  */
-function TokenBreakdown({ d }: { d: RunDiagnostics }) {
+/** Average estimated size of the screen lists the run's steps returned, or null when none were stored. */
+function avgScreenTokens(steps: DiagnosticsStep[]): number | null {
+  const sizes = steps.map((s) => s.screen_tokens ?? 0).filter((n) => n > 0);
+  return sizes.length ? Math.round(sizes.reduce((a, b) => a + b, 0) / sizes.length) : null;
+}
+
+function TokenBreakdown({ d, screenTokens }: { d: RunDiagnostics; screenTokens: number | null }) {
   const cached = Math.min(d.cache_read_tokens ?? 0, d.prompt_tokens);
   const fresh = Math.max(0, d.prompt_tokens - cached);
   const output = d.completion_tokens;
@@ -728,6 +739,17 @@ function TokenBreakdown({ d }: { d: RunDiagnostics }) {
             {d.cache_write_tokens != null ? 'Billed at 1.25× once, then read cheaply' : 'Not reported by OpenRouter; included in the billed cost'}
           </Typography>
         </Box>
+        {screenTokens ? (
+          <Box>
+            <Typography variant="caption" color="text.secondary">
+              Screen list, per call
+            </Typography>
+            <Typography sx={{ fontWeight: 800, fontSize: 18, fontVariantNumeric: 'tabular-nums' }}>~{fmtInt(screenTokens)}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {d.llm_calls && d.prompt_tokens ? `≈${pct(screenTokens, Math.max(1, d.prompt_tokens - Math.min(d.cache_read_tokens ?? 0, d.prompt_tokens)) / d.llm_calls)} of the fresh input; estimated` : 'Estimated from the stored screens'}
+            </Typography>
+          </Box>
+        ) : null}
       </Box>
     </Card>
   );
@@ -762,6 +784,9 @@ function StepRow({ step, labels }: { step: DiagnosticsStep; labels: Record<strin
       <TableCell align="right">{step.prompt_tokens ? fmtInt(step.prompt_tokens) : ''}</TableCell>
       <TableCell align="right" sx={{ color: 'success.main' }}>
         {step.prompt_tokens && step.cache_read_tokens ? fmtInt(step.cache_read_tokens) : step.prompt_tokens ? '0' : ''}
+      </TableCell>
+      <TableCell align="right" sx={{ color: 'text.secondary' }}>
+        {step.screen_tokens ? `~${fmtInt(step.screen_tokens)}` : ''}
       </TableCell>
       <TableCell align="right">
         {step.prompt_tokens ? (

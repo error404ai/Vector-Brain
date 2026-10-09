@@ -232,7 +232,10 @@ describe('VectorEngine', () => {
     expect(lite.calls.open_app).toBe(1);
     const fullTools = seen[0].tools;
     const liteTools = seen[2].tools;
-    expect(liteTools.map((t) => t.name)).toEqual(fullTools.map((t) => t.name));
+    // Same tools, plus phone_info (the phone's facts on request instead of in every call).
+    expect(liteTools.map((t) => t.name).filter((n) => n !== 'phone_info')).toEqual(fullTools.map((t) => t.name));
+    expect(liteTools.map((t) => t.name)).toContain('phone_info');
+    expect(fullTools.map((t) => t.name)).not.toContain('phone_info');
     expect(liteTools.find((t) => t.name === 'open_app')?.description).toBe(SHORT_DESCRIPTIONS.open_app);
   });
 
@@ -309,41 +312,48 @@ describe('VectorEngine', () => {
     expect(seen[1].providerOptions?.openrouter?.reasoning).toBeUndefined();
   });
 
-  it('Lite keeps phone facts out of the cached prompt and asks for a sticky session', async () => {
+  it('Lite sends phone facts only through phone_info and asks for a sticky session', async () => {
     const { agent } = fakeAgent();
     const withFacts = Object.assign(Object.create(Object.getPrototypeOf(agent)), agent, {
       systemPrompt: async (o?: { withFacts?: boolean }) => (o?.withFacts === false ? 'You control a phone.' : 'You control a phone.\n\nTHIS PHONE: ip 1.2.3.4'),
       deviceFactsText: () => 'THIS PHONE: ip 1.2.3.4',
     });
     const seen: { prompt: { role: string; content: unknown; providerOptions?: unknown }[]; providerOptions?: { openrouter?: Record<string, unknown> } }[] = [];
-    const run = async (compact: boolean) => {
-      const e = engineWith([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')], undefined, {
-        compact,
-        agent: withFacts as never,
-        cacheSession: compact ? 'vb-u1-c2' : undefined,
-      });
+    const run = async (compact: boolean, script: Chunk[][]) => {
+      const e = engineWith(script, undefined, { compact, agent: withFacts as never, cacheSession: compact ? 'vb-u1-c2' : undefined });
       const model = (e.engine as unknown as { model: { doStream: (o: unknown) => unknown } }).model;
       const original = model.doStream.bind(model);
       model.doStream = (o: unknown) => {
         seen.push(o as never);
         return original(o);
       };
-      await e.engine.run('open YouTube', compact ? 's1' : 's2');
+      return e.engine.run('what is my IP', compact ? 's1' : 's2');
     };
-    await run(true);
-    await run(false);
+    const lite = await run(true, [toolCall('phone_info', {}), done(true, 'The IP is 1.2.3.4')]);
+    await run(false, [toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'YouTube is open')]);
     const text = (m: { content: unknown }) => JSON.stringify(m.content);
-    const lite = seen[0].prompt;
-    expect(text(lite.find((m) => m.role === 'system')!)).not.toContain('1.2.3.4');
-    const users = lite.filter((m) => m.role === 'user');
-    expect(text(users[0])).toContain('TASK: open YouTube');
+    // First Lite call: the facts are nowhere — not in the system prompt, not after the task.
+    expect(JSON.stringify(seen[0].prompt)).not.toContain('1.2.3.4');
+    const users = seen[0].prompt.filter((m) => m.role === 'user');
+    expect(users).toHaveLength(1);
+    expect(text(users[0])).toContain('TASK: what is my IP');
     expect(users[0].providerOptions).toBeDefined(); // the cache ends at the task
-    expect(text(users[1])).toContain('1.2.3.4'); // facts come after it, uncached
-    expect(users[1].providerOptions).toBeUndefined();
     expect(seen[0].providerOptions?.openrouter).toMatchObject({ session_id: 'vb-u1-c2' });
+    // phone_info answered from the facts, without touching the phone.
+    expect(JSON.stringify(seen[1].prompt.filter((m) => m.role === 'tool'))).toContain('1.2.3.4');
+    expect(lite.success).toBe(true);
     // Vector keeps the facts in its system prompt and sends no session.
-    expect(text(seen[2].prompt.find((m) => m.role === 'system')!)).toContain('1.2.3.4');
-    expect(seen[2].providerOptions?.openrouter?.session_id).toBeUndefined();
+    expect(text(seen[3].prompt.find((m) => m.role === 'system')!)).toContain('1.2.3.4');
+    expect(seen[3].providerOptions?.openrouter?.session_id).toBeUndefined();
+  });
+
+  it('Lite answers phone_info plainly when the phone reported no facts', async () => {
+    const { agent } = fakeAgent();
+    const noFacts = Object.assign(Object.create(Object.getPrototypeOf(agent)), agent, { deviceFactsText: () => null });
+    const e = engineWith([toolCall('phone_info', {}), done(false, 'Not reported')], undefined, { compact: true, agent: noFacts as never });
+    await e.engine.run('what is my IP', 's3');
+    const result = e.messages.find((m) => m.type === 'tool_result' && m.toolName === 'phone_info');
+    expect(JSON.stringify(result)).toContain('has not reported');
   });
 
   it('gives the judge the steps the phone performed', async () => {

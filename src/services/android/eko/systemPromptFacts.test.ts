@@ -21,3 +21,29 @@ describe('system prompt and phone facts', () => {
     expect(new AndroidAgent({} as never, 'c').deviceFactsText()).toBeNull();
   });
 });
+
+describe('Lite (compact) prompt', () => {
+  it('keeps every rule of the full prompt in fewer words, and no phone facts', async () => {
+    const agent = new AndroidAgent({} as never, 'hw', undefined, { vision: true, screenshots: 'stuck', deviceFacts: FACTS });
+    const full = await agent.systemPrompt({ withFacts: false });
+    agent.compactText = true;
+    const short = await agent.systemPrompt();
+    expect(short.length).toBeLessThan(full.length * 0.8);
+    expect(short).not.toContain('203.0.113.7');
+    // Each rule's anchor: tools, numbers, examples and markers the model is told about.
+    for (const anchor of [
+      'read_ui_tree', 'UPDATED SCREEN ELEMENTS', 'tap_element', 'click_node', 'tap_coordinate', 'type_text', 'install_app',
+      'FORWARD', 'BACKWARD', 'swipe', 'global_action BACK', 'wait_for_element', 'CURRENT screen list', 'Install→Cancel',
+      '120000', '7 scrolls', 'press_key ENTER', 'newTab: true', 'one by one', 'Research', 'ALL requested', 'AUTO-CLEARED:',
+      'task_snapshot', 'STOP', 'idx|type|label|flags|tap_at', 't=tappable', 'e=editable', 'd=disabled', '0–1000', '500,500',
+      '5|input|Search Google|te|500,190', 'capture_screen', 'phone_info',
+    ]) {
+      expect(short).toContain(anchor);
+    }
+  });
+
+  it('uses the short screen heading that the step pruning still recognises', async () => {
+    const { SCREEN_DUMP } = await import('./contextPruning');
+    expect(SCREEN_DUMP.test('CURRENT APP: x\n\nUPDATED SCREEN ELEMENTS:\nidx|type|label|flags|tap_at\n0|btn|OK|t|500,500')).toBe(true);
+  });
+});

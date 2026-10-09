@@ -8,6 +8,7 @@ import type { ActionResult, AutomationAction, UiNodeSnapshot, UiTreeSnapshot } f
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
+import { compactSystemPrompt } from './compactPrompt';
 import type { ScreenshotMode } from './screenshotMode';
 import {
   GRID,
@@ -180,6 +181,11 @@ export interface AndroidAgentCallbacks {
 }
 
 export class AndroidAgent extends Agent {
+  /**
+   * Lite: shorter wording where the model reads it every call (the system prompt,
+   * read_ui_tree's heading). Same rules and the same screen list; set by the engine.
+   */
+  compactText = false;
   private lastUiTree: string | null = null;
   /** Whether the AI saw the screen as an image on the latest step. */
   sight: Sight | null = null;
@@ -273,7 +279,10 @@ export class AndroidAgent extends Agent {
             screenshotBase64: this.lastScreenshotBase64 || undefined,
           });
 
-          const text = `${cleared}CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
+          // Lite: the columns are explained in its system prompt, so the heading is the short one action results use.
+          const text = this.compactText
+            ? `${cleared}CURRENT APP: ${pkg}\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}${extra.note}`
+            : `${cleared}CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
           return { content: extra.image ? [{ type: 'text', text }, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }] : [{ type: 'text', text }] };
         },
       },
@@ -959,8 +968,14 @@ export class AndroidAgent extends Agent {
    * sends them after the task instead, so every phone shares one cached prompt).
    */
   async systemPrompt(options: { withFacts?: boolean } = {}): Promise<string> {
+    if (this.compactText) return compactSystemPrompt(this.screenshotMode());
     if (options.withFacts === false) return this.baseSystemPrompt() + this.screenshotRule();
     return this.buildSystemPrompt();
+  }
+
+  /** Which screenshot rule applies: images reach the AI, are switched off, or the model cannot see them. */
+  private screenshotMode(): 'on' | 'off' | 'blind' {
+    return this.imagesToAi ? 'on' : this.options.vision ? 'off' : 'blind';
   }
 
   /**

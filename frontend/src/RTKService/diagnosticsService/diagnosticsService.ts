@@ -140,6 +140,8 @@ export interface DiagnosticsStep {
   cache_write_tokens?: number | null;
   reasoning_tokens?: number | null;
   cost_usd?: number | null;
+  /** Estimated tokens of the screen list this step returned (the next call reads it). */
+  screen_tokens?: number | null;
   waste: string | null;
   thought_reasoning: string;
   result_message: string;

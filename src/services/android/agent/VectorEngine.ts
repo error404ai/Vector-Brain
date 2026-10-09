@@ -5,6 +5,7 @@ import type { AndroidAgent } from '../eko/AndroidAgent';
 import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOutcome } from './AgentEngine';
 import { compactTool, type ToolSpec } from './compactTools';
 import { buildContext, summaryLine, type StepRecord } from './contextBuilder';
+import { LITE_ENGINE_RULES } from '../eko/compactPrompt';
 import { parseAppList, verifyCompletion } from './successVerifier';
 import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
 
@@ -117,6 +118,14 @@ const NOT_IDEMPOTENT = new Set([
 ]);
 
 const TASK_DONE = 'task_done';
+/**
+ * Lite: the phone's network and locale facts on request. They used to ride along
+ * as a message after the task on every call — after the cache mark, so billed in
+ * full each time — for the few tasks that ask about them. The tool is offered on
+ * every phone (with or without facts) so all phones keep one cached tool list.
+ */
+export const PHONE_INFO = 'phone_info';
+const NO_PHONE_FACTS = 'This phone has not reported its network or locale facts. Find what you need with open_settings or a website.';
 
 const VECTOR_RULES = `
 
@@ -128,13 +137,6 @@ FINISHING THE TASK:
 
 UNCONFIRMED ACTIONS:
 - If a result says the phone did not confirm an action, it may already have happened. Look at the screen in that result before repeating it.`;
-
-/** Lite only: every word the model writes is billed as output, and every extra call as a whole prompt. */
-const LITE_RULES = `
-
-KEEP IT SHORT:
-- Call the tool directly. No explanation before it; at most a few words.
-- Every action's result already contains the current screen list. Do not call read_ui_tree after an action; use the list you were given.`;
 
 const PLANNER_PROMPT = `You plan tasks for an agent that controls an Android phone through tools (open_app, open_url, tap, type, scroll, back/home).
 Write the shortest plan that does exactly what the user asked: numbered steps, one action each, at most 8 lines, no preamble.
@@ -216,13 +218,23 @@ export class VectorEngine implements AgentEngine {
       const spec = options.compact ? compactTool(t as unknown as ToolSpec) : t;
       set[t.name] = tool({ description: spec.description ?? '', inputSchema: jsonSchema(spec.parameters as never) });
     }
+    const compact = Boolean(options.compact);
+    if (compact) {
+      options.agent.compactText = true;
+      set[PHONE_INFO] = tool({
+        description: "This phone's public IP, proxy, DNS, language, region, timezone and time, as the phone reported them.",
+        inputSchema: jsonSchema({ type: 'object', properties: {}, additionalProperties: false } as never),
+      });
+    }
     set[TASK_DONE] = tool({
-      description: 'Finish the task. success=true when the goal is achieved, false when it cannot be done. summary: one short sentence.',
+      description: compact
+        ? 'Finish. success=true if achieved, false if impossible. summary: one short sentence.'
+        : 'Finish the task. success=true when the goal is achieved, false when it cannot be done. summary: one short sentence.',
       inputSchema: jsonSchema({
         type: 'object',
         properties: {
-          success: { type: 'boolean', description: 'Whether the goal was achieved' },
-          summary: { type: 'string', description: 'What was done and what is on screen now, or why it could not be done' },
+          success: { type: 'boolean', description: compact ? 'Goal achieved' : 'Whether the goal was achieved' },
+          summary: { type: 'string', description: compact ? "What was done and what's on screen, or why not" : 'What was done and what is on screen now, or why it could not be done' },
         },
         required: ['success', 'summary'],
         additionalProperties: false,
@@ -255,12 +267,9 @@ export class VectorEngine implements AgentEngine {
     const envelope = { streamType: 'agent', chatId: runId, taskId: runId, agentName: 'AndroidAgent' };
     const emit = (message: Record<string, unknown>) => this.options.onMessage({ ...envelope, ...message } as unknown as AgentStreamMessage);
 
-    // Lite: nothing phone-specific in the system prompt, so every phone shares one cached prefix.
-    const agent = this.options.agent as AndroidAgent & { deviceFactsText?: () => string | null };
-    const system = this.options.compact
-      ? `${await agent.systemPrompt({ withFacts: false })}${VECTOR_RULES}${LITE_RULES}`
-      : `${await agent.systemPrompt()}${VECTOR_RULES}`;
-    const facts = this.options.compact ? agent.deviceFactsText?.() ?? null : null;
+    // Lite: the short prompt, with nothing phone-specific in it (facts come from
+    // phone_info), so every phone shares one cached prefix.
+    const system = this.options.compact ? `${await this.options.agent.systemPrompt({ withFacts: false })}${LITE_ENGINE_RULES}` : `${await this.options.agent.systemPrompt()}${VECTOR_RULES}`;
     const plan = this.options.planner ? await this.makePlan(prompt, signal, emit) : null;
     const steps: StepRecord[] = [];
     const notes: string[] = [];
@@ -279,7 +288,6 @@ export class VectorEngine implements AgentEngine {
         vision: this.options.vision,
         notes,
         taskFirst: Boolean(this.options.compact),
-        afterTask: facts,
       });
       notes.length = 0;
 
@@ -555,6 +563,10 @@ export class VectorEngine implements AgentEngine {
   }
 
   private async executeTool(toolName: string, input: unknown, callId: string, thought: string): Promise<StepRecord> {
+    if (toolName === PHONE_INFO && this.options.compact) {
+      const agent = this.options.agent as AndroidAgent & { deviceFactsText?: () => string | null };
+      return { callId, toolName, input, thought, resultText: agent.deviceFactsText?.() ?? NO_PHONE_FACTS, isError: false };
+    }
     const definition = this.tools.find((t) => t.name === toolName);
     if (!definition) {
       return { callId, toolName, input, thought, resultText: `Unknown tool "${toolName}". Use one of the listed tools.`, isError: true };

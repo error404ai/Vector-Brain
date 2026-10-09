@@ -1,4 +1,5 @@
 import { AgentTask } from '@/entities/AgentTask';
+import { estimateTokens } from './agent/contextBuilder';
 import { AndroidDevice } from '@/entities/AndroidDevice';
 import { AndroidTaskLog } from '@/entities/AndroidTaskLog';
 import { ClientReport } from '@/entities/ClientReport';
@@ -339,7 +340,7 @@ export class RunDiagnosticsService {
     if (!task) throw new AppError('Run not found', 404);
     const steps = await this.logRepo.find({
       where: { agent_task_id: taskId },
-      select: [...STEP_COLUMNS, 'thought_reasoning', 'result_message', 'error_message'],
+      select: [...STEP_COLUMNS, 'thought_reasoning', 'result_message', 'error_message', 'ui_tree_snapshot'],
       order: { step_index: 'ASC', id: 'ASC' },
     });
     const devices = await this.deviceNames([task.device_id]);
@@ -348,8 +349,11 @@ export class RunDiagnosticsService {
         ...task,
         device: devices.get(task.device_id) ?? null,
         waste_labels: WASTE_LABELS,
-        steps: steps.map((s) => ({
+        steps: steps.map(({ ui_tree_snapshot, ...s }) => ({
           ...s,
+          // The screen list this step returned, which the next AI call reads in full
+          // (only the newest one is sent). An estimate: about 4 characters a token.
+          screen_tokens: typeof ui_tree_snapshot === 'string' && ui_tree_snapshot ? estimateTokens(ui_tree_snapshot) : null,
           thought_reasoning: String(s.thought_reasoning ?? '').slice(0, 600),
           result_message: String(s.result_message ?? '').slice(0, 400),
           error_message: s.error_message ? String(s.error_message).slice(0, 400) : null,

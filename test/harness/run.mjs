@@ -2686,7 +2686,10 @@ const scenarios = [
       if (lite.done.status !== 'SUCCEEDED') return `lite run ${lite.done.status}/${lite.done.reason_code}: ${String(lite.done.message).slice(0, 160)}`;
       if (lite.done.engine !== 'lite') return `lite run recorded engine ${lite.done.engine}`;
       if (!vectorTools || !liteTools) return 'no agent call recorded';
-      if (liteTools.tools.join() !== vectorTools.tools.join()) return `lite offered different tools: lite=[${liteTools.tools.join()}] vector=[${vectorTools.tools.join()}]`;
+      // Same tools, plus phone_info (the phone's facts on request instead of in every call).
+      const liteSame = liteTools.tools.filter((t) => t !== 'phone_info');
+      if (liteSame.join() !== vectorTools.tools.join()) return `lite offered different tools: lite=[${liteTools.tools.join()}] vector=[${vectorTools.tools.join()}]`;
+      if (!liteTools.tools.includes('phone_info')) return 'lite did not offer phone_info';
       if (!(liteTools.toolChars < vectorTools.toolChars * 0.6)) return `lite tool text ${liteTools.toolChars} vs vector ${vectorTools.toolChars}`;
       if (lite.actions.filter((a) => a === 'OpenApp').length !== 1) return `lite sent OpenApp ${lite.actions.filter((a) => a === 'OpenApp').length} times`;
       const verification = typeof lite.done.verification === 'string' ? JSON.parse(lite.done.verification) : lite.done.verification;

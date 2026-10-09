@@ -70,7 +70,7 @@ export const startsAnywhere = (step: FlowStepV2) => STARTS_ANYWHERE.has(step.act
 const MUST_DO = new Set<FlowAction>(['type', 'install_app']);
 
 /** Agent tools that only look; they never count as doing a step. */
-export const LOOK_ONLY_TOOLS = new Set(['read_ui_tree', 'capture_screen', 'list_apps', 'read_clipboard', 'read_notifications', 'wait', 'wait_for_element']);
+export const LOOK_ONLY_TOOLS = new Set(['read_ui_tree', 'capture_screen', 'list_apps', 'read_clipboard', 'read_notifications', 'wait', 'wait_for_element', 'phone_info']);
 
 /** The agent tools that perform each kind of step (used to tell that the AI did it). */
 const TOOLS_FOR: Record<FlowAction, string[]> = {
