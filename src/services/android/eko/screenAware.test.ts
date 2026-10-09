@@ -237,3 +237,41 @@ describe('screenshots to the model', () => {
     expect(hasImage(await tool(agent, 'read_ui_tree').execute({}, {}, {}))).toBe(true);
   });
 });
+
+describe('swipe guard', () => {
+  const reel = (n: number) =>
+    node({
+      bounds: [0, 0, 1080, 2400],
+      children: [node({ text: `Reel ${n} by creator${n}`, bounds: [0, 1800, 1080, 1900] }), node({ text: 'Like', clickable: true, bounds: [900, 1200, 1000, 1300] })],
+    });
+  /** A feed: every swipe shows the next reel when `moving`, otherwise the same one. */
+  const feed = (moving: boolean) => {
+    let current = 0;
+    const gateway = {
+      executeAction: jest.fn(async (_hw: string, action: { type: string }) => {
+        if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.instagram.android', root: reel(current) } };
+        if (action.type === 'Swipe' && moving) current += 1;
+        return { status: 'SUCCESS', summary: `${action.type} done` };
+      }),
+    };
+    return gateway;
+  };
+
+  it('lets every swipe through while each one brings new content (scroll Reels 6 times)', async () => {
+    const agent = new AndroidAgent(feed(true) as never, 'hw');
+    await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    for (let i = 0; i < 6; i += 1) {
+      const r = await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
+      expect(r.isError).toBeFalsy();
+    }
+  });
+
+  it('still blocks after 4 swipes that changed nothing', async () => {
+    const agent = new AndroidAgent(feed(false) as never, 'hw');
+    await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    for (let i = 0; i < 4; i += 1) await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
+    const blocked = await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toMatch(/Blocked: already scrolled 4 times in this direction with nothing changing/);
+  });
+});

@@ -505,7 +505,7 @@ export class AndroidAgent extends Agent {
           const recentScrolls = this.actionHistory.filter(a => a === scrollKey).length;
           if (recentScrolls >= 4) {
             return {
-              content: [{ type: 'text', text: `Blocked: already scrolled ${recentScrolls} times in this direction without finding it. Stop scrolling — read the screen, work with the elements that are visible, or reach the target another way (for example open_url).` }],
+              content: [{ type: 'text', text: `Blocked: already scrolled ${recentScrolls} times in this direction with nothing changing. Stop scrolling — read the screen, work with the elements that are visible, or reach the target another way (for example open_url).` }],
               isError: true,
             };
           }
@@ -520,7 +520,8 @@ export class AndroidAgent extends Agent {
           const gesture =
             requested === 'DOWN' ? 'UP' : requested === 'UP' ? 'DOWN' : requested === 'RIGHT' ? 'LEFT' : 'RIGHT';
 
-          return this.runDeviceAction(
+          const before = this.currentKey();
+          const result = await this.runDeviceAction(
             {
               type: 'Swipe',
               direction: gesture,
@@ -529,6 +530,14 @@ export class AndroidAgent extends Agent {
             'swipe',
             args,
           );
+          // Only swipes that changed nothing count towards the block above. A swipe
+          // that brought new content (the next reel, more of a list) is progress:
+          // "scroll Reels 5 times" was blocked at the 5th on Oct 9 (run #3229).
+          if (!result.isError && this.currentKey() !== before) {
+            const at = this.actionHistory.lastIndexOf(scrollKey);
+            if (at >= 0) this.actionHistory.splice(at, 1);
+          }
+          return result;
         },
       },
       {
