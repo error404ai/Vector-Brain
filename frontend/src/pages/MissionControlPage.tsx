@@ -65,7 +65,6 @@ import AddIcon from '@mui/icons-material/Add';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type TouchEvent, useCallback} from 'react';
 import toast from 'react-hot-toast';
 import { FAILURE_KIND, FAILURE_KIND_ORDER, type FailureKind } from '@/utils/failureKind';
@@ -1824,6 +1823,8 @@ function RotationSwitch() {
   );
 }
 
+const HISTORY_INK = '#141a2e';
+
 function ConversationSidebar({
   open,
   conversations,
@@ -1856,14 +1857,18 @@ function ConversationSidebar({
     return out;
   }, [conversations, now]);
   if (!open) return null;
+  let index = 0;
   return (
-    // Positioned above the prism background (absolute, z-index 0): without this the
-    // list painted underneath it and only the New chat button (itself positioned) showed.
+    // Frosted Rail. Positioned above the prism background (absolute, z-index 0):
+    // without this the list painted underneath it.
     <Box
+      component="nav"
+      aria-label="Chat history"
       sx={{
         position: 'relative',
         zIndex: 1,
-        width: 240,
+        width: 264,
+        '@media (max-width:900px)': { width: '100%' },
         flexShrink: 0,
         borderRight: '1px solid rgba(20,26,46,.08)',
         display: 'flex',
@@ -1874,56 +1879,121 @@ function ConversationSidebar({
         WebkitBackdropFilter: 'blur(18px)',
       }}
     >
-      <Box sx={{ p: 1.5 }}>
-        <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={onNew} sx={{ justifyContent: 'flex-start', borderRadius: 2 }}>
+      <Box sx={{ p: '18px 14px 10px' }}>
+        <Button
+          fullWidth
+          disableElevation
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={onNew}
+          sx={{
+            height: 44,
+            borderRadius: '14px',
+            textTransform: 'none',
+            fontWeight: 700,
+            fontSize: 14,
+            bgcolor: HISTORY_INK,
+            color: '#fff',
+            transition: `transform 200ms ${ease}, box-shadow 200ms ${ease}`,
+            '&:hover': { bgcolor: '#232a45', transform: 'translateY(-1px)', boxShadow: '0 10px 24px rgba(20,26,46,.22)' },
+            ...reducedMotion,
+          }}
+        >
           New chat
         </Button>
       </Box>
-      <Box sx={{ flex: 1, overflowY: 'auto', px: 1, pb: 1 }}>
+      <Box sx={{ flex: 1, overflowY: 'auto', px: '14px', pb: 1.5 }}>
         {conversations.length === 0 && (
-          <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+          <Typography variant="caption" sx={{ display: 'block', px: 1.25, pt: 1, color: '#5b6280' }}>
             No chats yet.
           </Typography>
         )}
         {groups.map((group) => (
-          <Box key={group.label} sx={{ mb: 1 }}>
-            <Typography variant="caption" sx={{ px: 1, color: 'text.disabled', textTransform: 'uppercase', letterSpacing: 0.4, fontSize: 11 }}>
+          <Box key={group.label} sx={{ mt: 1 }}>
+            <Typography
+              sx={{
+                px: 1.25,
+                pt: 0.75,
+                pb: 0.5,
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: 10.5,
+                fontWeight: 600,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: '#7a809c',
+              }}
+            >
               {group.label}
             </Typography>
-            {group.items.map((c) => (
-              <Box
-                key={c.id}
-                onClick={() => onOpen(c.id)}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  px: 1,
-                  py: 0.9,
-                  borderRadius: 2,
-                  cursor: 'pointer',
-                  bgcolor: c.id === activeId ? 'action.selected' : 'transparent',
-                  '&:hover': { bgcolor: c.id === activeId ? 'action.selected' : 'action.hover', '& .del': { opacity: 1 } },
-                }}
-              >
-                <ChatBubbleOutlineIcon sx={{ fontSize: 16, color: c.id === activeId ? 'primary.main' : 'text.disabled' }} />
-                <Typography variant="body2" noWrap sx={{ flex: 1, fontWeight: c.id === activeId ? 600 : 400 }}>
-                  {c.title}
-                </Typography>
-                <IconButton
-                  size="small"
-                  className="del"
-                  aria-label="Delete chat"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(c.id);
-                  }}
-                  sx={{ opacity: 0, transition: 'opacity 150ms' }}
-                >
-                  <DeleteOutlineIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Box>
-            ))}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {group.items.map((c) => {
+                const active = c.id === activeId;
+                const delay = Math.min(index++, 12) * 40;
+                return (
+                  <Box
+                    key={c.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => onOpen(c.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onOpen(c.id);
+                      }
+                    }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.25,
+                      pl: 1.5,
+                      pr: 0.5,
+                      minHeight: 44,
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      outline: 'none',
+                      color: active ? HISTORY_INK : '#3a4060',
+                      background: active ? 'linear-gradient(90deg, rgba(59,76,255,.14), rgba(236,72,153,.08))' : 'transparent',
+                      boxShadow: active ? 'inset 0 0 0 1px rgba(59,76,255,.18)' : 'none',
+                      animation: `${riseIn} 450ms ${ease} ${delay}ms both`,
+                      transition: `background 200ms ${ease}`,
+                      '&:hover': { bgcolor: active ? undefined : 'rgba(59,76,255,.07)', '& .del': { opacity: 1 } },
+                      '&:focus-visible': { boxShadow: '0 0 0 2px #3b4cff', '& .del': { opacity: 1 } },
+                      ...reducedMotion,
+                    }}
+                  >
+                    <Box
+                      component="span"
+                      aria-hidden
+                      sx={{
+                        width: 7,
+                        height: 7,
+                        flex: 'none',
+                        borderRadius: '50%',
+                        bgcolor: active ? '#3b4cff' : '#c5c9dc',
+                        boxShadow: active ? '0 0 0 4px rgba(59,76,255,.15)' : 'none',
+                        transition: `background 200ms ${ease}`,
+                      }}
+                    />
+                    <Typography noWrap sx={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: active ? 700 : 600 }}>
+                      {c.title}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      className="del"
+                      aria-label="Delete chat"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(c.id);
+                      }}
+                      sx={{ opacity: 0, color: '#9aa0b8', transition: 'opacity 150ms, color 150ms', '&:hover': { color: '#dc2626' }, '&:focus-visible': { opacity: 1 } }}
+                    >
+                      <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Box>
+                );
+              })}
+            </Box>
           </Box>
         ))}
       </Box>
