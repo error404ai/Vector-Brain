@@ -388,7 +388,10 @@ export class VectorEngine implements AgentEngine {
       const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine));
       if (outcome.status === 'failed' && verificationRetries < MAX_VERIFICATION_RETRIES) {
         verificationRetries += 1;
-        notes.push(`SYSTEM CHECK FAILED: ${outcome.reason}. The task is not finished — look at the current screen, carry on, and call task_done again when it is really done.`);
+        // Oct 9: after "carry on" alone, 2 of 3 Chrome runs gave up with success=false although only the check's wording was at issue.
+        notes.push(
+          `SYSTEM CHECK FAILED: ${outcome.reason}. The task is not finished — look at the current screen, do the part that is still missing (for example more of the same action), and call task_done again when it is really done. Report failure only if it truly cannot be done.`,
+        );
         continue;
       }
       if (outcome.status === 'failed') {

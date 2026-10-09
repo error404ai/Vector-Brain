@@ -98,6 +98,7 @@ export function judgePrompt(goal: string, summary: string, screen: ScreenState, 
     '"yes" only if the final screen shows the goal achieved (or the goal needed no lasting screen, like closing an app, and nothing contradicts it).' +
       (shown.length ? ' For goals made of several actions the final screen cannot show (visit several sites, send then go back), the STEPS are the evidence: count them against the goal.' : ''),
     '"no" if the screen or the steps show it was not achieved (wrong app or page, an error, a login wall, fewer actions than asked, the thing still missing).',
+    'Judge what can be checked: apps, pages, counts, text. Loose words in the goal ("random", "any", "some", "a little time", "one after another") are not grounds for "no": any choice of sites or items counts as random, a page that was opened counts as visited (open_url waits for it to load), and a link that serves a new page each visit counts once per visit.',
     '"unsure" if neither can tell.',
     '',
     `GOAL: ${goal}`,

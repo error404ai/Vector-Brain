@@ -38,4 +38,10 @@ describe('judge prompt', () => {
     expect(p).toContain('2. open_url {"url":"b"} → ok');
     expect(judgePrompt('g', 's', { packageName: null, tree: 'x' })).not.toContain('STEPS');
   });
+
+  it('tells the judge loose words like "random" or "a little time" are not grounds for no', () => {
+    const p = judgePrompt('visit 10 random websites, spending a little time on each', 'done', { packageName: 'com.android.chrome', tree: 'x' }, ['1. open_url → ok']);
+    expect(p).toContain('Loose words in the goal');
+    expect(p).toContain('counts once per visit');
+  });
 });

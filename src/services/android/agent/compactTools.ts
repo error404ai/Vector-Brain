@@ -16,7 +16,8 @@ export interface ToolSpec {
 
 /** One line per tool: what it does and the rule that keeps it from being misused. */
 export const SHORT_DESCRIPTIONS: Record<string, string> = {
-  read_ui_tree: 'Read the screen. Only if no screen list shown yet; every action result has it.',
+  // Wording kept from before the Oct 9 trim: the shorter one was followed by a read_ui_tree first in 8 of 8 runs.
+  read_ui_tree: 'Read the screen. Only when no screen list was shown yet: every action result already includes it.',
   capture_screen: "Screenshot. Expensive; only if the list can't describe the screen.",
   tap_element: 'Tap by idx from the latest list. Preferred tap.',
   tap_coordinate: 'Tap x,y on 0–1000 grid (tap_at). Only for points not in the list.',
