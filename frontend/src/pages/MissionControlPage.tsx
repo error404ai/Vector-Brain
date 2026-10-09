@@ -1857,7 +1857,23 @@ function ConversationSidebar({
   }, [conversations, now]);
   if (!open) return null;
   return (
-    <Box sx={{ width: 240, flexShrink: 0, borderRight: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column', minHeight: 0, bgcolor: 'background.paper' }}>
+    // Positioned above the prism background (absolute, z-index 0): without this the
+    // list painted underneath it and only the New chat button (itself positioned) showed.
+    <Box
+      sx={{
+        position: 'relative',
+        zIndex: 1,
+        width: 240,
+        flexShrink: 0,
+        borderRight: '1px solid rgba(20,26,46,.08)',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        bgcolor: 'rgba(255,255,255,.72)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)',
+      }}
+    >
       <Box sx={{ p: 1.5 }}>
         <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={onNew} sx={{ justifyContent: 'flex-start', borderRadius: 2 }}>
           New chat
