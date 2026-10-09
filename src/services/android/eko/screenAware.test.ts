@@ -221,10 +221,19 @@ describe('screenshots to the model', () => {
     expect(await agent.systemPrompt()).toMatch(/screenshots are off for this account/);
   });
 
-  it('still shows a thin screen when screenshots are "when stuck"', async () => {
+  it('"when stuck" does not show a thin screen until the agent is stuck (Oct 9: an image after nearly every open_url)', async () => {
     const blank = node({ bounds: [0, 0, 1080, 2400], children: Array.from({ length: 5 }, (_, i) => node({ clickable: true, bounds: [0, i * 300, 1080, i * 300 + 200] })) });
     const phone = fakePhone([blank]);
     const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'stuck' });
+    const listing = await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    expect(hasImage(listing)).toBe(false);
+    expect(text(listing)).toMatch(/If you get stuck, you will be shown a screenshot/);
+  });
+
+  it('"every step" shows a thin screen', async () => {
+    const blank = node({ bounds: [0, 0, 1080, 2400], children: Array.from({ length: 5 }, (_, i) => node({ clickable: true, bounds: [0, i * 300, 1080, i * 300 + 200] })) });
+    const phone = fakePhone([blank]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw', undefined, { vision: true, screenshots: 'every_step' });
     expect(hasImage(await tool(agent, 'read_ui_tree').execute({}, {}, {}))).toBe(true);
   });
 });
