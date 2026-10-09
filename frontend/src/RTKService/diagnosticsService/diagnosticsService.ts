@@ -19,6 +19,8 @@ export interface RunDiagnostics {
   reasoning_tokens?: number;
   /** Billed cost of the run's model calls in USD; null when not reported. */
   cost_usd?: number | null;
+  /** 'price_list': worked out from tokens × the model's list price (the provider sends no cost). */
+  cost_basis?: 'billed' | 'price_list';
   think_ms: number;
   phone_ms: number;
   wait_ms: number;

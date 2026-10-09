@@ -19,11 +19,11 @@ import { AndroidAgent } from './eko/AndroidAgent';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
-import { modelSeesImages } from './eko/modelVision';
+import { modelPrice, modelSeesImages } from './eko/modelVision';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
-import type { UsageDetails } from './agent/usageDetails';
+import { costFromPrice, type UsageDetails } from './agent/usageDetails';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
@@ -1177,7 +1177,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let completionTokens = 0;
     let tokensReported = false;
     /** Where the tokens went, as far as the provider reports it (agent/usageDetails). */
-    const usageTotals = { cacheRead: 0, cacheWrite: 0, cacheWriteReported: false, reasoning: 0, costUsd: 0, costReported: false };
+    const usageTotals = { cacheRead: 0, cacheWrite: 0, cacheWriteReported: false, reasoning: 0, costUsd: 0, costReported: false, fromPrice: false };
+    // Providers other than OpenRouter do not say what a call cost: work it out
+    // from the model's list price, so every run has a cost (marked as such).
+    const listPrice = String(aiConfig.provider).toLowerCase() === 'openrouter' ? null : await modelPrice(aiConfig.provider, aiConfig.model).catch(() => null);
     /** Steps the current model call has produced so far (its usage is booked on the first). */
     let callSteps: AndroidTaskLog[] = [];
 
@@ -1554,7 +1557,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
             const cacheRead = Math.max(0, Number(usage?.cachedTokens) || 0);
             const cacheWrite = usage?.cacheWriteTokens == null ? null : Math.max(0, Number(usage.cacheWriteTokens) || 0);
             const reasoning = Math.max(0, Number(usage?.reasoningTokens) || 0);
-            const cost = usage?.costUsd == null || !Number.isFinite(Number(usage.costUsd)) ? null : Number(usage.costUsd);
+            let cost = usage?.costUsd == null || !Number.isFinite(Number(usage.costUsd)) ? null : Number(usage.costUsd);
+            if (cost === null && listPrice && (inTokens || outTokens)) {
+              cost = costFromPrice(listPrice, aiConfig.provider, { inputTokens: inTokens, outputTokens: outTokens, cachedTokens: cacheRead, cacheWriteTokens: cacheWrite });
+              usageTotals.fromPrice = true;
+            }
             if (inTokens || outTokens) tokensReported = true;
             promptTokens += inTokens;
             completionTokens += outTokens;
@@ -2086,6 +2093,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         cacheWriteTokens: usageTotals.cacheWriteReported ? usageTotals.cacheWrite : null,
         reasoningTokens: usageTotals.reasoning,
         costUsd: usageTotals.costReported ? usageTotals.costUsd : null,
+        costBasis: usageTotals.fromPrice ? 'price_list' : 'billed',
         recoveries: [...ruleRecoveries, ...(activeEngine.usedBackupModel ? (['backup_model'] as const) : [])],
         // Which AI config made each request, so Diagnostics can ask that account what it was billed.
         generations: (activeEngine.generations ?? []).map((g) => ({ id: g.id, c: g.fallback ? fallbackConfig?.id ?? null : aiConfig.id })),

@@ -57,3 +57,20 @@ export const CACHE_BREAKPOINT = {
   openrouter: { cacheControl: { type: 'ephemeral' } },
   anthropic: { cacheControl: { type: 'ephemeral' } },
 } as const;
+
+/**
+ * A call's cost from the model's list price, for providers that do not bill per
+ * call in the response (OpenAI, Anthropic, Google, DeepSeek, Groq, custom).
+ * Anthropic's own API counts input without the cached part; the others count
+ * cached tokens inside input. Missing cache prices fall back to the input price.
+ */
+export function costFromPrice(
+  price: { input: number; output: number; cacheRead: number | null; cacheWrite: number | null },
+  provider: string,
+  usage: { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number | null },
+): number {
+  const read = Math.max(0, usage.cachedTokens);
+  const write = Math.max(0, usage.cacheWriteTokens ?? 0);
+  const plain = String(provider).toLowerCase() === 'anthropic' ? Math.max(0, usage.inputTokens) : Math.max(0, usage.inputTokens - read - write);
+  return plain * price.input + read * (price.cacheRead ?? price.input) + write * (price.cacheWrite ?? price.input) + Math.max(0, usage.outputTokens) * price.output;
+}

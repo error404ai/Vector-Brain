@@ -318,6 +318,8 @@ export class VectorEngine implements AgentEngine {
     const steps: StepRecord[] = [];
     const notes: string[] = [];
     let verificationRetries = 0;
+    /** Whether the agent was already asked once to reconsider giving up. */
+    let gaveUpAsked = false;
     const maxCalls = this.options.maxModelCalls ?? 600;
 
     for (let call = 0; call < maxCalls; call += 1) {
@@ -427,6 +429,19 @@ export class VectorEngine implements AgentEngine {
         done = { success: !/\b(unable|cannot|can't|could not|couldn't|failed|not possible|impossible)\b/i.test(text), summary: text.slice(0, 500) };
       }
       if (!done) continue;
+
+      // Giving up while the run is still moving: ask once whether it is really blocked.
+      // Oct 9, mission 245 ("visit 10 random websites"): 14 of 15 phones called
+      // task_done(false) mid-way — "visited 5, did not reach 10", "could not confirm
+      // 10 visits" — with nothing in the way.
+      if (!done.success && !gaveUpAsked && steps.some((s) => !s.isError && !LOOK_ONLY.has(s.toolName))) {
+        gaveUpAsked = true;
+        const progress = countActions(steps, LOOK_ONLY);
+        notes.push(
+          `You reported failure, but nothing has blocked you${progress ? ` (DONE SO FAR: ${progress})` : ''}. If the task can still be done, carry on with the part that is missing. Not sure it is complete? Call task_done with success=true: the system checks the phone and tells you what is missing. Use success=false only for a real blocker (app not installed, sign-in required, an error you cannot get past).`,
+        );
+        continue;
+      }
 
       await emit({ type: 'agent_result', result: done.summary });
       if (!done.success) {

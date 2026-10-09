@@ -45,7 +45,32 @@ export interface ScreenModel {
   elements: ScreenElement[];
   /** Rows that carry a label — how much the tree actually tells us. */
   labelledCount: number;
+  /** A dialog or pop-up window is in front: the list holds only its rows. */
+  popup?: boolean;
+  /** Rows the app itself labels as an ad (Sponsored, Ad, Promoted…). */
+  adRows?: string[];
+  /** An ad is playing: the row of its "Skip ad" button, or '' while it cannot be skipped yet. */
+  adPlaying?: string | null;
 }
+
+/**
+ * Words apps put on an ad. Matched against a whole part of a label ("Sponsored",
+ * "Sponsored · 1 of 2", "Ad · 0:15"), never inside other text, so "Ad Astra"
+ * or "Add to cart" is not an ad. Oct 9: two YouTube runs tapped a Sponsored
+ * result or reported an ad as the song (#3273, #3277).
+ */
+const AD_WORD = /^(?:ads?|sponsored|promoted|advertisement|anuncio|anúncio|publicidad|patrocinado|gesponsert|werbung|anzeige|sponsorisé|annonce|sponsorizzato|реклама|विज्ञापन|प्रायोजित)$/i;
+const SKIP_AD = /^skip\s+ads?$/i;
+/** An ad's own progress ("1 of 2", "0:12") next to its label: it is playing. */
+const AD_PROGRESS = /^(?:\d+\s+of\s+\d+|\d{1,2}:\d{2})$/i;
+const labelParts = (label: string) => label.split(/\s*[·•|]\s*/).map((p) => p.trim()).filter(Boolean);
+
+/**
+ * Ids Android's own dialogs and bottom sheets carry. Their window is the active
+ * one, so the list shows only the dialog; saying so stops the agent hunting for
+ * the app's rows behind it.
+ */
+const DIALOG_ID = /:id\/(?:alertTitle|parentPanel|buttonPanel|design_bottom_sheet|touch_outside)$/;
 
 export function toGrid(px: number, span: number): number {
   if (!span) return 0;
@@ -90,10 +115,40 @@ export function screenSizeOf(root?: UiNodeSnapshot, fallback?: Partial<ScreenSiz
   };
 }
 
-export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?: Partial<ScreenSize>): ScreenModel {
-  const size = screenSizeOf(root, fallbackSize);
+/**
+ * A window smaller than the full screen (a dialog, a pop-up menu, a sheet) is
+ * in front. Needs the full size from an earlier full-screen window; without it
+ * only Android's dialog ids can tell.
+ */
+function isPopup(root: UiNodeSnapshot, fullScreen?: ScreenSize): boolean {
+  const b = root.bounds;
+  // A window still at the top-left corner is the app (perhaps resized for the
+  // keyboard); a dialog sits in the middle or at the bottom.
+  if (fullScreen && fullScreen.width > 100 && fullScreen.height > 100 && (b.left > 0 || b.top > 0)) {
+    const area = Math.max(0, b.right - b.left) * Math.max(0, b.bottom - b.top);
+    if (area > 0 && area < fullScreen.width * fullScreen.height * 0.85) return true;
+  }
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop()!;
+    if (node.viewId && DIALOG_ID.test(node.viewId)) return true;
+    stack.push(...(node.children ?? []));
+  }
+  return false;
+}
+
+/**
+ * @param fullScreen the phone's full screen size, when an earlier window showed
+ *   it: a dialog's window is smaller, and grid numbers stay on the whole screen.
+ */
+export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?: Partial<ScreenSize>, fullScreen?: ScreenSize): ScreenModel {
+  const popup = root ? isPopup(root, fullScreen) : false;
+  const size = popup && fullScreen ? fullScreen : screenSizeOf(root, fallbackSize);
   const elements: ScreenElement[] = [];
   const consumed = new Set<UiNodeSnapshot>();
+  const adRows: string[] = [];
+  let skipRow: string | null = null;
+  let adProgress = false;
   let labelledCount = 0;
 
   const visit = (node: UiNodeSnapshot) => {
@@ -109,6 +164,12 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
     const b = node.bounds;
     const onScreen = b.right > b.left && b.bottom > b.top;
     if (informative && onScreen && elements.length < MAX_ROWS) {
+      const parts = labelParts(label);
+      if (parts.some((p) => AD_WORD.test(p))) {
+        adRows.push(String(elements.length));
+        if (parts.some((p) => AD_PROGRESS.test(p))) adProgress = true;
+      }
+      if (control && skipRow === null && parts.some((p) => SKIP_AD.test(p))) skipRow = String(elements.length);
       if (label.length > MAX_LABEL) label = `${label.slice(0, MAX_LABEL)}…`;
       const cx = Math.round((b.left + b.right) / 2);
       const cy = Math.round((b.top + b.bottom) / 2);
@@ -128,7 +189,12 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
     for (const child of node.children ?? []) visit(child);
   };
   if (root) visit(root);
-  return { size, elements, labelledCount };
+  const model: ScreenModel = { size, elements, labelledCount };
+  if (popup) model.popup = true;
+  if (adRows.length) model.adRows = adRows;
+  if (skipRow !== null) model.adPlaying = skipRow;
+  else if (adProgress) model.adPlaying = '';
+  return model;
 }
 
 /** Rows the vision helper found in a screenshot, appended as v1, v2… */
@@ -162,7 +228,22 @@ export function formatScreen(model: ScreenModel): string {
     if (e.disabled) flags += 'd';
     return `${e.idx}|${e.type}|${e.label}|${flags}|${e.grid.x},${e.grid.y}`;
   });
-  return ['idx|type|label|flags|tap_at', ...rows].join('\n');
+  return ['idx|type|label|flags|tap_at', ...rows, ...screenMarks(model)].join('\n');
+}
+
+/** What the phone itself says about this screen, one line each, under the list. */
+export function screenMarks(model: ScreenModel): string[] {
+  const marks: string[] = [];
+  if (model.popup) marks.push('POP-UP: a dialog or pop-up is in front; only its rows are listed. Answer or close it (its button or BACK) to reach the screen behind.');
+  if (model.adRows?.length || model.adPlaying != null) {
+    let line = model.adRows?.length
+      ? `ADS: row${model.adRows.length > 1 ? 's' : ''} ${model.adRows.join(', ')} ${model.adRows.length > 1 ? 'are' : 'is'} labelled as an ad by the app; unless the task is about ads, don't tap it or count it as the content asked for.`
+      : 'ADS:';
+    if (model.adPlaying) line += ` An ad is playing: tap "Skip ad" (row ${model.adPlaying}).`;
+    else if (model.adPlaying === '') line += ' An ad is playing and cannot be skipped yet: wait for it to end (or for "Skip ad"), then check.';
+    marks.push(line);
+  }
+  return marks;
 }
 
 /** The element under a grid point: the smallest box that holds it, else the nearest centre within reach. */
@@ -219,6 +300,25 @@ export function uncoveredPoint(model: ScreenModel | null, target: ScreenElement)
   if (!free.length) return null;
   free.sort((p, q) => p.d - q.d);
   return { grid: { x: free[0].x, y: free[0].y }, cover: covers[0] };
+}
+
+/** Buttons that submit what was typed. Whole labels only: "Search" submits, "Search with your voice" does not. */
+const SUBMIT = /^(?:search|go|send|submit|done|enter|find|ok|next|सर्च|खोजें|buscar|rechercher|suchen|cerca|pesquisar|поиск)$/i;
+const squash = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
+
+/**
+ * What to tap when Enter cannot submit the field: a Search/Go/Send button, else
+ * the suggestion row whose text is exactly what was typed (search screens list
+ * it first). The field itself never counts. Null when neither is on screen.
+ */
+export function submitTarget(model: ScreenModel | null, typed: string | null): ScreenElement | null {
+  if (!model) return null;
+  const usable = model.elements.filter((e) => e.tappable && !e.editable && !e.disabled && !e.seen);
+  const button = usable.find((e) => SUBMIT.test(e.label.trim()));
+  if (button) return button;
+  const text = typed ? squash(typed) : '';
+  if (!text) return null;
+  return usable.find((e) => squash(e.label) === text || squash(labelParts(e.label)[0] ?? '') === text) ?? null;
 }
 
 /**

@@ -12,7 +12,9 @@ import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
-import { In } from 'typeorm';
+import { In, MoreThan } from 'typeorm';
+import { modelPrice } from './eko/modelVision';
+import { estimateLine, estimateNote, estimateMission, type MissionEstimate, type PastRun } from './missionEstimate';
 import { PLAIN_YES } from './plainYes';
 import { answerPrompt, parseAnswer, type AnswerPhone, type PhoneReport } from './taskAnswer';
 import { Service } from 'typedi';
@@ -36,11 +38,9 @@ import { ProxyRotationService } from './ProxyRotationService';
 /** Above this many phones, or this many minutes, a task needs Confirm. */
 const CONFIRM_PHONES = 5;
 const CONFIRM_MINUTES = 10;
-/** Rough cost per agent step with the current token budget (DeepSeek V4 Flash). */
-const COST_PER_STEP_USD = 0.0005;
-const STEPS_PER_SIMPLE_TASK = 30;
-const STEPS_PER_MINUTE = 5;
 const MAX_MODEL_TURNS = 6;
+/** How far back the mission estimate looks at the user's runs. */
+const ESTIMATE_HISTORY_DAYS = 30;
 
 export interface ToolCall {
   id: string;
@@ -94,7 +94,10 @@ export interface ProposalPlan {
   instruction?: string;
   phones?: string[];
   steps?: number;
-  cost_usd?: number;
+  /** Null: the model's price is unknown (see cost_note). */
+  cost_usd?: number | null;
+  /** Where the estimate comes from, in a few words ("from your last 15 runs of this task"). */
+  cost_note?: string;
   duration_minutes?: number;
   lanes?: string[];
   setting?: string;
@@ -641,6 +644,46 @@ export class VectorAgentService {
    * Policy v2: start what the policy check accepted. Tasks for the same phones
    * become one mission with numbered steps, so they run in order on each phone.
    */
+  /**
+   * The Confirm card's estimate from the user's own recent runs and the model
+   * the mission will run on (their active AI config). Never throws: without
+   * history or a price it falls back to defaults or "price unknown".
+   */
+  private async estimateFor(userId: number, instructions: string[], phones: number, minutes: number): Promise<MissionEstimate> {
+    const config = await this.aiConfigService.resolveActiveConfig(userId).catch(() => null);
+    const provider = config?.provider ? String(config.provider) : null;
+    const model = config?.model ?? null;
+    const [rows, price] = await Promise.all([
+      this.taskRepo
+        .find({
+          where: { user_id: userId, finished_at: MoreThan(new Date(Date.now() - ESTIMATE_HISTORY_DAYS * 86_400_000)) },
+          select: { id: true, prompt: true, provider: true, model: true, total_steps: true, total_duration_seconds: true, diagnostics: true },
+          order: { id: 'DESC' },
+          take: 200,
+        })
+        .catch(() => [] as AgentTask[]),
+      provider && model ? modelPrice(provider, model).catch(() => null) : Promise.resolve(null),
+    ]);
+    const runs: PastRun[] = rows.map((t) => {
+      const d = t.diagnostics;
+      return {
+        prompt: t.prompt ?? '',
+        provider: t.provider ?? null,
+        model: t.model ?? null,
+        steps: Number(t.total_steps) || 0,
+        durationSeconds: Number(t.total_duration_seconds) || 0,
+        costUsd: d?.cost_usd ?? null,
+        promptTokens: d?.prompt_tokens ?? 0,
+        completionTokens: d?.completion_tokens ?? 0,
+        cacheReadTokens: d?.cache_read_tokens ?? 0,
+        cacheWriteTokens: d?.cache_write_tokens ?? null,
+        // A run longer than 15 minutes was a timed one ("for 30 minutes"), not a single task.
+        timed: (Number(t.total_duration_seconds) || 0) > 15 * 60,
+      };
+    });
+    return estimateMission({ runs, instructions, phones, minutes, provider, model, price });
+  }
+
   private async runPlanned(ctx: AgentContext, result: AgentResult): Promise<void> {
     const groups = new Map<string, { deviceIds: number[]; minutes: number; instructions: string[] }>();
     for (const step of result.planned ?? []) {
@@ -656,13 +699,12 @@ export class VectorAgentService {
       const durationSeconds = group.minutes ? Math.round(group.minutes * 60) : undefined;
       if (group.deviceIds.length > CONFIRM_PHONES || group.minutes >= CONFIRM_MINUTES) {
         if (result.proposal) continue; // one Confirm at a time
-        const steps = group.deviceIds.length * (group.minutes ? group.minutes * STEPS_PER_MINUTE : STEPS_PER_SIMPLE_TASK * group.instructions.length);
-        const cost = steps * COST_PER_STEP_USD;
+        const estimate = await this.estimateFor(ctx.userId, group.instructions, group.deviceIds.length, group.minutes);
         const phoneNames = await this.namesFor(ctx.userId, group.deviceIds);
         result.proposal = {
           action: { type: 'run_mission', instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds },
-          summary: `Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phones — about ${steps} AI steps, roughly $${cost.toFixed(2)}`,
-          plan: { kind: 'mission', instruction, phones: phoneNames, steps, cost_usd: Math.round(cost * 100) / 100, duration_minutes: group.minutes || undefined },
+          summary: `Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phones — ${estimateLine(estimate)}`,
+          plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: group.minutes || undefined },
         };
         continue;
       }
@@ -802,14 +844,13 @@ export class VectorAgentService {
           }
           const durationSeconds = minutes ? Math.round(minutes * 60) : undefined;
           if (deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
-            const steps = deviceIds.length * (minutes ? minutes * STEPS_PER_MINUTE : STEPS_PER_SIMPLE_TASK);
-            const cost = steps * COST_PER_STEP_USD;
-            const summary = `Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — about ${steps} AI steps, roughly $${cost.toFixed(cost < 1 ? 2 : 1)}`;
+            const estimate = await this.estimateFor(ctx.userId, [instruction], deviceIds.length, minutes);
+            const summary = `Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — ${estimateLine(estimate)}`;
             const phoneNames = await this.namesFor(ctx.userId, deviceIds);
             result.proposal = {
               action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds },
               summary,
-              plan: { kind: 'mission', instruction, phones: phoneNames, steps, cost_usd: Math.round(cost * 100) / 100, duration_minutes: minutes || undefined },
+              plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: minutes || undefined },
             };
             return JSON.stringify({ status: 'needs_confirmation', summary });
           }

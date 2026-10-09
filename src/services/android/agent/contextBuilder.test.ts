@@ -35,7 +35,8 @@ describe('buildContext', () => {
       step(9, { toolName: 'open_url', input: { url: 'https://c.com' }, isError: true }),
       step(10, { toolName: 'wait', input: {} }),
     ];
-    expect(countActions(steps)).toBe('open_url: 3 succeeded (2 different), 1 failed; wait: 1 succeeded');
+    // URLs are not told apart: one link can serve a new page each visit (Special:Random).
+    expect(countActions(steps)).toBe('open_url: 3 succeeded, 1 failed; wait: 1 succeeded');
   });
 
   it('Lite: at most maxRecent steps in full, however much budget is left', () => {

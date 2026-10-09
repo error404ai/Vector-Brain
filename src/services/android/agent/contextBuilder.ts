@@ -139,7 +139,10 @@ export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = ne
     else {
       entry.ok += 1;
       const i = (step.input ?? {}) as Record<string, unknown>;
-      const target = i.url ?? i.packageName ?? i.text;
+      // Not URLs: one link can serve a new page each visit (Special:Random), and
+      // "9 succeeded (1 different)" made 14 of 15 phones give up on "visit 10
+      // random websites" (Oct 9, mission 245).
+      const target = i.packageName ?? i.text;
       if (target != null) entry.distinct.add(String(target));
     }
     per.set(step.toolName, entry);

@@ -4,7 +4,8 @@ import type { VerificationOutcome } from './AgentEngine';
  * The system's own check of a task the agent reported as done.
  *
  * Two levels, cheapest first:
- * - rule: things the phone can prove without a model — "open X" means X is in
+ * - rule: things the phone can prove without a model — "open example.com" means
+ *   the screen shows that address; "open X" means X is in
  *   the foreground; "close X" means X is no longer on screen; "install X"
  *   means the phone's app list has X (not found by name → the judge decides). Applied only
  *   when the whole task is that one action, so "open YouTube and play lofi"
@@ -92,6 +93,21 @@ export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   return null;
 }
 
+const SITE = /\b(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:\/[^\s,;]*)?/i;
+const SITE_WORDS = /\b(?:open|launch|visit|go\s+to|goto|load|browse|khol(?:o|na|do)?|the|a|website|web\s*site|site|page|homepage|home\s*page|url|link|in|on|with|using|chrome|browser|please|kar(?:o|do)?)\b/gi;
+
+/**
+ * The site a goal asks to open, when opening it is all the goal asks
+ * ("open https://example.com", "visit wikipedia.org in Chrome"); else null.
+ */
+export function siteOnlyGoal(goal: string): string | null {
+  const match = SITE.exec(goal);
+  if (!match) return null;
+  const leftover = goal.replace(match[0], ' ').replace(SITE_WORDS, ' ').replace(/[^\p{L}\p{N}]/gu, '');
+  if (leftover) return null;
+  return match[1].toLowerCase().replace(/^www\./, '');
+}
+
 export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = ''): string {
   const shown = steps.slice(-40);
   return [
@@ -128,7 +144,14 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
   const screen = await input.observe().catch(() => null);
   if (!screen) return { status: 'unverified', method: 'none', reason: 'Could not read the final screen', retries };
 
-  const rule = ruleFor(input.goal);
+  // "Open <site>": the address bar on the final screen shows it. Not shown
+  // proves nothing (a page can hide the bar), so that goes to the judge.
+  const site = siteOnlyGoal(input.goal);
+  if (site && screen.tree.toLowerCase().includes(site)) {
+    return { status: 'verified', method: 'rule', reason: `${site} is open (the screen shows its address)`, retries };
+  }
+
+  const rule = site ? null : ruleFor(input.goal);
   if (rule) {
     const apps = await input.listApps().catch(() => []);
     const app = appNamedIn(input.goal, apps);

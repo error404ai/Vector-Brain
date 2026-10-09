@@ -381,7 +381,8 @@ describe('VectorEngine', () => {
     expect(lite.calls.tap_coordinate).toBe(1);
     expect(lite.calls.global_action ?? 0).toBe(0);
     // Vector keeps sending every action of the reply, as before.
-    const full = engineWith([two, done(false, 'gave up')], { tapResult: () => ({ text: 'Action failed: NODE_NOT_FOUND', isError: true }) });
+    // (Its BACK went through, so giving up is questioned once: it gives up twice.)
+    const full = engineWith([two, done(false, 'gave up'), done(false, 'gave up')], { tapResult: () => ({ text: 'Action failed: NODE_NOT_FOUND', isError: true }) });
     await full.engine.run('tap then back', 'b2');
     expect(full.calls.global_action).toBe(1);
   });
@@ -446,6 +447,30 @@ describe('VectorEngine', () => {
     const { engine } = engineWith([done(true, 'Playing lofi music')]);
     const result = await engine.run('open YouTube and play lofi music', 'r7');
     expect(result.verification).toMatchObject({ status: 'verified', method: 'judge' });
+  });
+
+  it('giving up after making progress is questioned once; the agent carries on (Oct 9, mission 245: 14 of 15 quit mid-way)', async () => {
+    const { engine, prompts } = engineWith(
+      [
+        toolCall('swipe', { direction: 'UP' }, 's1'),
+        toolCall('swipe', { direction: 'UP' }, 's2'),
+        done(false, 'Scrolled 2 of 10 times, not yet complete'),
+        toolCall('swipe', { direction: 'UP' }, 's3'),
+        done(true, 'Scrolled 3 times'),
+      ],
+      undefined,
+      { compact: true },
+    );
+    const result = await engine.run('scroll the feed 3 times', 'g2');
+    const asked = JSON.stringify(prompts.find((p) => JSON.stringify(p).includes('You reported failure')));
+    expect(asked).toContain('You reported failure, but nothing has blocked you');
+    expect(asked).toContain('swipe: 2 succeeded');
+    expect(result.reasonCode).not.toBe('AGENT_REPORTED_FAILURE');
+  });
+
+  it('giving up a second time is accepted', async () => {
+    const { engine } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(false, 'Sign-in required'), done(false, 'Sign-in required')]);
+    expect(await engine.run('post a comment', 'g3')).toMatchObject({ success: false, reasonCode: 'AGENT_REPORTED_FAILURE' });
   });
 
   it('reports a task the agent says it cannot do as a failure, without a check', async () => {

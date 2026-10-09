@@ -39,6 +39,8 @@ export interface RunDiagnostics {
   reasoning_tokens?: number;
   /** What the provider billed for the run's model calls, in USD; null when not reported. */
   cost_usd?: number | null;
+  /** Where cost_usd came from: the provider's bill per call, or tokens × the model's list price (providers that do not report a cost). */
+  cost_basis?: 'billed' | 'price_list';
   think_ms: number;
   phone_ms: number;
   wait_ms: number;
@@ -172,6 +174,7 @@ export interface RunTotals {
   cacheWriteTokens?: number | null;
   reasoningTokens?: number;
   costUsd?: number | null;
+  costBasis?: 'billed' | 'price_list';
   /** Recoveries only the engine knows about (e.g. 'backup_model'). */
   recoveries?: RecoveryKind[];
   /** Provider generation ids of the run's model requests and the AI config that made each (c). */
@@ -232,6 +235,7 @@ export function summarizeRun(steps: StepLite[], tags: (WasteTag | null)[], total
     cache_write_tokens: totals.cacheWriteTokens ?? null,
     reasoning_tokens: totals.reasoningTokens ?? 0,
     cost_usd: totals.costUsd ?? null,
+    ...(totals.costUsd != null && totals.costBasis ? { cost_basis: totals.costBasis } : {}),
     think_ms: thinkMs,
     phone_ms: phoneMs,
     wait_ms: waitMs,

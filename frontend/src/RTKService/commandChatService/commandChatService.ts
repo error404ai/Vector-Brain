@@ -52,7 +52,10 @@ export interface ChatReply {
     instruction?: string;
     phones?: string[];
     steps?: number;
-    cost_usd?: number;
+    /** Null: the model's price is unknown. */
+    cost_usd?: number | null;
+    /** Where the estimate comes from. */
+    cost_note?: string;
     duration_minutes?: number;
     lanes?: string[];
     setting?: string;

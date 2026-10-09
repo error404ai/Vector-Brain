@@ -130,6 +130,7 @@ export class RunDiagnosticsService {
             cacheWriteTokens: addKnown(previous.cache_write_tokens, totals.cacheWriteTokens),
             reasoningTokens: (previous.reasoning_tokens ?? 0) + (totals.reasoningTokens ?? 0),
             costUsd: addKnown(previous.cost_usd, totals.costUsd),
+            costBasis: previous.cost_basis === 'price_list' || totals.costBasis === 'price_list' ? 'price_list' : 'billed',
             recoveries: engineRecoveries,
           }
         : { ...totals, recoveries: engineRecoveries };

@@ -1513,6 +1513,14 @@ function AssistantRow({ children }: { children: React.ReactNode }) {
 }
 
 /** What a Confirm will do, laid out — phones, task, estimate — with the two choices. */
+/** "$0.033", "$0.0021", "$1.40": a small mission is not shown as "$0.00". */
+function formatEstimateUsd(usd: number): string {
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
+  if (usd >= 0.0001) return `$${usd.toPrecision(2)}`;
+  return usd > 0 ? '<$0.0001' : '$0';
+}
+
 function PlanCard({
   plan,
   text,
@@ -1542,7 +1550,19 @@ function PlanCard({
       ),
     });
     if (plan.duration_minutes) rows.push({ label: 'Duration', value: `${plan.duration_minutes} min per phone` });
-    rows.push({ label: 'Estimate', value: `~${plan.steps} AI steps · ~$${(plan.cost_usd ?? 0).toFixed(2)}` });
+    rows.push({
+      label: 'Estimate',
+      value: (
+        <Box>
+          {`~${plan.steps} AI steps · ${plan.cost_usd == null ? 'price unknown' : `~${formatEstimateUsd(plan.cost_usd)}`}`}
+          {plan.cost_note && (
+            <Typography variant="caption" component="div" sx={{ color: 'text.secondary', mt: 0.25 }}>
+              {plan.cost_note}
+            </Typography>
+          )}
+        </Box>
+      ),
+    });
   } else {
     rows.push({ label: plan.kind === 'rotation' ? 'Proxy rotation' : 'Lane', value: plan.setting });
     rows.push({ label: 'Lanes', value: (plan.lanes ?? []).join(', ') });

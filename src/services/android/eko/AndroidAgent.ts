@@ -14,6 +14,7 @@ import { createHash } from 'crypto';
 import {
   GRID,
   buildScreenModel,
+  submitTarget,
   elementAt,
   formatScreen,
   isThin,
@@ -182,6 +183,18 @@ export interface AndroidAgentCallbacks {
   onHeartbeat?: () => void;
 }
 
+/**
+ * "bbc.com" or "www.reddit.com/r/news" → with https:// in front. The phone opens
+ * only http(s) links; Oct 9, 20 of 21 failed open_url calls were a bare address.
+ * Anything with its own scheme or with spaces is left as it is.
+ */
+export function withScheme(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || /\s/.test(trimmed)) return trimmed;
+  const bare = trimmed.replace(/^\/\//, '');
+  return /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/.test(bare) ? `https://${bare}` : trimmed;
+}
+
 export class AndroidAgent extends Agent {
   /**
    * Lite: shorter wording where the model reads it every call (the system prompt,
@@ -195,6 +208,9 @@ export class AndroidAgent extends Agent {
   private lastScreenshotBase64: string | null = null;
   /** The latest screen as elements, for tap_element and "what is at this point". */
   private screen: ScreenModel | null = null;
+  private fullScreen: { width: number; height: number } | null = null;
+  /** The text type_text last put in a field: a suggestion row with the same text submits it when Enter cannot. */
+  private lastTypedText: string | null = null;
   /** The last tap: what it hit, so a button that turns into Cancel is not tapped again. */
   private lastTap: { grid: { x: number; y: number }; label: string; at: number } | null = null;
   /** A tap that changed nothing, on the screen it left behind. */
@@ -483,6 +499,7 @@ export class AndroidAgent extends Agent {
             'type_text',
             args,
           );
+          if (!result.isError) this.lastTypedText = String(args.text || '');
           return idx ? this.withNote(result, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : result;
         },
       },
@@ -600,7 +617,7 @@ export class AndroidAgent extends Agent {
           return this.runDeviceAction(
             {
               type: 'OpenUrl',
-              url: String(args.url || ''),
+              url: withScheme(String(args.url || '')),
               sameTab: USE_IN_APP_BROWSER,
               ...(browser ? { packageName: browser } : {}),
             },
@@ -640,7 +657,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'press_key',
         description:
-          'Press a key on the text field that currently has focus. Use ENTER to submit a search or form after set_text — it triggers the field\'s own Search/Go/Done action. BACKSPACE deletes one character, CLEAR empties the field. ENTER needs Android 11 or newer; if it is refused, tap the on-screen Search or Go button instead.',
+          'Press a key on the text field that currently has focus. Use ENTER to submit a search or form after set_text — it triggers the field\'s own Search/Go/Done action. BACKSPACE deletes one character, CLEAR empties the field. Where Enter does not work (Android 10 and older, or a field that ignores it), the on-screen Search/Go/Send button or the suggestion matching the typed text is tapped for you; the result says which.',
         parameters: {
           type: 'object',
           properties: {
@@ -654,7 +671,7 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
-          return this.runDeviceAction(
+          const result = await this.runDeviceAction(
             {
               type: 'PressKey',
               key: args.key as 'ENTER' | 'BACKSPACE' | 'CLEAR',
@@ -662,6 +679,16 @@ export class AndroidAgent extends Agent {
             'press_key',
             args,
           );
+          if (!result.isError || args.key !== 'ENTER') return result;
+          // Enter needs Android 11 and some fields ignore it. The screen nearly
+          // always has another way to submit: a Search/Go/Send button, or the
+          // suggestion row that repeats the typed text. Oct 9, #3273 (Android 10):
+          // Enter was refused, and the agent spent two more calls finding that row.
+          const submit = submitTarget(this.screen, this.lastTypedText);
+          if (!submit) return result;
+          const tapped = await this.tapAt(submit.grid, submit, 'tap_element', { idx: submit.idx });
+          if (tapped.isError) return result;
+          return this.withNote(tapped, `(Enter does not work in this field on this phone, so "${submit.label.slice(0, 40)}" (row ${submit.idx}) was tapped instead to submit.)`);
         },
       },
       {
@@ -1436,6 +1463,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     return screenKey(this.lastForegroundApp, this.baseTable ?? this.lastUiTree);
   }
 
+  /**
+   * The phone's full screen size, from a window that starts at the top-left
+   * corner. A dialog's window is smaller; knowing the full size is how the list
+   * can say a pop-up is in front. A turn of the phone (wider than tall, or back)
+   * replaces it; a smaller window at the corner (a top sheet) does not.
+   */
+  private learnFullScreen(root?: UiNodeSnapshot): void {
+    if (!root) return;
+    const b = root.bounds;
+    if (b.left > 0 || b.top > 0) return;
+    const width = b.right - b.left;
+    const height = b.bottom - b.top;
+    if (width < 200 || height < 200) return;
+    const known = this.fullScreen;
+    const turned = known && width > height !== known.width > known.height;
+    if (!known || turned || width * height >= known.width * known.height * 0.9) this.fullScreen = { width, height };
+  }
+
   /** Takes in an observation: the element list, the app in front and the latest frame. */
   private absorb(observation: Awaited<ReturnType<AndroidGatewayService['executeAction']>>): void {
     if (observation.status !== 'SUCCESS') return;
@@ -1443,7 +1488,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const tree = observation.uiTree as UiTreeSnapshot | undefined;
     if (!tree) return;
     const capture = observation.screenCapture as { width?: number; height?: number } | undefined;
-    this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height });
+    this.learnFullScreen(tree.root);
+    this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height }, this.fullScreen ?? undefined);
     this.lastUiTree = formatScreen(this.screen);
     this.baseTable = this.lastUiTree;
     this.lastForegroundApp = this.detectPackageName(tree.root, tree.packageName || 'unknown');

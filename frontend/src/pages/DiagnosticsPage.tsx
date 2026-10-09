@@ -571,7 +571,9 @@ function RunsTable({ runs, loading, onOpen }: { runs: DiagnosticsRun[]; loading:
               <TableCell align="right">{d ? `${d.wasted} (${pct(d.wasted, d.steps)})` : '–'}</TableCell>
               <TableCell align="right">{d ? d.llm_calls : '–'}</TableCell>
               <TableCell align="right">{d?.tokens_reported ? fmtInt(d.prompt_tokens + d.completion_tokens) : '–'}</TableCell>
-              <TableCell align="right">{d?.cost_usd != null ? fmtUsd(d.cost_usd) : '–'}</TableCell>
+              <TableCell align="right" title={d?.cost_basis === 'price_list' ? 'Estimated from tokens × the model list price; this provider sends no cost' : undefined}>
+                {d?.cost_usd != null ? `${d.cost_basis === 'price_list' ? '≈' : ''}${fmtUsd(d.cost_usd)}` : '–'}
+              </TableCell>
             </TableRow>
           );
         })}
@@ -704,10 +706,11 @@ function TokenBreakdown({ d, screenTokens }: { d: RunDiagnostics; screenTokens: 
           {fmtInt(d.prompt_tokens + output)} tokens over {d.llm_calls} AI calls
           {d.cost_usd != null ? (
             <>
-              {' · billed '}
+              {d.cost_basis === 'price_list' ? ' · about ' : ' · billed '}
               <Box component="strong" sx={{ color: 'text.primary' }}>
                 {fmtUsd(d.cost_usd)}
               </Box>
+              {d.cost_basis === 'price_list' && ' (tokens × list price; this provider sends no cost)'}
             </>
           ) : (
             ' · cost not reported by this provider'
