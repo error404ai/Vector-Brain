@@ -54,6 +54,11 @@ export interface ContextOptions {
    * attached", "rows v1… were read from a screenshot"): stale once it is gone.
    */
   cleanOld?: boolean;
+  /**
+   * Lite: a line of what the run did, counted by code ("swipe: 6 succeeded"),
+   * sent with the history so the model never has to count its own steps.
+   */
+  progress?: string;
 }
 
 export interface BuiltContext {
@@ -125,9 +130,10 @@ export function shortLine(step: StepRecord, index: number): string {
  * actions per tool and how many distinct targets (URLs, apps, texts). A model
  * counting 40 step lines itself said "14 visits, short of the 10 required".
  */
-export function countActions(steps: StepRecord[]): string {
+export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = new Set()): string {
   const per = new Map<string, { ok: number; failed: number; distinct: Set<string> }>();
   for (const step of steps) {
+    if (skip.has(step.toolName)) continue;
     const entry = per.get(step.toolName) ?? { ok: 0, failed: 0, distinct: new Set<string>() };
     if (step.isError) entry.failed += 1;
     else {
@@ -202,11 +208,13 @@ export function buildContext(options: ContextOptions): BuiltContext {
     ? `STEPS ALREADY DONE (${older.length}${dropped ? `, the oldest ${dropped} not shown` : ''}; the full detail of the last ${steps.length - firstFull} follows):\n${summary.join('\n')}`
     : '';
 
+  const progress = options.progress && steps.length ? `DONE SO FAR (counted by the system, exact): ${options.progress}` : '';
+  const doneBlock = [done, progress].filter(Boolean).join('\n\n');
   const messages: ModelMessage[] = options.taskFirst
     ? [
         { role: 'user', content: task },
         ...(options.afterTask ? [{ role: 'user' as const, content: options.afterTask }] : []),
-        ...(done ? [{ role: 'user' as const, content: done }] : []),
+        ...(doneBlock ? [{ role: 'user' as const, content: doneBlock }] : []),
       ]
     : [{ role: 'user', content: [task, done ? `\n${done}` : ''].filter(Boolean).join('\n') }];
   for (let i = firstFull; i < steps.length; i += 1) {

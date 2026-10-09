@@ -184,6 +184,43 @@ export function elementAt(model: ScreenModel | null, x: number, y: number): Scre
   return best;
 }
 
+type Box = ScreenElement['box'];
+const inside = (b: Box, x: number, y: number) => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+const encloses = (outer: Box, inner: Box) => outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom;
+
+/**
+ * Where to tap an element whose middle is covered by another control floating
+ * over part of it (a mini player, a chat bubble, a floating button). The cover
+ * is a tappable element over the middle that neither holds the element (a
+ * container) nor sits inside it (its own child). Returns the uncovered point
+ * nearest the middle, or null when the middle is free or nothing is free.
+ * Oct 9: YouTube's mini player sat on a result's middle on a moto g9, and
+ * every tap opened nothing (runs #3232, #3234).
+ */
+export function uncoveredPoint(model: ScreenModel | null, target: ScreenElement): { grid: { x: number; y: number }; cover: ScreenElement } | null {
+  if (!model) return null;
+  const covers = model.elements.filter(
+    (e) => e !== target && (e.tappable || e.editable) && !e.seen && inside(e.box, target.grid.x, target.grid.y) && !encloses(e.box, target.box) && !encloses(target.box, e.box),
+  );
+  if (!covers.length) return null;
+  const b = target.box;
+  const w = b.right - b.left;
+  const h = b.bottom - b.top;
+  if (w < 4 || h < 4) return null;
+  const free: { x: number; y: number; d: number }[] = [];
+  for (const fx of [0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9]) {
+    for (const fy of [0.15, 0.3, 0.5, 0.7, 0.85]) {
+      const x = Math.round(b.left + w * fx);
+      const y = Math.round(b.top + h * fy);
+      if (covers.some((c) => inside(c.box, x, y))) continue;
+      free.push({ x, y, d: Math.hypot(x - target.grid.x, y - target.grid.y) });
+    }
+  }
+  if (!free.length) return null;
+  free.sort((p, q) => p.d - q.d);
+  return { grid: { x: free[0].x, y: free[0].y }, cover: covers[0] };
+}
+
 /**
  * A screen the tree does not describe well enough to act on: few labelled
  * rows, or tappable rows that are mostly unlabelled (canvas, web view, game).

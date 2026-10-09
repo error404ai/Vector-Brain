@@ -97,6 +97,15 @@ function fakeAgent(options: { tapResult?: () => { text: string; isError?: boolea
           return { content: [{ type: 'text', text: `Action succeeded: Opened ${args.packageName}` }] };
         },
       },
+      {
+        name: 'swipe',
+        description: 'swipe',
+        parameters: { type: 'object', properties: { direction: { type: 'string' } } },
+        execute: async () => {
+          count('swipe');
+          return { content: [{ type: 'text', text: 'Action succeeded: Gesture completed' }] };
+        },
+      },
     ],
     systemPrompt: async () => 'You control a phone.',
     observeForCheck: async () => {
@@ -397,6 +406,34 @@ describe('VectorEngine', () => {
     expect(lastAgentPrompt).toContain('1. tap_coordinate');
     expect(lastAgentPrompt).not.toContain('not shown');
     expect(JSON.stringify(e.prompts.at(-1))).toContain('COUNTED BY THE SYSTEM');
+  });
+
+  it('Lite: only the first scroll of a reply is sent, and the model is told why', async () => {
+    const three: Chunk[] = [
+      { type: 'stream-start', warnings: [] },
+      ...['a', 'b', 'c'].map((id) => ({ type: 'tool-call', toolCallId: id, toolName: 'swipe', input: JSON.stringify({ direction: 'UP' }) }) as Chunk),
+      { type: 'finish', finishReason: 'tool-calls', usage },
+    ];
+    const lite = engineWith([three, done(true, 'Scrolled')], undefined, { compact: true });
+    await lite.engine.run('scroll the feed 3 times', 's1');
+    expect(lite.calls.swipe).toBe(1);
+    expect(JSON.stringify(lite.prompts[1])).toContain('Only the first scroll of your last reply was done');
+    // Vector is unchanged: all three are sent.
+    const full = engineWith([three, done(true, 'Scrolled')]);
+    await full.engine.run('scroll the feed 3 times', 's2');
+    expect(full.calls.swipe).toBe(3);
+  });
+
+  it('Lite: every call carries the actions done so far, counted by code', async () => {
+    const lite = engineWith(
+      [toolCall('swipe', { direction: 'UP' }, 'a'), toolCall('swipe', { direction: 'UP' }, 'b'), toolCall('open_app', { packageName: 'com.android.chrome' }, 'c'), done(true, 'ok')],
+      undefined,
+      { compact: true },
+    );
+    await lite.engine.run('swipe twice then open Chrome', 'p1');
+    const third = JSON.stringify(lite.prompts[2]);
+    expect(third).toContain('DONE SO FAR (counted by the system, exact): swipe: 2 succeeded');
+    expect(JSON.stringify(lite.prompts[0])).not.toContain('DONE SO FAR (counted');
   });
 
   it('gives the judge the steps the phone performed', async () => {

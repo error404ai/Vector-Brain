@@ -10,6 +10,7 @@ import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
 import { compactSystemPrompt } from './compactPrompt';
 import type { ScreenshotMode } from './screenshotMode';
+import { createHash } from 'crypto';
 import {
   GRID,
   buildScreenModel,
@@ -18,6 +19,7 @@ import {
   isThin,
   screenKey,
   toPixels,
+  uncoveredPoint,
   withSeenElements,
   type ScreenElement,
   type ScreenModel,
@@ -358,6 +360,12 @@ export class AndroidAgent extends Agent {
               isError: true,
             };
           }
+          // Its middle under a floating control (a mini player): tap the part that shows.
+          const free = uncoveredPoint(this.screen, target);
+          if (free) {
+            const result = await this.tapAt(free.grid, { ...target, grid: free.grid }, 'tap_element', args, true);
+            return result.isError ? result : this.withNote(result, `(The middle of "${target.label.slice(0, 40)}" is under "${free.cover.label.slice(0, 40) || free.cover.type}", so its uncovered part was tapped.)`);
+          }
           return this.tapAt(target.grid, target, 'tap_element', args);
         },
       },
@@ -521,6 +529,7 @@ export class AndroidAgent extends Agent {
             requested === 'DOWN' ? 'UP' : requested === 'UP' ? 'DOWN' : requested === 'RIGHT' ? 'LEFT' : 'RIGHT';
 
           const before = this.currentKey();
+          const frameBefore = this.frameKey();
           const result = await this.runDeviceAction(
             {
               type: 'Swipe',
@@ -533,7 +542,12 @@ export class AndroidAgent extends Agent {
           // Only swipes that changed nothing count towards the block above. A swipe
           // that brought new content (the next reel, more of a list) is progress:
           // "scroll Reels 5 times" was blocked at the 5th on Oct 9 (run #3229).
-          if (!result.isError && this.currentKey() !== before) {
+          // Changed = the element list or the picture changed. A feed of videos or
+          // photos (Reels, Shorts, a gallery) can show the same list for every
+          // item, so the list alone called real scrolls "nothing changing".
+          const frameAfter = this.frameKey();
+          const pictureChanged = Boolean(frameBefore && frameAfter && frameBefore !== frameAfter);
+          if (!result.isError && (this.currentKey() !== before || pictureChanged)) {
             const at = this.actionHistory.lastIndexOf(scrollKey);
             if (at >= 0) this.actionHistory.splice(at, 1);
           }
@@ -1412,6 +1426,11 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     return detected;
   }
 
+  /** A fingerprint of the latest frame the phone sent (identical pixels give identical JPEG bytes), or null without one. */
+  private frameKey(): string | null {
+    return this.lastScreenshotBase64 ? createHash('sha1').update(this.lastScreenshotBase64).digest('hex') : null;
+  }
+
   /** "Has the screen changed": the app in front plus the list as the phone reported it. */
   private currentKey(): string {
     return screenKey(this.lastForegroundApp, this.baseTable ?? this.lastUiTree);
@@ -1527,7 +1546,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   }
 
   /** Every tap goes through here: guards first, then the phone, then the check. */
-  private async tapAt(grid: { x: number; y: number }, target: ScreenElement | null, toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+  private async tapAt(grid: { x: number; y: number }, target: ScreenElement | null, toolName: string, args: Record<string, unknown>, atGrid = false): Promise<ToolResult> {
     const refuse = (text: string): ToolResult => ({ content: [{ type: 'text', text }], isError: true });
     const label = target?.label ?? '';
     const now = Date.now();
@@ -1549,7 +1568,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     }
     const width = this.screen?.size.width ?? 1080;
     const height = this.screen?.size.height ?? 2400;
-    const px = target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
+    const px = !atGrid && target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
     const actionKey = `tap_${grid.x}_${grid.y}`;
     this.actionHistory.push(actionKey);
     if (this.actionHistory.length > 10) this.actionHistory.shift();

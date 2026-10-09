@@ -275,3 +275,65 @@ describe('swipe guard', () => {
     expect(text(blocked)).toMatch(/Blocked: already scrolled 4 times in this direction with nothing changing/);
   });
 });
+
+describe('covered elements and changing pictures', () => {
+  /** A results screen: a video row whose middle sits under a mini player (YouTube on a moto g9, Oct 9). */
+  const covered = () =>
+    node({
+      bounds: [0, 0, 1080, 2400],
+      children: [
+        node({ text: 'Song video result', clickable: true, bounds: [0, 1800, 1080, 2120] }),
+        node({ contentDescription: 'Minimised player', clickable: true, bounds: [520, 1880, 1080, 2140] }),
+        node({ text: 'Home', clickable: true, bounds: [0, 2200, 216, 2400] }),
+      ],
+    });
+
+  it('taps the uncovered part of an element whose middle is under a floating control', async () => {
+    const phone = fakePhone([covered()]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw');
+    const listing = text(await tool(agent, 'read_ui_tree').execute({}, {}, {}));
+    const idx = listing.split('\n').find((row) => row.includes('|Song video result|'))!.split('|')[0];
+    const result = await tool(agent, 'tap_element').execute({ idx }, {}, {});
+    const tap = phone.actions.find((a) => a.type === 'Tap')! as unknown as { x: number; y: number };
+    // On the row, outside the mini player (520–1080 × 1880–2140).
+    expect(tap.y).toBeGreaterThanOrEqual(1800);
+    expect(tap.y).toBeLessThanOrEqual(2120);
+    expect(tap.x < 520 || tap.y < 1880).toBe(true);
+    expect(text(result)).toMatch(/is under "Minimised player", so its uncovered part was tapped/);
+  });
+
+  it('taps the middle as before when nothing covers it', async () => {
+    const phone = fakePhone([playStore('Install', 720, 1600)]);
+    const agent = new AndroidAgent(phone.gateway as never, 'hw');
+    const listing = text(await tool(agent, 'read_ui_tree').execute({}, {}, {}));
+    const idx = listing.split('\n').find((row) => row.includes('|Install|'))!.split('|')[0];
+    const result = await tool(agent, 'tap_element').execute({ idx }, {}, {});
+    expect(text(result)).not.toMatch(/uncovered part/);
+  });
+
+  /** Same element list on every swipe; the picture changes only when `pictureMoves`. */
+  const feedWithFrames = (pictureMoves: boolean) => {
+    let frame = 0;
+    const screen = node({ bounds: [0, 0, 1080, 2400], children: [node({ text: 'Like', clickable: true, bounds: [900, 1200, 1000, 1300] })] });
+    return {
+      executeAction: jest.fn(async (_hw: string, action: { type: string }) => {
+        if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.example.feed', root: screen }, screenCapture: { base64Data: `FRAME${frame}` } };
+        if (action.type === 'Swipe' && pictureMoves) frame += 1;
+        return { status: 'SUCCESS', summary: `${action.type} done` };
+      }),
+    };
+  };
+
+  it('a swipe that changes the picture counts as progress even when the element list is the same', async () => {
+    const agent = new AndroidAgent(feedWithFrames(true) as never, 'hw');
+    await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    for (let i = 0; i < 7; i += 1) expect((await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {})).isError).toBeFalsy();
+  });
+
+  it('list and picture both unchanged: still blocked after 4 swipes', async () => {
+    const agent = new AndroidAgent(feedWithFrames(false) as never, 'hw');
+    await tool(agent, 'read_ui_tree').execute({}, {}, {});
+    for (let i = 0; i < 4; i += 1) await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
+    expect((await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {})).isError).toBe(true);
+  });
+});

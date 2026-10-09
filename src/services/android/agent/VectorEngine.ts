@@ -118,6 +118,10 @@ const NOT_IDEMPOTENT = new Set([
 ]);
 
 const TASK_DONE = 'task_done';
+/** Tools that only look or wait; left out of the progress line the model reads. */
+const LOOK_ONLY = new Set(['read_ui_tree', 'capture_screen', 'wait', 'wait_for_element', 'phone_info', 'list_apps', 'read_clipboard', 'read_notifications']);
+/** Actions after which the screen has moved: in a Lite reply, nothing after one of these is sent. */
+const MOVES_SCREEN = new Set(['swipe', 'scroll_element']);
 /**
  * Lite: the phone's network and locale facts on request. They used to ride along
  * as a message after the task on every call — after the cache mark, so billed in
@@ -330,6 +334,7 @@ export class VectorEngine implements AgentEngine {
         taskFirst: Boolean(this.options.compact),
         maxRecent: this.options.compact ? COMPACT_MIN_RECENT : undefined,
         cleanOld: Boolean(this.options.compact),
+        progress: this.options.compact ? countActions(steps, LOOK_ONLY) || undefined : undefined,
       });
       notes.length = 0;
 
@@ -395,6 +400,13 @@ export class VectorEngine implements AgentEngine {
         // Lite may send several actions in one reply; after one fails, the rest were
         // planned on a screen that did not come about, so they are not sent.
         if (this.options.compact && record.isError) break;
+        // After a scroll the screen is new: whatever else the reply planned (another
+        // scroll, a tap) was chosen on the old one. Oct 9: replies of 3–4 swipes
+        // overshot "scroll 5 times" and the model lost count.
+        if (this.options.compact && MOVES_SCREEN.has(c.toolName) && calls.indexOf(c) < calls.length - 1) {
+          notes.push('Only the first scroll of your last reply was done: the screen moved. Look at the new screen list before the next action.');
+          break;
+        }
       }
       await bookUsage();
 
