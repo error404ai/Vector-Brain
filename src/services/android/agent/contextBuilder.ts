@@ -147,9 +147,27 @@ export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = ne
     }
     per.set(step.toolName, entry);
   }
-  return [...per]
-    .map(([tool, e]) => `${tool}: ${e.ok} succeeded${e.distinct.size ? ` (${e.distinct.size} different)` : ''}${e.failed ? `, ${e.failed} failed` : ''}`)
-    .join('; ');
+  const parts = [...per].map(([tool, e]) => `${tool}: ${e.ok} succeeded${e.distinct.size ? ` (${e.distinct.size} different)` : ''}${e.failed ? `, ${e.failed} failed` : ''}`);
+  const changes = buttonChanges(steps);
+  if (changes.length) {
+    const tally = new Map<string, number>();
+    for (const c of changes) tally.set(`"${c.from}" → "${c.to}"`, (tally.get(`"${c.from}" → "${c.to}"`) ?? 0) + 1);
+    parts.push(`buttons changed by your taps: ${[...tally].map(([k, n]) => `${k} ×${n}`).join(', ')}`);
+  }
+  return parts.join('; ');
+}
+
+const CHANGED = /^CHANGED: "(.+?)" → "(.+?)"$/m;
+
+/** Buttons the run's taps turned into something else (the "CHANGED:" line AndroidAgent adds to a tap's result). */
+export function buttonChanges(steps: StepRecord[]): { from: string; to: string }[] {
+  const out: { from: string; to: string }[] = [];
+  for (const step of steps) {
+    if (step.isError) continue;
+    const m = CHANGED.exec(step.resultText ?? '');
+    if (m) out.push({ from: m[1], to: m[2] });
+  }
+  return out;
 }
 
 function stepMessages(step: StepRecord, keepScreen: boolean, clean = false): ModelMessage[] {

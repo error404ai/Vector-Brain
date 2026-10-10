@@ -220,6 +220,14 @@ export const diagnosticsService = baseApi.injectEndpoints({
     checkBilledCost: builder.mutation<{ data: BilledCost }, number>({
       query: (id) => ({ url: `/diagnostics/runs/${id}/billed`, method: 'POST' }),
     }),
+    getTestSet: builder.query<{ data: { tasks: TestSetTask[]; runs: TestSetRun[] } }, void>({
+      query: () => ({ url: '/diagnostics/testset', method: 'GET' }),
+      providesTags: ['MISSIONS' as never],
+    }),
+    startTestSet: builder.mutation<{ data: { run: string; missions: number } }, { device_ids: number[]; keys?: string[] }>({
+      query: (body) => ({ url: '/diagnostics/testset/run', method: 'POST', body }),
+      invalidatesTags: ['MISSIONS' as never],
+    }),
     syncDiagnosticsNow: builder.mutation<{ data: SyncState }, void>({
       query: () => ({ url: '/diagnostics/sync', method: 'POST' }),
       invalidatesTags: [TAG],
@@ -235,7 +243,45 @@ export const {
   useSyncDiagnosticsNowMutation,
   useGetClientReportsQuery,
   useCheckBilledCostMutation,
+  useGetTestSetQuery,
+  useStartTestSetMutation,
 } = diagnosticsService;
+
+/** One task of the fixed test set (backend testset/testSet.ts). */
+export interface TestSetTask {
+  key: string;
+  kind: string;
+  prompt: string;
+}
+
+export interface TestSetTaskResult {
+  key: string;
+  kind: string;
+  prompt: string;
+  phones: number;
+  pending: number;
+  passed: number;
+  verified: number;
+  failed: number;
+  costUsd: number;
+  steps: number;
+  reasons: { reason: string; count: number }[];
+}
+
+/** One run of the test set: every task on the same phones, started together. */
+export interface TestSetRun {
+  run: string;
+  startedAt: string;
+  phones: number;
+  model: string | null;
+  engine: string | null;
+  finished: number;
+  total: number;
+  passed: number;
+  verified: number;
+  costUsd: number;
+  tasks: TestSetTaskResult[];
+}
 
 /** The export needs the bearer token, so it is fetched as a blob and saved. */
 export async function downloadDiagnosticsExport(days: number): Promise<void> {

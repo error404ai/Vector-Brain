@@ -44,6 +44,10 @@ export class Mission {
   @Column({ type: 'varchar', length: 12, default: 'RUNNING' })
   status: MissionStatus;
 
+  /** Who started it when not the user directly: "testset:<run>" for a test-set run (TestSetService). */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  source: string | null;
+
   /** Anything the user should know up front — e.g. fewer phones were ready than asked for. */
   @Column({ type: 'varchar', length: 500, nullable: true })
   note: string | null;

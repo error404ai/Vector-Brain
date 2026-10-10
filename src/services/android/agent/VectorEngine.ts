@@ -4,9 +4,9 @@ import { generateText, jsonSchema, streamText, tool, wrapLanguageModel, type Lan
 import type { AndroidAgent } from '../eko/AndroidAgent';
 import type { AgentEngine, EngineMessageHandler, EngineRunResult, VerificationOutcome } from './AgentEngine';
 import { compactTool, type ToolSpec } from './compactTools';
-import { buildContext, countActions, summaryLine, type StepRecord } from './contextBuilder';
+import { buildContext, buttonChanges, countActions, summaryLine, type StepRecord } from './contextBuilder';
 import { LITE_ENGINE_RULES } from '../eko/compactPrompt';
-import { parseAppList, verifyCompletion } from './successVerifier';
+import { countChecks, parseAppList, verifyCompletion, type RunTally } from './successVerifier';
 import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
 
 export interface VectorEngineOptions {
@@ -193,6 +193,12 @@ interface ModelTurn {
  * - the run ends with task_done and a system check of the phone;
  * - only model requests are retried; a phone action is sent at most once.
  */
+/** What the run did, counted from its steps, for the goal's own numbers (successVerifier.countChecks). */
+export function runTally(steps: StepRecord[]): RunTally {
+  const ok = (names: string[]) => steps.filter((s) => !s.isError && names.includes(s.toolName)).length;
+  return { openUrl: ok(['open_url']), scrolls: ok(['swipe', 'scroll_element']), changes: buttonChanges(steps) };
+}
+
 export class VectorEngine implements AgentEngine {
   readonly kind: 'vector' | 'lite';
   private controller: AbortController | null = null;
@@ -409,6 +415,15 @@ export class VectorEngine implements AgentEngine {
           notes.push('Only the first scroll of your last reply was done: the screen moved. Look at the new screen list before the next action.');
           break;
         }
+        // Same after a tap when the reply goes on to tap or scroll: the next idx was
+        // picked on the screen before the tap. Oct 10, mission 249: five or nine Follow
+        // taps in one reply, the list shifted after each, extra accounts got followed
+        // and the agent lost count. (Tap a field, then type: still one reply.)
+        const next = calls[calls.indexOf(c) + 1];
+        if (this.options.compact && TAP_TOOLS.has(c.toolName) && next && (TAP_TOOLS.has(next.toolName) || MOVES_SCREEN.has(next.toolName))) {
+          notes.push('Only the first tap of your last reply was done: a tap can change the screen. Look at the new screen list, then tap the next one.');
+          break;
+        }
       }
       await bookUsage();
 
@@ -437,8 +452,11 @@ export class VectorEngine implements AgentEngine {
       if (!done.success && !gaveUpAsked && steps.some((s) => !s.isError && !LOOK_ONLY.has(s.toolName))) {
         gaveUpAsked = true;
         const progress = countActions(steps, LOOK_ONLY);
+        // The goal's numbers already reached (Oct 9: phones gave up with 10 of 10 pages open).
+        const { short, met } = countChecks(prompt, runTally(steps));
+        const reached = met.length && !short.length ? ` The system counted ${met.join('; ')}: the goal's numbers are reached.` : '';
         notes.push(
-          `You reported failure, but nothing has blocked you${progress ? ` (DONE SO FAR: ${progress})` : ''}. If the task can still be done, carry on with the part that is missing. Not sure it is complete? Call task_done with success=true: the system checks the phone and tells you what is missing. Use success=false only for a real blocker (app not installed, sign-in required, an error you cannot get past).`,
+          `You reported failure, but nothing has blocked you${progress ? ` (DONE SO FAR: ${progress})` : ''}.${reached} If the task can still be done, carry on with the part that is missing. Not sure it is complete? Call task_done with success=true: the system checks the phone and tells you what is missing. Use success=false only for a real blocker (app not installed, sign-in required, an error you cannot get past).`,
         );
         continue;
       }
@@ -457,7 +475,7 @@ export class VectorEngine implements AgentEngine {
         return { success: true, stopReason: 'done', result: done.summary, verification: { status: 'unverified', method: 'none', reason: 'Verification is off', retries: 0 } };
       }
 
-      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine), countActions(steps));
+      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine), countActions(steps), runTally(steps));
       if (outcome.status === 'failed' && verificationRetries < MAX_VERIFICATION_RETRIES) {
         verificationRetries += 1;
         // Oct 9: after "carry on" alone, 2 of 3 Chrome runs gave up with success=false although only the check's wording was at issue.
@@ -722,6 +740,7 @@ export class VectorEngine implements AgentEngine {
     emit: (message: Record<string, unknown>) => Promise<void>,
     steps: string[] = [],
     counts = '',
+    tally?: RunTally,
   ): Promise<VerificationOutcome> {
     const agent = this.options.agent;
     return verifyCompletion(
@@ -730,6 +749,7 @@ export class VectorEngine implements AgentEngine {
         summary,
         steps,
         counts,
+        tally,
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {

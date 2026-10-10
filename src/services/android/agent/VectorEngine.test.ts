@@ -390,7 +390,7 @@ describe('VectorEngine', () => {
   it('records every request\'s generation id, the judge\'s too', async () => {
     const withId = (id: string, chunks: Chunk[]): Chunk[] => [chunks[0], { type: 'response-metadata', id } as never, ...chunks.slice(1)];
     const e = engineWith([withId('gen-a', toolCall('open_app', { packageName: 'com.android.chrome' })), withId('gen-b', done(true, 'Visited the sites'))], undefined, { compact: true });
-    await e.engine.run('open Chrome and visit 2 sites', 'g1');
+    await e.engine.run('open Chrome and visit some sites', 'g1');
     const ids = e.engine.generations.map((g) => g.id);
     expect(ids).toEqual(expect.arrayContaining(['gen-a', 'gen-b']));
     expect(e.engine.generations.every((g) => g.fallback === false)).toBe(true);
@@ -416,12 +416,12 @@ describe('VectorEngine', () => {
       { type: 'finish', finishReason: 'tool-calls', usage },
     ];
     const lite = engineWith([three, done(true, 'Scrolled')], undefined, { compact: true });
-    await lite.engine.run('scroll the feed 3 times', 's1');
+    await lite.engine.run('scroll the feed', 's1');
     expect(lite.calls.swipe).toBe(1);
     expect(JSON.stringify(lite.prompts[1])).toContain('Only the first scroll of your last reply was done');
     // Vector is unchanged: all three are sent.
     const full = engineWith([three, done(true, 'Scrolled')]);
-    await full.engine.run('scroll the feed 3 times', 's2');
+    await full.engine.run('scroll the feed', 's2');
     expect(full.calls.swipe).toBe(3);
   });
 
@@ -439,7 +439,7 @@ describe('VectorEngine', () => {
 
   it('gives the judge the steps the phone performed', async () => {
     const { engine, prompts } = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }), done(true, 'Visited the sites')]);
-    await engine.run('open Chrome and visit 2 sites', 'r9');
+    await engine.run('open Chrome and visit some sites', 'r9');
     expect(JSON.stringify(prompts.at(-1))).toContain('STEPS (1):');
   });
 
@@ -466,6 +466,19 @@ describe('VectorEngine', () => {
     expect(asked).toContain('You reported failure, but nothing has blocked you');
     expect(asked).toContain('swipe: 2 succeeded');
     expect(result.reasonCode).not.toBe('AGENT_REPORTED_FAILURE');
+  });
+
+  it('Lite: after a tap, the rest of the reply\'s taps wait for the new screen (Oct 10, mission 249: nine Follow taps in one reply)', async () => {
+    const twoTaps: Chunk[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: 'a', toolName: 'tap_coordinate', input: JSON.stringify({ x: 1, y: 1 }) },
+      { type: 'tool-call', toolCallId: 'b', toolName: 'tap_coordinate', input: JSON.stringify({ x: 2, y: 2 }) },
+      { type: 'finish', finishReason: 'tool-calls', usage },
+    ];
+    const lite = engineWith([twoTaps, done(true, 'Tapped')], undefined, { compact: true });
+    await lite.engine.run('tap twice', 'tb1');
+    expect(lite.calls.tap_coordinate).toBe(1);
+    expect(JSON.stringify(lite.prompts.at(-2) ?? lite.prompts.at(-1))).toContain('Only the first tap of your last reply was done');
   });
 
   it('giving up a second time is accepted', async () => {

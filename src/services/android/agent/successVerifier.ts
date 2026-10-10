@@ -32,6 +32,57 @@ export interface VerifyInput {
   steps?: string[];
   /** Actions counted by code (countActions): the judge uses these instead of counting lines itself. */
   counts?: string;
+  /** The same counts as numbers, for the goal's own numbers ("visit 10 sites", "scroll 5 times"). */
+  tally?: RunTally;
+}
+
+/** What the run did, counted by code from its steps. */
+export interface RunTally {
+  /** open_url calls that succeeded. */
+  openUrl: number;
+  /** swipe and scroll_element calls that succeeded. */
+  scrolls: number;
+  /** Buttons a tap turned into something else ("Follow" → "Following"). */
+  changes: { from: string; to: string }[];
+}
+
+const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
+const NUM = `(\\d{1,3}|${Object.keys(NUMBER_WORDS).join('|')})`;
+const toNumber = (t: string) => NUMBER_WORDS[t.toLowerCase()] ?? Number(t);
+/** "visit 10 random websites", "open 5 sites", "browse three pages". */
+const SITES = new RegExp(`\\b(?:visit|open|browse|load|go\\s+to)\\b(?:\\W+\\w+){0,4}?\\W+${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:websites?|web\\s*sites?|sites?|web\\s*pages?|pages?|urls?|links?)\\b`, 'gi');
+/** "scroll through Reels 5 times", "swipe 10 shorts", "scroll down 3 times". */
+const SCROLLS = new RegExp(`\\b(?:scroll|swipe)\\b(?:\\W+\\w+){0,4}?\\W+${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:times|reels?|videos?|posts?|shorts?|stories|photos?|items?|tweets?|pins?)\\b`, 'gi');
+/** "follow 3 people", "like 5 posts", "subscribe to 2 channels": a button a tap turns into its done state. */
+const BUTTONS = new RegExp(`\\b(follow|like|subscribe|join|save|connect)\\b(?:\\W+\\w+){0,3}?\\W+${NUM}\\b`, 'gi');
+
+/**
+ * The goal's own numbers against what the system counted. "short": counts the
+ * phone proves (pages opened, scrolls) that fall below the goal — the task is
+ * not done, whatever a model thinks. "met": counts that are reached, said to the
+ * judge so it does not recount (Oct 10: the judge passed 8 of 10 sites and 4 of
+ * 5 swipes, and failed a run with 13 different sites as "only 9").
+ * Button changes are only evidence: a tap that opened a profile first is not
+ * seen as a change, so they never fail a run on their own.
+ */
+export function countChecks(goal: string, tally: RunTally): { short: string[]; met: string[] } {
+  const short: string[] = [];
+  const met: string[] = [];
+  for (const m of goal.matchAll(SITES)) {
+    const want = toNumber(m[1]);
+    (tally.openUrl >= want ? met : short).push(`pages opened (open_url): ${tally.openUrl} of ${want}`);
+  }
+  for (const m of goal.matchAll(SCROLLS)) {
+    const want = toNumber(m[1]);
+    (tally.scrolls >= want ? met : short).push(`scrolls (swipe/scroll_element): ${tally.scrolls} of ${want}`);
+  }
+  for (const m of goal.matchAll(BUTTONS)) {
+    const verb = m[1].toLowerCase();
+    const want = toNumber(m[2]);
+    const done = tally.changes.filter((c) => c.from.toLowerCase().split(/\s+/)[0] === verb).length;
+    if (done >= want) met.push(`"${m[1]}" buttons changed by taps: ${done} of ${want}`);
+  }
+  return { short, met };
 }
 
 const INSTALL = /\b(install|download|daal(?:o|do)?|dalo)\b/i;
@@ -82,10 +133,13 @@ export function ruleFor(goal: string): 'open' | 'close' | 'install' | null {
   const stripped = goal.replace(/\(.*?\)/g, ' ');
   if (INSTALL.test(stripped) && !MORE.test(stripped.replace(INSTALL, ' ').replace(INSTALL_FILLER, ' ').replace(INSTALL, ' '))) return 'install';
   // "Close X" is provable only when closing the app itself is the last thing asked.
+  const last = lastClause(stripped);
   if (
     CLOSE.test(stripped) &&
     !NOT_THE_APP.test(stripped) &&
-    CLOSE.test(lastClause(stripped)) &&
+    CLOSE.test(last) &&
+    // "…, then stop" ends the task; it does not close an app (Oct 10, #3347 failed for it).
+    last.replace(CLOSE, ' ').replace(/[^\p{L}\p{N}]/gu, '') !== '' &&
     !/\b(search|play|type|send|post|install)\b/i.test(stripped)
   ) return 'close';
   if (CLOSE.test(stripped)) return null;
@@ -108,7 +162,7 @@ export function siteOnlyGoal(goal: string): string | null {
   return match[1].toLowerCase().replace(/^www\./, '');
 }
 
-export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = ''): string {
+export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = '', met: string[] = []): string {
   const shown = steps.slice(-40);
   return [
     'You check whether an Android phone task was really completed. You see the final screen as a list of UI elements' + (shown.length ? ', and the steps the phone actually performed.' : '.'),
@@ -122,6 +176,7 @@ export function judgePrompt(goal: string, summary: string, screen: ScreenState, 
     `GOAL: ${goal}`,
     `AGENT SAYS: ${summary}`,
     ...(counts ? [`COUNTED BY THE SYSTEM (exact, for the whole run; use these numbers, do not recount): ${counts}`] : []),
+    ...(met.length ? [`THE GOAL'S NUMBERS ARE MET (checked by the system): ${met.join('; ')}. Do not answer "no" over these counts; judge only the rest of the goal.`] : []),
     ...(shown.length ? [`STEPS (${steps.length > shown.length ? `last ${shown.length} of ${steps.length}` : steps.length}):`, ...shown] : []),
     `FOREGROUND APP: ${screen.packageName ?? 'unknown'}`,
     'FINAL SCREEN:',
@@ -143,6 +198,12 @@ export function parseVerdict(text: string): { verdict: 'yes' | 'no' | 'unsure'; 
 export async function verifyCompletion(input: VerifyInput, retries = 0): Promise<VerificationOutcome> {
   const screen = await input.observe().catch(() => null);
   if (!screen) return { status: 'unverified', method: 'none', reason: 'Could not read the final screen', retries };
+
+  // The goal's numbers, counted by code: fewer than asked is not done.
+  const checks = input.tally ? countChecks(input.goal, input.tally) : { short: [], met: [] };
+  if (checks.short.length) {
+    return { status: 'failed', method: 'rule', reason: `Counted by the system: ${checks.short.join('; ')}. Do the rest, then call task_done again`, retries };
+  }
 
   // "Open <site>": the address bar on the final screen shows it. Not shown
   // proves nothing (a page can hide the bar), so that goes to the judge.
@@ -181,7 +242,7 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
 
   if (!input.judge) return { status: 'unverified', method: 'none', reason: 'No check applies to this task', retries };
   try {
-    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps, input.counts)));
+    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps, input.counts, checks.met)));
     return {
       status: verdict.verdict === 'yes' ? 'verified' : verdict.verdict === 'no' ? 'failed' : 'unverified',
       method: 'judge',

@@ -36,7 +36,7 @@ export const TAGS = {
  * conversation with its latest messages missing. Missions and threads change
  * by the second; an old snapshot of them is wrong, not just old.
  */
-const NEVER_CACHE_ENDPOINTS = new Set(['getChatHistory', 'getConversations', 'getMission']);
+const NEVER_CACHE_ENDPOINTS = new Set(['getChatHistory', 'getConversations', 'getMission', 'getTestSet']);
 
 const baseQuery = async (args: any, api: any, extraOptions: any) => {
   const rawBaseQuery = fetchBaseQuery({

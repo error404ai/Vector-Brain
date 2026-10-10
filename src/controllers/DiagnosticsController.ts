@@ -4,7 +4,8 @@ import { DiagnosticsSyncService } from '@/services/android/DiagnosticsSyncServic
 import { ClientReportService } from '@/services/ClientReportService';
 import { clampDays, RunDiagnosticsService } from '@/services/android/RunDiagnosticsService';
 import { Response } from 'express';
-import { Authorized, CurrentUser, Get, JsonController, Param, Post, QueryParam, Res } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, QueryParam, Res } from 'routing-controllers';
+import { TestSetService } from '@/services/android/testset/TestSetService';
 import { Service } from 'typedi';
 import { createGzip } from 'zlib';
 
@@ -22,7 +23,22 @@ export class DiagnosticsController {
     private sync: DiagnosticsSyncService,
     private clientReports: ClientReportService,
     private billedCost: BilledCostService,
+    private testSet: TestSetService,
   ) {}
+
+  /** The fixed test set and its recent runs: pass rate and cost per task, to compare versions. */
+  @Get('/testset')
+  async testSetRuns(@CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: { tasks: this.testSet.tasks(), runs: await this.testSet.runs(user.userId) } };
+  }
+
+  /** Start the test set on these phones: one mission per task, all tagged with one run. */
+  @Post('/testset/run')
+  async startTestSet(@Body() body: { device_ids?: number[]; keys?: string[] }, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testSet.start(user.userId, Array.isArray(body?.device_ids) ? body.device_ids : [], Array.isArray(body?.keys) ? body.keys.map(String) : undefined) };
+  }
 
   /** What browsers reported about themselves: unclean exits, stuck loaders, JS/render errors. */
   @Get('/client-reports')

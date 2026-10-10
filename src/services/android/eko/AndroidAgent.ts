@@ -14,6 +14,7 @@ import { createHash } from 'crypto';
 import {
   GRID,
   buildScreenModel,
+  buttonChange,
   submitTarget,
   elementAt,
   formatScreen,
@@ -1211,6 +1212,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     tap?: { grid: { x: number; y: number }; px: { x: number; y: number }; label: string },
   ): Promise<ToolResult> {
     const keyBefore = this.currentKey();
+    const screenBefore = this.screen;
     let res: Awaited<ReturnType<AndroidGatewayService['executeAction']>>;
     if (action.type === 'Wait') {
       // Not a blind pause: watch the screen and return once it is still.
@@ -1357,6 +1359,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     }
     const stuck = isError ? null : this.stuckReason();
     if (tap && !isError) this.lastTap = { grid: tap.grid, label: tap.label, at: Date.now() };
+    // The button under the finger turned into something else on the same screen
+    // (Follow → Following, Like → Unlike, Subscribe → Subscribed): said in the
+    // result in a fixed form, so the system can count it (contextBuilder.countActions).
+    if (tap && !isError && meantToChange) {
+      const change = buttonChange(screenBefore, this.screen, tap.grid, tap.label);
+      if (change) summary = `${summary}\nCHANGED: "${change.from}" → "${change.to}"`;
+    }
 
     const cleared = isError ? '' : await this.clearObstacles();
     if (cleared) freshShot = undefined;

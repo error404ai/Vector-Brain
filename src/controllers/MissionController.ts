@@ -18,7 +18,8 @@ export class MissionController {
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     // strict: false makes zod infer every key optional; the body is validated.
-    return this.missionService.create(user.userId, request as any);
+    // source is set by the server only (test-set runs), never from a request body.
+    return this.missionService.create(user.userId, { ...(request as any), source: undefined });
   }
 
   @Authorized()

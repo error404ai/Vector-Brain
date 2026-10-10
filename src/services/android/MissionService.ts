@@ -120,6 +120,8 @@ export interface CreateMissionInput {
   duration_seconds?: number;
   /** Phones to use when the request names none (the chat passes its last task's). */
   fallback_device_ids?: number[];
+  /** "testset:<run>" for a test-set run; not settable from the HTTP route. */
+  source?: string;
 }
 
 interface FleetDevice {
@@ -181,7 +183,8 @@ export class MissionService {
     const known = this.pilotMode.get(mission.id);
     if (known !== undefined) return known;
     let pilot = false;
-    if (!mission.duration_seconds && items.length > 1 && !items.some((i) => i.continue_from_task_id)) {
+    // A test-set run measures the AI on every phone: no replaying the first phone's run.
+    if (!mission.duration_seconds && items.length > 1 && !items.some((i) => i.continue_from_task_id) && !mission.source?.startsWith('testset:')) {
       const settings = await this.flowLibrary.settings(mission.user_id);
       const prompt = mission.prompt ?? mission.request;
       pilot = settings.record && settings.replay_first && !(await this.flowLibrary.hasMatch(mission.user_id, prompt).catch(() => true));
@@ -293,6 +296,7 @@ export class MissionService {
         ai_config_id: input.ai_config_id ?? null,
         status: 'RUNNING',
         note: notes.join(' ') || null,
+        source: input.source ?? null,
       }),
     );
     await this.itemRepo.save(

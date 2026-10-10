@@ -302,6 +302,30 @@ export function uncoveredPoint(model: ScreenModel | null, target: ScreenElement)
   return { grid: { x: free[0].x, y: free[0].y }, cover: covers[0] };
 }
 
+/**
+ * The tapped button became another one in place, on what is still the same
+ * screen: "Follow" → "Following". Null when the tap opened something else (a new
+ * screen shares few rows with the old one), when nothing is at the spot any more,
+ * or when the label did not change. Short labels only: a button, not a list row.
+ */
+export function buttonChange(
+  before: ScreenModel | null,
+  after: ScreenModel | null,
+  grid: { x: number; y: number },
+  tappedLabel: string,
+): { from: string; to: string } | null {
+  const from = tappedLabel.trim();
+  if (!before || !after || !from || from.length > 30) return null;
+  const now = elementAt(after, grid.x, grid.y);
+  const to = now?.label.trim() ?? '';
+  if (!to || to.length > 30 || to.toLowerCase() === from.toLowerCase()) return null;
+  // Still the same screen: most labelled rows from before are still there.
+  const was = new Set(before.elements.map((e) => e.label).filter(Boolean));
+  const still = after.elements.filter((e) => e.label && was.has(e.label)).length;
+  if (was.size < 3 || still / was.size < 0.6) return null;
+  return { from, to };
+}
+
 /** Buttons that submit what was typed. Whole labels only: "Search" submits, "Search with your voice" does not. */
 const SUBMIT = /^(?:search|go|send|submit|done|enter|find|ok|next|सर्च|खोजें|buscar|rechercher|suchen|cerca|pesquisar|поиск)$/i;
 const squash = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
