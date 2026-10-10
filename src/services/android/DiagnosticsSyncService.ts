@@ -2,12 +2,21 @@ import Logger from '@/logger/index';
 import { PassThrough } from 'stream';
 import { Service } from 'typedi';
 import { createGzip } from 'zlib';
-import { RunDiagnosticsService } from './RunDiagnosticsService';
+import { RunDiagnosticsService, runFinished } from './RunDiagnosticsService';
 
 /** How often today's file is refreshed. */
 const SYNC_EVERY_MS = 2 * 60 * 60 * 1000;
 /** First sync shortly after boot, so a deploy does not wait two hours. */
 const FIRST_SYNC_MS = 5 * 60 * 1000;
+/**
+ * After runs finish: push once things go quiet for this long (a mission's phones
+ * finish within a minute or two of each other), but never wait longer than
+ * AFTER_RUNS_MAX_MS while runs keep finishing, and never push more often than
+ * MIN_GAP_MS. So a finished task is on GitHub within minutes, not hours.
+ */
+const AFTER_RUNS_QUIET_MS = 2 * 60 * 1000;
+const AFTER_RUNS_MAX_MS = 10 * 60 * 1000;
+const MIN_GAP_MS = 3 * 60 * 1000;
 /** GitHub's contents API refuses very large files; a day of runs is far below this. */
 const MAX_FILE_BYTES = 40 * 1024 * 1024;
 
@@ -22,7 +31,8 @@ export interface SyncState {
 
 /**
  * Pushes the sanitized run export to a private GitHub repository so it can be
- * analysed without anyone copying files by hand.
+ * analysed without anyone copying files by hand: a few minutes after runs
+ * finish, and every two hours.
  *
  * Off unless DIAG_GITHUB_REPO ("owner/name") and DIAG_GITHUB_TOKEN are set.
  * The token should be fine-grained with "Contents: read and write" on that one
@@ -34,6 +44,9 @@ export class DiagnosticsSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private finalisedDays = new Set<string>();
+  private quietTimer: ReturnType<typeof setTimeout> | null = null;
+  private firstPendingAt = 0;
+  private lastSyncAt = 0;
   private state: SyncState = {
     configured: false,
     repo: null,
@@ -73,6 +86,22 @@ export class DiagnosticsSyncService {
     first.unref?.();
     this.timer = setInterval(() => void this.syncNow(), SYNC_EVERY_MS);
     this.timer.unref?.();
+    runFinished.on('finished', () => this.afterRun());
+  }
+
+  /** A run finished: push soon (see AFTER_RUNS_QUIET_MS). */
+  afterRun(now = Date.now()): void {
+    if (!this.repo || !this.token) return;
+    if (!this.firstPendingAt) this.firstPendingAt = now;
+    if (this.quietTimer) clearTimeout(this.quietTimer);
+    const waitedLongEnough = now - this.firstPendingAt >= AFTER_RUNS_MAX_MS;
+    const delay = Math.max(waitedLongEnough ? 0 : AFTER_RUNS_QUIET_MS, this.lastSyncAt + MIN_GAP_MS - now);
+    this.quietTimer = setTimeout(() => {
+      this.quietTimer = null;
+      this.firstPendingAt = 0;
+      void this.syncNow();
+    }, delay);
+    this.quietTimer.unref?.();
   }
 
   /** Refresh today's file, and yesterday's once after the day has ended. */
@@ -85,6 +114,7 @@ export class DiagnosticsSyncService {
     }
     if (this.running) return this.status();
     this.running = true;
+    this.lastSyncAt = Date.now();
     try {
       const today = startOfUtcDay(new Date());
       const yesterday = new Date(today.getTime() - 86_400_000);

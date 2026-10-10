@@ -28,7 +28,12 @@ import {
   summarizeRun,
   tagWaste,
 } from './runDiagnostics';
+import { EventEmitter } from 'events';
 import { failureKind } from './failureKind';
+
+/** Fires once a run's diagnostics are written (DiagnosticsSyncService pushes soon after). */
+export const runFinished = new EventEmitter();
+runFinished.setMaxListeners(5);
 
 /** Columns a diagnostics pass reads; never the screenshot. */
 const STEP_COLUMNS: (keyof AndroidTaskLog)[] = [
@@ -140,6 +145,7 @@ export class RunDiagnosticsService {
       if (generations.length) diagnostics.generations = generations;
       const outcome = classifyOutcome({ status: task.status, recoveries: diagnostics.recoveries, verification: task.verification });
       await this.taskRepo.update({ id: taskId }, { diagnostics, outcome });
+      runFinished.emit('finished', taskId);
       return diagnostics;
     } catch (error) {
       Logger.warn(`[RunDiagnostics] Could not finalize task ${taskId}:`, error);
@@ -517,7 +523,7 @@ export class RunDiagnosticsService {
           await write({
             t: 'mission', id: m.id, user: clean.hash(m.user_id), request: clean.scrub(m.request, 400), prompt: clean.scrub(m.prompt, 400),
             target_mode: m.target_mode, requested_count: m.requested_count, no_internet: Boolean(m.no_internet), max_steps: m.max_steps,
-            duration_seconds: m.duration_seconds, status: m.status, note: clean.scrub(m.note, 300), created_at: m.created_at, finished_at: m.finished_at,
+            duration_seconds: m.duration_seconds, status: m.status, note: clean.scrub(m.note, 300), source: m.source ?? null, created_at: m.created_at, finished_at: m.finished_at,
           });
         }
       }
