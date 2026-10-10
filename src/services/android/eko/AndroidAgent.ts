@@ -196,6 +196,11 @@ export function withScheme(url: string): string {
   return /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/.test(bare) ? `https://${bare}` : trimmed;
 }
 
+/** Buttons that switch on and off in place, whose label often stays the same (Instagram's heart stays "Like"). */
+const TOGGLE = /^(?:like|liked|unlike|love|heart|save|saved|unsave|bookmark|favou?rite|star|upvote|downvote|vote|repost|subscribe|subscribed|join|joined)\b/i;
+/** Actions that move to another item or screen: after one, the same toggle is a new item. */
+const MOVES_ON = new Set(['Swipe', 'ScrollNode', 'Global', 'OpenApp', 'OpenUrl']);
+
 export class AndroidAgent extends Agent {
   /**
    * Lite: shorter wording where the model reads it every call (the system prompt,
@@ -256,6 +261,11 @@ export class AndroidAgent extends Agent {
   private lastStuckLookKey = '';
   /** A coordinate tap on nothing in the list is questioned once per screen and point. */
   private blindTapWarned = '';
+  /** Swipes, scrolls, BACK/HOME and app or page opens so far: "has the agent moved on since". */
+  private moves = 0;
+  /** The last toggle tapped (Like, Save…): a second tap on it before moving on would undo it. */
+  private lastToggle: { grid: { x: number; y: number }; label: string; moves: number } | null = null;
+  private toggleWarned = '';
 
   constructor(
     private gatewayService: AndroidGatewayService,
@@ -1213,6 +1223,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   ): Promise<ToolResult> {
     const keyBefore = this.currentKey();
     const screenBefore = this.screen;
+    const frameBefore = this.frameKey();
     let res: Awaited<ReturnType<AndroidGatewayService['executeAction']>>;
     if (action.type === 'Wait') {
       // Not a blind pause: watch the screen and return once it is still.
@@ -1344,7 +1355,21 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const keyAfter = this.currentKey();
     const meantToChange = ['Tap', 'ClickNode', 'LongPress'].includes(action.type);
     let checkNote = '';
-    if (!isError && meantToChange && keyAfter === keyBefore) {
+    if (!isError && MOVES_ON.has(action.type)) this.moves += 1;
+    const toggle = Boolean(tap && TOGGLE.test(tap.label.trim()));
+    const frameAfter = this.frameKey();
+    if (!isError && toggle && tap) this.lastToggle = { grid: tap.grid, label: tap.label.trim(), moves: this.moves };
+    if (!isError && meantToChange && keyAfter === keyBefore && toggle && tap) {
+      // Like, Save, heart…: many apps change only the icon, never the label, so the
+      // list looks the same after a tap that worked. Saying "did NOT change" here
+      // made agents tap again and undo it (Oct 10, mission 256: 15 of 15 runs).
+      summary = `${summary}\nTOGGLED: "${tap.label.trim().slice(0, 30)}"`;
+      checkNote = `\n\nNOTE: "${tap.label.trim().slice(0, 30)}" is a toggle; apps often change only its icon, so the list looks the same. Count it as done and do NOT tap it again here (a second tap undoes it). Move on to the next item.`;
+    } else if (!isError && meantToChange && keyAfter === keyBefore && frameBefore && frameAfter && frameBefore !== frameAfter) {
+      // The list is the same but the picture is not: something changed that the list does not show.
+      checkNote =
+        '\n\nNOTE: the element list is the same, but the screen image changed, so the tap probably did something the list does not show (an icon, a colour). Do not repeat it blindly; carry on, and check the result if it matters.';
+    } else if (!isError && meantToChange && keyAfter === keyBefore) {
       this.noEffectStreak += 1;
       if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
       checkNote =
@@ -1616,6 +1641,18 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       return refuse(
         `Not tapped: this spot was "${this.lastTap.label}" and is now "${label}" — your last tap worked and it is in progress. Tapping it would undo it. Wait for it to finish: wait_for_element with the text you expect next (for an app install, "Open") and timeoutMillis up to 120000.`,
       );
+    }
+    // A toggle tapped a moment ago, nothing scrolled since: a second tap undoes it.
+    // Asked once; the same tap again goes through (the first may really have missed).
+    const t = this.lastToggle;
+    if (t && TOGGLE.test(label.trim()) && t.label === label.trim() && t.moves === this.moves && Math.hypot(t.grid.x - grid.x, t.grid.y - grid.y) < 60) {
+      const warnKey = `${this.moves}|${label.trim()}|${grid.x},${grid.y}`;
+      if (this.toggleWarned !== warnKey) {
+        this.toggleWarned = warnKey;
+        return refuse(
+          `Not tapped: you already tapped "${label.trim().slice(0, 30)}" here and have not moved on since. A second tap would undo it (unlike, unsave). Count it as done and move to the next item (swipe or scroll). If you are sure the first tap missed, call the same tap again.`,
+        );
+      }
     }
     // The same spot again on a screen that did not react last time.
     if (this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {

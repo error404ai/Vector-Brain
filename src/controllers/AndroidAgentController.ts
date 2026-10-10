@@ -42,10 +42,11 @@ export class AndroidAgentController {
    * engine: 'eko' | 'vector' | 'lite' | null (null = server default); planner: Vector engine's optional planning call;
    * vision_config_id / fallback_config_id: one of the account's AI configs, or null.
    * screenshots: when the agent model sees a screenshot — 'off' | 'stuck' | 'every_step' (null = 'stuck').
+   * reasoning: Lite — when the model writes out its thinking first — 'off' | 'hard' | 'always' (null = 'hard').
    */
   @Put('/engine')
   async setEngine(
-    @Body() body: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null },
+    @Body() body: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null; reasoning?: string | null },
     @CurrentUser({ required: true }) user: { userId: number },
   ) {
     return this.plannerService.setEngineSettings(user.userId, {
@@ -54,6 +55,7 @@ export class AndroidAgentController {
       vision_config_id: body?.vision_config_id,
       fallback_config_id: body?.fallback_config_id,
       screenshots: body?.screenshots,
+      reasoning: body?.reasoning,
     });
   }
 

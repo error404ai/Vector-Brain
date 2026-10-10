@@ -7,9 +7,12 @@ import { compactTool, type ToolSpec } from './compactTools';
 import { buildContext, buttonChanges, countActions, summaryLine, type StepRecord } from './contextBuilder';
 import { LITE_ENGINE_RULES } from '../eko/compactPrompt';
 import { countChecks, parseAppList, verifyCompletion, type RunTally } from './successVerifier';
+import type { ReasoningMode } from './reasoningMode';
 import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
 
 export interface VectorEngineOptions {
+  /** Lite: when the model writes out its thinking before acting (reasoningMode.ts). Default 'hard'. */
+  reasoning?: ReasoningMode;
   model: LanguageModel;
   agent: AndroidAgent;
   onMessage: EngineMessageHandler;
@@ -199,6 +202,31 @@ export function runTally(steps: StepRecord[]): RunTally {
   return { openUrl: ok(['open_url']), scrolls: ok(['swipe', 'scroll_element']), changes: buttonChanges(steps) };
 }
 
+/** Lite, reasoning 'always': part of the system prompt (cached once per mode). */
+const THINK_ALWAYS_RULE = `
+
+THINK FIRST (every step): before the tool call write 2–4 short lines — what the last result showed, what is already done (count it), what is left, and what this action should change. Then call the tool.`;
+
+/** Lite, reasoning 'hard': added to the call only on a hard step. */
+const THINK_NOW_NOTE =
+  'THINK FIRST this step: in 2–4 short lines say what the last result showed, what is already done (count it), what is left, and what this action should change. Then call the tool.';
+
+const HARD_RESULT = /did NOT change|STUCK|Blocked|Not tapped|POP-UP|AUTO-CLEARED|already tapped/;
+
+/**
+ * Where a model that acts without thinking goes wrong: the first step, a failed
+ * action, a screen that did not move, a stuck/loop/blocked warning, a system note
+ * (a failed check, a refused give-up), or the same action three times running.
+ */
+export function isHardStep(call: number, steps: StepRecord[], notes: string[]): boolean {
+  if (call === 0 || notes.length > 0) return true;
+  const last = steps.at(-1);
+  if (!last) return true;
+  if (last.isError || HARD_RESULT.test(last.resultText ?? '')) return true;
+  const tail = steps.slice(-3);
+  return tail.length === 3 && tail.every((s) => s.toolName === tail[0].toolName && JSON.stringify(s.input ?? {}) === JSON.stringify(tail[0].input ?? {}));
+}
+
 export class VectorEngine implements AgentEngine {
   readonly kind: 'vector' | 'lite';
   private controller: AbortController | null = null;
@@ -319,7 +347,10 @@ export class VectorEngine implements AgentEngine {
 
     // Lite: the short prompt, with nothing phone-specific in it (facts come from
     // phone_info), so every phone shares one cached prefix.
-    const system = this.options.compact ? `${await this.options.agent.systemPrompt({ withFacts: false })}${LITE_ENGINE_RULES}` : `${await this.options.agent.systemPrompt()}${VECTOR_RULES}`;
+    const reasoning: ReasoningMode = this.options.reasoning ?? 'hard';
+    const system = this.options.compact
+      ? `${await this.options.agent.systemPrompt({ withFacts: false })}${LITE_ENGINE_RULES}${reasoning === 'always' ? THINK_ALWAYS_RULE : ''}`
+      : `${await this.options.agent.systemPrompt()}${VECTOR_RULES}`;
     const plan = this.options.planner ? await this.makePlan(prompt, signal, emit) : null;
     const steps: StepRecord[] = [];
     const notes: string[] = [];
@@ -330,6 +361,9 @@ export class VectorEngine implements AgentEngine {
 
     for (let call = 0; call < maxCalls; call += 1) {
       if (signal.aborted) return this.aborted();
+
+      // Lite thinks in writing on the steps where acting straight away goes wrong.
+      if (this.options.compact && reasoning === 'hard' && isHardStep(call, steps, notes)) notes.push(THINK_NOW_NOTE);
 
       const context = buildContext({
         task: prompt,

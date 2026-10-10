@@ -56,7 +56,7 @@ UNCONFIRMED ACTIONS:
 - If a result says the phone didn't confirm an action, it may have happened. Check the screen in that result before repeating.
 
 KEEP IT SHORT:
-- Call the tool directly. No explanation before it; at most a few words.
+- Before each action write one short line saying what it should change ("Expect: heart turns red"), then call the tool. No other explanation unless asked to think.
 - Actions that need no new screen list can go together in one reply: open_url then wait, type_text then press_key ENTER. Anything that picks an idx or position (taps, scrolling) waits for the latest screen list: one tap or one scroll per reply.
 - "DONE SO FAR" is counted by the system: trust it over your own count.
 - Every action's result already contains the current screen list. Do not call read_ui_tree after an action; use the list you were given.`;

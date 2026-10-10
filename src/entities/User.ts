@@ -59,6 +59,10 @@ export class User {
   @Column({ type: 'varchar', length: 12, nullable: true })
   agent_screenshots: string | null;
 
+  /** Lite: when the model writes out its thinking before acting — 'off' | 'hard' | 'always'; null = 'hard'. */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  agent_reasoning: string | null;
+
   // Saved flows (docs/REPLAY_ENGINE.md). All off until the user turns them on.
   /** Save each successful run as a flow. */
   @Column({ type: 'boolean', default: false })

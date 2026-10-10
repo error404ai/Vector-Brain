@@ -30,6 +30,7 @@ import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
 import { isScreenshotMode, type ScreenshotMode } from './eko/screenshotMode';
+import { isReasoningMode, type ReasoningMode } from './agent/reasoningMode';
 import { deviceFactsText } from './deviceNetwork';
 import { createLanguageModel } from './agent/aiSdkModel';
 import { User } from '@/entities/User';
@@ -999,10 +1000,11 @@ Use the current visible Android screen and UI state as context. Continue from wh
     vision_config_id: number | null;
     fallback_config_id: number | null;
     screenshots: ScreenshotMode;
+    reasoning: ReasoningMode;
   }> {
     const fallback: EngineKind = isEngineKind(process.env.AGENT_ENGINE) ? process.env.AGENT_ENGINE : 'eko';
     const user = await AppDataSource.getRepository(User)
-      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner', 'agent_vision_config_id', 'agent_fallback_config_id', 'agent_screenshots'] })
+      .findOne({ where: { id: userId }, select: ['id', 'agent_engine', 'agent_planner', 'agent_vision_config_id', 'agent_fallback_config_id', 'agent_screenshots', 'agent_reasoning'] })
       .catch(() => null);
     const own = user?.agent_engine;
     const shots = user?.agent_screenshots;
@@ -1013,6 +1015,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       vision_config_id: user?.agent_vision_config_id ?? null,
       fallback_config_id: user?.agent_fallback_config_id ?? null,
       screenshots: isScreenshotMode(shots) ? shots : 'stuck',
+      reasoning: isReasoningMode(user?.agent_reasoning) ? user.agent_reasoning : 'hard',
     };
   }
 
@@ -1035,7 +1038,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
   async setEngineSettings(
     userId: number,
-    input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null },
+    input: { engine?: string | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: string | null; reasoning?: string | null },
   ): Promise<ApiResponse> {
     const patch: Partial<User> = {};
     if (input.engine !== undefined) {
@@ -1046,6 +1049,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
     if (input.screenshots !== undefined) {
       if (input.screenshots !== null && !isScreenshotMode(input.screenshots)) throw new AppError('screenshots must be "off", "stuck" or "every_step"', 400);
       patch.agent_screenshots = input.screenshots;
+    }
+    if (input.reasoning !== undefined) {
+      if (input.reasoning !== null && !isReasoningMode(input.reasoning)) throw new AppError('reasoning must be "off", "hard" or "always"', 400);
+      patch.agent_reasoning = input.reasoning;
     }
     // A helper model must be one of this account's own AI configs.
     for (const [key, column] of [
@@ -1180,9 +1187,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
     let tokensReported = false;
     /** Where the tokens went, as far as the provider reports it (agent/usageDetails). */
     const usageTotals = { cacheRead: 0, cacheWrite: 0, cacheWriteReported: false, reasoning: 0, costUsd: 0, costReported: false, fromPrice: false };
-    // Providers other than OpenRouter do not say what a call cost: work it out
-    // from the model's list price, so every run has a cost (marked as such).
-    const listPrice = String(aiConfig.provider).toLowerCase() === 'openrouter' ? null : await modelPrice(aiConfig.provider, aiConfig.model).catch(() => null);
+    // When a call's response carries no cost (other providers, and the Eko engine,
+    // which does not ask OpenRouter for it), work it out from the model's list
+    // price, so every run has a cost (marked as such in Diagnostics).
+    const listPrice = await modelPrice(aiConfig.provider, aiConfig.model).catch(() => null);
     /** Steps the current model call has produced so far (its usage is booked on the first). */
     let callSteps: AndroidTaskLog[] = [];
 
@@ -1606,6 +1614,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
             onMessage: handleMessage,
             vision,
             planner: engineSettings.planner,
+            reasoning: engineSettings.reasoning,
             // Unset in production (engine defaults apply); the harness shortens them.
             callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
             callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,

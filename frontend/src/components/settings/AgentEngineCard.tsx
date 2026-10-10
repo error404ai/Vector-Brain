@@ -1,11 +1,17 @@
 import { useEffect } from 'react';
 import { useGetAiConfigsQuery } from '@/RTKService/aiConfigService/aiConfigService';
-import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind, type ScreenshotMode } from '@/RTKService/androidService/engineService';
+import { useGetAgentEngineQuery, useSetAgentEngineMutation, type EngineKind, type ReasoningMode, type ScreenshotMode } from '@/RTKService/androidService/engineService';
 import { isFreeModel } from '@/utils/modelMeta';
 import MemoryIcon from '@mui/icons-material/Memory';
 import { Alert, Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import toast from 'react-hot-toast';
 import { monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, prismSwitch, sectionTitle } from './settingsStyle';
+
+const REASONING_OPTIONS: { value: ReasoningMode; label: string; help: string }[] = [
+  { value: 'hard', label: 'Hard steps', help: 'Thinks first only where acting straight away goes wrong: the first step, an error, a screen that did not change, a loop, before giving up. Small extra cost.' },
+  { value: 'always', label: 'Every step', help: 'Thinks a few lines before every action. Most careful; roughly up to twice the output per step.' },
+  { value: 'off', label: 'Off', help: 'Acts straight away. Cheapest, but slips on tasks where the screen does not show what happened (a Like heart).' },
+];
 
 const SCREENSHOT_OPTIONS: { value: ScreenshotMode; label: string }[] = [
   { value: 'stuck', label: 'When stuck' },
@@ -63,7 +69,7 @@ export default function AgentEngineCard() {
   const active = configs.find((c) => c.is_active);
   const others = configs.filter((c) => !c.is_active);
 
-  const update = async (body: { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null }) => {
+  const update = async (body: { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null; reasoning?: ReasoningMode | null }) => {
     try {
       await save(body).unwrap();
       toast.success('Saved — applies to the next run');
@@ -128,6 +134,47 @@ export default function AgentEngineCard() {
                   </Box>
                 }
               />
+            ) : null}
+
+            {settings.kind === 'lite' ? (
+              <Box role="group" aria-labelledby="reasoning-label">
+                <Typography id="reasoning-label" sx={{ ...monoLabel, mb: 1 }}>
+                  Think before acting (Lite)
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px' }}>
+                  {REASONING_OPTIONS.map((o) => {
+                    const on = (settings.reasoning ?? 'hard') === o.value;
+                    return (
+                      <Box
+                        key={o.value}
+                        component="button"
+                        type="button"
+                        aria-pressed={on}
+                        disabled={saving}
+                        onClick={() => !on && void update({ reasoning: o.value })}
+                        sx={{
+                          minHeight: 44,
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          font: 'inherit',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          border: on ? `1.5px solid ${PRISM_ACCENT}` : '1px solid #dfe2ef',
+                          bgcolor: on ? `${PRISM_ACCENT}14` : '#fff',
+                          color: on ? PRISM_ACCENT : '#4b5270',
+                          transition: 'background 200ms ease, border-color 200ms ease',
+                        }}
+                      >
+                        {o.label}
+                        {o.value === 'hard' ? ' ★' : ''}
+                      </Box>
+                    );
+                  })}
+                </Box>
+                <Typography variant="caption" sx={{ display: 'block', mt: 0.75, color: PRISM_MUTED, lineHeight: 1.5 }}>
+                  {REASONING_OPTIONS.find((o) => o.value === (settings.reasoning ?? 'hard'))?.help}
+                </Typography>
+              </Box>
             ) : null}
 
             <Box role="group" aria-labelledby="screenshots-label">

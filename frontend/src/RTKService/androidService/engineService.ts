@@ -5,6 +5,9 @@ export type EngineKind = 'eko' | 'vector' | 'lite';
 /** When the agent model is shown a screenshot: never beyond unreadable screens, when stuck, or every step. */
 export type ScreenshotMode = 'off' | 'stuck' | 'every_step';
 
+/** Lite: when the model writes out its thinking before acting. */
+export type ReasoningMode = 'off' | 'hard' | 'always';
+
 export interface EngineSettings {
   kind: EngineKind;
   planner: boolean;
@@ -15,6 +18,7 @@ export interface EngineSettings {
   /** One of the account's AI configs: takes over when the main model is rate-limited or out of quota. */
   fallback_config_id: number | null;
   screenshots: ScreenshotMode;
+  reasoning: ReasoningMode;
 }
 
 /** sees: the model reads images; helper: a vision helper reads them for it; blind: no image reaches the AI. */
@@ -42,7 +46,7 @@ export const engineService = baseApi.injectEndpoints({
       query: () => ({ url: '/android/agent/sight', method: 'GET' }),
       providesTags: [TAG],
     }),
-    setAgentEngine: builder.mutation<{ data: EngineSettings }, { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null }>({
+    setAgentEngine: builder.mutation<{ data: EngineSettings }, { engine?: EngineKind | null; planner?: boolean; vision_config_id?: number | null; fallback_config_id?: number | null; screenshots?: ScreenshotMode | null; reasoning?: ReasoningMode | null }>({
       query: (body) => ({ url: '/android/agent/engine', method: 'PUT', body }),
       invalidatesTags: [TAG],
     }),

@@ -348,7 +348,9 @@ describe('VectorEngine', () => {
     // First Lite call: the facts are nowhere — not in the system prompt, not after the task.
     expect(JSON.stringify(seen[0].prompt)).not.toContain('1.2.3.4');
     const users = seen[0].prompt.filter((m) => m.role === 'user');
-    expect(users).toHaveLength(1);
+    // The task, then (reasoning 'hard', first step) the think-first note after the cache mark.
+    expect(users).toHaveLength(2);
+    expect(text(users[1])).toContain('THINK FIRST this step');
     expect(text(users[0])).toContain('TASK: what is my IP');
     expect(users[0].providerOptions).toBeDefined(); // the cache ends at the task
     expect(seen[0].providerOptions?.openrouter).toMatchObject({ session_id: 'vb-u1-c2' });
@@ -479,6 +481,20 @@ describe('VectorEngine', () => {
     await lite.engine.run('tap twice', 'tb1');
     expect(lite.calls.tap_coordinate).toBe(1);
     expect(JSON.stringify(lite.prompts.at(-2) ?? lite.prompts.at(-1))).toContain('Only the first tap of your last reply was done');
+  });
+
+  it('Lite reasoning: hard asks to think on the first step, off never, always puts it in the system prompt', async () => {
+    const hard = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }, 'h1'), done(true, 'ok')], undefined, { compact: true });
+    await hard.engine.run('open Chrome', 'rh');
+    expect(JSON.stringify(hard.prompts[0])).toContain('THINK FIRST this step');
+    expect(JSON.stringify(hard.prompts[1])).not.toContain('THINK FIRST this step');
+    const off = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }, 'o1'), done(true, 'ok')], undefined, { compact: true, reasoning: 'off' });
+    await off.engine.run('open Chrome', 'ro');
+    expect(JSON.stringify(off.prompts)).not.toContain('THINK FIRST');
+    const always = engineWith([toolCall('open_app', { packageName: 'com.android.chrome' }, 'a1'), done(true, 'ok')], undefined, { compact: true, reasoning: 'always' });
+    await always.engine.run('open Chrome', 'ra');
+    expect(JSON.stringify(always.prompts[0])).toContain('THINK FIRST (every step)');
+    expect(JSON.stringify(always.prompts[1])).toContain('THINK FIRST (every step)');
   });
 
   it('giving up a second time is accepted', async () => {

@@ -158,6 +158,8 @@ export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = ne
 }
 
 const CHANGED = /^CHANGED: "(.+?)" → "(.+?)"$/m;
+/** A toggle whose label stays the same (Like): counted as switched by the tap. */
+const TOGGLED = /^TOGGLED: "(.+?)"$/m;
 
 /** Buttons the run's taps turned into something else (the "CHANGED:" line AndroidAgent adds to a tap's result). */
 export function buttonChanges(steps: StepRecord[]): { from: string; to: string }[] {
@@ -166,6 +168,8 @@ export function buttonChanges(steps: StepRecord[]): { from: string; to: string }
     if (step.isError) continue;
     const m = CHANGED.exec(step.resultText ?? '');
     if (m) out.push({ from: m[1], to: m[2] });
+    const t = TOGGLED.exec(step.resultText ?? '');
+    if (t) out.push({ from: t[1], to: 'tapped once' });
   }
   return out;
 }
