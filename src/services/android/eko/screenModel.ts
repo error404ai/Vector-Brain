@@ -92,7 +92,22 @@ function shortType(className?: string): string {
   return type.toLowerCase();
 }
 
-const ownLabel = (n: UiNodeSnapshot) => (n.text?.trim() || n.contentDescription?.trim() || '').replace(/\s+/g, ' ');
+/**
+ * Text cut to n UTF-16 units without splitting an emoji: a half emoji (a lone
+ * surrogate) is not valid JSON for MySQL, and the step write failed and ended
+ * the run (Oct 10, #3350/#3355/#3360: a label cut at 60 characters).
+ */
+export function cutText(text: string, n: number): string {
+  return text.length > n ? text.slice(0, n).replace(/[\uD800-\uDBFF]$/, '') : text;
+}
+
+/** Text with any half emoji (lone surrogate) replaced by "\uFFFD", so it is valid JSON for MySQL. */
+export function wellFormed(text: string): string {
+  return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
+/** The phone cuts long labels at 200 characters too, so a half emoji can arrive already. */
+const ownLabel = (n: UiNodeSnapshot) => wellFormed((n.text?.trim() || n.contentDescription?.trim() || '').replace(/\s+/g, ' '));
 
 /** Text of the descendants that are not tappable themselves — what a user would read on the button. */
 function childText(node: UiNodeSnapshot, out: string[], consumed: Set<UiNodeSnapshot>): void {
@@ -170,7 +185,7 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
         if (parts.some((p) => AD_PROGRESS.test(p))) adProgress = true;
       }
       if (control && skipRow === null && parts.some((p) => SKIP_AD.test(p))) skipRow = String(elements.length);
-      if (label.length > MAX_LABEL) label = `${label.slice(0, MAX_LABEL)}…`;
+      if (label.length > MAX_LABEL) label = `${cutText(label, MAX_LABEL)}…`;
       const cx = Math.round((b.left + b.right) / 2);
       const cy = Math.round((b.top + b.bottom) / 2);
       if (label) labelledCount += 1;
@@ -205,7 +220,7 @@ export function withSeenElements(model: ScreenModel, seen: { label: string; x: n
     return {
       idx: `v${i + 1}`,
       type: (s.kind || 'seen').toLowerCase().slice(0, 8),
-      label: String(s.label || '').replace(/\s+/g, ' ').slice(0, MAX_LABEL),
+      label: cutText(wellFormed(String(s.label || '').replace(/\s+/g, ' ')), MAX_LABEL),
       tappable: true,
       editable: /field|input|box/i.test(s.kind ?? ''),
       disabled: false,

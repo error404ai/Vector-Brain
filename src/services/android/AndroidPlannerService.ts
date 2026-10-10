@@ -20,6 +20,7 @@ import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
 import { modelPrice, modelSeesImages } from './eko/modelVision';
+import { wellFormed } from './eko/screenModel';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
@@ -1283,7 +1284,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
             result: { screenCapture: { base64Data: info.screenshotBase64 } },
           });
         }
-        if (info.uiTree) lastUiTree = info.uiTree;
+        // Never a half emoji in what is stored: MySQL rejects it as JSON and the run ends.
+        if (info.uiTree) lastUiTree = wellFormed(info.uiTree);
         if (info.foregroundApp) lastForegroundApp = info.foregroundApp;
         // Where a tap landed in pixels, stored on the step so a saved flow can replay it.
         if (info.tapPx) pendingTapPx = info.tapPx;
@@ -1441,7 +1443,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
               step_index: stepCount,
               action_type: toolName,
               action_payload: persistedToolParams,
-              thought_reasoning: currentThought || `Executing ${toolName}`,
+              thought_reasoning: wellFormed(currentThought || `Executing ${toolName}`),
               status: AndroidStepStatus.EXECUTING,
               ui_tree_snapshot: lastUiTree,
               // What the model was looking at when it chose this step. The
@@ -1494,7 +1496,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
                 currentTaskLog.action_payload = { ...(currentTaskLog.action_payload ?? {}), px_x: pendingTapPx.x, px_y: pendingTapPx.y };
               }
               pendingTapPx = null;
-              currentTaskLog.result_message = stripScreenDump(textContent);
+              currentTaskLog.result_message = wellFormed(stripScreenDump(textContent));
               if (stepSight) {
                 currentTaskLog.sight = stepSight.seen;
                 currentTaskLog.sight_why = stepSight.why ?? null;
