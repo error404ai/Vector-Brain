@@ -21,6 +21,7 @@ import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
 import { modelPrice, modelSeesImages } from './eko/modelVision';
 import { wellFormed } from './eko/screenModel';
+import { saveStepLog, saveTaskResult } from './safeWrites';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
@@ -1455,7 +1456,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
               llm_call: stepSource === 'ai' ? llmCalls + 1 : null,
               source: stepSource,
             });
-            await this.taskLogRepo.save(currentTaskLog);
+            await saveStepLog(this.taskLogRepo as never, currentTaskLog as never, (m) => Logger.warn(`[AndroidPlanner] Task ${agentTask.id}: ${m}`));
             if (stepSource === 'ai') callSteps.push(currentTaskLog);
             if (toolName === 'type_text' && typeof toolParams.text === 'string') typedTexts.set(stepCount, toolParams.text);
             if (repair && stepSource === 'ai') repair.used += 1;
@@ -1511,7 +1512,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
               if (record && lastScreenshot) {
                 currentTaskLog.screenshot_base64 = lastScreenshot;
               }
-              await this.taskLogRepo.save(currentTaskLog);
+              await saveStepLog(this.taskLogRepo as never, currentTaskLog as never, (m) => Logger.warn(`[AndroidPlanner] Task ${agentTask.id}: ${m}`));
             }
 
             this.gatewayService.broadcastToUser(userId, 'task:step_result', {
@@ -2031,7 +2032,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // phone's last screen after the task ends, even after a reload.
       if (lastScreenshot) agentTask.final_screenshot = lastScreenshot;
       agentTask.sight = runSight;
-      if (!this.shuttingDown) await this.agentTaskRepo.save(agentTask);
+      if (!this.shuttingDown) await saveTaskResult(this.agentTaskRepo as never, agentTask as never, (m) => Logger.warn(`[AndroidPlanner] ${m}`));
 
       if (!wasCancelled) {
         this.gatewayService.broadcastToUser(userId, 'task:completed', {
@@ -2062,7 +2063,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         agentTask.finished_at = new Date();
         agentTask.lease_until = null;
         agentTask.sight = runSight;
-        await this.agentTaskRepo.save(agentTask);
+        await saveTaskResult(this.agentTaskRepo as never, agentTask as never, (m) => Logger.warn(`[AndroidPlanner] ${m}`));
         this.gatewayService.broadcastToUser(userId, 'task:error', {
           taskId: agentTask.id,
           deviceId: deviceDbId,
