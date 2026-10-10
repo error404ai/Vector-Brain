@@ -334,11 +334,29 @@ export function buttonChange(
   const now = elementAt(after, grid.x, grid.y);
   const to = now?.label.trim() ?? '';
   if (!to || to.length > 30 || to.toLowerCase() === from.toLowerCase()) return null;
-  // Still the same screen: most labelled rows from before are still there.
+  if (!sameScreen(before, after)) return null;
+  return { from, to };
+}
+
+/** Still the same screen: most labelled rows from before are still there. */
+export function sameScreen(before: ScreenModel, after: ScreenModel): boolean {
   const was = new Set(before.elements.map((e) => e.label).filter(Boolean));
   const still = after.elements.filter((e) => e.label && was.has(e.label)).length;
-  if (was.size < 3 || still / was.size < 0.6) return null;
-  return { from, to };
+  return was.size >= 3 && still / was.size >= 0.6;
+}
+
+/**
+ * The tapped button is still there with the same label, on the same screen.
+ * For a toggle (Like, Save) that is what a tap that worked looks like, even
+ * when something else on screen changed with it: the like count "1,204" →
+ * "1,205" changes the list, and the old check missed the toggle (Oct 10,
+ * mission 266: agents tapped Like again and were refused).
+ */
+export function sameButton(before: ScreenModel | null, after: ScreenModel | null, grid: { x: number; y: number }, tappedLabel: string): boolean {
+  const from = tappedLabel.trim().toLowerCase();
+  if (!before || !after || !from) return false;
+  const now = elementAt(after, grid.x, grid.y);
+  return Boolean(now && now.label.trim().toLowerCase() === from && sameScreen(before, after));
 }
 
 /** Buttons that submit what was typed. Whole labels only: "Search" submits, "Search with your voice" does not. */

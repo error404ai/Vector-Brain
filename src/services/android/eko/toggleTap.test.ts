@@ -90,3 +90,29 @@ describe('toggles whose label stays the same (Oct 10: 15 of 15 "like 5 reels" ru
     expect(countActions(steps)).toMatch(/"Like" → "tapped once" ×2/);
   });
 });
+
+describe('a Like that also changes the like count (Oct 10, mission 266)', () => {
+  const withCount = (count: string) =>
+    ({
+      path: 'r', bounds: { left: 0, top: 0, right: 1080, bottom: 2400 }, clickable: false, editable: false, enabled: true,
+      children: [node('Like', [960, 900, 1040, 980]), node(count, [960, 985, 1040, 1000]), node('Comment', [960, 1000, 1040, 1080]), node('Share', [960, 1100, 1040, 1180]), node('a reel', [0, 1900, 900, 2000]), node('Reels', [0, 2250, 540, 2400])],
+    }) as UiNodeSnapshot;
+
+  it('is still TOGGLED: the button kept its label on the same screen', async () => {
+    let current = withCount('1,204');
+    const gateway = {
+      executeAction: jest.fn(async (_hw: string, action: { type: string }) => {
+        if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.instagram.android', root: current } };
+        if (action.type === 'Tap') current = withCount('1,205');
+        return { status: 'SUCCESS', summary: `${action.type} done` };
+      }),
+    };
+    const agent = new AndroidAgent(gateway as never, 'hw');
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[] }> }[] }).tools;
+    const run = async (name: string, args: Record<string, unknown> = {}) => (await tools.find((t) => t.name === name)!.execute(args, {}, {})).content.map((c) => c.text ?? '').join('');
+    const idx = likeIdx(await run('read_ui_tree'));
+    const r = await run('tap_element', { idx });
+    expect(r).toMatch(/TOGGLED: "Like"/);
+    expect(r).toMatch(/do NOT tap it again/);
+  });
+});

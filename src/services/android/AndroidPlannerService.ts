@@ -1302,7 +1302,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         // Waits deliberately skip re-observation, so they always report the
         // previous screen. Counting them here killed legitimate runs that were
         // simply waiting for a page to finish loading.
-        const isWaitStep = info.toolName === 'wait';
+        // Looking (read_ui_tree, list_apps…) changes nothing by design either: on
+        // Oct 10 (#3502) read → failed open → HOME → list_apps ended a run that
+        // had just found Firefox in the app list.
+        const isWaitStep = info.toolName === 'wait' || LOOK_ONLY_TOOLS.has(String(info.toolName ?? ''));
 
         if (!isWaitStep && (info.uiTree || info.screenshotBase64)) {
           const observationFingerprint = this.fingerprintObservation(

@@ -151,3 +151,19 @@ describe('run outcome', () => {
     expect(b.failure_reasons).toEqual([{ reason: 'LLM_QUOTA', count: 1 }]);
   });
 });
+
+describe('secrets in prompts never reach an export (Oct 10, missions 267–268)', () => {
+  const clean = new DiagnosticsSanitizer();
+  it('drops the value after password, otp, pin and the like', () => {
+    expect(clean.scrub('If asked for a password, use Abc@@@321. Create a new blog')).toBe('If asked for a password, use <secret> Create a new blog');
+    expect(clean.scrub('password: hunter2')).toBe('password: <secret>');
+    expect(clean.scrub('Password is sunshine')).toBe('Password is <secret>');
+    expect(clean.scrub('pass hai Qwerty#1')).toBe('pass hai <secret>');
+    expect(clean.scrub('enter otp 4821')).toBe('enter otp <secret>');
+  });
+  it('keeps ordinary words around those keywords', () => {
+    expect(clean.scrub('Tap the password field, then Sign in')).toBe('Tap the password field, then Sign in');
+    expect(clean.scrub('pin the post to your profile')).toBe('pin the post to your profile');
+    expect(clean.scrub('token usage went up')).toBe('token usage went up');
+  });
+});

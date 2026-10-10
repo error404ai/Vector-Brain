@@ -49,12 +49,20 @@ export interface RunTally {
 const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const NUM = `(\\d{1,3}|${Object.keys(NUMBER_WORDS).join('|')})`;
 const toNumber = (t: string) => NUMBER_WORDS[t.toLowerCase()] ?? Number(t);
+/**
+ * Up to N words between a verb and its number, never across a clause: no
+ * comma or full stop, no "and/then", no other action verb. "scroll through
+ * Reels, and like 2 posts" asked for no scrolls; the old gap read it as
+ * "scroll 2" and failed a correct run (Oct 10, #3485).
+ */
+const STOP_WORDS = 'and|then|or|but|after|before|aur|phir|fir|like|follow|comment|share|subscribe|save|join|connect|watch|play|open|visit|browse|tap|click|search|type|post|send|scroll|swipe|install|close';
+const GAP = (n: number) => `(?:[^\\w,;.!?\\n]+(?!(?:${STOP_WORDS})\\b)\\w+){0,${n}}?[^\\w,;.!?\\n]+`;
 /** "visit 10 random websites", "open 5 sites", "browse three pages". */
-const SITES = new RegExp(`\\b(?:visit|open|browse|load|go\\s+to)\\b(?:\\W+\\w+){0,4}?\\W+${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:websites?|web\\s*sites?|sites?|web\\s*pages?|pages?|urls?|links?)\\b`, 'gi');
+const SITES = new RegExp(`\\b(?:visit|open|browse|load|go\\s+to)\\b${GAP(4)}${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:websites?|web\\s*sites?|sites?|web\\s*pages?|pages?|urls?|links?)\\b`, 'gi');
 /** "scroll through Reels 5 times", "swipe 10 shorts", "scroll down 3 times". */
-const SCROLLS = new RegExp(`\\b(?:scroll|swipe)\\b(?:\\W+\\w+){0,4}?\\W+${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:times|reels?|videos?|posts?|shorts?|stories|photos?|items?|tweets?|pins?)\\b`, 'gi');
+const SCROLLS = new RegExp(`\\b(?:scroll|swipe)\\b${GAP(4)}${NUM}\\s+(?:[\\w-]+\\s+){0,2}?(?:times|reels?|videos?|posts?|shorts?|stories|photos?|items?|tweets?|pins?)\\b`, 'gi');
 /** "follow 3 people", "like 5 posts", "subscribe to 2 channels": a button a tap turns into its done state. */
-const BUTTONS = new RegExp(`\\b(follow|like|subscribe|join|save|connect)\\b(?:\\W+\\w+){0,3}?\\W+${NUM}\\b`, 'gi');
+const BUTTONS = new RegExp(`\\b(follow|like|subscribe|join|save|connect)\\b${GAP(3)}${NUM}\\b`, 'gi');
 
 /**
  * The goal's own numbers against what the system counted. "short": counts the
@@ -102,17 +110,33 @@ export function parseAppList(text: string): { label: string; packageName: string
   return apps;
 }
 
-/** The app the goal names: the longest launcher label found in it as whole words. */
+/**
+ * The app the goal names: the launcher label that comes first in it as whole
+ * words; of labels starting at the same place, the longest ("YouTube Music"
+ * over "YouTube"). First, not longest overall: "force stop Chrome from the app
+ * settings" names Chrome, and picking "Settings" for being longer failed 24
+ * correct runs (Oct 10, missions 269–270).
+ */
 export function appNamedIn(goal: string, apps: { label: string; packageName: string }[]): { label: string; packageName: string } | null {
   const text = goal.toLowerCase();
-  let best: { label: string; packageName: string } | null = null;
+  let best: { label: string; packageName: string; at: number } | null = null;
   for (const app of apps) {
     const label = app.label.toLowerCase().trim();
     if (label.length < 2) continue;
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'u').test(text) && (!best || label.length > best.label.length)) best = app;
+    const match = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'u').exec(text);
+    if (!match) continue;
+    const at = match.index + match[1].length;
+    if (!best || at < best.at || (at === best.at && label.length > best.label.length)) best = { ...app, at };
   }
-  return best;
+  return best ? { label: best.label, packageName: best.packageName } : null;
+}
+
+/** The part of a close goal that names what to close: its last clause, from the close word on. */
+export function closeTarget(goal: string): string {
+  const last = lastClause(goal.replace(/\(.*?\)/g, ' '));
+  const match = CLOSE.exec(last);
+  return match ? last.slice(match.index) : last;
 }
 
 /**
@@ -215,7 +239,8 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
   const rule = site ? null : ruleFor(input.goal);
   if (rule) {
     const apps = await input.listApps().catch(() => []);
-    const app = appNamedIn(input.goal, apps);
+    // A close goal is about the app after the close word, not one named earlier ("open YouTube, then close Chrome").
+    const app = (rule === 'close' ? appNamedIn(closeTarget(input.goal), apps) : null) ?? appNamedIn(input.goal, apps);
     if (app) {
       const onScreen = screen.packageName === app.packageName;
       if (rule === 'install') {

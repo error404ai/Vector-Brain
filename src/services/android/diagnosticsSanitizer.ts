@@ -23,7 +23,8 @@ export class DiagnosticsSanitizer {
       .replace(URL_RE, (match) => scrubUrl(match))
       .replace(EMAIL, '<email>')
       .replace(PHONE, '<phone>')
-      .replace(LONG_DIGITS, '<n>');
+      .replace(LONG_DIGITS, '<n>')
+      .replace(SECRET, scrubSecret);
     if (text.length > max) text = `${text.slice(0, max)}…`;
     return text;
   }
@@ -97,6 +98,23 @@ const PHONE = /\+?\d[\d\s().-]{7,}\d/g;
 const LONG_DIGITS = /\d{5,}/g;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>)]+/gi;
 const BASE64_BLOB = /[A-Za-z0-9+/=]{200,}/g;
+/**
+ * "password: X", "password is X", "If asked for a password, use X", "otp 4821",
+ * "pin hai 1234". Users put sign-in details in prompts (Oct 10, missions
+ * 267–268), and exports go to a public GitHub branch. The word after the
+ * keyword (and a few joining words) is dropped when it looks like a secret
+ * (has a digit or a symbol) or when the joining words say it is the value;
+ * "tap the password field" stays readable.
+ */
+const SECRET = /\b(pass(?:word|wd|code)?s?|pwd|pin|otp|secret|api[\s_-]?key|token)\b((?:[\s,:=-]+(?:is|use|enter|type|as|hai|h|ka|wala|will\s+be|should\s+be)\b)*[\s,:=-]*)([^\s,;]+)/gi;
+function scrubSecret(match: string, word: string, joint: string, value: string): string {
+  // Already scrubbed (<n>, <email>, a URL's "token=*").
+  if (/^[<*]/.test(value)) return match;
+  const said = /[:=]|\b(is|use|enter|type|as|hai|h|ka|wala|be)\b/i.test(joint);
+  const looks = value.length >= 4 && /[\d\W_]/.test(value.replace(/[.!?)]+$/, ''));
+  if (!joint.trim() && !looks) return match;
+  return said || looks ? `${word}${joint}<secret>` : match;
+}
 const SAFE_STRING_KEYS = new Set(['direction', 'action', 'key', 'packageName', 'screen', 'nodePath', 'viewId']);
 
 export function scrubUrl(raw: string): string {

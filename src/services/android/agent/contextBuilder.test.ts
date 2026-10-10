@@ -137,3 +137,33 @@ describe('successVerifier helpers', () => {
     expect(parseVerdict('garbage').verdict).toBe('unsure');
   });
 });
+
+describe('which app a close goal is about (Oct 10, missions 269–270)', () => {
+  const apps = [
+    { label: 'Chrome', packageName: 'com.android.chrome' },
+    { label: 'Settings', packageName: 'com.android.settings' },
+    { label: 'YouTube', packageName: 'com.google.android.youtube' },
+    { label: 'YouTube Music', packageName: 'com.google.android.apps.youtube.music' },
+  ];
+  const { closeTarget } = jest.requireActual('./successVerifier') as typeof import('./successVerifier');
+
+  it('the app after the close word, not the longest name in the goal', () => {
+    const goal = 'Open Chrome, visit 10 different UK websites, spending a short time on each. Then force stop Chrome from the app settings.';
+    expect(ruleFor(goal)).toBe('close');
+    expect(appNamedIn(closeTarget(goal), apps)?.packageName).toBe('com.android.chrome');
+    expect(appNamedIn('open YouTube, then close Chrome', apps)?.packageName).toBe('com.google.android.youtube');
+    expect(appNamedIn(closeTarget('open YouTube, then close Chrome'), apps)?.packageName).toBe('com.android.chrome');
+    expect(appNamedIn('close youtube music', apps)?.packageName).toBe('com.google.android.apps.youtube.music');
+  });
+
+  it('a correct force stop that ends on Chrome’s settings page is verified', async () => {
+    const { verifyCompletion } = jest.requireActual('./successVerifier') as typeof import('./successVerifier');
+    const result = await verifyCompletion({
+      goal: 'Open Chrome and open bbc.co.uk. Then force stop Chrome from the app settings.',
+      summary: 'done',
+      observe: async () => ({ packageName: 'com.android.settings', tree: '0|button|Force stop|d|500,500' }),
+      listApps: async () => apps,
+    });
+    expect(result).toMatchObject({ status: 'verified', reason: 'Chrome is no longer on screen' });
+  });
+});

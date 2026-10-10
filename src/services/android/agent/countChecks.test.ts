@@ -73,3 +73,16 @@ describe('a button the tap changed', () => {
     expect(countActions(steps)).toBe('tap_element: 3 succeeded; buttons changed by your taps: "Follow" → "Following" ×2');
   });
 });
+
+describe('a number belongs to its own verb (Oct 10, #3485)', () => {
+  it('"scroll through Reels, and like 2 posts" asks for no scrolls', () => {
+    expect(countChecks('Open the Instagram app, scroll through Reels, and like 2 posts or reels chosen at random', tally(0, 0))).toEqual({ short: [], met: [] });
+    expect(countChecks('scroll the feed and then like 3 posts', tally(0, 1)).short).toEqual([]);
+    expect(countChecks('open Chrome and search for 5 recipes', tally())).toEqual({ short: [], met: [] });
+  });
+  it('still reads the plain phrasings', () => {
+    expect(countChecks('scroll through Reels 5 times', tally(0, 2)).short).toHaveLength(1);
+    expect(countChecks('Open Chrome (or Firefox if Chrome is not available), visit 10 different UK websites', tally(9)).short).toHaveLength(1);
+    expect(countChecks('like 2 posts', tally(0, 0, [{ from: 'Like', to: 'tapped once' }, { from: 'Like', to: 'tapped once' }])).met).toHaveLength(1);
+  });
+});

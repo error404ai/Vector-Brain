@@ -15,6 +15,7 @@ import {
   GRID,
   buildScreenModel,
   buttonChange,
+  sameButton,
   submitTarget,
   elementAt,
   formatScreen,
@@ -1359,7 +1360,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const toggle = Boolean(tap && TOGGLE.test(tap.label.trim()));
     const frameAfter = this.frameKey();
     if (!isError && toggle && tap) this.lastToggle = { grid: tap.grid, label: tap.label.trim(), moves: this.moves };
-    if (!isError && meantToChange && keyAfter === keyBefore && toggle && tap) {
+    if (!isError && meantToChange && toggle && tap && (keyAfter === keyBefore || sameButton(screenBefore, this.screen, tap.grid, tap.label))) {
       // Like, Save, heart…: many apps change only the icon, never the label, so the
       // list looks the same after a tap that worked. Saying "did NOT change" here
       // made agents tap again and undo it (Oct 10, mission 256: 15 of 15 runs).
