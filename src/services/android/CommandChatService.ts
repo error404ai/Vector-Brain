@@ -1,7 +1,7 @@
 import { historyEntry } from './chatClaims';
 import { fallbackAnswer, type TaskAnswer } from './taskAnswer';
 import { AndroidGatewayService } from './AndroidGatewayService';
-import { LessThan } from 'typeorm';
+import { LessThan, Like } from 'typeorm';
 import { describeModelError } from '@/services/ai/modelErrors';
 import { ChatMessage } from '@/entities/ChatMessage';
 import { ChatScreenShot } from '@/entities/ChatScreenShot';
@@ -21,8 +21,14 @@ import { ProxyRotationService } from './ProxyRotationService';
 import { ChatStopped, PLAIN_YES, POLICY_V2_DEFAULT, VectorAgentService, type Brain, type PolicyJudge, type ProposedAction } from './VectorAgentService';
 
 const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV !== 'production';
-/** A pending confirmation lives this long before the token is refused. */
+/** A bare "ok" confirms a plan only this soon after it was shown. */
 const CONFIRM_TTL_MS = 10 * 60_000;
+/**
+ * The Confirm button itself works this long, across reloads and server restarts:
+ * the plan is kept with the chat message, not only in memory (Oct 11: a Confirm
+ * pressed 5–10 minutes later, or after a deploy, said "expired").
+ */
+const CONFIRM_BUTTON_TTL_MS = 6 * 60 * 60_000;
 /** Screens shown in the chat are kept this long, then swept. */
 const SCREEN_SHOT_TTL_MS = 7 * 24 * 60 * 60_000;
 
@@ -77,6 +83,8 @@ export interface ChatReply {
   pending?: { awaiting: 'phones'; request: string } | { awaiting: 'action'; target: string };
   /** kind 'result': the answer to the user's question once a task from the chat finished. */
   result?: TaskAnswer;
+  /** A Confirm that ran out: the request, so the chat can offer "Ask again". */
+  ask_again?: string;
 }
 
 /**
@@ -184,7 +192,7 @@ export class CommandChatService {
     // Stop landed after the work finished: undo what it would have started.
     const missions = reply ? ([reply.mission, ...((reply as { extra_missions?: unknown[] }).extra_missions ?? [])] as ({ id?: number } | undefined)[]) : [];
     for (const mission of missions) if (mission?.id) await this.missionService.cancel(mission.id, userId).catch(() => undefined);
-    if (reply?.confirm_token) this.pending.delete(reply.confirm_token);
+    if (reply?.confirm_token) await this.retire(reply.confirm_token);
     const stopped: ChatReply = { kind: 'answer', text: 'Stopped.' };
     await this.record(userId, 'assistant', stopped.text, stopped, conversationId);
     return { message: 'Chat reply', data: { ...stopped, stopped: true, conversation_id: conversationId } };
@@ -316,7 +324,7 @@ export class CommandChatService {
     if (stop?.aborted) throw new ChatStopped();
 
     if (result.confirmToken) return this.applyToken(userId, result.confirmToken);
-    if (result.cancelledPending) for (const p of pending) this.pending.delete(p.token);
+    if (result.cancelledPending) for (const p of pending) await this.retire(p.token);
     if (result.ask) {
       return { kind: 'clarify', text: result.ask.question, quick_replies: result.ask.options.length ? result.ask.options : undefined };
     }
@@ -415,11 +423,22 @@ export class CommandChatService {
       order: { id: 'DESC' },
       take: Math.max(1, Math.min(300, limit)),
     });
-    const turns = rows.reverse().map((row) => {
-      if (row.role === 'user') return { id: row.id, role: 'user' as const, text: row.text };
+    const ordered = rows.reverse();
+    const live = new Set(this.pendingFor(userId, conversation.id).map((p) => p.token));
+    const now = Date.now();
+    let lastUserText = '';
+    const turns = ordered.map((row, index) => {
+      if (row.role === 'user') {
+        lastUserText = row.text;
+        return { id: row.id, role: 'user' as const, text: row.text };
+      }
       let reply: ChatReply = { kind: 'answer', text: row.text };
       try {
-        if (row.reply) reply = JSON.parse(row.reply) as ChatReply;
+        if (row.reply) {
+          const { _proposal, _at, _used, ...stored } = JSON.parse(row.reply) as ChatReply & StoredConfirm;
+          reply = stored;
+          if (reply.confirm_token && _proposal && !_used && now - (_at ?? new Date(row.created_at).getTime()) <= CONFIRM_BUTTON_TTL_MS) live.add(reply.confirm_token);
+        }
       } catch {
         /* keep the plain text */
       }
@@ -430,8 +449,16 @@ export class CommandChatService {
         const problem = describeModelError(legacy[1]);
         reply = { ...reply, text: reply.text.slice(legacy[0].length), notice: { code: problem.code, title: problem.title, hint: `${problem.hint} Meanwhile Vector answered in basic mode.` } };
       }
-      // A confirm from an earlier visit can't be applied any more; show it as text.
-      if (reply.kind === 'confirm') reply = { kind: 'answer', text: `${reply.text.replace(/ Confirm\?$/, '')} (not confirmed)` };
+      // A confirm still waiting on the server keeps its button after a reload. One that
+      // was answered later in the chat is plain text; the last one, if it ran out of
+      // time (or the server restarted), says so and offers to ask again.
+      if (reply.kind === 'confirm' && !(reply.confirm_token && live.has(reply.confirm_token))) {
+        const text = reply.text.replace(/ Confirm\?$/, '');
+        const answeredLater = ordered.slice(index + 1).some((r) => r.role === 'user');
+        reply = answeredLater
+          ? { kind: 'answer', text }
+          : { kind: 'answer', text: `${text}\n\nThis wait for your OK ran out, so nothing was started.`, ...(lastUserText ? { ask_again: lastUserText } : {}) };
+      }
       // Screens from before they were stored have nothing to show — keep the caption.
       if (reply.kind === 'screens' && !reply.screens?.some((s) => s.shot_id)) reply = { kind: 'answer', text: reply.text };
       return { id: row.id, role: 'assistant' as const, reply };
@@ -553,7 +580,10 @@ export class CommandChatService {
       // The (large) images never go into the transcript row: each is saved on
       // its own and the reply keeps only its id, so a reload shows the same
       // screens while the history itself stays small.
-      const toStore = reply?.kind === 'screens' ? { ...reply, screens: await this.storeShots(userId, conversationId, reply.screens ?? []) } : reply;
+      let toStore: (ChatReply & StoredConfirm) | undefined = reply?.kind === 'screens' ? { ...reply, screens: await this.storeShots(userId, conversationId, reply.screens ?? []) } : reply;
+      // A task plan waiting for Confirm is kept with its message, so the button still works later.
+      const waiting = reply?.confirm_token ? this.pending.get(reply.confirm_token) : undefined;
+      if (toStore && waiting?.action.type === 'agent') toStore = { ...toStore, _proposal: waiting.action.proposal, _at: waiting.at };
       await this.messageRepo.save(
         this.messageRepo.create({ user_id: userId, conversation_id: conversationId ?? null, role, text: text.slice(0, 8000), reply: toStore ? JSON.stringify(toStore) : null, mission_id: missionId }),
       );
@@ -621,11 +651,68 @@ export class CommandChatService {
   }
 
   /** Applies a pending proposal; the caller records the reply. */
-  private async applyToken(userId: number, token: string): Promise<ChatReply> {
+  /** The chat message that showed this Confirm, if its plan was kept with it. */
+  private async confirmMessage(userId: number, token: string): Promise<{ row: ChatMessage; reply: ChatReply & StoredConfirm } | null> {
+    if (!/^[a-f0-9]{24}$/.test(token)) return null;
+    const row = await this.messageRepo.findOne({ where: { user_id: userId, role: 'assistant', reply: Like(`%"confirm_token":"${token}"%`) }, order: { id: 'DESC' } });
+    if (!row?.reply) return null;
+    try {
+      return { row, reply: JSON.parse(row.reply) as ChatReply & StoredConfirm };
+    } catch {
+      return null;
+    }
+  }
+
+  /** A plan the server no longer holds in memory (a restart, a deploy), read back from its message. */
+  private async revive(userId: number, token: string): Promise<Pending | undefined> {
+    const found = await this.confirmMessage(userId, token);
+    if (!found?.reply._proposal || found.reply._used) return undefined;
+    return {
+      userId,
+      conversationId: found.row.conversation_id ?? undefined,
+      action: { type: 'agent', proposal: found.reply._proposal },
+      summary: found.reply.text,
+      at: found.reply._at ?? new Date(found.row.created_at).getTime(),
+    };
+  }
+
+  /** A Confirm answered (run or cancelled): never runnable again, in memory or from its message. */
+  private async retire(token: string): Promise<void> {
     const pending = this.pending.get(token);
-    if (!pending || pending.userId !== userId) throw new AppError('Nothing to confirm (it may have expired)', 404);
     this.pending.delete(token);
-    if (Date.now() - pending.at > CONFIRM_TTL_MS) throw new AppError('That confirmation expired — ask again', 410);
+    const userId = pending?.userId;
+    if (!userId) {
+      // Not in memory: find it by token alone among recent messages.
+      const row = await this.messageRepo.findOne({ where: { role: 'assistant', reply: Like(`%"confirm_token":"${token.replace(/[^a-f0-9]/g, '')}"%`) }, order: { id: 'DESC' } }).catch(() => null);
+      if (row) await this.markUsed(row);
+      return;
+    }
+    const found = await this.confirmMessage(userId, token).catch(() => null);
+    if (found) await this.markUsed(found.row);
+  }
+
+  private async markUsed(row: ChatMessage): Promise<void> {
+    try {
+      const stored = JSON.parse(row.reply ?? '{}') as ChatReply & StoredConfirm;
+      if (stored._used) return;
+      const { _proposal: _drop, ...rest } = stored;
+      await this.messageRepo.update(row.id, { reply: JSON.stringify({ ...rest, _used: true }) });
+    } catch (error) {
+      Logger.warn('[CommandChat] Could not mark a Confirm as answered:', error);
+    }
+  }
+
+  /** Confirms being applied right now: a double press must not start the task twice. */
+  private applying = new Set<string>();
+
+  private async applyToken(userId: number, token: string): Promise<ChatReply> {
+    if (this.applying.has(token)) throw new AppError('Already confirmed — it is starting', 409);
+    this.applying.add(token);
+    setTimeout(() => this.applying.delete(token), 60_000).unref?.();
+    const pending = this.pending.get(token) ?? (await this.revive(userId, token));
+    if (!pending || pending.userId !== userId) throw new AppError('Nothing to confirm (it was already answered, or it expired)', 404);
+    await this.retire(token);
+    if (Date.now() - pending.at > CONFIRM_BUTTON_TTL_MS) throw new AppError('That plan is more than 6 hours old — ask again so it is planned on today’s phones', 410);
 
     let reply: ChatReply = { kind: 'answer', text: `Done — ${pending.summary}.` };
     if (pending.action.type === 'agent') {
@@ -964,4 +1051,11 @@ export function classifyLocally(text: string): ChatIntent {
   if (MISSION_WORDS.test(t)) return { kind: 'mission', prompt: text };
 
   return { kind: 'clarify', question: 'What would you like to do — run a task on some phones, check status, or change proxy rotation?' };
+}
+
+/** Kept with a Confirm's message (never sent to the browser): the plan, when it was made, whether it was answered. */
+interface StoredConfirm {
+  _proposal?: ProposedAction;
+  _at?: number;
+  _used?: boolean;
 }

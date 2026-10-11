@@ -130,6 +130,13 @@ export class AndroidFileController {
     return this.fileService.finishUpload(user.userId, String(body?.upload_id || ''));
   }
 
+  /** Stops a send for the phones that do not have it yet: { ids: [12, 13] }. */
+  @Authorized()
+  @Post('/cancel')
+  async cancelFiles(@Body() body: { ids?: number[] }, @CurrentUser({ required: true }) user: { userId: number }) {
+    return this.fileService.cancelForDashboard(user.userId, Array.isArray(body?.ids) ? body.ids.map(Number) : []);
+  }
+
   @Authorized()
   @Delete('/:id')
   async deleteFile(@Param('id') id: number, @CurrentUser({ required: true }) user: { userId: number }) {

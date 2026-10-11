@@ -86,7 +86,7 @@ function untilStopped<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 export type ProposedAction =
   | { type: 'set_rotation'; proxy_ids: number[]; every: number }
   | { type: 'set_concurrency'; proxy_id: number; concurrency: number }
-  | { type: 'run_mission'; instruction: string; device_ids: number[]; duration_seconds?: number };
+  | { type: 'run_mission'; instruction: string; device_ids: number[]; duration_seconds?: number; estimate_usd?: number | null };
 
 /** What a proposal will do, laid out for the chat's plan card. */
 export interface ProposalPlan {
@@ -702,7 +702,7 @@ export class VectorAgentService {
         const estimate = await this.estimateFor(ctx.userId, group.instructions, group.deviceIds.length, group.minutes);
         const phoneNames = await this.namesFor(ctx.userId, group.deviceIds);
         result.proposal = {
-          action: { type: 'run_mission', instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds },
+          action: { type: 'run_mission', instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds, estimate_usd: estimate.costUsd },
           summary: `Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phones — ${estimateLine(estimate)}`,
           plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: group.minutes || undefined },
         };
@@ -848,7 +848,7 @@ export class VectorAgentService {
             const summary = `Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — ${estimateLine(estimate)}`;
             const phoneNames = await this.namesFor(ctx.userId, deviceIds);
             result.proposal = {
-              action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds },
+              action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds, estimate_usd: estimate.costUsd },
               summary,
               plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: minutes || undefined },
             };
@@ -1060,6 +1060,7 @@ export class VectorAgentService {
       request: action.instruction,
       device_ids: action.device_ids,
       duration_seconds: action.duration_seconds,
+      estimate_usd: action.estimate_usd ?? null,
     });
     return created.data;
   }

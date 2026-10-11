@@ -42,6 +42,8 @@ export interface ChatReply {
   action?: unknown;
   /** Tap-to-send answers under a question. */
   quick_replies?: string[];
+  /** A Confirm that ran out before a reload: the request, for "Ask again". */
+  ask_again?: string;
   /** The AI model could not be used (daily limit, key, outage): what happened and what to do. */
   notice?: { code: string; title: string; hint: string };
   /** The thread this reply belongs to. */

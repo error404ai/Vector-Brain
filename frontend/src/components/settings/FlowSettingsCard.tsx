@@ -108,7 +108,8 @@ export default function FlowSettingsCard() {
                     px: 1.75,
                     py: 1.5,
                     borderRadius: '16px',
-                    opacity: blocked ? 0.5 : 1,
+                    opacity: blocked ? 0.8 : 1,
+                    bgcolor: blocked ? 'rgba(226,230,243,.45)' : undefined,
                     background: active ? `linear-gradient(90deg, ${PRISM_ACCENT}14, rgba(236,72,153,.06))` : 'transparent',
                     transition: 'background 300ms ease',
                   }}

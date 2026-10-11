@@ -89,6 +89,9 @@ function statusChip(file: DeviceFile) {
   if (file.status === 'FAILED') {
     return <Chip size="small" color="error" variant="outlined" icon={<ErrorOutlineIcon />} label="Failed" />;
   }
+  if (file.status === 'CANCELLED') {
+    return <Chip size="small" variant="outlined" label="Stopped" />;
+  }
   return <Chip size="small" variant="outlined" icon={<HourglassEmptyIcon />} label="Waiting" />;
 }
 

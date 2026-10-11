@@ -267,6 +267,17 @@ export class AndroidCompanionController {
     res.setHeader('X-File-Sha256', file.sha256);
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
 
+    // Stopped from the dashboard mid-download: cut the phone off within a few seconds.
+    const watch = setInterval(() => {
+      this.fileService
+        .isCancelled(Number(id))
+        .then((stopped) => {
+          if (stopped && !res.destroyed) res.destroy();
+        })
+        .catch(() => undefined);
+    }, 3000);
+    res.on('close', () => clearInterval(watch));
+
     // A fleet collecting the same file reads it from a verified disk copy, so
     // MySQL is read once per file instead of once per phone.
     const cached = await this.fileService.cachedCopy(file, Number(id));

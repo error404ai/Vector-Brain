@@ -8,7 +8,8 @@ import type { SxProps, Theme } from '@mui/material';
 export const PRISM_ACCENT = '#3b4cff';
 export const PRISM_PINK = '#ec4899';
 export const PRISM_INK = '#141a2e';
-export const PRISM_MUTED = '#5b6280';
+/** Secondary text: dark enough to read at a glance on the glass (≈10:1 on white). */
+export const PRISM_MUTED = '#3c435e';
 
 export const glassSection: SxProps<Theme> = {
   position: 'relative',
@@ -37,7 +38,7 @@ export const prismSwitch: SxProps<Theme> = {
       color: '#fff',
       '& + .MuiSwitch-track': { opacity: 1, background: `linear-gradient(90deg, ${PRISM_ACCENT}, ${PRISM_PINK})` },
     },
-    '&.Mui-disabled + .MuiSwitch-track': { opacity: 0.35 },
+    '&.Mui-disabled + .MuiSwitch-track': { opacity: 0.6 },
   },
   '& .MuiSwitch-thumb': { width: 24, height: 24, boxShadow: '0 2px 6px rgba(0,0,0,.2)', bgcolor: '#fff' },
   '& .MuiSwitch-track': { borderRadius: 999, opacity: 1, bgcolor: '#d7dae8' },
@@ -45,4 +46,32 @@ export const prismSwitch: SxProps<Theme> = {
 };
 
 export const sectionTitle: SxProps<Theme> = { fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', color: PRISM_INK };
-export const monoLabel: SxProps<Theme> = { fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.12em', color: '#7a809c', textTransform: 'uppercase' };
+export const monoLabel: SxProps<Theme> = { fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.1em', color: '#3730a3', textTransform: 'uppercase' };
+
+/** A chosen option: filled with the accent, white text, so the choice reads at a glance. */
+export const chosenOption = {
+  border: '1.5px solid transparent',
+  background: `linear-gradient(135deg, ${PRISM_ACCENT}, #6d28d9)`,
+  color: '#fff',
+  boxShadow: '0 8px 20px -8px rgba(59,76,255,.65)',
+} as const;
+
+/** An option that is not chosen: a clear border and dark text, accent on hover. */
+export const plainOption = {
+  border: '1.5px solid #c3c8de',
+  background: '#fff',
+  color: '#262c48',
+  '&:hover:not(:disabled)': { borderColor: PRISM_ACCENT, color: PRISM_ACCENT },
+} as const;
+
+/**
+ * Text on the Settings page: captions and helper text a size up and dark,
+ * labels dark, so nothing reads as greyed out unless it really is disabled.
+ */
+export const readableScope: SxProps<Theme> = {
+  '& .MuiTypography-caption': { fontSize: 13, lineHeight: 1.55 },
+  '& .MuiFormHelperText-root': { color: PRISM_MUTED, fontSize: 12.5, lineHeight: 1.5 },
+  '& .MuiInputLabel-root:not(.Mui-focused)': { color: '#262c48' },
+  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#b9bfd6' },
+  '& .MuiFormControlLabel-label .MuiTypography-body2': { fontWeight: 600, color: PRISM_INK },
+};

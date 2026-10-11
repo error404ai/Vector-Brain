@@ -842,6 +842,14 @@ function PhoneTile({ item, steps, round, feed }: { item: MissionItem; steps: Liv
         <Typography sx={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }} noWrap>
           {item.device_name}
         </Typography>
+        {item.cost_usd != null && (
+          <Tooltip title={item.cost_estimated ? 'Priced from the model’s list price (no bill came back)' : 'Billed cost of this phone’s runs, retries included'}>
+            <Typography component="span" sx={{ fontSize: 12, fontWeight: 700, color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
+              {item.cost_estimated ? '≈' : ''}
+              {formatEstimateUsd(item.cost_usd)}
+            </Typography>
+          </Tooltip>
+        )}
         <StatusChip item={item} />
       </Box>
       <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', minWidth: 0 }}>
@@ -1208,6 +1216,7 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <SummaryLine items={items} />
           <SightCounter run={sumSight(items.map((i) => (i.agent_task_id ? feed.sight[i.agent_task_id] : null) ?? i.sight))} finished={!running && !paused} />
+          <CostChip mission={mission} finished={!running && !paused} />
         </Box>
         {paused && (
           <>
@@ -1512,6 +1521,57 @@ function AssistantRow({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * What the mission really cost, from each run's own record (retries included),
+ * next to what the Confirm card estimated. "so far" while phones still work.
+ */
+function CostChip({ mission, finished }: { mission: Mission; finished: boolean }) {
+  const cost = mission.cost;
+  if (!cost || cost.priced_runs === 0) return null;
+  const phones = mission.items.filter((i) => i.cost_usd != null).length;
+  const perPhone = phones ? cost.usd / phones : 0;
+  const waiting = cost.runs - cost.priced_runs;
+  const label = `${cost.estimated ? '≈' : ''}${formatEstimateUsd(cost.usd)}${finished && waiting === 0 ? '' : ' so far'}`;
+  const tip = [
+    `${cost.priced_runs} run${cost.priced_runs === 1 ? '' : 's'} on ${phones} phone${phones === 1 ? '' : 's'} · ${formatEstimateUsd(perPhone)} per phone`,
+    cost.estimate_usd != null ? `Estimate before confirming: ${formatEstimateUsd(cost.estimate_usd)}` : null,
+    cost.estimated ? 'Some runs were priced from the model’s list price (no bill came back).' : 'Billed by the AI provider.',
+    waiting > 0 ? `${waiting} run${waiting === 1 ? '' : 's'} not recorded yet.` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+      <Box
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.75,
+          px: 1.25,
+          py: 0.4,
+          borderRadius: 99,
+          border: '1px solid #c7d7fe',
+          bgcolor: '#eef2ff',
+          color: '#1e3a8a',
+          fontSize: 13,
+          fontWeight: 700,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <Box component="span" sx={{ fontSize: 11, fontWeight: 800, letterSpacing: '.06em', color: '#4338ca' }}>
+          COST
+        </Box>
+        {label}
+        {cost.estimate_usd != null && finished && waiting === 0 && (
+          <Box component="span" sx={{ fontWeight: 600, color: '#475569' }}>
+            · est. {formatEstimateUsd(cost.estimate_usd)}
+          </Box>
+        )}
+      </Box>
+    </Tooltip>
+  );
+}
+
 /** What a Confirm will do, laid out — phones, task, estimate — with the two choices. */
 /** "$0.033", "$0.0021", "$1.40": a small mission is not shown as "$0.00". */
 function formatEstimateUsd(usd: number): string {
@@ -1728,6 +1788,13 @@ function AssistantBubble({
                 sx={{ animation: `${riseIn} 260ms ${ease} ${index * 45}ms both`, ...reducedMotion }}
               />
             ))}
+          </Box>
+        )}
+        {isLatest && reply.ask_again && (
+          <Box sx={{ mt: 1 }}>
+            <Button size="small" variant="contained" startIcon={<ReplayIcon />} onClick={() => onQuickReply(reply.ask_again as string)}>
+              Ask again
+            </Button>
           </Box>
         )}
         {reply.kind === 'confirm' && reply.confirm_token && (

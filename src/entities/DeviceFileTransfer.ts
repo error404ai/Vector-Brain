@@ -6,6 +6,8 @@ export enum DeviceFileStatus {
   PENDING = 'PENDING',
   DELIVERED = 'DELIVERED',
   FAILED = 'FAILED',
+  /** Stopped from the dashboard before this phone had it. */
+  CANCELLED = 'CANCELLED',
 }
 
 /**

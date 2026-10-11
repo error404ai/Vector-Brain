@@ -19,7 +19,7 @@ export interface DropTarget {
   name: string;
 }
 
-export type DropPhase = 'hashing' | 'uploading' | 'queued' | 'error';
+export type DropPhase = 'hashing' | 'uploading' | 'queued' | 'error' | 'stopped';
 
 export interface DropState {
   phase: DropPhase;
@@ -46,6 +46,8 @@ interface Job {
   timer: ReturnType<typeof setTimeout> | null;
   startedAt: number;
   polling: boolean;
+  /** Set by stopDrop: the upload loop checks it between chunks. */
+  stopped: boolean;
 }
 
 /**
@@ -137,6 +139,7 @@ export function startDrop(id: string, file: File, targets: DropTarget[]): void {
     timer: null,
     startedAt: Date.now(),
     polling: false,
+    stopped: false,
   };
   jobs.set(id, job);
   void upload(job, targets.map((t) => t.id));
@@ -150,8 +153,43 @@ export function retryFailed(id: string): void {
     .map((t) => t.id)
     .filter((deviceId) => job.state.status[job.state.rowOf[deviceId]]?.status === 'FAILED');
   if (failed.length === 0) return;
+  job.stopped = false;
   job.startedAt = Date.now();
   void upload(job, failed);
+}
+
+/**
+ * Stops a send. While uploading: the upload ends before the server queues
+ * anything. Once queued: phones that do not have the file yet are never given
+ * it, and a download in progress is cut off. Phones that saved it keep it.
+ */
+export async function stopSend(id: string): Promise<void> {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.stopped = true;
+  if (job.state.phase === 'hashing' || job.state.phase === 'uploading') {
+    update(job, { phase: 'stopped' });
+    return;
+  }
+  await stopDrop(job);
+}
+
+async function stopDrop(job: Job): Promise<void> {
+  const open = openRows(job);
+  if (open.length) {
+    try {
+      for (let i = 0; i < open.length; i += STATUS_IDS_PER_REQUEST) {
+        await store.dispatch(deviceFileApi.endpoints.cancelDeviceFiles.initiate(open.slice(i, i + STATUS_IDS_PER_REQUEST))).unwrap();
+      }
+    } catch (error) {
+      const err = error as { data?: { message?: string }; message?: string };
+      update(job, { error: err?.data?.message || err?.message || 'Could not stop the send. Try again.' });
+      return;
+    }
+  }
+  // One last read so every tile shows what really happened (saved before the stop, or stopped).
+  job.polling = false;
+  await poll(job, true);
 }
 
 async function upload(job: Job, deviceIds: number[]) {
@@ -190,10 +228,13 @@ async function upload(job: Job, deviceIds: number[]) {
         .unwrap();
       update(job, { phase: 'uploading' });
       for (let index = 0; index < totalChunks; index += 1) {
+        // Stopped mid-upload: never finish, so no phone is ever offered the file.
+        if (job.stopped) return;
         const start = index * UPLOAD_CHUNK_SIZE;
         await uploadChunk(init.data.upload_id, index, file.slice(start, Math.min(start + UPLOAD_CHUNK_SIZE, file.size)));
         update(job, { progress: (index + 1) / totalChunks });
       }
+      if (job.stopped) return;
       const res = await store.dispatch(deviceFileApi.endpoints.finishDeviceUpload.initiate({ upload_id: init.data.upload_id })).unwrap();
       result = res.data;
     }
@@ -206,6 +247,11 @@ async function upload(job: Job, deviceIds: number[]) {
       rowOf[row.device_id] = row.id;
     }
     update(job, { phase: 'queued', progress: 1, rowOf, status, queuedAt: Date.now() });
+    // Stop pressed while the server was finishing: stop what it just queued.
+    if (job.stopped) {
+      void stopDrop(job);
+      return;
+    }
     schedulePoll(job, 800);
   } catch (error) {
     const err = error as { data?: { message?: string }; message?: string };
@@ -249,10 +295,10 @@ function schedulePoll(job: Job, delay: number) {
   }, delay);
 }
 
-async function poll(job: Job) {
+async function poll(job: Job, force = false) {
   if (job.polling) return;
-  const rows = openRows(job);
-  if (rows.length === 0 || job.listeners.size === 0) return;
+  const rows = force ? Object.values(job.state.rowOf).filter((row) => !job.state.gone[row]) : openRows(job);
+  if (rows.length === 0 || (!force && job.listeners.size === 0)) return;
   if (typeof document !== 'undefined' && document.hidden) {
     schedulePoll(job, 5000);
     return;
@@ -277,6 +323,7 @@ async function poll(job: Job) {
   } finally {
     job.polling = false;
   }
+  if (job.stopped) return;
   const young = Date.now() - job.startedAt < 2 * 60_000;
   schedulePoll(job, young ? 3000 : 15_000);
 }

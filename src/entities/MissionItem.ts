@@ -66,6 +66,10 @@ export class MissionItem {
   @Column({ type: 'json', nullable: true })
   sight: RunSight | null;
 
+  /** Every run this item started (retries and continues too), so the card can add up what it really cost. */
+  @Column({ type: 'json', nullable: true })
+  run_task_ids: number[] | null;
+
   @ManyToOne(() => Mission, (mission) => mission.items, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'mission_id' })
   mission: Relation<Mission>;

@@ -350,6 +350,31 @@ export class DeviceFileService {
     };
   }
 
+  /**
+   * Stops a send for the phones that do not have it yet. Rows already saved
+   * on a phone stay as they are (an APK that arrived may still install); a
+   * phone mid-download is cut off within seconds (see isCancelled) and is
+   * never offered the file again.
+   */
+  async cancelForDashboard(userId: number, ids: number[]): Promise<ApiResponse> {
+    const wanted = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+    if (wanted.length === 0) throw new AppError('Pass at least one file id', 400);
+    if (wanted.length > MAX_STATUS_IDS) throw new AppError(`Stop at most ${MAX_STATUS_IDS} files at once.`, 400);
+    const result = await this.fileRepo
+      .createQueryBuilder()
+      .update()
+      .set({ status: DeviceFileStatus.CANCELLED, failure_message: 'Stopped from the dashboard' })
+      .where({ id: In(wanted), user_id: userId, status: DeviceFileStatus.PENDING })
+      .execute();
+    return { message: 'Stopped', data: { stopped: result.affected ?? 0 } };
+  }
+
+  /** True once a send was stopped: the content route checks this while it streams. */
+  async isCancelled(fileId: number): Promise<boolean> {
+    const row = await this.fileRepo.findOne({ where: { id: fileId }, select: ['id', 'status'] });
+    return !row || row.status === DeviceFileStatus.CANCELLED;
+  }
+
   async deleteForDashboard(userId: number, fileId: number): Promise<ApiResponse> {
     const file = await this.fileRepo.findOne({ where: { id: fileId, user_id: userId } });
     if (!file) throw new AppError('File not found', 404);
@@ -594,6 +619,7 @@ export class DeviceFileService {
 
     const file = await this.fileRepo.findOne({ where: { id: fileId, device_id: device.id } });
     if (!file) throw new AppError('File not found', 404);
+    if (file.status === DeviceFileStatus.CANCELLED) throw new AppError('This send was stopped from the dashboard', 410);
     if (new Date() > new Date(file.expires_at)) throw new AppError('This file has expired', 410);
 
     const [inline] = await this.fileRepo.query(
@@ -684,6 +710,8 @@ export class DeviceFileService {
 
     const file = await this.fileRepo.findOne({ where: { id: fileId, device_id: device.id } });
     if (!file) throw new AppError('File not found', 404);
+    // A stopped send stays stopped: the cut-off download reports a failure that is not one.
+    if (file.status === DeviceFileStatus.CANCELLED && !success) return { success: true, message: 'Receipt ignored: the send was stopped' };
 
     if (success) {
       await this.fileRepo.update(file.id, {

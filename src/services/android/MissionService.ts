@@ -1,3 +1,4 @@
+import { runFinished } from './RunDiagnosticsService';
 import { AgentTask } from '@/entities/AgentTask';
 import { runSightLine } from './screenSight';
 import { AndroidDevice } from '@/entities/AndroidDevice';
@@ -122,6 +123,8 @@ export interface CreateMissionInput {
   fallback_device_ids?: number[];
   /** "testset:<run>" for a test-set run; not settable from the HTTP route. */
   source?: string;
+  /** The Confirm card's estimate, shown next to the real cost when the mission ends. */
+  estimate_usd?: number | null;
 }
 
 interface FleetDevice {
@@ -211,6 +214,9 @@ export class MissionService {
 
   start(): void {
     if (this.timer) return;
+    // A run's cost is written when its diagnostics are saved, a moment after it ends:
+    // tell the card to refresh then, so the cost does not stay "not recorded yet".
+    runFinished.on('finished', (taskId: number) => void this.costRecorded(taskId).catch(() => undefined));
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.timer.unref?.();
     Logger.info(`[Mission] Runner started (tick ${TICK_MS}ms)`);
@@ -297,6 +303,7 @@ export class MissionService {
         status: 'RUNNING',
         note: notes.join(' ') || null,
         source: input.source ?? null,
+        estimate_usd: typeof input.estimate_usd === 'number' && Number.isFinite(input.estimate_usd) ? input.estimate_usd : null,
       }),
     );
     await this.itemRepo.save(
@@ -643,6 +650,7 @@ export class MissionService {
         item.status = 'CANCELLED';
         item.last_reason = 'USER_CANCELLED';
         item.agent_task_id = data.taskId ?? null;
+        noteRun(item, item.agent_task_id);
         await this.itemRepo.save(item);
         return;
       }
@@ -652,6 +660,7 @@ export class MissionService {
       } else if (data.taskId) {
         item.status = 'RUNNING';
         item.agent_task_id = data.taskId;
+        noteRun(item, data.taskId);
         item.waiting_since = null;
       } else {
         await this.settleFailure(mission, item, 'DISPATCH_ERROR', result?.message ?? 'No run was started');
@@ -700,6 +709,7 @@ export class MissionService {
     if (task) {
       item.status = 'RUNNING';
       item.agent_task_id = task.id;
+      noteRun(item, task.id);
       item.queue_id = null;
       item.waiting_since = null;
       await this.itemRepo.save(item);
@@ -877,8 +887,31 @@ export class MissionService {
     const names = await this.deviceNames(items.map((i) => i.device_id));
     const hardwareIds = await this.hardwareIds(items.map((i) => i.device_id));
     const count = (status: string) => items.filter((i) => i.status === status).length;
+    const costs = await this.runCosts(items);
+    const itemCost = (item: MissionItem) => {
+      const ids = runIdsOf(item);
+      if (!ids.length) return null;
+      const known = ids.map((id) => costs.get(id)).filter((c): c is RunCost => Boolean(c));
+      if (!known.length) return null;
+      return { usd: known.reduce((sum, c) => sum + c.usd, 0), runs: ids.length, estimated: known.some((c) => c.estimated) };
+    };
+    const perItem = new Map(items.map((i) => [i.id, itemCost(i)]));
+    const allRuns = items.flatMap(runIdsOf);
+    const knownRuns = allRuns.filter((id) => costs.has(id));
     return {
       id: mission.id,
+      /**
+       * What the runs really cost, added up from each run's own record (retries included).
+       * estimated: some runs were priced from the model's list price (no bill came back).
+       * pending: runs still going or not yet recorded.
+       */
+      cost: {
+        usd: knownRuns.reduce((sum, id) => sum + (costs.get(id)?.usd ?? 0), 0),
+        runs: allRuns.length,
+        priced_runs: knownRuns.length,
+        estimated: knownRuns.some((id) => costs.get(id)?.estimated),
+        estimate_usd: mission.estimate_usd ?? null,
+      },
       request: mission.request,
       prompt: mission.prompt,
       target_mode: mission.target_mode,
@@ -918,11 +951,44 @@ export class MissionService {
         failure_kind: item.status === 'FAILED' ? failureKind(item.last_reason, item.last_message) : null,
         sight: item.sight ?? null,
         sight_line: runSightLine(item.sight),
+        cost_usd: perItem.get(item.id)?.usd ?? null,
+        cost_estimated: perItem.get(item.id)?.estimated ?? false,
         next_attempt_at: item.next_attempt_at,
         /** While the phone is offline: until when the mission waits for it. */
         waiting_until: item.status === 'PENDING' && item.waiting_since ? new Date(item.waiting_since.getTime() + offlineWaitFor(mission)) : null,
       })),
     };
+  }
+
+  private async costRecorded(taskId: number): Promise<void> {
+    const item = await this.itemRepo
+      .createQueryBuilder('item')
+      .where('item.agent_task_id = :taskId', { taskId })
+      .orWhere('JSON_CONTAINS(item.run_task_ids, :json)', { json: JSON.stringify(taskId) })
+      .getOne();
+    if (!item) return;
+    const mission = await this.missionRepo.findOne({ where: { id: item.mission_id }, select: ['id', 'user_id'] });
+    if (mission) this.gatewayService.broadcastToUser(mission.user_id, 'mission:update', { id: mission.id });
+  }
+
+  /** Each run's cost from its diagnostics (billed, or priced from the list when no bill came back). */
+  private async runCosts(items: MissionItem[]): Promise<Map<number, RunCost>> {
+    const ids = [...new Set(items.flatMap(runIdsOf))];
+    const out = new Map<number, RunCost>();
+    if (!ids.length) return out;
+    const rows: { id: number; cost: string | number | null; basis: string | null }[] = await this.taskRepo.query(
+      `SELECT id,
+              JSON_UNQUOTE(JSON_EXTRACT(diagnostics, '$.cost_usd')) AS cost,
+              JSON_UNQUOTE(JSON_EXTRACT(diagnostics, '$.cost_basis')) AS basis
+         FROM agent_tasks WHERE id IN (?)`,
+      [ids],
+    );
+    for (const row of rows) {
+      const usd = Number(row.cost);
+      if (row.cost === null || row.cost === 'null' || !Number.isFinite(usd)) continue;
+      out.set(Number(row.id), { usd, estimated: row.basis === 'price_list' });
+    }
+    return out;
   }
 
   private async hardwareIds(ids: number[]): Promise<Map<number, string>> {
@@ -1075,4 +1141,24 @@ function summarize(mission: Mission, items: MissionItem[], names: Map<number, st
     lines.push(`✗ ${names.get(item.device_id) ?? item.device_id}: ${why}${item.attempts > 1 ? ` after ${item.attempts} tries` : ''}${detail}`);
   }
   return lines.join('\n');
+}
+
+interface RunCost {
+  usd: number;
+  /** Priced from the model's list price: the provider sent no bill. */
+  estimated: boolean;
+}
+
+/** Remembers a run on its item so the card can add up every try, not just the last. */
+function noteRun(item: MissionItem, taskId: number | null | undefined): void {
+  if (!taskId) return;
+  const ids = item.run_task_ids ?? [];
+  if (!ids.includes(taskId)) item.run_task_ids = [...ids, taskId].slice(-50);
+}
+
+/** The item's runs: those it remembers, else (items from before) its current run. */
+function runIdsOf(item: MissionItem): number[] {
+  const ids = [...(item.run_task_ids ?? [])];
+  if (item.agent_task_id && !ids.includes(item.agent_task_id)) ids.push(item.agent_task_id);
+  return ids;
 }

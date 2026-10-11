@@ -17,7 +17,7 @@ import { FREE_MODEL_NOTE, getModelMeta, sortModelsForDisplay } from '@/utils/mod
 import Reveal from '@/components/ui/Reveal';
 import PrismBackground from '@/components/ui/PrismBackground';
 import { useGetAgentEngineQuery } from '@/RTKService/androidService/engineService';
-import { glassSection, monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, PRISM_PINK, sectionTitle } from '@/components/settings/settingsStyle';
+import { glassSection, monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, PRISM_PINK, readableScope, sectionTitle } from '@/components/settings/settingsStyle';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -43,6 +43,7 @@ import {
   useTheme,
 } from '@mui/material';
 import React, { useEffect, useState } from 'react';
+import { ThemeProvider, type Theme } from '@mui/material/styles';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
 
@@ -182,7 +183,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <>
+    <ThemeProvider theme={readableTheme}>
       <Helmet>
         <title>Settings & AI Providers - Vector Brain</title>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600&display=swap" />
@@ -198,6 +199,7 @@ export default function SettingsPage() {
           minHeight: 'calc(100vh - 64px)',
           overflow: 'hidden',
           color: PRISM_INK,
+          ...readableScope,
         }}
       >
         <PrismBackground />
@@ -207,7 +209,7 @@ export default function SettingsPage() {
               <Typography component="h1" sx={{ m: 0, fontSize: { xs: 40, md: 54 }, lineHeight: 1, fontWeight: 800, letterSpacing: '-0.045em', color: PRISM_INK }}>
                 Settings
               </Typography>
-              <Typography sx={{ mt: 1.5, fontSize: 15, color: '#4b5270', maxWidth: 560, lineHeight: 1.55 }}>
+              <Typography sx={{ mt: 1.5, fontSize: 15, color: PRISM_MUTED, maxWidth: 560, lineHeight: 1.55 }}>
                 Your AI models, how the agent drives your phones, and how much of each task can run without the AI at all.
               </Typography>
             </Box>
@@ -496,9 +498,9 @@ export default function SettingsPage() {
                                         label={config.provider.toUpperCase()}
                                         size="small"
                                         sx={{
-                                          bgcolor: alpha(providerColor, 0.12),
+                                          bgcolor: alpha(providerColor, 0.16),
                                           color: providerColor,
-                                          fontWeight: 600,
+                                          fontWeight: 800,
                                           height: 20,
                                           fontSize: '0.65rem',
                                         }}
@@ -521,7 +523,7 @@ export default function SettingsPage() {
                                           {outcome.ok ? `Tested OK · ${outcome.detail}` : `Test failed · ${outcome.detail}`}
                                         </Typography>
                                       ) : (
-                                        <Typography variant="caption" color="text.disabled">
+                                        <Typography variant="caption" sx={{ color: '#4b5270', fontStyle: 'italic' }}>
                                           Not tested this session
                                         </Typography>
                                       )}
@@ -533,9 +535,10 @@ export default function SettingsPage() {
                                 <Stack direction="row" spacing={0.75} alignItems="center" alignSelf={{ xs: 'flex-end', sm: 'center' }}>
                                   <Button
                                     size="small"
-                                    variant="outlined"
-                                    color="secondary"
-                                    startIcon={isTestingThis ? <CircularProgress size={14} /> : <FlashOnIcon />}
+                                    variant="contained"
+                                    disableElevation
+                                    startIcon={isTestingThis ? <CircularProgress size={14} color="inherit" /> : <FlashOnIcon />}
+                                    sx={{ fontWeight: 700, borderRadius: '10px', background: `linear-gradient(135deg, ${PRISM_ACCENT}, #6d28d9)`, '&:hover': { filter: 'brightness(1.08)' } }}
                                     onClick={() => handleTestSaved(config.id)}
                                     disabled={isTestingThis}
                                   >
@@ -607,6 +610,11 @@ export default function SettingsPage() {
         onClose={() => setModalOpen(false)}
         configToEdit={editingConfig}
       />
-    </>
+    </ThemeProvider>
   );
+}
+
+/** Settings reads on light glass: secondary and disabled text a few shades darker than the app default. */
+function readableTheme(outer: Theme): Theme {
+  return { ...outer, palette: { ...outer.palette, text: { ...outer.palette.text, secondary: PRISM_MUTED, disabled: '#5b6280' } } };
 }

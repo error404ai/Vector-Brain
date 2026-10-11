@@ -4,7 +4,7 @@ import { keyframes } from '@mui/material/styles';
 import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
 import type { FileTransferStatus } from '@/RTKService/androidService/deviceFileService';
 import { describeInstallStage } from '@/components/android/installStage';
-import { dropInfo, fileBadge, formatSize, getDropState, retryFailed, subscribeDrop, type DropState } from './fileDrop';
+import { dropInfo, fileBadge, formatSize, getDropState, retryFailed, stopSend, subscribeDrop, type DropState } from './fileDrop';
 
 /** Up to this many phones get a flip tile each; beyond it, the dot matrix. */
 const TILE_LIMIT = 24;
@@ -23,6 +23,7 @@ const TONE = {
   waiting: '#B5BFD4',
   sending: '#D6DDEC',
   expired: '#94A0BA',
+  stopped: '#7A8499',
 } as const;
 
 type PhoneState = keyof typeof TONE;
@@ -35,6 +36,7 @@ const LABEL: Record<PhoneState, string> = {
   waiting: 'Offline',
   sending: 'Sending',
   expired: 'Expired',
+  stopped: 'Stopped',
 };
 
 interface PhoneRow {
@@ -58,7 +60,7 @@ function phoneState(
   online: Map<number, boolean>,
 ): { state: PhoneState; detail: string | null; at: string | null; row: FileTransferStatus | null } {
   const rowId = state.rowOf[deviceId];
-  if (!rowId) return { state: 'sending', detail: null, at: null, row: null };
+  if (!rowId) return state.phase === 'stopped' ? { state: 'stopped', detail: 'Stopped before upload finished', at: null, row: null } : { state: 'sending', detail: null, at: null, row: null };
   if (state.gone[rowId]) return { state: 'expired', detail: 'No longer on the server', at: null, row: null };
   const row = state.status[rowId] ?? null;
   if (row?.status === 'DELIVERED') {
@@ -66,6 +68,7 @@ function phoneState(
     return { state: 'saved', detail: install ? install.label : null, at: row.delivered_at, row };
   }
   if (row?.status === 'FAILED') return { state: 'failed', detail: row.failure_message, at: null, row };
+  if (row?.status === 'CANCELLED') return { state: 'stopped', detail: 'Stopped from the dashboard', at: null, row };
   if (row && row.download_attempts > 0) return { state: 'receiving', detail: null, at: null, row };
   return { state: online.get(deviceId) === false ? 'waiting' : 'queued', detail: null, at: null, row };
 }
@@ -101,6 +104,14 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
   }, [state, info, online]);
 
   const [showAll, setShowAll] = useState(false);
+  /** Two-step stop: the first press asks, the second stops. Resets after a few seconds. */
+  const [askStop, setAskStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => {
+    if (!askStop) return;
+    const t = setTimeout(() => setAskStop(false), 5000);
+    return () => clearTimeout(t);
+  }, [askStop]);
 
   if (!state || !info) {
     return (
@@ -116,22 +127,38 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
   const badge = fileBadge(file);
   const counts = phones.reduce<Record<PhoneState, number>>(
     (acc, p) => ({ ...acc, [p.state]: acc[p.state] + 1 }),
-    { saved: 0, failed: 0, queued: 0, receiving: 0, waiting: 0, sending: 0, expired: 0 },
+    { saved: 0, failed: 0, queued: 0, receiving: 0, waiting: 0, sending: 0, expired: 0, stopped: 0 },
   );
   const total = phones.length;
   const uploading = state.phase === 'hashing' || state.phase === 'uploading';
   const settledOnline = counts.saved + counts.failed;
-  const reachable = total - counts.waiting - counts.expired;
+  const reachable = total - counts.waiting - counts.expired - counts.stopped;
   const small = total <= TILE_LIMIT;
-  const allDone = !uploading && counts.queued + counts.receiving + counts.sending === 0;
+  const allDone = state.phase === 'stopped' || (!uploading && counts.queued + counts.receiving + counts.sending + counts.waiting === 0);
+  // Something can still be stopped: the upload, or phones that do not have the file yet.
+  const stoppable = state.phase !== 'error' && state.phase !== 'stopped' && (uploading || counts.queued + counts.receiving + counts.waiting + counts.sending > 0);
+  const onStop = async () => {
+    if (!askStop) {
+      setAskStop(true);
+      return;
+    }
+    setAskStop(false);
+    setStopping(true);
+    await stopSend(dropId);
+    setStopping(false);
+  };
 
   const title =
     state.phase === 'error'
       ? 'The file was not sent'
       : state.phase === 'hashing'
         ? 'Preparing the file'
-        : uploading
+        : state.phase === 'stopped'
+          ? 'Stopped before any phone got it'
+          : uploading
           ? 'Uploading to your server'
+          : allDone && counts.stopped > 0
+            ? `Stopped · saved on ${counts.saved} of ${total} phone${total === 1 ? '' : 's'}`
           : allDone
             ? `Saved on ${counts.saved} of ${total} phone${total === 1 ? '' : 's'}`
             : `Sending to ${total} phone${total === 1 ? '' : 's'}`;
@@ -234,7 +261,7 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
         </Box>
         <Box sx={{ display: 'grid', gap: 1 }}>
           <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
-            {(['saved', 'receiving', 'queued', 'waiting', 'failed'] as PhoneState[])
+            {(['saved', 'receiving', 'queued', 'waiting', 'failed', 'stopped'] as PhoneState[])
               .filter((k) => k === 'saved' || k === 'failed' || counts[k] > 0)
               .map((k) => (
                 <Box
@@ -287,7 +314,7 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
         </>
       )}
 
-      {state.phase === 'error' && state.error && <Notice>{state.error}</Notice>}
+      {state.error && <Notice>{state.error}</Notice>}
       {firstFailure && (
         <Notice>
           <b>{firstFailure.name}:</b> {firstFailure.detail}
@@ -303,12 +330,45 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
               : `Uploading ${formatSize(file.size * state.progress)} of ${formatSize(file.size)}`
             : state.phase === 'error'
               ? 'Nothing was queued'
+              : state.phase === 'stopped'
+                ? 'Upload stopped · nothing was queued'
+                : counts.stopped > 0 && allDone
+                  ? 'Stopped · phones that had not got it will not get it'
               : counts.waiting > 0
                 ? 'Offline phones get it when they reconnect · kept 7 days'
                 : allDone
                   ? 'Done'
                   : 'On the server · waiting for the phones'}
         </Typography>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+        {stoppable && (
+          <ButtonBase
+            onClick={onStop}
+            disabled={stopping}
+            aria-label={askStop ? 'Confirm stop' : 'Stop sending'}
+            sx={{
+              font: '700 12px inherit',
+              px: 1.5,
+              py: 0.75,
+              borderRadius: '10px',
+              border: `1.5px solid ${askStop ? TONE.failed : LINE}`,
+              bgcolor: askStop ? TONE.failed : '#fff',
+              color: askStop ? '#fff' : TONE.failed,
+              transition: 'background 160ms, color 160ms, transform 160ms',
+              '&:hover': { transform: 'translateY(-1px)' },
+              '&:focus-visible': { outline: `2px solid ${TONE.failed}`, outlineOffset: 2 },
+              '&.Mui-disabled': { opacity: 0.6 },
+            }}
+          >
+            {stopping
+              ? 'Stopping…'
+              : askStop
+                ? uploading
+                  ? 'Stop the upload?'
+                  : `Stop for ${counts.queued + counts.receiving + counts.waiting + counts.sending} phone${counts.queued + counts.receiving + counts.waiting + counts.sending === 1 ? '' : 's'}?`
+                : '■ Stop sending'}
+          </ButtonBase>
+        )}
         {counts.failed > 0 && !uploading && (
           <ButtonBase
             onClick={() => retryFailed(dropId)}
@@ -327,6 +387,7 @@ function FileDropCard({ dropId, sentAt }: { dropId: string; sentAt: number }) {
             Retry {counts.failed} failed
           </ButtonBase>
         )}
+        </Box>
       </Box>
     </Box>
   );
@@ -589,7 +650,7 @@ function DotMatrix({ phones }: { phones: PhoneRow[] }) {
         </Box>
       )}
       <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mt: 1, font: `600 10.5px ${MONO}`, color: MUTED }}>
-        {(['saved', 'receiving', 'queued', 'waiting', 'failed'] as PhoneState[]).map((k) => (
+        {(['saved', 'receiving', 'queued', 'waiting', 'failed', 'stopped'] as PhoneState[]).filter((k) => k !== 'stopped' || phones.some((p) => p.state === 'stopped')).map((k) => (
           <Box key={k} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
             <Box component="span" sx={{ width: 9, height: 9, borderRadius: '3px', bgcolor: TONE[k] }} />
             {LABEL[k]}

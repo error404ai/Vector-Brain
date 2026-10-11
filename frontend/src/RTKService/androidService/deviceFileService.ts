@@ -7,7 +7,7 @@ export interface DeviceFile {
   file_name: string;
   mime_type: string;
   size_bytes: number;
-  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  status: 'PENDING' | 'DELIVERED' | 'FAILED' | 'CANCELLED';
   failure_message?: string | null;
   delivered_at?: string | null;
   /** Companion APKs only: where the update stands on the phone. */
@@ -36,7 +36,7 @@ export interface QueuedFileResult {
 export interface FileTransferStatus {
   id: number;
   device_id: number;
-  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  status: 'PENDING' | 'DELIVERED' | 'FAILED' | 'CANCELLED';
   /** Downloads the phone has started; above 0 while PENDING means it is receiving. */
   download_attempts: number;
   failure_message: string | null;
@@ -106,6 +106,12 @@ const deviceFileApi = baseApi.injectEndpoints({
     getFileStatus: builder.query<{ message: string; data: FileTransferStatus[] }, number[]>({
       query: (ids) => ({ url: `/android/files/status?ids=${ids.join(',')}`, method: 'GET' }),
       keepUnusedDataFor: 0,
+    }),
+
+    /** Stops a send for the phones that do not have it yet. */
+    cancelDeviceFiles: builder.mutation<{ message: string; data: { stopped: number } }, number[]>({
+      query: (ids) => ({ url: '/android/files/cancel', method: 'POST', body: { ids } }),
+      invalidatesTags: ['DEVICE_FILES'],
     }),
 
     deleteDeviceFile: builder.mutation<{ message: string }, number>({

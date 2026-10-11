@@ -5,7 +5,7 @@ import { isFreeModel } from '@/utils/modelMeta';
 import MemoryIcon from '@mui/icons-material/Memory';
 import { Alert, Box, Card, CardContent, Chip, FormControlLabel, LinearProgress, MenuItem, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import toast from 'react-hot-toast';
-import { monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, prismSwitch, sectionTitle } from './settingsStyle';
+import { chosenOption, monoLabel, PRISM_MUTED, plainOption, prismSwitch, sectionTitle } from './settingsStyle';
 
 const REASONING_OPTIONS: { value: ReasoningMode; label: string; help: string }[] = [
   { value: 'hard', label: 'Hard steps', help: 'Thinks first only where acting straight away goes wrong: the first step, an error, a screen that did not change, a loop, before giving up. Small extra cost.' },
@@ -26,7 +26,7 @@ const segmented = {
   gap: '6px',
   p: '6px',
   borderRadius: '16px',
-  bgcolor: '#eceef8',
+  bgcolor: '#e3e6f3',
   '& .MuiToggleButton-root': {
     border: 0,
     borderRadius: '12px !important',
@@ -37,8 +37,9 @@ const segmented = {
     textTransform: 'none',
     fontWeight: 600,
     fontSize: 14,
-    color: PRISM_MUTED,
-    '&.Mui-selected, &.Mui-selected:hover': { bgcolor: '#fff', color: PRISM_INK, boxShadow: '0 6px 18px rgba(30,40,90,.12)' },
+    color: '#262c48',
+    '&:hover': { bgcolor: 'rgba(255,255,255,.7)' },
+    '&.Mui-selected, &.Mui-selected:hover': { ...chosenOption, border: 0 },
   },
 } as const;
 
@@ -106,16 +107,16 @@ export default function AgentEngineCard() {
               sx={segmented}
             >
               <ToggleButton value="eko">
-                Eko<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>stable</Box>
+                Eko<Box component="span" sx={{ fontWeight: 600, fontSize: 12, opacity: 0.9 }}>stable</Box>
               </ToggleButton>
               <ToggleButton value="vector">
-                Vector<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>beta</Box>
+                Vector<Box component="span" sx={{ fontWeight: 600, fontSize: 12, opacity: 0.9 }}>beta</Box>
               </ToggleButton>
               <ToggleButton value="lite">
-                Lite<Box component="span" sx={{ fontWeight: 500, fontSize: 12, opacity: 0.7 }}>cheapest</Box>
+                Lite<Box component="span" sx={{ fontWeight: 600, fontSize: 12, opacity: 0.9 }}>cheapest</Box>
               </ToggleButton>
             </ToggleButtonGroup>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{ color: PRISM_MUTED }}>
               {settings.kind === 'eko'
                 ? 'Eko: a planning call first, then step by step; long runs are compressed with extra AI calls.'
                 : settings.kind === 'lite'
@@ -128,7 +129,7 @@ export default function AgentEngineCard() {
                 label={
                   <Box>
                     <Typography variant="body2">Plan before acting</Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography variant="caption" sx={{ display: 'block', color: PRISM_MUTED }}>
                       One extra AI call per run that writes a short plan and shows it on the task card.
                     </Typography>
                   </Box>
@@ -159,10 +160,8 @@ export default function AgentEngineCard() {
                           font: 'inherit',
                           fontSize: 13,
                           fontWeight: 600,
-                          border: on ? `1.5px solid ${PRISM_ACCENT}` : '1px solid #dfe2ef',
-                          bgcolor: on ? `${PRISM_ACCENT}14` : '#fff',
-                          color: on ? PRISM_ACCENT : '#4b5270',
-                          transition: 'background 200ms ease, border-color 200ms ease',
+                          ...(on ? chosenOption : plainOption),
+                          transition: 'background 200ms ease, border-color 200ms ease, color 200ms ease',
                         }}
                       >
                         {o.label}
@@ -199,10 +198,8 @@ export default function AgentEngineCard() {
                         font: 'inherit',
                         fontSize: 13,
                         fontWeight: 600,
-                        border: on ? `1.5px solid ${PRISM_ACCENT}` : '1px solid #dfe2ef',
-                        bgcolor: on ? `${PRISM_ACCENT}14` : '#fff',
-                        color: on ? PRISM_ACCENT : '#4b5270',
-                        transition: 'background 200ms ease, border-color 200ms ease',
+                        ...(on ? chosenOption : plainOption),
+                        transition: 'background 200ms ease, border-color 200ms ease, color 200ms ease',
                       }}
                     >
                       {o.label}

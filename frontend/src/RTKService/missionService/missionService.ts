@@ -27,6 +27,10 @@ export interface MissionItem {
   /** The latest run's screenshot totals, and its one line ("AI saw 6 screenshots."). */
   sight?: RunSight | null;
   sight_line?: string | null;
+  /** What this phone's runs really cost (USD), retries included; null until a run is recorded. */
+  cost_usd?: number | null;
+  /** Priced from the model's list price (no bill came back). */
+  cost_estimated?: boolean;
 }
 
 export interface Mission {
@@ -54,6 +58,15 @@ export interface Mission {
     retries: number;
   };
   items: MissionItem[];
+  /** Real cost, added up from every run's own record. */
+  cost?: {
+    usd: number;
+    runs: number;
+    priced_runs: number;
+    estimated: boolean;
+    /** What the Confirm card estimated; null when there was none. */
+    estimate_usd: number | null;
+  };
 }
 
 export interface MissionInput {

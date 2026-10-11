@@ -48,6 +48,10 @@ export class Mission {
   @Column({ type: 'varchar', length: 40, nullable: true })
   source: string | null;
 
+  /** What the Confirm card estimated for this mission (USD); null when nothing was estimated. */
+  @Column({ type: 'decimal', precision: 12, scale: 6, nullable: true, transformer: { to: (v: number | null) => v, from: (v: string | null) => (v === null ? null : Number(v)) } })
+  estimate_usd: number | null;
+
   /** Anything the user should know up front — e.g. fewer phones were ready than asked for. */
   @Column({ type: 'varchar', length: 500, nullable: true })
   note: string | null;
