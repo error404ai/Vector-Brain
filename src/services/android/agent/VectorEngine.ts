@@ -114,6 +114,7 @@ const NOT_IDEMPOTENT = new Set([
   'long_press',
   'swipe',
   'scroll_element',
+  'scroll_until',
   'press_key',
   'paste',
   'global_action',
@@ -124,7 +125,7 @@ const TASK_DONE = 'task_done';
 /** Tools that only look or wait; left out of the progress line the model reads. */
 const LOOK_ONLY = new Set(['read_ui_tree', 'capture_screen', 'wait', 'wait_for_element', 'phone_info', 'list_apps', 'read_clipboard', 'read_notifications']);
 /** Actions after which the screen has moved: in a Lite reply, nothing after one of these is sent. */
-const MOVES_SCREEN = new Set(['swipe', 'scroll_element']);
+const MOVES_SCREEN = new Set(['swipe', 'scroll_element', 'scroll_until']);
 /**
  * Lite: the phone's network and locale facts on request. They used to ride along
  * as a message after the task on every call — after the cache mark, so billed in

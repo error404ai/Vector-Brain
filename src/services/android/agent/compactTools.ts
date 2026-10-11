@@ -40,6 +40,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   open_settings: 'Open a Settings screen directly. Prefer over navigating Settings.',
   open_intent: 'One-step intent instead of tapping: VIEW a link/market://details?id=PKG/geo:0,0?q=PLACE, SENDTO mailto:/smsto: (extras subject, body), SEND text, DIAL tel:, WEB_SEARCH (extras query).',
   open_app_info: "An app's info page: Force stop, Storage/cache, Permissions, Enable a disabled app.",
+  scroll_until: 'Scroll the list until text shows, one step (max 30). Says found or list ended.',
   read_notifications: 'Notifications since Vector app started (codes, alerts).',
   wait_for_element: 'Wait until text appears (e.g. "Open" after install starts).',
   wait: 'Wait until screen stops changing, up to durationMillis.',

@@ -313,6 +313,8 @@ export class AndroidGatewayService {
     action: AutomationAction,
     timeoutMillis = 15000,
     safetyLevel: 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED' = 'LOW',
+    /** observeAfter (companion 0.31+, feature "observe_after"): the new screen comes back with the result. */
+    options: { observeAfter?: boolean } = {},
   ): Promise<ActionResult> {
     const ws = this.deviceSockets.get(deviceId);
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -333,6 +335,7 @@ export class AndroidGatewayService {
         action,
         timeoutMillis,
         safetyLevel,
+        ...(options.observeAfter ? { observeAfter: true } : {}),
       },
     };
 
@@ -345,7 +348,7 @@ export class AndroidGatewayService {
           message: `Action execution on device timed out after ${timeoutMillis}ms`,
           recoverable: true,
         });
-      }, timeoutMillis + 2000); // 2s buffer over device timeout
+      }, timeoutMillis + 2000 + (options.observeAfter ? 13_000 : 0)); // 2s buffer over device timeout (+ the screen read after it)
 
       this.pendingRequests.set(requestId, { resolve, timeoutId, deviceId });
 

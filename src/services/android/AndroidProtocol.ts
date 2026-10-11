@@ -98,10 +98,21 @@ export type AutomationAction =
       extras?: Record<string, string>;
     }
   /** Phone-side reading options (companion 0.30+, feature "options"). */
-  | { type: 'SetOptions'; includeHidden?: boolean };
+  | { type: 'SetOptions'; includeHidden?: boolean }
+  /** Scrolls until text shows or the list ends (companion 0.31+, feature "scroll_until"). */
+  | { type: 'ScrollUntil'; text: string; direction?: 'FORWARD' | 'BACKWARD'; maxScrolls?: number };
 
 /** What a companion build can do beyond the base protocol (DeviceCapabilities.features). */
-export type CompanionFeature = 'node_state' | 'windows' | 'events' | 'intent' | 'options' | 'apps_info';
+export type CompanionFeature =
+  | 'node_state'
+  | 'windows'
+  | 'events'
+  | 'intent'
+  | 'options'
+  | 'apps_info'
+  | 'scroll_until'
+  | 'observe_after'
+  | 'observe_no_frame';
 
 /**
  * Where the Vector Keyboard stands on a phone: active (it is the current
@@ -235,6 +246,8 @@ export interface DeviceCapabilities {
   vectorKeyboard?: VectorKeyboardState;
   /** Companion 0.30+: what this build can do beyond the base protocol. */
   features?: CompanionFeature[];
+  /** Companion 0.31+: can switch its accessibility service back on ("granted"), or needs the adb grant. */
+  a11yRestore?: 'granted' | 'needs_adb';
 }
 
 // WebSocket Message Envelopes
@@ -294,6 +307,7 @@ export type AndroidWsServerMessage =
         action: AutomationAction;
         timeoutMillis?: number;
         safetyLevel?: SafetyLevel;
+        observeAfter?: boolean;
       };
     }
   | {

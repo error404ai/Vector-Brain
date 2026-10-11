@@ -192,6 +192,25 @@ export interface AndroidAgentCallbacks {
  * only http(s) links; Oct 9, 20 of 21 failed open_url calls were a bare address.
  * Anything with its own scheme or with spaces is left as it is.
  */
+const ANNOUNCED_ON = /^(?:liked|saved|bookmarked|followed|following|subscribed|starred|favou?rited|joined|added\b)/i;
+const ANNOUNCED_OFF = /^(?:unliked|unsaved|un-?bookmarked|unfollowed|unsubscribed|unstarred|unfavou?rited|left\b|removed\b|like removed)/i;
+
+/** What the phone announced about a toggle just tapped ("Liked" → on, "Unliked" → off), else null. */
+export function announcedToggle(events: UiEvent[]): { on: boolean; text: string } | null {
+  for (const e of [...events].reverse()) {
+    if (e.kind !== 'announcement' && e.kind !== 'toast') continue;
+    const text = (e.text ?? '').trim();
+    if (ANNOUNCED_OFF.test(text)) return { on: false, text: text.slice(0, 40) };
+    if (ANNOUNCED_ON.test(text)) return { on: true, text: text.slice(0, 40) };
+  }
+  return null;
+}
+
+/** The task itself asks for an install (any language the user writes in, roughly). */
+export function asksToInstall(task?: string): boolean {
+  return /\b(install|download|update|re-?install|get\s+the\s+app|daal(?:o|do|na)?|dalo|laga(?:o|do|na)?)\b|इंस्टॉल|डाउनलोड/i.test(task ?? '');
+}
+
 const INTENT_ACTIONS: Record<string, string> = {
   VIEW: 'android.intent.action.VIEW',
   SENDTO: 'android.intent.action.SENDTO',
@@ -227,7 +246,10 @@ export function intentFor(args: Record<string, unknown>): Extract<AutomationActi
       else extras['android.intent.extra.TEXT'] = text;
     } else extras[INTENT_EXTRAS[key] ?? key] = text;
   }
-  const packageName = typeof args.packageName === 'string' && args.packageName.trim() ? args.packageName.trim() : undefined;
+  let packageName = typeof args.packageName === 'string' && args.packageName.trim() ? args.packageName.trim() : undefined;
+  // Store links straight to the Play Store: on phones with a second store (Samsung's
+  // Galaxy Store) Android asks which app to use, a step the agent then has to answer.
+  if (!packageName && data && /^(market:\/\/|https?:\/\/play\.google\.com\/store\/)/i.test(data)) packageName = 'com.android.vending';
   return {
     type: 'OpenIntent',
     action,
@@ -246,9 +268,13 @@ export function withScheme(url: string): string {
 }
 
 /** Buttons that switch on and off in place, whose label often stays the same (Instagram's heart stays "Like"). */
+/** Actions after which the screen is read again; with companion 0.31+ it comes back with the result. */
+const SCREEN_CHANGING = new Set<AutomationAction['type']>([
+  'Tap', 'ClickNode', 'LongPress', 'Swipe', 'ScrollNode', 'ScrollUntil', 'Global', 'OpenApp', 'OpenUrl', 'OpenIntent', 'OpenSettings', 'PressKey', 'SetText', 'KeyboardType', 'Paste',
+]);
 const TOGGLE = /^(?:like|liked|unlike|love|heart|save|saved|unsave|bookmark|favou?rite|star|upvote|downvote|vote|repost|subscribe|subscribed|join|joined)\b/i;
 /** Actions that move to another item or screen: after one, the same toggle is a new item. */
-const MOVES_ON = new Set(['Swipe', 'ScrollNode', 'Global', 'OpenApp', 'OpenUrl']);
+const MOVES_ON = new Set(['Swipe', 'ScrollNode', 'ScrollUntil', 'Global', 'OpenApp', 'OpenUrl', 'OpenIntent']);
 
 export class AndroidAgent extends Agent {
   /**
@@ -317,6 +343,8 @@ export class AndroidAgent extends Agent {
   private toggleWarned = '';
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
+  /** The events that came with the latest read (toasts, announcements…). */
+  private lastEvents: UiEvent[] = [];
 
   constructor(
     private gatewayService: AndroidGatewayService,
@@ -339,7 +367,7 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (_args: Record<string, unknown>, _context: AgentContext): Promise<ToolResult> => {
-          const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+          const res = await this.observe();
           if (res.status !== 'SUCCESS') {
             const errorMsg = res.status === 'FAILURE' ? `${res.code}: ${res.message}` : 'Inspection cancelled';
             return { content: [{ type: 'text', text: `Failed to read UI tree: ${errorMsg}` }], isError: true };
@@ -782,6 +810,35 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'scroll_until',
+        description:
+          'Scroll the main list until an item with this text is on screen, in one step (up to 30 scrolls). Use it to find a named item further down a list (a setting, a contact, an app, a song). The result says found, or that the list ended without it.',
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'Visible text of the item to bring on screen' },
+            direction: { type: 'string', enum: ['FORWARD', 'BACKWARD'], description: 'FORWARD = down or right, BACKWARD = up or left' },
+            maxScrolls: { type: 'number', description: 'Give up after this many scrolls, 1 to 30 (default 10)' },
+          },
+          required: ['text'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const text = String(args.text ?? '').trim();
+          if (!text) return { content: [{ type: 'text', text: 'Say which text to scroll to.' }], isError: true };
+          return this.runDeviceAction(
+            {
+              type: 'ScrollUntil',
+              text,
+              direction: (args.direction as 'FORWARD' | 'BACKWARD') || 'FORWARD',
+              maxScrolls: Math.max(1, Math.min(30, Math.round(Number(args.maxScrolls) || 10))),
+            },
+            'scroll_until',
+            args,
+          );
+        },
+      },
+      {
         name: 'long_press',
         description:
           'Press and hold. Use for context menus, selecting text, app icon menus, and anything that a normal tap does not open. Give a selector, or x and y for a raw coordinate.',
@@ -1087,7 +1144,8 @@ export class AndroidAgent extends Agent {
         (tool) =>
           (tool.name !== 'capture_screen' || (options.vision && options.screenshots !== 'off')) &&
           // Only phones whose companion can start intents (0.30+) get these; an older build drops the action.
-          ((tool.name !== 'open_intent' && tool.name !== 'open_app_info') || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'intent'))),
+          ((tool.name !== 'open_intent' && tool.name !== 'open_app_info') || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'intent'))) &&
+          (tool.name !== 'scroll_until' || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'scroll_until'))),
       ),
       // The backup model (when the account set one) takes over if the main one fails.
       llms: ['default', 'fallback'],
@@ -1155,7 +1213,7 @@ export class AndroidAgent extends Agent {
    * format the model sees.
    */
   async observeForCheck(): Promise<{ packageName: string | null; tree: string } | null> {
-    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+    const res = await this.observe();
     if (res.status !== 'SUCCESS' || !res.uiTree) return null;
     this.absorb(res);
     const packageName = this.lastForegroundApp;
@@ -1167,7 +1225,7 @@ export class AndroidAgent extends Agent {
    * rule, without screenshots, a vision helper or a step being counted.
    */
   async observeForReplay(): Promise<{ packageName: string | null; tree: string | null; key: string } | null> {
-    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+    const res = await this.observe();
     if (res.status !== 'SUCCESS' || !res.uiTree) return null;
     this.absorb(res);
     await this.clearObstacles();
@@ -1329,8 +1387,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       const settled = await this.waitUntilSettled(Number(action.durationMillis) || 4000);
       res = { status: 'SUCCESS', summary: settled.settled ? `Screen settled after ${(settled.ms / 1000).toFixed(1)}s` : `Screen was still changing after ${(settled.ms / 1000).toFixed(1)}s (something is loading or downloading)` } as typeof res;
     } else {
-      res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+      // Companion 0.31+: the new screen comes back with the result, one round trip instead of two.
+      const observeAfter = SCREEN_CHANGING.has(action.type) && Boolean(this.gatewayService.hasFeature?.(this.hardwareDeviceId, 'observe_after'));
+      res = observeAfter
+        ? await this.gatewayService.executeAction(this.hardwareDeviceId, action, 15000, 'LOW', { observeAfter })
+        : await this.gatewayService.executeAction(this.hardwareDeviceId, action);
     }
+    const bundled = res;
 
     // The model guessed a package name that does not exist on this build. Try
     // the known equivalents before handing back a failure — three wasted steps
@@ -1384,10 +1447,15 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // what is installed. Point it at the one method that does.
     if (action.type === 'OpenApp' && isError && res.status === 'FAILURE' && res.code === 'APP_NOT_FOUND') {
       const alsoTried = triedAlternatives.length > 0 ? ` Also tried: ${triedAlternatives.join(', ')}.` : '';
+      // Look it up on the phone instead of letting the model search the launcher for an app
+      // that is not there (Oct 11, #3576: 24 steps, ending in a Play Store sign-in).
+      const missing = await this.missingApp(String(action.packageName || ''));
       summary =
-        `${summary}${alsoTried} Do NOT guess more package names — none of the usual ones exist here. ` +
-        'Use global_action HOME, then read_ui_tree to find the app by the name shown under its icon, ' +
-        'and open it with click_node instead.';
+        missing && !asksToInstall(this.options.task)
+          ? `${summary}${alsoTried} ${missing}`
+          : `${summary}${alsoTried} Do NOT guess more package names — none of the usual ones exist here. ` +
+            'Use global_action HOME, then read_ui_tree to find the app by the name shown under its icon, ' +
+            'and open it with click_node instead.';
     }
 
     // Android refused to bring the app forward from the background. Calling open_app
@@ -1443,7 +1511,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     let freshShot: string | undefined;
     try {
       if (skipObservation) throw new Error('skip');
-      const observation = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+      // The screen already came with the action's result (and no fallback action ran since): use it.
+      const observation = res === bundled && res.status === 'SUCCESS' && res.uiTree ? res : await this.observe();
       this.absorb(observation);
       freshShot = observation.status === 'SUCCESS' ? observation.screenCapture?.base64Data : undefined;
     } catch {
@@ -1462,8 +1531,17 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const stateAfter = tap ? stateWords(elementAt(this.screen, tap.grid.x, tap.grid.y)) : null;
     const sameSpot = Boolean(tap && sameButton(screenBefore, this.screen, tap.grid, tap.label));
     const stateKnown = Boolean(stateBefore && stateAfter && sameSpot);
+    // Apps that keep the label ("Like") often announce the change instead: "Liked", "Unliked".
+    const announced = tap && toggle && !isError ? announcedToggle(this.lastEvents) : null;
     if (!isError && toggle && tap && !(stateKnown && stateBefore === stateAfter)) this.lastToggle = { grid: tap.grid, label: tap.label.trim(), moves: this.moves };
-    if (!isError && meantToChange && toggle && tap && stateKnown && stateBefore === stateAfter) {
+    if (!isError && meantToChange && toggle && tap && announced?.on === false) {
+      // The tap took it away: it was already on. Not counted, and putting it back is not refused.
+      this.lastToggle = null;
+      checkNote = `\n\nCHECK: the phone announced "${announced.text}", so this tap turned "${tap.label.trim().slice(0, 30)}" OFF (it was already on). Tap it once more to turn it back on, then move on.`;
+    } else if (!isError && meantToChange && toggle && tap && announced?.on && !(stateKnown && stateBefore !== stateAfter)) {
+      summary = `${summary}\nTOGGLED: "${tap.label.trim().slice(0, 30)}"\nSTATE: "${tap.label.trim().slice(0, 30)}" → on (the phone announced "${announced.text}")`;
+      checkNote = `\n\nNOTE: the phone announced "${announced.text}": it is done. Do NOT tap it again here (that undoes it). Move on to the next item.`;
+    } else if (!isError && meantToChange && toggle && tap && stateKnown && stateBefore === stateAfter) {
       // The phone says the button is as it was: the tap missed. Not counted, and a retry is not refused.
       checkNote = `\n\nCHECK: "${tap.label.trim().slice(0, 30)}" is still ${stateAfter} (the phone reports it), so this tap did not register. Tap it once more, or use click_node with its text.`;
     } else if (!isError && meantToChange && toggle && tap && stateKnown) {
@@ -1599,6 +1677,20 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     return detected;
   }
 
+  /**
+   * The screen now. When the phone could not take a screenshot (capture timed
+   * out, often on Android 10), the element list alone is still read: without
+   * it the agent was blind for that step (Oct 11: 19 times in one day).
+   */
+  private async observe(): Promise<ActionResult> {
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
+    if (res.status === 'FAILURE' && /frame|captur|screenshot|projection/i.test(res.message)) {
+      const tree = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ReadUiTree' });
+      if (tree.status === 'SUCCESS' && tree.uiTree) return tree;
+    }
+    return res;
+  }
+
   /** A fingerprint of the latest frame the phone sent (identical pixels give identical JPEG bytes), or null without one. */
   private frameKey(): string | null {
     return this.lastScreenshotBase64 ? createHash('sha1').update(this.lastScreenshotBase64).digest('hex') : null;
@@ -1638,7 +1730,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height }, this.fullScreen ?? undefined, { windows: tree.windows, activity: tree.activity });
     this.lastUiTree = formatScreen(this.screen);
     this.baseTable = this.lastUiTree;
-    const seen = eventsLine((observation as { events?: UiEvent[] }).events);
+    this.lastEvents = (observation as { events?: UiEvent[] }).events ?? [];
+    const seen = eventsLine(this.lastEvents);
     if (seen) this.phoneSaw = this.phoneSaw ? `${this.phoneSaw}\n${seen}` : seen;
     this.lastForegroundApp = this.detectPackageName(tree.root, tree.packageName || 'unknown');
   }
@@ -1800,7 +1893,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (res.status !== 'SUCCESS') break;
       await sleep(700);
       try {
-        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+        this.absorb(await this.observe());
       } catch {
         break;
       }
@@ -1833,6 +1926,23 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * own app list polled until the package is there. The model never has to
    * judge "is it installed" from a screen.
    */
+  /**
+   * When open_app found nothing: the phone's own app list says whether the app
+   * is there under another package (then which one to open) or not installed at
+   * all (then the task cannot be done here). Null when the list cannot be read.
+   */
+  private async missingApp(packageName: string): Promise<string | null> {
+    const key = packageName.split('.').filter((p) => !['com', 'org', 'net', 'android', 'app', 'apps', 'google', 'mobile'].includes(p.toLowerCase())).pop()?.toLowerCase() ?? '';
+    if (key.length < 3) return null;
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ListApps' }).catch(() => null);
+    if (!res || res.status !== 'SUCCESS') return null;
+    const apps = parseAppList(res.summary ?? '');
+    if (!apps.length) return null;
+    const near = apps.find((a) => a.packageName.toLowerCase().includes(key) || a.label.toLowerCase().replace(/\s+/g, '').includes(key));
+    if (near) return `This phone has "${near.label}" (${near.packageName}): open that package instead.`;
+    return `The phone's app list has no app like "${key}": it is NOT installed on this phone, and the task does not ask to install it. Finish now with task_done (success false) and say "${key} is not installed on this phone" — do not search the launcher or the Play Store for it.`;
+  }
+
   private async installApp(packageName: string, args: Record<string, unknown>): Promise<ToolResult> {
     const started = Date.now();
     const finish = (ok: boolean, text: string): ToolResult => {
@@ -1904,7 +2014,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       await sleep(4000);
       this.callbacks?.onHeartbeat?.();
       try {
-        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+        this.absorb(await this.observe());
       } catch {
         // keep polling
       }
@@ -1959,7 +2069,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     while (Date.now() < deadline) {
       await sleep(700);
       try {
-        this.absorb(await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' }));
+        this.absorb(await this.observe());
       } catch {
         continue;
       }
