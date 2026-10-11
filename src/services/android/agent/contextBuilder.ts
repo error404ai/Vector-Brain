@@ -182,6 +182,7 @@ export function openedHosts(steps: StepRecord[]): string[] {
 const CHANGED = /^CHANGED: "(.+?)" → "(.+?)"$/m;
 /** A toggle whose label stays the same (Like): counted as switched by the tap. */
 const TOGGLED = /^TOGGLED: "(.+?)"$/m;
+const UNTOGGLED = /^UNTOGGLED: "(.+?)"$/m;
 
 /** Buttons the run's taps turned into something else (the "CHANGED:" line AndroidAgent adds to a tap's result). */
 export function buttonChanges(steps: StepRecord[]): { from: string; to: string }[] {
@@ -192,6 +193,12 @@ export function buttonChanges(steps: StepRecord[]): { from: string; to: string }
     if (m) out.push({ from: m[1], to: m[2] });
     const t = TOGGLED.exec(step.resultText ?? '');
     if (t) out.push({ from: t[1], to: 'tapped once' });
+    // The phone said a tap turned one off again ("Unliked"): it no longer counts.
+    const u = UNTOGGLED.exec(step.resultText ?? '');
+    if (u) {
+      const i = out.map((c) => c.from === u[1] && c.to === 'tapped once').lastIndexOf(true);
+      if (i >= 0) out.splice(i, 1);
+    }
   }
   return out;
 }

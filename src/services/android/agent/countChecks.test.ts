@@ -100,3 +100,11 @@ describe('sites opened, by name (Oct 11, #3700: one site opened twice)', () => {
     expect(countActions(steps)).not.toMatch(/sites opened/);
   });
 });
+
+describe('a like the phone says was taken away again (Oct 11, #3718)', () => {
+  it('is not counted', () => {
+    const tap = (resultText: string) => ({ toolName: 'tap_element', input: {}, isError: false, thought: '', resultText }) as unknown as StepRecord;
+    const steps = [tap('ok\nTOGGLED: "Like"'), tap('ok\nUNTOGGLED: "Like"'), tap('ok\nTOGGLED: "Like"'), tap('ok\nTOGGLED: "Like"')];
+    expect(buttonChanges(steps)).toHaveLength(2);
+  });
+});

@@ -1540,6 +1540,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!isError && meantToChange && toggle && tap && announced?.on === false) {
       // The tap took it away: it was already on. Not counted, and putting it back is not refused.
       this.lastToggle = null;
+      // Counted back: the like this tap removed no longer counts (Oct 11, #3718 trusted a tally of 9).
+      summary = `${summary}\nUNTOGGLED: "${tap.label.trim().slice(0, 30)}"`;
       checkNote = `\n\nCHECK: the phone announced "${announced.text}", so this tap turned "${tap.label.trim().slice(0, 30)}" OFF (it was already on). Tap it once more to turn it back on, then move on.`;
     } else if (!isError && meantToChange && toggle && tap && announced?.on && !(stateKnown && stateBefore !== stateAfter)) {
       summary = `${summary}\nTOGGLED: "${tap.label.trim().slice(0, 30)}"\nSTATE: "${tap.label.trim().slice(0, 30)}" → on (the phone announced "${announced.text}")`;

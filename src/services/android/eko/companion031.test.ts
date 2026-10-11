@@ -60,7 +60,8 @@ describe('what the phone announces about a toggle', () => {
     const idx = likeIdx((await a.run('read_ui_tree')).text);
     announce = 'Unliked';
     const r = await a.run('tap_element', { idx });
-    expect(r.text).not.toMatch(/TOGGLED/);
+    expect(r.text).not.toMatch(/^TOGGLED/m);
+    expect(r.text).toMatch(/^UNTOGGLED: "Like"$/m);
     expect(r.text).toMatch(/turned "Like" OFF \(it was already on\)/);
     announce = 'Liked';
     const again = await a.run('tap_element', { idx });
