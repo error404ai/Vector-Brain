@@ -194,7 +194,7 @@ const llmServer = http.createServer((req, res) => {
     const json = JSON.parse(body || '{}');
     const tools = (json.tools ?? []).map((t) => t.function?.name);
     const text = JSON.stringify(json.messages ?? []);
-    const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : 'plan';
+    const kind = tools.length ? 'agent' : text.includes('really completed') ? 'judge' : text.includes('rule list') ? 'rules' : text.includes('Rewrite this phone task') ? 'variant' : 'plan';
     const cacheMarked = (json.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((c) => c && c.cache_control));
     const systemMsg = (json.messages ?? []).find((m) => m.role === 'system');
     const systemMarked = Boolean(systemMsg && (systemMsg.cache_control || (Array.isArray(systemMsg.content) && systemMsg.content.some((c) => c && c.cache_control))));
@@ -216,7 +216,16 @@ const llmServer = http.createServer((req, res) => {
     }
     // Non-streaming calls (the completion judge): one JSON answer.
     if (json.stream !== true) {
-      const content = kind === 'judge' ? '{"verdict":"yes","reason":"YouTube is on screen"}' : EKO_PLAN;
+      const lastUser = [...(json.messages ?? [])].reverse().find((m) => m.role === 'user');
+      const asked = typeof lastUser?.content === 'string' ? lastUser.content : (lastUser?.content ?? []).map((c) => c.text ?? '').join('');
+      const content =
+        kind === 'judge'
+          ? '{"verdict":"yes","reason":"YouTube is on screen"}'
+          : kind === 'rules'
+            ? '{"parts":["YouTube is open"],"counts":[],"proof":"YouTube on screen","avoid":[],"report":null}'
+            : kind === 'variant'
+              ? `please ${asked.trim()}`
+              : EKO_PLAN;
       return reply(200, {
         id: `h${llm.requests.length}`,
         object: 'chat.completion',
@@ -975,6 +984,57 @@ const scenarios = [
       const ok = done.items.filter((i) => i.status === 'SUCCEEDED').length;
       if (ok !== 2) return `${ok}/2 items succeeded: ${JSON.stringify(done.items.map((i) => [i.status, i.last_reason]))}`;
       if (!/2\/2/.test(done.summary ?? '')) return `summary does not say 2/2: ${done.summary}`;
+    },
+  },
+  {
+    name: 'Test Lab: a night runs each job on its own model, one job per phone at a time, and files a report',
+    async run() {
+      await ensureLlmConfig('openrouter');
+      const saved = userToken;
+      // The Test Lab is the platform owner's: an admin token for this scenario.
+      userToken = jwt.sign({ userId, email: 'harness@test.local', role: 'admin' }, env.JWT_SECRET, { expiresIn: '1h' });
+      try {
+        const phonesUsed = [phones.free1.dbId, phones.free2.dbId];
+        await api('PUT', '/diagnostics/testlab/settings', { enabled: false, models: ['harness/a:free', 'harness/b:free'], device_ids: phonesUsed, runs_per_night: 6, variant_share: 1, max_steps: 10, core: [{ prompt: 'check the time [sim steps=2 delay=100]' }] });
+        const started = await api('POST', '/diagnostics/testlab/run');
+        const id = started?.data?.id;
+        if (!id || started.data.jobs !== 6) return `night not started as planned: ${JSON.stringify(started).slice(0, 200)}`;
+        let twoOnOnePhone = null;
+        const night = await waitFor(async () => {
+          const n = (await api('GET', `/diagnostics/testlab/nights/${id}`)).data;
+          const running = n.jobs.filter((j) => j.status === 'running').map((j) => j.device_id);
+          if (new Set(running).size !== running.length) twoOnOnePhone = running;
+          return n.status === 'DONE' ? n : null;
+        }, 150_000, 400);
+        if (!night) return 'the night never finished';
+        if (twoOnOnePhone) return `two jobs ran on one phone at once: ${twoOnOnePhone}`;
+        const t = night.report?.totals;
+        if (!t || t.runs !== 6) return `report totals wrong: ${JSON.stringify(t)}`;
+        const bad = night.jobs.filter((j) => !['pass', 'unsure'].includes(j.bucket) || !j.task_id);
+        if (bad.length) return `jobs did not run cleanly: ${JSON.stringify(bad.map((j) => [j.key, j.status, j.bucket, j.note, j.result?.reason_code]))}`;
+        // Each task ran on both models, through the Test Lab's own configs.
+        const [rows] = await db.query(
+          "SELECT m.source, c.model, c.label FROM missions m JOIN ai_configs c ON c.id = m.ai_config_id WHERE m.source LIKE ?",
+          [`testlab:${id}:%`],
+        );
+        if (rows.length !== 6 || rows.some((r) => r.label !== 'Test Lab')) return `missions not on Test Lab configs: ${JSON.stringify(rows)}`;
+        for (const key of new Set(night.jobs.map((j) => j.key))) {
+          const models = new Set(night.jobs.filter((j) => j.key === key).map((j) => j.model));
+          if (models.size !== 2) return `${key} ran on ${[...models]}`;
+        }
+        if (night.jobs[0].key !== 'core-1') return `core task not first: ${night.jobs[0].key}`;
+        // Reworded bank tasks keep the original; core tasks are never reworded.
+        if (!night.jobs.some((j) => j.original && j.prompt.startsWith('please '))) return 'no bank task was reworded';
+        if (night.jobs.some((j) => j.kind === 'core' && j.original)) return 'a core task was reworded';
+        const file = [...github.files.keys()].find((k) => k.startsWith('testlab/') && k.endsWith(`night-${id}.md`));
+        if (!file) return `no report on GitHub: ${[...github.files.keys()].join(', ')}`;
+        if (!/^# Test Lab /.test(github.files.get(file).content.toString())) return 'GitHub report has no heading';
+        // Nothing replays a saved flow or uses a backup model on these runs.
+        const [tasks] = await db.query("SELECT t.flow_id FROM agent_tasks t JOIN mission_items i ON i.agent_task_id = t.id JOIN missions m ON m.id = i.mission_id WHERE m.source LIKE ?", [`testlab:${id}:%`]);
+        if (tasks.some((r) => r.flow_id)) return 'a Test Lab run replayed a saved flow';
+      } finally {
+        userToken = saved;
+      }
     },
   },
   {

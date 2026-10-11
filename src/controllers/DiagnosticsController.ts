@@ -4,7 +4,8 @@ import { DiagnosticsSyncService } from '@/services/android/DiagnosticsSyncServic
 import { ClientReportService } from '@/services/ClientReportService';
 import { clampDays, RunDiagnosticsService } from '@/services/android/RunDiagnosticsService';
 import { Response } from 'express';
-import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, QueryParam, Res } from 'routing-controllers';
+import { Authorized, Body, CurrentUser, Get, JsonController, Param, Post, Put, QueryParam, Res } from 'routing-controllers';
+import { TestLabService } from '@/services/android/testlab/TestLabService';
 import { TestSetService } from '@/services/android/testset/TestSetService';
 import { Service } from 'typedi';
 import { createGzip } from 'zlib';
@@ -24,7 +25,49 @@ export class DiagnosticsController {
     private clientReports: ClientReportService,
     private billedCost: BilledCostService,
     private testSet: TestSetService,
+    private testLab: TestLabService,
   ) {}
+
+  /** Test Lab: settings, the task bank and recent nights. */
+  @Get('/testlab')
+  async testLabOverview(@CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testLab.overview(user.userId) };
+  }
+
+  @Put('/testlab/settings')
+  async testLabSettings(@Body() body: unknown, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testLab.saveSettings(user.userId, body) };
+  }
+
+  /** One night: every job and, once finished, the triaged report. */
+  @Get('/testlab/nights/:id')
+  async testLabNight(@Param('id') id: number, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testLab.night(user.userId, Number(id)) };
+  }
+
+  @Post('/testlab/run')
+  async testLabRun(@CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    const night = await this.testLab.runNow(user.userId);
+    return { data: { id: night.id, jobs: night.jobs.length } };
+  }
+
+  @Post('/testlab/stop')
+  async testLabStop(@CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    const night = await this.testLab.stop(user.userId);
+    return { data: night ? { id: night.id } : null };
+  }
+
+  /** OpenRouter's free models that can call tools (cached for an hour). */
+  @Get('/testlab/free-models')
+  async testLabFreeModels(@CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testLab.freeModels() };
+  }
 
   /** The fixed test set and its recent runs: pass rate and cost per task, to compare versions. */
   @Get('/testset')

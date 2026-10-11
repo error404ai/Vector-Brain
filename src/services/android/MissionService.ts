@@ -58,6 +58,11 @@ const SIMULATION = process.env.AGENT_SIMULATION === '1' && process.env.NODE_ENV 
  * it could not do it, the step budget ran out, the AI key is bad — would fail
  * the same way again and only costs tokens, so it is reported instead.
  */
+/** Missions the Test Lab starts ("testlab:<night>"). */
+export function isTestLabSource(source: string | null | undefined): boolean {
+  return Boolean(source?.startsWith('testlab:'));
+}
+
 const RETRYABLE = new Set([
   'DEVICE_OFFLINE',
   'DEVICE_BUSY',
@@ -187,7 +192,7 @@ export class MissionService {
     if (known !== undefined) return known;
     let pilot = false;
     // A test-set run measures the AI on every phone: no replaying the first phone's run.
-    if (!mission.duration_seconds && items.length > 1 && !items.some((i) => i.continue_from_task_id) && !mission.source?.startsWith('testset:')) {
+    if (!mission.duration_seconds && items.length > 1 && !items.some((i) => i.continue_from_task_id) && !mission.source?.startsWith('testset:') && !isTestLabSource(mission.source)) {
       const settings = await this.flowLibrary.settings(mission.user_id);
       const prompt = mission.prompt ?? mission.request;
       pilot = settings.record && settings.replay_first && !(await this.flowLibrary.hasMatch(mission.user_id, prompt).catch(() => true));
@@ -630,6 +635,8 @@ export class MissionService {
         false,
         mission.no_internet,
         runFor,
+        // A Test Lab run measures the model it was given: no flow replay, no backup model.
+        { aiOnly: isTestLabSource(mission.source) },
       );
       const data = (result?.data ?? {}) as { taskId?: number; queued?: boolean; queueId?: number };
       // Stopped while this start was in flight: undo what just began, or a

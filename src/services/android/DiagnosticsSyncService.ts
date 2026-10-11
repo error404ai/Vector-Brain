@@ -160,6 +160,13 @@ export class DiagnosticsSyncService {
     this.state.last_file = path;
   }
 
+  /** Writes one file to the diagnostics repo (the Test Lab's nightly report). False when the repo is not set up. */
+  async pushFile(path: string, content: Buffer, message: string): Promise<boolean> {
+    if (!this.repo || !this.token) return false;
+    await this.putFile(this.repo, this.token, path, content, message);
+    return true;
+  }
+
   private async putFile(repo: string, token: string, path: string, content: Buffer, message: string): Promise<void> {
     // DIAG_GITHUB_API only exists so the test harness can point this at a fake GitHub.
     const api = (process.env.DIAG_GITHUB_API ?? '').trim().replace(/\/$/, '') || 'https://api.github.com';

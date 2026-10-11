@@ -686,7 +686,11 @@ export class AndroidPlannerService {
      */
     runForSeconds?: number,
     /** Replay this saved flow first (the Flows page's "Replay"), whatever the account switch says. */
-    opts: { flowId?: number } = {},
+    /**
+     * aiOnly (Test Lab): measure the chosen model itself — no saved-flow replay, no
+     * backup model, nothing recorded as a flow.
+     */
+    opts: { flowId?: number; aiOnly?: boolean } = {},
   ): Promise<ApiResponse> {
     // A task can pin a specific provider so different devices can run different
     // models simultaneously; otherwise fall back to the user's active config.
@@ -917,7 +921,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       initialScreenshot,
       record,
       runForSeconds && runForSeconds > 0 ? Date.now() + runForSeconds * 1000 : undefined,
-      { flowId: opts.flowId, followUp: Boolean(existingTaskId) },
+      { flowId: opts.flowId, followUp: Boolean(existingTaskId), aiOnly: Boolean(opts.aiOnly) },
     ).catch((err) => {
       Logger.error(`[AndroidPlanner] Unhandled error in task ${agentTask.id}:`, err);
       this.gatewayService.setAutomationSession(device.device_id, false);
@@ -1125,7 +1129,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     record = false,
     /** Epoch ms. When set, the run keeps going in rounds until this moment. */
     runUntil?: number,
-    flowOptions: { flowId?: number; followUp?: boolean } = {},
+    flowOptions: { flowId?: number; followUp?: boolean; aiOnly?: boolean } = {},
   ) {
     const lastLog = await this.taskLogRepo.findOne({
       where: { agent_task_id: agentTask.id },
@@ -1277,7 +1281,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
     const sightWhys = new Map<SightWhy, number>();
     // The backup model, for when the main one is rate-limited or out of quota.
     const fallbackConfig =
-      engineSettings.fallback_config_id && engineSettings.fallback_config_id !== aiConfig.id
+      !flowOptions.aiOnly && engineSettings.fallback_config_id && engineSettings.fallback_config_id !== aiConfig.id
         ? await this.aiConfigService.resolveConfigById(userId, engineSettings.fallback_config_id).catch(() => null)
         : null;
     const ruleRecoveries: RecoveryKind[] = [];
@@ -1786,7 +1790,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
       // timed run or a follow-up: neither has a recorded path to follow.
       flowSettings = await this.flowLibrary.settings(userId);
       flowPlan =
-        runUntil || flowOptions.followUp
+        runUntil || flowOptions.followUp || flowOptions.aiOnly
           ? null
           : flowOptions.flowId
             ? await this.flowLibrary.byId(userId, flowOptions.flowId)
@@ -2136,7 +2140,8 @@ Use the current visible Android screen and UI state as context. Continue from wh
           pendingFix,
           typed: typedTexts,
           timed: Boolean(runUntil),
-          followUp: Boolean(flowOptions.followUp),
+          // A Test Lab run is a measurement, not a path to replay later.
+          followUp: Boolean(flowOptions.followUp) || Boolean(flowOptions.aiOnly),
         });
       }
 

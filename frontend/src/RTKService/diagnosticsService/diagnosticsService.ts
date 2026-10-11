@@ -228,6 +228,29 @@ export const diagnosticsService = baseApi.injectEndpoints({
       query: (body) => ({ url: '/diagnostics/testset/run', method: 'POST', body }),
       invalidatesTags: ['MISSIONS' as never],
     }),
+    getTestLab: builder.query<{ data: TestLabOverview }, void>({
+      query: () => ({ url: '/diagnostics/testlab', method: 'GET' }),
+      providesTags: ['TESTLAB' as never],
+    }),
+    getTestLabNight: builder.query<{ data: TestLabNight }, number>({
+      query: (id) => ({ url: `/diagnostics/testlab/nights/${id}`, method: 'GET' }),
+      providesTags: ['TESTLAB' as never],
+    }),
+    getTestLabFreeModels: builder.query<{ data: { id: string; name: string; context: number | null }[] }, void>({
+      query: () => ({ url: '/diagnostics/testlab/free-models', method: 'GET' }),
+    }),
+    saveTestLabSettings: builder.mutation<{ data: TestLabSettings }, TestLabSettings>({
+      query: (body) => ({ url: '/diagnostics/testlab/settings', method: 'PUT', body }),
+      invalidatesTags: ['TESTLAB' as never],
+    }),
+    runTestLab: builder.mutation<{ data: { id: number; jobs: number } }, void>({
+      query: () => ({ url: '/diagnostics/testlab/run', method: 'POST' }),
+      invalidatesTags: ['TESTLAB' as never],
+    }),
+    stopTestLab: builder.mutation<{ data: { id: number } | null }, void>({
+      query: () => ({ url: '/diagnostics/testlab/stop', method: 'POST' }),
+      invalidatesTags: ['TESTLAB' as never],
+    }),
     syncDiagnosticsNow: builder.mutation<{ data: SyncState }, void>({
       query: () => ({ url: '/diagnostics/sync', method: 'POST' }),
       invalidatesTags: [TAG],
@@ -245,7 +268,89 @@ export const {
   useCheckBilledCostMutation,
   useGetTestSetQuery,
   useStartTestSetMutation,
+  useGetTestLabQuery,
+  useGetTestLabNightQuery,
+  useGetTestLabFreeModelsQuery,
+  useSaveTestLabSettingsMutation,
+  useRunTestLabMutation,
+  useStopTestLabMutation,
 } = diagnosticsService;
+
+/** Test Lab (backend testlab/testLab.ts). */
+export interface TestLabSettings {
+  enabled: boolean;
+  hour: number;
+  models: string[];
+  device_ids: number[];
+  runs_per_night: number;
+  variant_share: number;
+  max_steps: number;
+  core: { key: string; prompt: string }[];
+  skip_kinds: string[];
+}
+
+export type TestLabBucket = 'pass' | 'unsure' | 'engine' | 'model' | 'setup' | 'quota' | 'platform' | 'skipped';
+export type TestLabTotals = Record<TestLabBucket, number> & { runs: number; counted: number; pass_rate: number | null; cost_usd: number };
+
+export interface TestLabNightRow {
+  id: number;
+  day: string;
+  status: 'RUNNING' | 'DONE' | 'STOPPED';
+  manual: boolean;
+  started_at: string;
+  finished_at: string | null;
+  jobs: number;
+  done: number;
+  running: number;
+  totals: TestLabTotals | null;
+}
+
+export interface TestLabOverview {
+  settings: TestLabSettings;
+  openrouter_ready: boolean;
+  github: boolean;
+  bank: { key: string; kind: string; prompt: string; needs: string[] }[];
+  nights: TestLabNightRow[];
+}
+
+export interface TestLabJob {
+  id: number;
+  key: string;
+  kind: string;
+  prompt: string;
+  original?: string;
+  model: string;
+  pair?: number;
+  status: 'queued' | 'running' | 'done' | 'skipped';
+  device_id?: number | null;
+  task_id?: number | null;
+  note?: string;
+  bucket?: TestLabBucket;
+  result?: { status: string; reason_code: string | null; message: string; verification: { status: string; method: string; reason: string } | null; parts: string[]; cost_usd: number; steps: number };
+}
+
+export interface TestLabReport {
+  night_id: number;
+  day: string;
+  totals: TestLabTotals;
+  per_model: { model: string; runs: number; pass: number; unsure: number; engine: number; model_fault: number; quota: number; cost_usd: number; avg_steps: number }[];
+  per_kind: { kind: string; runs: number; pass: number; engine: number }[];
+  engine: { signature: string; count: number; runs: { key: string; task_id: number | null; model: string; device_id: number | null; why: string }[] }[];
+  model_quirks: { model: string; key: string; task_id: number | null; why: string }[];
+  setup: { device_id: number | null; key: string; task_id: number | null; why: string }[];
+  failed_everywhere: string[];
+}
+
+export interface TestLabNight {
+  id: number;
+  day: string;
+  status: 'RUNNING' | 'DONE' | 'STOPPED';
+  manual: boolean;
+  started_at: string;
+  finished_at: string | null;
+  jobs: TestLabJob[];
+  report: TestLabReport | null;
+}
 
 /** One task of the fixed test set (backend testset/testSet.ts). */
 export interface TestSetTask {

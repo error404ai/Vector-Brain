@@ -43,6 +43,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import { FAILURE_KIND, FAILURE_KIND_ORDER } from '@/utils/failureKind';
 import TestSetCard from './diagnostics/TestSetCard';
+import TestLabCard from './diagnostics/TestLabCard';
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import toast from 'react-hot-toast';
@@ -285,6 +286,8 @@ export default function DiagnosticsPage() {
               </ScrollTable>
             </Card>
           ) : null}
+
+          <TestLabCard onOpenRun={setOpenRun} />
 
           <TestSetCard />
 

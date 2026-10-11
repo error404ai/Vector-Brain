@@ -53,6 +53,7 @@ import { authorizationChecker, currentUserChecker } from './middleware/authCheck
 import { AiEmbeddingService } from './services/AiEmbeddingService';
 import { HistoryCleanupService } from './services/android/HistoryCleanupService';
 import { DiagnosticsSyncService } from './services/android/DiagnosticsSyncService';
+import { TestLabService } from '@/services/android/testlab/TestLabService';
 import { ScheduledTaskService } from './services/android/ScheduledTaskService';
 import { MissionService } from './services/android/MissionService';
 import { TelegramService } from './services/telegram/TelegramService';
@@ -259,6 +260,7 @@ AppDataSource.initialize()
       Container.get(HistoryCleanupService).start();
       Container.get(MissionService).start();
       Container.get(DiagnosticsSyncService).start();
+      Container.get(TestLabService).start();
     } catch (error) {
       Logger.warn('Scheduled task runner failed to start:', error);
     }
