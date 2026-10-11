@@ -58,6 +58,34 @@ describe('what a field shows after typing', () => {
     expect(value).toBe('travel742');
   });
 
+  it('a field with a length limit: said once, not retried, and a repeat is called out (Blogger, 15 of 16)', async () => {
+    let value = '';
+    const exec = jest.fn(async (_hw: string, action: { type: string; text?: string }) => {
+      if (action.type === 'ObserveScreen') {
+        return { status: 'SUCCESS', uiTree: { packageName: 'com.android.chrome', root: screen([node({ text: value, editable: true, clickable: true, focused: true, box: [40, 500, 1040, 600] }), node({ text: 'Next', clickable: true, box: [800, 1200, 1040, 1300] })]) } };
+      }
+      if (action.type === 'SetText') value = (action.text ?? '').slice(0, 15);
+      return { status: 'SUCCESS', summary: `${action.type} done` };
+    });
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw');
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[] }> }[] }).tools;
+    const run = async (name: string, args: Record<string, unknown> = {}) => (await tools.find((t) => t.name === name)!.execute(args, {}, {})).content.map((c) => c.text ?? '').join('');
+    await run('read_ui_tree');
+    const first = await run('type_text', { text: 'wanderlusttrip42' });
+    expect(first).toMatch(/FIELD LIMIT: this field holds at most 15 characters\. It kept "wanderlusttrip4" and dropped "2"/);
+    expect(first).not.toMatch(/TYPED AGAIN/);
+    expect(exec.mock.calls.filter(([, a]) => a.type === 'Paste' || a.type === 'SetClipboard')).toHaveLength(0);
+    const second = await run('type_text', { text: 'wanderlusttrip42' });
+    expect(second).toMatch(/TYPED AGAIN: this exact text has now been typed 2 times/);
+    const shorter = await run('type_text', { text: 'wanderlust42' });
+    expect(shorter).not.toMatch(/FIELD LIMIT|TYPED/);
+  });
+
+  it('length-limit messages count as field messages', () => {
+    const after = { elements: [{ label: 'Use up to 15 characters', tappable: false }, { label: '20 characters max', tappable: false }, { label: 'Up to 15', tappable: false }] };
+    expect(newFieldMessages(null, after)).toEqual(['Use up to 15 characters', '20 characters max']);
+  });
+
   it('new form messages only', () => {
     const before = { elements: [{ label: 'Password must be 8 characters', tappable: false }] };
     const after = { elements: [{ label: 'Password must be 8 characters', tappable: false }, { label: 'This username is already taken', tappable: false }, { label: 'Invalid', tappable: true }] };

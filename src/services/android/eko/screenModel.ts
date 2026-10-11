@@ -184,6 +184,7 @@ function stateOf(node: UiNodeSnapshot): NodeStateView {
   if (node.password) v.password = true;
   if (node.hint?.trim() && node.hint.trim() !== (node.text ?? '').trim()) v.details.push(`hint "${cutText(wellFormed(node.hint.trim()), 40)}"`);
   if (node.inputKind) v.details.push(`${node.inputKind} field`);
+  if (node.editable && typeof node.maxLength === 'number' && node.maxLength > 0) v.details.push(`max ${node.maxLength} characters`);
   if (node.error?.trim()) v.details.push(`ERROR "${cutText(wellFormed(node.error.trim()), 60)}"`);
   if (node.range) {
     const r = node.range;

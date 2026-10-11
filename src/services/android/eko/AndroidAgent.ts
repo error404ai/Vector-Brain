@@ -226,8 +226,22 @@ export function sameTyped(shown: string, typed: string): boolean {
   return a === b || bare(a) === bare(b) || (a.length >= 50 && b.startsWith(a));
 }
 
+/**
+ * The field kept only the start of what was typed: it has a length limit. Typing the
+ * same value again keeps the same start, so this is not a typing slip to retry.
+ * Returns how many characters it kept, else null. Labels are cut near 60 characters,
+ * so a longer field cannot be told apart from a cut label.
+ */
+export function fieldKept(shown: string, typed: string): number | null {
+  const a = shown.trim();
+  const b = typed.trim();
+  if (!a || a.length >= 50 || a.length >= b.length) return null;
+  return b.toLowerCase().startsWith(a.toLowerCase()) ? a.length : null;
+}
+
 /** Messages forms show next to a field ("This blog address is invalid", "Already taken"). */
-const FIELD_MESSAGE = /\b(invalid|not (?:supported|available|valid|allowed)|already (?:taken|in use|exists|registered)|is required|required field|too (?:short|long)|must (?:be|contain|have|include)|try another|unavailable|doesn't match|does not match|incorrect)\b/i;
+const FIELD_MESSAGE =
+  /\b(invalid|not (?:supported|available|valid|allowed)|already (?:taken|in use|exists|registered)|is required|required field|too (?:short|long)|must (?:be|contain|have|include)|try another|unavailable|doesn't match|does not match|incorrect|character limit|(?:up to|at most|maximum(?: of)?|max|no more than|less than|fewer than|between \d+ and) \d+ (?:characters|chars|letters)|\d+ (?:characters|chars|letters) (?:max(?:imum)?|or (?:less|fewer)))\b/i;
 
 /** Field messages on the new screen that were not on the old one. */
 export function newFieldMessages(before: { elements: { label: string }[] } | null, after: { elements: { label: string; tappable: boolean }[] } | null): string[] {
@@ -380,6 +394,8 @@ export class AndroidAgent extends Agent {
   private toggleWarned = '';
   /** Taps per spot (25-unit grid cells) in this run, for "you keep tapping here". */
   private spotTaps = new Map<string, number>();
+  /** Values that did not end up in their field as typed, and what the field showed. */
+  private typedMisses = new Map<string, { times: number; shown: string }>();
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
   /** The events that came with the latest read (toasts, announcements…). */
@@ -1408,6 +1424,21 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const shown = () => focusedFieldText(this.screen);
     const first = shown();
     if (first === null || sameTyped(first, typed)) return result;
+    const key = typed.replace(/\s+/g, ' ').trim().toLowerCase();
+    const before = this.typedMisses.get(key);
+    const times = (before?.times ?? 0) + 1;
+    // The same value, the same field result as last time: saying so is what breaks the loop.
+    const again =
+      before && before.shown === first
+        ? `\n\nTYPED AGAIN: this exact text has now been typed ${times} times and the field showed "${cutText(first, 60)}" every time. Typing it again will not change that: use a different value, or say what blocks you.`
+        : '';
+    // A field with a length limit keeps the start (Blogger's address box: 16 typed, 15 kept, Oct 12).
+    const kept = fieldKept(first, typed);
+    if (kept !== null) {
+      this.typedMisses.set(key, { times, shown: first });
+      const note = `FIELD LIMIT: this field holds at most ${kept} characters. It kept "${cutText(first, 60)}" and dropped "${cutText(typed.trim().slice(kept), 40)}". Typing the same value again keeps the same ${kept}. Pick a value of ${kept} characters or fewer (shorten it sensibly, e.g. drop words or digits), then type that.`;
+      return this.withNote(result, `${note}${again}`);
+    }
     let how = '';
     const viaKeyboard = await this.typeWithVectorKeyboard(typed);
     if (viaKeyboard.result) how = 'with the Vector Keyboard';
@@ -1422,10 +1453,12 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     this.absorb(await this.observe());
     const now = shown();
     const fixed = now !== null && sameTyped(now, typed);
+    if (fixed) this.typedMisses.delete(key);
+    else this.typedMisses.set(key, { times, shown: first });
     const note = fixed
       ? `\n\nTYPED CHECK: the field first showed "${cutText(first, 60)}" (not what was typed), so it was cleared and the text put in ${how}. It now shows "${cutText(now ?? '', 60)}".`
       : `\n\nTYPED CHECK: the field shows "${cutText(now ?? first, 60)}", not "${cutText(typed, 60)}"${how ? ` (retried ${how})` : ''}. Do not type pieces to patch it: press_key CLEAR, then type the whole value once.`;
-    return this.withNote(result, `${note.trim()}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`);
+    return this.withNote(result, `${note.trim()}${fixed ? '' : again}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`);
   }
 
   private async typeWithVectorKeyboard(text: string): Promise<{ result?: ActionResult; note: string }> {

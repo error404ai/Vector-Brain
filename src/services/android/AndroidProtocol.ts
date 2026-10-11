@@ -148,6 +148,8 @@ export interface UiNodeSnapshot {
   expanded?: 'collapsed' | 'expanded' | 'partial';
   range?: { type: 'int' | 'float' | 'percent'; min: number; max: number; current: number };
   hint?: string;
+  /** Companion 0.32+: the most characters the field accepts (Android's maxTextLength), when it has a limit. */
+  maxLength?: number;
   password?: boolean;
   inputKind?: 'number' | 'phone' | 'date' | 'email' | 'uri' | 'multiline';
   focused?: boolean;
