@@ -1,4 +1,5 @@
 import type { AgentStreamMessage } from '@eko-ai/eko';
+import type { TaskRules } from './taskRules';
 
 /**
  * The part of a phone run that talks to the model.
@@ -28,6 +29,8 @@ export interface VerificationOutcome {
   reason: string;
   /** How many times the agent was sent back after a failed check. */
   retries: number;
+  /** The task's rule list the run was checked against (taskRules), kept with the result for triage. */
+  rules?: TaskRules | null;
 }
 
 export interface EngineRunResult {

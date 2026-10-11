@@ -29,6 +29,8 @@ export interface StepRecord {
 export interface ContextOptions {
   task: string;
   plan?: string | null;
+  /** The task's rule list as text (taskRules.rulesBlock), sent with the task. */
+  rules?: string | null;
   steps: StepRecord[];
   /** Token budget for step history (summary + full recent steps). The newest screen is always sent on top. */
   budgetTokens: number;
@@ -257,7 +259,7 @@ export function buildContext(options: ContextOptions): BuiltContext {
     dropped += 1;
   }
 
-  const task = [`TASK: ${options.task}`, options.plan ? `\nPLAN (a guide, not a script):\n${options.plan}` : ''].filter(Boolean).join('\n');
+  const task = [`TASK: ${options.task}`, options.rules ? `\n${options.rules}` : '', options.plan ? `\nPLAN (a guide, not a script):\n${options.plan}` : ''].filter(Boolean).join('\n');
   const done = older.length
     ? `STEPS ALREADY DONE (${older.length}${dropped ? `, the oldest ${dropped} not shown` : ''}; the full detail of the last ${steps.length - firstFull} follows):\n${summary.join('\n')}`
     : '';

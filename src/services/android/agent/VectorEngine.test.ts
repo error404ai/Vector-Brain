@@ -3,6 +3,7 @@ import { MockLanguageModelV2 } from 'ai/test';
 import type { AndroidAgent } from '../eko/AndroidAgent';
 import { SHORT_DESCRIPTIONS } from './compactTools';
 import { RESTART_SUMMARY, VectorEngine, restartedByTap } from './VectorEngine';
+import { clearRulesCache } from './taskRules';
 
 type Chunk = Record<string, unknown>;
 type Slow = { chunks: Chunk[]; initialDelayInMs?: number; chunkDelayInMs?: number };
@@ -126,6 +127,8 @@ function engineWith(responses: Response[], agentOptions?: Parameters<typeof fake
     agent,
     vision: false,
     planner: false,
+    // The rule list's own call is tested on its own (taskRules tests below).
+    rules: false,
     onMessage: async (m) => {
       messages.push(m as never);
     },
@@ -526,7 +529,7 @@ describe('VectorEngine', () => {
     model.doGenerate = async () => ({ content: [{ type: 'text', text: '1. Open YouTube\n2. Search lofi' }], finishReason: 'stop', usage, warnings: [] }) as never;
     const { agent } = fakeAgent();
     const seen: { type: string; workflow?: { nodes: string[] } }[] = [];
-    const on = new VectorEngine({ model, agent, vision: false, planner: true, verify: false, onMessage: async (m) => void seen.push(m as never) });
+    const on = new VectorEngine({ model, agent, vision: false, planner: true, rules: false, verify: false, onMessage: async (m) => void seen.push(m as never) });
     await on.run('open YouTube and search lofi', 'p2');
     expect(seen.find((m) => m.type === 'workflow')?.workflow?.nodes).toEqual(['Open YouTube', 'Search lofi']);
   });
@@ -568,7 +571,7 @@ describe('VectorEngine', () => {
     const backup = scriptedModel([done(true, 'ok')]);
     const { agent } = fakeAgent();
     const seen: { type: string; text?: string }[] = [];
-    const engine = new VectorEngine({ model: main.model, agent, vision: false, planner: false, verify: false, fallback: { model: backup.model, label: 'backup-x' }, onMessage: async (m) => void seen.push(m as never) });
+    const engine = new VectorEngine({ model: main.model, agent, vision: false, planner: false, rules: false, verify: false, fallback: { model: backup.model, label: 'backup-x' }, onMessage: async (m) => void seen.push(m as never) });
     const result = await engine.run('tap', 'fb1');
     expect(result.success).toBe(true);
     expect(main.prompts).toHaveLength(1);
@@ -580,5 +583,61 @@ describe('VectorEngine', () => {
     const quota = Object.assign(new Error('Rate limit exceeded: free-models-per-day-high-balance'), { statusCode: 429 });
     const { engine } = engineWith([quota, done(true, 'x')], undefined, { verify: false });
     await expect(engine.run('tap', 'fb2')).rejects.toThrow(/per-day/);
+  });
+});
+
+describe('the task rule list', () => {
+  beforeEach(() => clearRulesCache());
+  const RULES = '{"parts":["Reels is open","scrolled through 3 reels"],"counts":[{"kind":"scrolls","n":3,"what":"reels scrolled"}],"proof":"Reels on screen","avoid":["like or comment"],"report":null}';
+
+  function withRules(responses: Response[]) {
+    const { model, prompts } = scriptedModel(responses);
+    let generated = 0;
+    model.doGenerate = async (options) => {
+      prompts.push(options.prompt);
+      generated += 1;
+      const text = generated === 1 ? RULES : '{"verdict":"yes","reason":"looks done"}';
+      return { content: [{ type: 'text', text }], finishReason: 'stop', usage, warnings: [] } as never;
+    };
+    const { agent, calls } = fakeAgent();
+    const seen: { type: string; workflow?: { nodes: string[] } }[] = [];
+    const engine = new VectorEngine({ model, agent, vision: false, planner: false, onMessage: async (m) => void seen.push(m as never) });
+    return { engine, calls, seen, prompts, generated: () => generated };
+  }
+
+  it('Hinglish counts the regexes never read ("3 baar") are counted by code, shown as the card, and kept with the result', async () => {
+    const r = withRules([toolCall('swipe', { direction: 'UP' }), toolCall('swipe', { direction: 'UP' }), done(true, 'scrolled'), toolCall('swipe', { direction: 'UP' }), done(true, 'scrolled 3')]);
+    const result = await r.engine.run('reels kholo aur 3 baar scroll karo', 'tr1');
+    expect(r.seen.find((m) => m.type === 'workflow')?.workflow?.nodes).toEqual(['Reels is open', 'scrolled through 3 reels']);
+    const text = JSON.stringify(r.prompts);
+    expect(text).toContain('RULES FOR THIS TASK');
+    expect(text).toContain('DO NOT: like or comment');
+    // Two swipes and task_done: the code count fails it and sends the agent back.
+    expect(text).toMatch(/SYSTEM CHECK FAILED: Counted by the system: scrolls \(swipe\/scroll_element\): 2 of 3/);
+    expect(text).toMatch(/RULE COUNTS \(counted by the system, exact\): reels scrolled: 2 of 3/);
+    expect(r.calls.swipe).toBe(3);
+    expect(result).toMatchObject({ success: true, verification: { status: 'verified', method: 'judge', rules: { counts: [{ kind: 'scrolls', n: 3 }] } } });
+    // The judge read the rule list.
+    expect(JSON.stringify(r.prompts.at(-1))).toContain("THE TASK'S RULE LIST");
+  });
+
+  it('the same prompt on another phone reuses the list: no second call', async () => {
+    const open = () => [toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'x')];
+    const a = withRules(open());
+    await a.engine.run('open YouTube', 'tr2');
+    const b = withRules(open());
+    await b.engine.run('open YouTube', 'tr3');
+    expect(a.generated()).toBe(1);
+    expect(b.generated()).toBe(0);
+  });
+
+  it('an unreadable list is not a failed task: the run goes on without it', async () => {
+    const { model } = scriptedModel([toolCall('open_app', { packageName: 'com.google.android.youtube' }), done(true, 'open')]);
+    model.doGenerate = async () => ({ content: [{ type: 'text', text: 'sure! here is a list' }], finishReason: 'stop', usage, warnings: [] }) as never;
+    const { agent } = fakeAgent();
+    const engine = new VectorEngine({ model, agent, vision: false, planner: false, onMessage: async () => undefined });
+    const result = await engine.run('open YouTube', 'tr4');
+    expect(result).toMatchObject({ success: true, verification: { status: 'verified', method: 'rule' } });
+    expect(result.verification?.rules).toBeUndefined();
   });
 });

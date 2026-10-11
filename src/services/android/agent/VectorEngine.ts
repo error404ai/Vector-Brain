@@ -8,6 +8,7 @@ import { buildContext, buttonChanges, countActions, summaryLine, type StepRecord
 import { LITE_ENGINE_RULES } from '../eko/compactPrompt';
 import { countChecks, parseAppList, verifyCompletion, type RunTally } from './successVerifier';
 import type { ReasoningMode } from './reasoningMode';
+import { cachedRules, parseRules, RULES_PROMPT, rulesBlock, rulesCountChecks, rulesProgress, type TaskRules } from './taskRules';
 import { CACHE_BREAKPOINT, NO_REASONING_OPTIONS, USAGE_REPORT_OPTIONS, isReasoningRejected, usageDetails, type UsageDetails } from './usageDetails';
 
 export interface VectorEngineOptions {
@@ -19,6 +20,8 @@ export interface VectorEngineOptions {
   vision: boolean;
   /** One planning call before acting, shown as the plan card. Off by default. */
   planner: boolean;
+  /** One short call before acting that turns the task into its rule list (taskRules). On unless false. */
+  rules?: boolean;
   /** Token budget for step history in each call (see contextBuilder). */
   historyBudgetTokens?: number;
   /** Check the phone after task_done. */
@@ -353,6 +356,11 @@ export class VectorEngine implements AgentEngine {
       ? `${await this.options.agent.systemPrompt({ withFacts: false })}${LITE_ENGINE_RULES}${reasoning === 'always' ? THINK_ALWAYS_RULE : ''}`
       : `${await this.options.agent.systemPrompt()}${VECTOR_RULES}`;
     const plan = this.options.planner ? await this.makePlan(prompt, signal, emit) : null;
+    const rules = this.options.rules === false ? null : await this.makeRules(prompt, signal, emit);
+    // The rule list is the card the user sees when there is no plan.
+    if (rules && !plan) await emit({ type: 'workflow', streamDone: true, workflow: { nodes: rules.parts } });
+    const withRules = (v: VerificationOutcome): VerificationOutcome => (rules ? { ...v, rules } : v);
+    const countsFor = (tally: RunTally) => (rules ? rulesCountChecks(rules, tally) : countChecks(prompt, tally));
     const steps: StepRecord[] = [];
     const notes: string[] = [];
     let verificationRetries = 0;
@@ -367,9 +375,14 @@ export class VectorEngine implements AgentEngine {
       // Lite thinks in writing on the steps where acting straight away goes wrong.
       if (this.options.compact && reasoning === 'hard' && isHardStep(call, steps, notes)) notes.push(THINK_NOW_NOTE);
 
+      // The counts code can tally, against the rule list: "posts liked 2 of 5".
+      const ruleCounts = rules && steps.length ? rulesProgress(rules, runTally(steps)) : '';
+      if (ruleCounts && !this.options.compact) notes.push(`RULE COUNTS (counted by the system, exact): ${ruleCounts}`);
+      const actions = this.options.compact ? countActions(steps, LOOK_ONLY) : '';
       const context = buildContext({
         task: prompt,
         plan,
+        rules: rules ? rulesBlock(rules) : null,
         steps,
         budgetTokens: this.options.historyBudgetTokens ?? (this.options.compact ? COMPACT_HISTORY_BUDGET : DEFAULT_HISTORY_BUDGET),
         minRecent: this.options.compact ? COMPACT_MIN_RECENT : MIN_RECENT_STEPS,
@@ -378,7 +391,7 @@ export class VectorEngine implements AgentEngine {
         taskFirst: Boolean(this.options.compact),
         maxRecent: this.options.compact ? COMPACT_MIN_RECENT : undefined,
         cleanOld: Boolean(this.options.compact),
-        progress: this.options.compact ? countActions(steps, LOOK_ONLY) || undefined : undefined,
+        progress: this.options.compact ? [actions, ruleCounts ? `rule counts: ${ruleCounts}` : ''].filter(Boolean).join('; ') || undefined : undefined,
       });
       notes.length = 0;
 
@@ -502,7 +515,7 @@ export class VectorEngine implements AgentEngine {
         gaveUpAsked = true;
         const progress = countActions(steps, LOOK_ONLY);
         // The goal's numbers already reached (Oct 9: phones gave up with 10 of 10 pages open).
-        const { short, met } = countChecks(prompt, runTally(steps));
+        const { short, met } = countsFor(runTally(steps));
         const reached = met.length && !short.length ? ` The system counted ${met.join('; ')}: the goal's numbers are reached.` : '';
         notes.push(
           `You reported failure, but nothing has blocked you${progress ? ` (DONE SO FAR: ${progress})` : ''}.${reached} If the task can still be done, carry on with the part that is missing. Not sure it is complete? Call task_done with success=true: the system checks the phone and tells you what is missing. Use success=false only for a real blocker (app not installed, sign-in required, an error you cannot get past).`,
@@ -517,14 +530,14 @@ export class VectorEngine implements AgentEngine {
           stopReason: 'done',
           result: done.summary,
           reasonCode: 'AGENT_REPORTED_FAILURE',
-          verification: { status: 'failed', method: 'none', reason: 'The agent reported it could not complete the task', retries: verificationRetries },
+          verification: withRules({ status: 'failed', method: 'none', reason: 'The agent reported it could not complete the task', retries: verificationRetries }),
         };
       }
       if (this.options.verify === false) {
-        return { success: true, stopReason: 'done', result: done.summary, verification: { status: 'unverified', method: 'none', reason: 'Verification is off', retries: 0 } };
+        return { success: true, stopReason: 'done', result: done.summary, verification: withRules({ status: 'unverified', method: 'none', reason: 'Verification is off', retries: 0 }) };
       }
 
-      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine), countActions(steps), runTally(steps));
+      const outcome = await this.verify(prompt, done.summary, verificationRetries, signal, emit, steps.map(summaryLine), countActions(steps), runTally(steps), rules);
       if (outcome.status === 'failed' && verificationRetries < MAX_VERIFICATION_RETRIES) {
         verificationRetries += 1;
         // Oct 9: after "carry on" alone, 2 of 3 Chrome runs gave up with success=false although only the check's wording was at issue.
@@ -534,9 +547,9 @@ export class VectorEngine implements AgentEngine {
         continue;
       }
       if (outcome.status === 'failed') {
-        return { success: false, stopReason: 'done', result: `${done.summary}\n\nSystem check: ${outcome.reason}`, reasonCode: 'VERIFICATION_FAILED', verification: outcome };
+        return { success: false, stopReason: 'done', result: `${done.summary}\n\nSystem check: ${outcome.reason}`, reasonCode: 'VERIFICATION_FAILED', verification: withRules(outcome) };
       }
-      return { success: true, stopReason: 'done', result: done.summary, verification: outcome };
+      return { success: true, stopReason: 'done', result: done.summary, verification: withRules(outcome) };
     }
     return { success: false, stopReason: 'max_calls', result: 'unfinished', reasonCode: 'STEP_LIMIT' };
   }
@@ -781,6 +794,39 @@ export class VectorEngine implements AgentEngine {
     }
   }
 
+  /**
+   * The task's rule list (taskRules), one short call. Shared by every run of the same
+   * prompt (a mission's phones wait on one call). A failed call is not a failed task:
+   * the run goes on without it, and the goal regexes check the counts as before.
+   */
+  private async makeRules(prompt: string, signal: AbortSignal, emit: (message: Record<string, unknown>) => Promise<void>): Promise<TaskRules | null> {
+    try {
+      const { rules } = cachedRules(prompt, async () => {
+        const { text, usage, providerMetadata } = await generateText({
+          model: this.tracked(),
+          providerOptions: USAGE_REPORT_OPTIONS,
+          system: RULES_PROMPT,
+          prompt,
+          // Room for models that reason before answering.
+          maxOutputTokens: 1500,
+          temperature: 0,
+          maxRetries: 2,
+          abortSignal: AbortSignal.any([signal, AbortSignal.timeout(SIDE_CALL_MAX_MS)]),
+        });
+        // Billed to the run that made the call; runs that reuse it pay nothing.
+        await emit({ type: 'finish', finishReason: 'stop', usage: { promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0, ...usageDetails(usage, providerMetadata as never) } });
+        const parsed = parseRules(text, prompt);
+        if (!parsed) Logger.warn(`[VectorEngine] Rule list unreadable, continuing without it: ${text.slice(0, 200)}`);
+        return parsed;
+      });
+      return await rules;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      Logger.warn(`[VectorEngine] Rule list failed, continuing without it: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
+      return null;
+    }
+  }
+
   private async verify(
     goal: string,
     summary: string,
@@ -790,6 +836,7 @@ export class VectorEngine implements AgentEngine {
     steps: string[] = [],
     counts = '',
     tally?: RunTally,
+    rules: TaskRules | null = null,
   ): Promise<VerificationOutcome> {
     const agent = this.options.agent;
     return verifyCompletion(
@@ -799,6 +846,7 @@ export class VectorEngine implements AgentEngine {
         steps,
         counts,
         tally,
+        rules,
         observe: () => agent.observeForCheck(),
         listApps: async () => parseAppList(await agent.launcherAppsText()),
         judge: async (text) => {

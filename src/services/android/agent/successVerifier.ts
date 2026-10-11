@@ -1,4 +1,5 @@
 import type { VerificationOutcome } from './AgentEngine';
+import { rulesCountChecks, rulesForJudge, type TaskRules } from './taskRules';
 
 /**
  * The system's own check of a task the agent reported as done.
@@ -34,6 +35,8 @@ export interface VerifyInput {
   counts?: string;
   /** The same counts as numbers, for the goal's own numbers ("visit 10 sites", "scroll 5 times"). */
   tally?: RunTally;
+  /** The task's rule list (taskRules): its counts replace the goal regexes, and the judge checks each part. */
+  rules?: TaskRules | null;
 }
 
 /** What the run did, counted by code from its steps. */
@@ -186,7 +189,7 @@ export function siteOnlyGoal(goal: string): string | null {
   return match[1].toLowerCase().replace(/^www\./, '');
 }
 
-export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = '', met: string[] = []): string {
+export function judgePrompt(goal: string, summary: string, screen: ScreenState, steps: string[] = [], counts = '', met: string[] = [], rules: TaskRules | null = null): string {
   const shown = steps.slice(-40);
   return [
     'You check whether an Android phone task was really completed. You see the final screen as a list of UI elements' + (shown.length ? ', and the steps the phone actually performed.' : '.'),
@@ -201,6 +204,7 @@ export function judgePrompt(goal: string, summary: string, screen: ScreenState, 
     '"unsure" if neither can tell.',
     '',
     `GOAL: ${goal}`,
+    ...(rules ? rulesForJudge(rules) : []),
     `AGENT SAYS: ${summary}`,
     ...(counts ? [`COUNTED BY THE SYSTEM (exact, for the whole run; use these numbers, do not recount): ${counts}`] : []),
     ...(met.length ? [`THE GOAL'S NUMBERS ARE MET (checked by the system): ${met.join('; ')}. Do not answer "no" over these counts; judge only the rest of the goal.`] : []),
@@ -227,7 +231,8 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
   if (!screen) return { status: 'unverified', method: 'none', reason: 'Could not read the final screen', retries };
 
   // The goal's numbers, counted by code: fewer than asked is not done.
-  const checks = input.tally ? countChecks(input.goal, input.tally) : { short: [], met: [] };
+  // The rule list's counts when there is one (no regex guessing at the wording), else the goal regexes.
+  const checks = input.tally ? (input.rules ? rulesCountChecks(input.rules, input.tally) : countChecks(input.goal, input.tally)) : { short: [], met: [] };
   if (checks.short.length) {
     return { status: 'failed', method: 'rule', reason: `Counted by the system: ${checks.short.join('; ')}. Do the rest, then call task_done again`, retries };
   }
@@ -270,7 +275,7 @@ export async function verifyCompletion(input: VerifyInput, retries = 0): Promise
 
   if (!input.judge) return { status: 'unverified', method: 'none', reason: 'No check applies to this task', retries };
   try {
-    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps, input.counts, checks.met)));
+    const verdict = parseVerdict(await input.judge(judgePrompt(input.goal, input.summary, screen, input.steps, input.counts, checks.met, input.rules ?? null)));
     return {
       status: verdict.verdict === 'yes' ? 'verified' : verdict.verdict === 'no' ? 'failed' : 'unverified',
       method: 'judge',
