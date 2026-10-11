@@ -4,7 +4,7 @@ import { wrongPackageHint } from './playStoreLookup';
 import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
-import type { ActionResult, AutomationAction, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
+import type { ActionResult, AutomationAction, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
@@ -15,7 +15,9 @@ import {
   GRID,
   buildScreenModel,
   buttonChange,
+  eventsLine,
   sameButton,
+  stateWords,
   submitTarget,
   elementAt,
   formatScreen,
@@ -190,6 +192,52 @@ export interface AndroidAgentCallbacks {
  * only http(s) links; Oct 9, 20 of 21 failed open_url calls were a bare address.
  * Anything with its own scheme or with spaces is left as it is.
  */
+const INTENT_ACTIONS: Record<string, string> = {
+  VIEW: 'android.intent.action.VIEW',
+  SENDTO: 'android.intent.action.SENDTO',
+  SEND: 'android.intent.action.SEND',
+  DIAL: 'android.intent.action.DIAL',
+  WEB_SEARCH: 'android.intent.action.WEB_SEARCH',
+};
+const INTENT_EXTRAS: Record<string, string> = {
+  subject: 'android.intent.extra.SUBJECT',
+  text: 'android.intent.extra.TEXT',
+  query: 'query',
+};
+
+/**
+ * open_intent's arguments as the phone's OpenIntent. Short names for the
+ * common actions and extras; "body" goes where each app reads it (sms_body for
+ * texts, EXTRA_TEXT otherwise). Anything that is not a plain intent or settings
+ * action, or that would place a call or delete something, is refused here.
+ */
+export function intentFor(args: Record<string, unknown>): Extract<AutomationAction, { type: 'OpenIntent' }> | { error: string } {
+  const raw = String(args.action ?? '').trim();
+  const action = INTENT_ACTIONS[raw.toUpperCase()] ?? raw;
+  if (!/^android\.(intent\.action|settings)\.[A-Z_]+$/.test(action)) return { error: `Unknown intent action "${raw}". Use VIEW, SENDTO, SEND, DIAL or WEB_SEARCH.` };
+  if (/\.(CALL|DELETE|UNINSTALL_PACKAGE|FACTORY_RESET|MASTER_CLEAR|REBOOT|SHUTDOWN)$/.test(action)) return { error: `${raw} is not allowed through open_intent; do it on screen if the task really asks for it.` };
+  const data = typeof args.data === 'string' && args.data.trim() ? args.data.trim() : undefined;
+  const extras: Record<string, string> = {};
+  const given = args.extras && typeof args.extras === 'object' ? (args.extras as Record<string, unknown>) : {};
+  for (const [key, value] of Object.entries(given)) {
+    if (value === undefined || value === null) continue;
+    const text = String(value);
+    if (key === 'body') {
+      if (data?.startsWith('smsto:') || data?.startsWith('sms:')) extras.sms_body = text;
+      else extras['android.intent.extra.TEXT'] = text;
+    } else extras[INTENT_EXTRAS[key] ?? key] = text;
+  }
+  const packageName = typeof args.packageName === 'string' && args.packageName.trim() ? args.packageName.trim() : undefined;
+  return {
+    type: 'OpenIntent',
+    action,
+    ...(data ? { data } : {}),
+    ...(packageName ? { packageName } : {}),
+    ...(action.endsWith('.SEND') ? { mimeType: 'text/plain' } : {}),
+    ...(Object.keys(extras).length ? { extras } : {}),
+  };
+}
+
 export function withScheme(url: string): string {
   const trimmed = url.trim();
   if (!trimmed || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || /\s/.test(trimmed)) return trimmed;
@@ -267,6 +315,8 @@ export class AndroidAgent extends Agent {
   /** The last toggle tapped (Like, Save…): a second tap on it before moving on would undo it. */
   private lastToggle: { grid: { x: number; y: number }; label: string; moves: number } | null = null;
   private toggleWarned = '';
+  /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
+  private phoneSaw = '';
 
   constructor(
     private gatewayService: AndroidGatewayService,
@@ -878,6 +928,49 @@ export class AndroidAgent extends Agent {
         },
       },
       {
+        name: 'open_intent',
+        description:
+          'Do a common job in one step by Android intent instead of tapping through screens: VIEW a link or app page (market://details?id=PKG for its Play Store page, geo:0,0?q=PLACE for maps), SENDTO mailto:ADDR or smsto:NUMBER to start an email or text (extras subject, body), SEND to share text (extras text; packageName picks the app), DIAL tel:NUMBER, WEB_SEARCH (extras query). The result says which app opened; if nothing handles it, do it through the screens.',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', description: 'VIEW, SENDTO, SEND, DIAL, WEB_SEARCH, or a full android.intent.action.* / android.settings.* name' },
+            data: { type: 'string', description: 'URI, e.g. "mailto:a@b.com", "smsto:+441234", "tel:+441234", "geo:0,0?q=Big Ben", "market://details?id=com.whatsapp"' },
+            packageName: { type: 'string', description: 'Optional app to handle it, e.g. "com.whatsapp"' },
+            extras: {
+              type: 'object',
+              description: 'Optional text extras: subject, body, text, query (other keys are passed as given)',
+              additionalProperties: { type: 'string' },
+            },
+          },
+          required: ['action'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const intent = intentFor(args);
+          if ('error' in intent) return { content: [{ type: 'text', text: intent.error }], isError: true };
+          this.actionHistory = [];
+          return this.runDeviceAction(intent, 'open_intent', args);
+        },
+      },
+      {
+        name: 'open_app_info',
+        description:
+          "Open an app's own info page in Settings (Force stop, Storage and cache, Permissions, Enable for a disabled app). Use for \"force stop X\", \"clear X's cache\", or to enable a disabled app.",
+        parameters: {
+          type: 'object',
+          properties: { packageName: { type: 'string', description: 'e.g. "com.android.chrome"' } },
+          required: ['packageName'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const pkg = String(args.packageName ?? '').trim();
+          if (!/^[a-zA-Z][\w]*(\.[\w]+)+$/.test(pkg)) return { content: [{ type: 'text', text: 'packageName must be a package like com.android.chrome (see list_apps).' }], isError: true };
+          this.actionHistory = [];
+          return this.runDeviceAction({ type: 'OpenIntent', action: 'android.settings.APPLICATION_DETAILS_SETTINGS', data: `package:${pkg}` }, 'open_app_info', args);
+        },
+      },
+      {
         name: 'read_notifications',
         description:
           'Read notifications the phone has received. Use this for one-time codes, delivery alerts, or to check whether a message arrived. Only notifications posted since the Vector app started are visible — it cannot read what was already in the shade.',
@@ -990,7 +1083,12 @@ export class AndroidAgent extends Agent {
       // A model that cannot see images gets no screenshot tool at all.
       // No screenshot tool for a model that cannot see images, or when the
       // account turned screenshots off (off means none at all).
-      tools: options.vision && options.screenshots !== 'off' ? tools : tools.filter((tool) => tool.name !== 'capture_screen'),
+      tools: tools.filter(
+        (tool) =>
+          (tool.name !== 'capture_screen' || (options.vision && options.screenshots !== 'off')) &&
+          // Only phones whose companion can start intents (0.30+) get these; an older build drops the action.
+          ((tool.name !== 'open_intent' && tool.name !== 'open_app_info') || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'intent'))),
+      ),
       // The backup model (when the account set one) takes over if the main one fails.
       llms: ['default', 'fallback'],
     });
@@ -1359,8 +1457,19 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!isError && MOVES_ON.has(action.type)) this.moves += 1;
     const toggle = Boolean(tap && TOGGLE.test(tap.label.trim()));
     const frameAfter = this.frameKey();
-    if (!isError && toggle && tap) this.lastToggle = { grid: tap.grid, label: tap.label.trim(), moves: this.moves };
-    if (!isError && meantToChange && toggle && tap && (keyAfter === keyBefore || sameButton(screenBefore, this.screen, tap.grid, tap.label))) {
+    // Companion 0.30+ reports a button's on/off state: what changed is then known, not guessed.
+    const stateBefore = tap ? stateWords(elementAt(screenBefore, tap.grid.x, tap.grid.y)) : null;
+    const stateAfter = tap ? stateWords(elementAt(this.screen, tap.grid.x, tap.grid.y)) : null;
+    const sameSpot = Boolean(tap && sameButton(screenBefore, this.screen, tap.grid, tap.label));
+    const stateKnown = Boolean(stateBefore && stateAfter && sameSpot);
+    if (!isError && toggle && tap && !(stateKnown && stateBefore === stateAfter)) this.lastToggle = { grid: tap.grid, label: tap.label.trim(), moves: this.moves };
+    if (!isError && meantToChange && toggle && tap && stateKnown && stateBefore === stateAfter) {
+      // The phone says the button is as it was: the tap missed. Not counted, and a retry is not refused.
+      checkNote = `\n\nCHECK: "${tap.label.trim().slice(0, 30)}" is still ${stateAfter} (the phone reports it), so this tap did not register. Tap it once more, or use click_node with its text.`;
+    } else if (!isError && meantToChange && toggle && tap && stateKnown) {
+      summary = `${summary}\nTOGGLED: "${tap.label.trim().slice(0, 30)}"\nSTATE: "${tap.label.trim().slice(0, 30)}" ${stateBefore} → ${stateAfter}`;
+      checkNote = `\n\nNOTE: the phone reports "${tap.label.trim().slice(0, 30)}" is now ${stateAfter}. It is done; do NOT tap it again here (that undoes it). Move on to the next item.`;
+    } else if (!isError && meantToChange && toggle && tap && (keyAfter === keyBefore || sameSpot)) {
       // Like, Save, heart…: many apps change only the icon, never the label, so the
       // list looks the same after a tap that worked. Saying "did NOT change" here
       // made agents tap again and undo it (Oct 10, mission 256: 15 of 15 runs).
@@ -1413,11 +1522,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       ? `\n\nWARNING: ${this.consecutiveFailures} consecutive failures. Try a completely different approach - use global_action BACK, click_node with the visible text, a different element, or open_url to navigate directly.`
       : '';
 
+    const phoneSaw = this.phoneSaw;
+    this.phoneSaw = '';
     const textPart = {
       type: 'text' as const,
       text: isError
         ? `Action failed: ${summary}${stuckHint}`
-        : `Action succeeded: ${summary}${checkNote}${cleared ? `\n\n${cleared.trim()}` : ''}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
+        : `Action succeeded: ${summary}${checkNote}${cleared ? `\n\n${cleared.trim()}` : ''}${phoneSaw ? `\n\n${phoneSaw}` : ''}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
     };
     if (extra.image) {
       return { content: [textPart, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError };
@@ -1524,9 +1635,11 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!tree) return;
     const capture = observation.screenCapture as { width?: number; height?: number } | undefined;
     this.learnFullScreen(tree.root);
-    this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height }, this.fullScreen ?? undefined);
+    this.screen = buildScreenModel(tree.root, { width: capture?.width, height: capture?.height }, this.fullScreen ?? undefined, { windows: tree.windows, activity: tree.activity });
     this.lastUiTree = formatScreen(this.screen);
     this.baseTable = this.lastUiTree;
+    const seen = eventsLine((observation as { events?: UiEvent[] }).events);
+    if (seen) this.phoneSaw = this.phoneSaw ? `${this.phoneSaw}\n${seen}` : seen;
     this.lastForegroundApp = this.detectPackageName(tree.root, tree.packageName || 'unknown');
   }
 

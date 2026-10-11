@@ -1,4 +1,4 @@
-import type { UiNodeSnapshot } from '../AndroidProtocol';
+import type { UiEvent, UiNodeSnapshot, WindowSnapshot } from '../AndroidProtocol';
 
 /**
  * The screen as the agent sees it: one row per thing it can tap or read, with
@@ -38,6 +38,20 @@ export interface ScreenElement {
   box: { left: number; top: number; right: number; bottom: number };
   /** Came from the vision helper, not the accessibility tree. */
   seen?: boolean;
+  /** Companion 0.30+: on/off for anything checkable (switch, checkbox, Like on many apps). */
+  on?: boolean;
+  /** Companion 0.30+: selected (the open tab, a chosen chip; Like on some apps). */
+  selected?: boolean;
+  /** The app's own words for the state ("Liked", "On"). */
+  stateText?: string;
+  expanded?: boolean;
+  /** The text field that has the cursor. */
+  focused?: boolean;
+  password?: boolean;
+  /** Hint, error, slider value, list size, scroll room: shown under the list. */
+  details?: string[];
+  /** Belongs to a window over the app (another app's dialog, a system panel). */
+  window?: string;
 }
 
 export interface ScreenModel {
@@ -51,6 +65,10 @@ export interface ScreenModel {
   adRows?: string[];
   /** An ad is playing: the row of its "Skip ad" button, or '' while it cannot be skipped yet. */
   adPlaying?: string | null;
+  /** Companion 0.30+: what the phone says about its windows (keyboard, PiP, another app's dialog). */
+  windowNotes?: string[];
+  /** Companion 0.30+: the foreground app's activity ("ProfileActivity"). */
+  activity?: string;
 }
 
 /**
@@ -152,11 +170,54 @@ function isPopup(root: UiNodeSnapshot, fullScreen?: ScreenSize): boolean {
   return false;
 }
 
+type NodeStateView = Pick<ScreenElement, 'on' | 'selected' | 'stateText' | 'expanded' | 'focused' | 'password'> & { details: string[] };
+
+/** What a node says about its own state (companion 0.30+); empty for older phones. */
+function stateOf(node: UiNodeSnapshot): NodeStateView {
+  const v: NodeStateView = { details: [] };
+  if (typeof node.checked === 'boolean') v.on = node.checked;
+  if (node.selected) v.selected = true;
+  if (node.stateDescription?.trim()) v.stateText = cutText(wellFormed(node.stateDescription.trim()), 40);
+  if (node.expanded === 'expanded' || node.expanded === 'partial') v.expanded = true;
+  else if (node.expanded === 'collapsed') v.expanded = false;
+  if (node.focused) v.focused = true;
+  if (node.password) v.password = true;
+  if (node.hint?.trim() && node.hint.trim() !== (node.text ?? '').trim()) v.details.push(`hint "${cutText(wellFormed(node.hint.trim()), 40)}"`);
+  if (node.inputKind) v.details.push(`${node.inputKind} field`);
+  if (node.error?.trim()) v.details.push(`ERROR "${cutText(wellFormed(node.error.trim()), 60)}"`);
+  if (node.range) {
+    const r = node.range;
+    const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+    v.details.push(r.type === 'percent' ? `at ${fmt(r.current)}%` : `value ${fmt(r.current)} of ${fmt(r.min)}–${fmt(r.max)}`);
+  }
+  if (node.collection && node.collection !== '-1' && node.collection !== '0') v.details.push(`list of ${node.collection.replace('x', ' rows × ')}${node.collection.includes('x') ? ' columns' : ' items'}`);
+  if (node.scroll) v.details.push(node.scroll === 'none' ? 'cannot scroll (whole list shown)' : `can scroll ${node.scroll}`);
+  return v;
+}
+
+/** A tappable container often has its state on the icon inside it (Instagram's heart): take the first child's. */
+function childState(node: UiNodeSnapshot): NodeStateView | null {
+  for (const child of node.children ?? []) {
+    if (child.clickable || child.editable) continue;
+    const st = stateOf(child);
+    if (st.on !== undefined || st.selected || st.stateText) return st;
+    const deeper = childState(child);
+    if (deeper) return deeper;
+  }
+  return null;
+}
+
 /**
  * @param fullScreen the phone's full screen size, when an earlier window showed
  *   it: a dialog's window is smaller, and grid numbers stay on the whole screen.
  */
-export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?: Partial<ScreenSize>, fullScreen?: ScreenSize): ScreenModel {
+export function buildScreenModel(
+  root: UiNodeSnapshot | undefined,
+  fallbackSize?: Partial<ScreenSize>,
+  fullScreen?: ScreenSize,
+  extras?: { windows?: WindowSnapshot[]; activity?: string },
+): ScreenModel {
+  const covering = (extras?.windows ?? []).filter((w) => w.root && !w.active);
   const popup = root ? isPopup(root, fullScreen) : false;
   const size = popup && fullScreen ? fullScreen : screenSizeOf(root, fallbackSize);
   const elements: ScreenElement[] = [];
@@ -165,6 +226,7 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
   let skipRow: string | null = null;
   let adProgress = false;
   let labelledCount = 0;
+  let windowLabel: string | undefined;
 
   const visit = (node: UiNodeSnapshot) => {
     const control = node.clickable || node.editable;
@@ -189,7 +251,7 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
       const cx = Math.round((b.left + b.right) / 2);
       const cy = Math.round((b.top + b.bottom) / 2);
       if (label) labelledCount += 1;
-      elements.push({
+      const element: ScreenElement = {
         idx: String(elements.length),
         type: shortType(node.className),
         label,
@@ -199,17 +261,48 @@ export function buildScreenModel(root: UiNodeSnapshot | undefined, fallbackSize?
         px: { x: cx, y: cy },
         grid: { x: toGrid(cx, size.width), y: toGrid(cy, size.height) },
         box: { left: toGrid(b.left, size.width), top: toGrid(b.top, size.height), right: toGrid(b.right, size.width), bottom: toGrid(b.bottom, size.height) },
-      });
+      };
+      const own = stateOf(node);
+      const st = own.on === undefined && !own.selected && !own.stateText && control ? childState(node) ?? own : own;
+      if (st.on !== undefined) element.on = st.on;
+      if (st.selected) element.selected = true;
+      if (st.stateText) element.stateText = st.stateText;
+      if (own.expanded !== undefined) element.expanded = own.expanded;
+      if (own.focused) element.focused = true;
+      if (own.password) element.password = true;
+      if (own.details.length) element.details = own.details;
+      if (windowLabel) element.window = windowLabel;
+      elements.push(element);
     }
     for (const child of node.children ?? []) visit(child);
   };
+  // Windows over the app first: they are what a tap lands on.
+  for (const w of covering) {
+    windowLabel = w.packageName || w.type;
+    visit(w.root!);
+  }
+  windowLabel = undefined;
   if (root) visit(root);
   const model: ScreenModel = { size, elements, labelledCount };
   if (popup) model.popup = true;
+  const notes = windowNotes(extras?.windows ?? [], size, covering);
+  if (notes.length) model.windowNotes = notes;
+  if (extras?.activity) model.activity = extras.activity.split('.').pop();
   if (adRows.length) model.adRows = adRows;
   if (skipRow !== null) model.adPlaying = skipRow;
   else if (adProgress) model.adPlaying = '';
   return model;
+}
+
+/** One short line each: keyboard open, picture-in-picture, another app's window in front. */
+function windowNotes(windows: WindowSnapshot[], size: ScreenSize, covering: WindowSnapshot[]): string[] {
+  const notes: string[] = [];
+  const keyboard = windows.find((w) => w.type === 'keyboard' && w.bounds.bottom > w.bounds.top);
+  if (keyboard) notes.push(`keyboard open (covers the screen below y=${toGrid(keyboard.bounds.top, size.height)}; BACK closes it)`);
+  const pip = windows.find((w) => w.pictureInPicture);
+  if (pip) notes.push(`a picture-in-picture video floats at ${toGrid((pip.bounds.left + pip.bounds.right) / 2, size.width)},${toGrid((pip.bounds.top + pip.bounds.bottom) / 2, size.height)}; taps there hit the video`);
+  for (const w of covering) notes.push(`a window from ${w.packageName || w.type}${w.title ? ` ("${cutText(w.title, 30)}")` : ''} is over the app; its rows come first`);
+  return notes;
 }
 
 /** Rows the vision helper found in a screenshot, appended as v1, v2… */
@@ -241,14 +334,59 @@ export function formatScreen(model: ScreenModel): string {
     if (e.tappable) flags += 't';
     if (e.editable) flags += 'e';
     if (e.disabled) flags += 'd';
+    flags += stateFlags(e);
     return `${e.idx}|${e.type}|${e.label}|${flags}|${e.grid.x},${e.grid.y}`;
   });
   return ['idx|type|label|flags|tap_at', ...rows, ...screenMarks(model)].join('\n');
 }
 
+/** Upper-case state letters after t/e/d; legend in STATE FLAGS under the list. */
+function stateFlags(e: ScreenElement): string {
+  let f = '';
+  if (e.on === true) f += 'C';
+  if (e.on === false) f += 'U';
+  if (e.selected) f += 'S';
+  if (e.expanded === true) f += 'X';
+  if (e.expanded === false) f += 'K';
+  if (e.focused) f += 'F';
+  if (e.password) f += 'P';
+  return f;
+}
+
+/** How a row's state reads in words: "on", "off", "selected", or the app's own words. */
+export function stateWords(e: ScreenElement | null | undefined): string | null {
+  if (!e) return null;
+  const parts: string[] = [];
+  if (e.on !== undefined) parts.push(e.on ? 'on' : 'off');
+  if (e.selected) parts.push('selected');
+  if (e.stateText) parts.push(`"${e.stateText}"`);
+  return parts.length ? parts.join(', ') : null;
+}
+
+/** One line for what the phone saw since the last read (companion 0.30+). */
+export function eventsLine(events: UiEvent[] | undefined): string {
+  if (!events?.length) return '';
+  const parts: string[] = [];
+  for (const e of events.slice(-6)) {
+    if (e.kind === 'toast' && e.text) parts.push(`message "${cutText(wellFormed(e.text), 80)}"`);
+    else if (e.kind === 'announcement' && e.text) parts.push(`announced "${cutText(wellFormed(e.text), 80)}"`);
+    else if (e.kind === 'scroll') {
+      const where = e.toIndex !== undefined && e.itemCount ? ` to item ${e.toIndex + 1} of ${e.itemCount}` : '';
+      parts.push(`list scrolled${where}${e.atEnd ? ' (at the END: no more items that way)' : ''}`);
+    } else if (e.kind === 'screen' && e.className) parts.push(`screen ${e.className.split('.').pop()}${e.text ? ` "${cutText(wellFormed(e.text), 40)}"` : ''}`);
+  }
+  return parts.length ? `PHONE SAW: ${parts.join('; ')}` : '';
+}
+
 /** What the phone itself says about this screen, one line each, under the list. */
 export function screenMarks(model: ScreenModel): string[] {
   const marks: string[] = [];
+  const flagged = model.elements.filter((e) => stateFlags(e));
+  if (flagged.length) marks.push('STATE FLAGS: C on/checked, U off/unchecked, S selected, X expanded, K collapsed, F has the cursor, P password field (reported by the phone, not guessed).');
+  const details = model.elements.filter((e) => e.details?.length || e.stateText).slice(0, 10);
+  if (details.length) marks.push(`DETAILS: ${details.map((e) => `row ${e.idx} ${[e.stateText ? `"${e.stateText}"` : '', ...(e.details ?? [])].filter(Boolean).join(', ')}`).join('; ')}`);
+  if (model.windowNotes?.length) marks.push(`WINDOWS: ${model.windowNotes.join('; ')}`);
+  if (model.activity) marks.push(`SCREEN: ${model.activity}`);
   if (model.popup) marks.push('POP-UP: a dialog or pop-up is in front; only its rows are listed. Answer or close it (its button or BACK) to reach the screen behind.');
   if (model.adRows?.length || model.adPlaying != null) {
     let line = model.adRows?.length

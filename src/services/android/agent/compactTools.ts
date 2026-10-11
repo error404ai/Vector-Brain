@@ -38,6 +38,8 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   use_vector_keyboard: 'Vector Keyboard on (true) or off (false). Only if the task asks.',
   read_clipboard: 'Read clipboard text.',
   open_settings: 'Open a Settings screen directly. Prefer over navigating Settings.',
+  open_intent: 'One-step intent instead of tapping: VIEW a link/market://details?id=PKG/geo:0,0?q=PLACE, SENDTO mailto:/smsto: (extras subject, body), SEND text, DIAL tel:, WEB_SEARCH (extras query).',
+  open_app_info: "An app's info page: Force stop, Storage/cache, Permissions, Enable a disabled app.",
   read_notifications: 'Notifications since Vector app started (codes, alerts).',
   wait_for_element: 'Wait until text appears (e.g. "Open" after install starts).',
   wait: 'Wait until screen stops changing, up to durationMillis.',
@@ -51,6 +53,8 @@ const PARAM_HINTS: Record<string, Record<string, string>> = {
   wait_for_element: { timeoutMillis: '250–15000' },
   wait: { durationMillis: 'max 15000' },
   install_app: { packageName: 'e.g. "com.whatsapp"' },
+  open_intent: { action: 'VIEW, SENDTO, SEND, DIAL or WEB_SEARCH', data: 'URI, e.g. "mailto:a@b.com", "tel:+44…", "market://details?id=com.whatsapp"' },
+  open_app_info: { packageName: 'e.g. "com.android.chrome"' },
 };
 
 /**

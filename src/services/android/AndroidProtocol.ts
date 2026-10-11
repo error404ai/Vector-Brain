@@ -82,7 +82,26 @@ export type AutomationAction =
    */
   | { type: 'KeyboardType'; text: string; replace?: boolean }
   /** Makes the Vector Keyboard (or the phone's usual one) the active keyboard. */
-  | { type: 'SetKeyboard'; keyboard: 'VECTOR' | 'DEFAULT' };
+  | { type: 'SetKeyboard'; keyboard: 'VECTOR' | 'DEFAULT' }
+  /**
+   * Starts an activity by intent (companion 0.30+, feature "intent"): compose
+   * mail or SMS, dial, navigate, a Play Store page, an app's info page.
+   */
+  | {
+      type: 'OpenIntent';
+      action: string;
+      data?: string;
+      packageName?: string;
+      className?: string;
+      mimeType?: string;
+      categories?: string[];
+      extras?: Record<string, string>;
+    }
+  /** Phone-side reading options (companion 0.30+, feature "options"). */
+  | { type: 'SetOptions'; includeHidden?: boolean };
+
+/** What a companion build can do beyond the base protocol (DeviceCapabilities.features). */
+export type CompanionFeature = 'node_state' | 'windows' | 'events' | 'intent' | 'options' | 'apps_info';
 
 /**
  * Where the Vector Keyboard stands on a phone: active (it is the current
@@ -109,6 +128,53 @@ export interface UiNodeSnapshot {
   editable: boolean;
   enabled: boolean;
   children: UiNodeSnapshot[];
+  // Companion 0.30+: present only when they say something.
+  /** Checkable nodes only: on or off. */
+  checked?: boolean;
+  selected?: boolean;
+  /** The app's own words for the state: "On", "Liked", "Expanded". */
+  stateDescription?: string;
+  expanded?: 'collapsed' | 'expanded' | 'partial';
+  range?: { type: 'int' | 'float' | 'percent'; min: number; max: number; current: number };
+  hint?: string;
+  password?: boolean;
+  inputKind?: 'number' | 'phone' | 'date' | 'email' | 'uri' | 'multiline';
+  focused?: boolean;
+  /** Directions it can scroll ("down,up"); "none" when scrollable but at both ends. */
+  scroll?: string;
+  longClickable?: boolean;
+  heading?: boolean;
+  paneTitle?: string;
+  error?: string;
+  /** A list or grid: "120" rows or "10x3"; "-1" when the app does not say. */
+  collection?: string;
+  itemIndex?: number;
+}
+
+/** One window on screen (companion 0.30+). root only for windows that cover the app. */
+export interface WindowSnapshot {
+  type: 'app' | 'keyboard' | 'system' | 'accessibility_overlay' | 'split_divider' | 'other';
+  packageName?: string;
+  title?: string;
+  layer: number;
+  bounds: NodeBounds;
+  active?: boolean;
+  focused?: boolean;
+  pictureInPicture?: boolean;
+  root?: UiNodeSnapshot;
+}
+
+/** Something the phone saw between two reads (companion 0.30+). */
+export interface UiEvent {
+  kind: 'toast' | 'scroll' | 'screen' | 'announcement';
+  packageName?: string;
+  text?: string;
+  className?: string;
+  fromIndex?: number;
+  toIndex?: number;
+  itemCount?: number;
+  atEnd?: boolean;
+  millisAgo: number;
 }
 
 export interface UiTreeSnapshot {
@@ -116,6 +182,9 @@ export interface UiTreeSnapshot {
   capturedAtEpochMillis: number;
   root?: UiNodeSnapshot;
   truncated: boolean;
+  windows?: WindowSnapshot[];
+  /** The foreground app's last activity class, when the phone saw it. */
+  activity?: string;
 }
 
 export interface ScreenCaptureSnapshot {
@@ -143,6 +212,8 @@ export type ActionResult =
       summary: string;
       uiTree?: UiTreeSnapshot;
       screenCapture?: ScreenCaptureSnapshot;
+      /** Toasts, scrolls and new screens since the last read (companion 0.30+). */
+      events?: UiEvent[];
     }
   | {
       status: 'FAILURE';
@@ -162,6 +233,8 @@ export interface DeviceCapabilities {
   /** Companion build the phone is running — shows who still needs an update. */
   appVersion?: string;
   vectorKeyboard?: VectorKeyboardState;
+  /** Companion 0.30+: what this build can do beyond the base protocol. */
+  features?: CompanionFeature[];
 }
 
 // WebSocket Message Envelopes

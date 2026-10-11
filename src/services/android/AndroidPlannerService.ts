@@ -1281,6 +1281,14 @@ Use the current visible Android screen and UI state as context. Continue from wh
         ? await this.aiConfigService.resolveConfigById(userId, engineSettings.fallback_config_id).catch(() => null)
         : null;
     const ruleRecoveries: RecoveryKind[] = [];
+    // Companion 0.30+: whether the phone also reads views apps mark "not important"
+    // (many React Native / Flutter buttons). Off unless AGENT_INCLUDE_HIDDEN=1, so it
+    // can be tried on a few phones and switched back without a new build.
+    if (this.gatewayService.hasFeature(hardwareDeviceId, 'options')) {
+      await this.gatewayService
+        .executeAction(hardwareDeviceId, { type: 'SetOptions', includeHidden: process.env.AGENT_INCLUDE_HIDDEN === '1' }, 5000)
+        .catch(() => undefined);
+    }
     const androidAgent = new AndroidAgent(this.gatewayService, hardwareDeviceId, {
       onStepExecuted: (info) => {
         // A device action came back, including waits. Proof the phone is alive.

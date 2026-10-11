@@ -1,7 +1,7 @@
 import { AgentTask } from '@/entities/AgentTask';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
-import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction, DeviceCapabilities, VectorKeyboardState } from './AndroidProtocol';
+import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction, CompanionFeature, DeviceCapabilities, VectorKeyboardState } from './AndroidProtocol';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { Service } from 'typedi';
@@ -295,6 +295,17 @@ export class AndroidGatewayService {
     const state = caps?.vectorKeyboard;
     if (state === 'active' || state === 'enabled' || state === 'off') this.keyboards.set(deviceId, state);
     else if (registering) this.keyboards.delete(deviceId);
+    // What the companion build can do (0.30+). Never send an action a build cannot parse:
+    // an unknown action type is dropped on the phone and the call only times out.
+    if (Array.isArray(caps?.features)) this.features.set(deviceId, new Set(caps.features));
+    else if (registering) this.features.delete(deviceId);
+  }
+
+  private features = new Map<string, Set<string>>();
+
+  /** True when the phone's companion reported this feature (see DeviceCapabilities.features). */
+  hasFeature(deviceId: string, feature: CompanionFeature): boolean {
+    return this.features.get(deviceId)?.has(feature) ?? false;
   }
 
   async executeAction(
