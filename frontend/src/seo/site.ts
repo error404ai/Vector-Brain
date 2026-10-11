@@ -103,6 +103,49 @@ export const PUBLIC_PAGES: PublicPage[] = [
     kind: 'article',
   },
   {
+    path: '/android-automation-without-root',
+    title: 'Android Automation Without Root or ADB | FLEET',
+    description:
+      'Automate real Android phones without rooting them, USB debugging or a computer nearby: one app with the accessibility permission, paired with a code, over Wi-Fi or mobile data.',
+    label: 'Automation without root',
+    priority: 0.8,
+    changefreq: 'monthly',
+    kind: 'product',
+  },
+  {
+    path: '/use-cases/install-apps-on-many-phones',
+    title: 'Install an App on Many Android Phones at Once | FLEET',
+    description:
+      'One instruction installs a Play Store app on up to 50 Android phones per mission, and each phone checks the app is really installed. Limits included.',
+    label: 'Install apps on many phones',
+    parents: [{ name: 'Use cases', path: '/use-cases/mobile-app-testing' }],
+    priority: 0.7,
+    changefreq: 'monthly',
+    kind: 'product',
+  },
+  {
+    path: '/use-cases/geo-testing',
+    title: 'Geo Testing on Real Android Phones by Country | FLEET',
+    description:
+      'Check prices, language, store listings and consent banners as other countries see them, on real Android phones behind your own proxies, with each phone’s network verified.',
+    label: 'Geo testing',
+    parents: [{ name: 'Use cases', path: '/use-cases/mobile-app-testing' }],
+    priority: 0.7,
+    changefreq: 'monthly',
+    kind: 'product',
+  },
+  {
+    path: '/compare/cloud-device-farms',
+    title: 'Own Android Phones vs Cloud Device Farms | FLEET',
+    description:
+      'When renting devices from a cloud device farm fits better, and when running plain-language tasks on phones you own does. A factual comparison.',
+    label: 'Own phones vs device farms',
+    parents: [{ name: 'Compare', path: '/compare/appium' }],
+    priority: 0.6,
+    changefreq: 'monthly',
+    kind: 'article',
+  },
+  {
     path: '/docs',
     title: 'FLEET Docs — Pair Phones, Run Missions, Fix Problems',
     description:
@@ -162,13 +205,17 @@ export const FOOTER_GROUPS: { title: string; links: Crumb[] }[] = [
       { name: 'How it works', path: '/how-it-works' },
       { name: 'Android fleet automation', path: '/android-fleet-automation' },
       { name: 'Phone farm automation', path: '/phone-farm-automation' },
+      { name: 'Automation without root', path: '/android-automation-without-root' },
     ],
   },
   {
     title: 'Use cases',
     links: [
       { name: 'Mobile app testing', path: '/use-cases/mobile-app-testing' },
+      { name: 'Install apps on many phones', path: '/use-cases/install-apps-on-many-phones' },
+      { name: 'Geo testing', path: '/use-cases/geo-testing' },
       { name: 'FLEET vs Appium', path: '/compare/appium' },
+      { name: 'Own phones vs device farms', path: '/compare/cloud-device-farms' },
     ],
   },
   {

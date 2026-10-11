@@ -20,6 +20,10 @@ Key facts:
 - [Phone farm automation](https://app.vectoragent.in/phone-farm-automation): running your own phone farm, network checks and proxy lanes
 - [AI mobile app testing](https://app.vectoragent.in/use-cases/mobile-app-testing): the same check on every Android model
 - [FLEET vs Appium](https://app.vectoragent.in/compare/appium): plain-language AI agent vs test scripts
+- [Android automation without root or ADB](https://app.vectoragent.in/android-automation-without-root): how the Vector app works through accessibility, and what that cannot do
+- [Install an app on many phones](https://app.vectoragent.in/use-cases/install-apps-on-many-phones): Play Store installs across up to 50 phones per mission, each checked
+- [Geo testing](https://app.vectoragent.in/use-cases/geo-testing): seeing apps and sites as other countries do, with each phone's network verified
+- [Own phones vs cloud device farms](https://app.vectoragent.in/compare/cloud-device-farms): when renting devices fits better and when owning them does
 - [Full documentation as plain text](https://app.vectoragent.in/llms-full.txt): the complete docs in one Markdown file
 
 ## Optional

@@ -12,6 +12,10 @@ import { StaticRouter } from 'react-router-dom';
 import DocsPage from './pages/DocsPage';
 import HomePage from './pages/HomePage';
 import CompareAppiumPage from './pages/site/CompareAppiumPage';
+import CompareDeviceFarmsPage from './pages/site/CompareDeviceFarmsPage';
+import GeoTestingPage from './pages/site/GeoTestingPage';
+import InstallAppsPage from './pages/site/InstallAppsPage';
+import NoRootPage from './pages/site/NoRootPage';
 import FleetAutomationPage from './pages/site/FleetAutomationPage';
 import HowItWorksPage from './pages/site/HowItWorksPage';
 import { ContactPage, PrivacyPage, TermsPage } from './pages/site/LegalPages';
@@ -32,6 +36,10 @@ const PAGES: Record<string, ComponentType> = {
   '/phone-farm-automation': PhoneFarmPage,
   '/use-cases/mobile-app-testing': MobileTestingPage,
   '/compare/appium': CompareAppiumPage,
+  '/android-automation-without-root': NoRootPage,
+  '/use-cases/install-apps-on-many-phones': InstallAppsPage,
+  '/use-cases/geo-testing': GeoTestingPage,
+  '/compare/cloud-device-farms': CompareDeviceFarmsPage,
   '/contact': ContactPage,
   '/privacy': PrivacyPage,
   '/terms': TermsPage,
