@@ -1,10 +1,11 @@
 import { useGetFleetStateQuery } from '@/RTKService/androidService/androidService';
-import { useGetTestSetQuery, useStartTestSetMutation, type TestSetRun, type TestSetTaskResult } from '@/RTKService/diagnosticsService/diagnosticsService';
+import { useGetTestSetQuery, useStartTestSetMutation, useStopTestSetMutation, type TestSetRun, type TestSetTaskResult } from '@/RTKService/diagnosticsService/diagnosticsService';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
+import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import { Box, Button, Card, Chip, Collapse, IconButton, LinearProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
 import { alpha, keyframes } from '@mui/material/styles';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 import toast from 'react-hot-toast';
 
 const MAX_PHONES = 10;
@@ -124,6 +125,16 @@ function RunRow({ run, previous, open, onToggle }: { run: TestSetRun; previous?:
   const before = previous ? rate(previous.passed, previous.finished) : null;
   const delta = pass !== null && before !== null ? pass - before : null;
   const done = run.finished >= run.total;
+  const [stopRun, { isLoading: stopping }] = useStopTestSetMutation();
+  const handleStop = async (e: MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await stopRun(run.run).unwrap();
+      toast.success(res.data.cancelled ? `Stopped: ${res.data.cancelled} task${res.data.cancelled === 1 ? '' : 's'} cancelled` : 'Nothing left to stop');
+    } catch (error) {
+      toast.error((error as { data?: { message?: string } })?.data?.message ?? 'Could not stop the run');
+    }
+  };
   const drops = previous ? run.tasks.filter((t) => dropped(t, previous.tasks.find((p) => p.key === t.key))).length : 0;
   return (
     <Box sx={(t) => ({ border: `1px solid ${t.palette.divider}`, borderRadius: 2, animation: `${rise} 260ms ease`, bgcolor: open ? alpha(t.palette.primary.main, 0.03) : 'transparent' })}>
@@ -151,6 +162,11 @@ function RunRow({ run, previous, open, onToggle }: { run: TestSetRun; previous?:
           {!done ? <LinearProgress variant="determinate" value={(run.finished / Math.max(1, run.total)) * 100} sx={{ mt: 0.5, borderRadius: 1, height: 4 }} /> : null}
         </Box>
         {drops ? <Chip size="small" color="error" variant="outlined" label={`${drops} worse`} /> : null}
+        {!done ? (
+          <Button size="small" color="error" variant="outlined" startIcon={<StopRoundedIcon />} onClick={handleStop} disabled={stopping} sx={{ borderRadius: 2, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Stop
+          </Button>
+        ) : null}
         <IconButton size="small" aria-label={open ? 'Hide tasks' : 'Show tasks'} sx={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 200ms ease' }}>
           <KeyboardArrowDownRoundedIcon fontSize="small" />
         </IconButton>

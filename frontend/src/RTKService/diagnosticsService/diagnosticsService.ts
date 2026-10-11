@@ -228,6 +228,10 @@ export const diagnosticsService = baseApi.injectEndpoints({
       query: (body) => ({ url: '/diagnostics/testset/run', method: 'POST', body }),
       invalidatesTags: ['MISSIONS' as never],
     }),
+    stopTestSet: builder.mutation<{ data: { cancelled: number } }, string>({
+      query: (run) => ({ url: '/diagnostics/testset/stop', method: 'POST', body: { run } }),
+      invalidatesTags: ['MISSIONS' as never],
+    }),
     getTestLab: builder.query<{ data: TestLabOverview }, void>({
       query: () => ({ url: '/diagnostics/testlab', method: 'GET' }),
       providesTags: ['TESTLAB' as never],
@@ -268,6 +272,7 @@ export const {
   useCheckBilledCostMutation,
   useGetTestSetQuery,
   useStartTestSetMutation,
+  useStopTestSetMutation,
   useGetTestLabQuery,
   useGetTestLabNightQuery,
   useGetTestLabFreeModelsQuery,

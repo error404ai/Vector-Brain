@@ -83,6 +83,13 @@ export class DiagnosticsController {
     return { data: await this.testSet.start(user.userId, Array.isArray(body?.device_ids) ? body.device_ids : [], Array.isArray(body?.keys) ? body.keys.map(String) : undefined) };
   }
 
+  /** Stop a test-set run that is still going. */
+  @Post('/testset/stop')
+  async stopTestSet(@Body() body: { run?: string }, @CurrentUser({ required: true }) user: AuthUser) {
+    assertOwner(user, 'Run diagnostics');
+    return { data: await this.testSet.stop(user.userId, String(body?.run ?? '')) };
+  }
+
   /** What browsers reported about themselves: unclean exits, stuck loaders, JS/render errors. */
   @Get('/client-reports')
   async listClientReports(@QueryParam('days') days: number, @CurrentUser({ required: true }) user: AuthUser) {

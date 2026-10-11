@@ -13,6 +13,7 @@ describe('Test Lab', () => {
 
   it('settings: bad models, phones and numbers are cleaned', () => {
     const s = normaliseSettings({ models: ['ok/model:free', 'not a model', 'ok/model:free'], device_ids: [3, '4', -1, 'x'], hour: 99, runs_per_night: 0, core: [{ prompt: '  open  youtube ' }, { prompt: '' }] });
+    expect(normaliseSettings({ core: [{ prompt: 'Open the YouTube app.' }, { prompt: 'my own task' }] }).core).toEqual([{ key: 'core-2', prompt: 'my own task' }]);
     expect(s).toMatchObject({ enabled: false, models: ['ok/model:free'], device_ids: [3, 4], hour: 23, runs_per_night: 1, core: [{ key: 'core-1', prompt: 'open youtube' }] });
   });
 
@@ -28,6 +29,14 @@ describe('Test Lab', () => {
     // Tasks run last night wait until the others have had a turn.
     expect(jobs.some((j) => j.kind === 'open')).toBe(false);
     expect(new Set(jobs.map((j) => j.id)).size).toBe(20);
+  });
+
+  it('more core tasks than the budget: only as many as fit, least recently run first', () => {
+    const core = Array.from({ length: 30 }, (_, i) => ({ key: `core-${i + 1}`, prompt: `my task ${i + 1}` }));
+    const jobs = planNight(settings({ core, runs_per_night: 10 }), TASK_BANK, new Map([['core-1', 5]]), seeded(3));
+    expect(jobs).toHaveLength(10);
+    expect(jobs.every((j) => j.kind === 'core')).toBe(true);
+    expect(jobs.some((j) => j.key === 'core-1')).toBe(false);
   });
 
   it('one model: one job per task; skipped kinds stay out', () => {

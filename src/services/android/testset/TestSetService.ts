@@ -44,6 +44,15 @@ export class TestSetService {
     return { run, missions: chosen.length };
   }
 
+  /** Stops a test-set run: every mission of it still running or paused is cancelled (finished runs keep their results). */
+  async stop(userId: number, run: string): Promise<{ cancelled: number }> {
+    const key = String(run ?? '').replace(/[^\d]/g, '');
+    if (!key) throw new AppError('Which run?', 400);
+    const missions = await this.missionRepo.find({ where: { user_id: userId, source: `testset:${key}`, status: In(['RUNNING', 'PAUSED']) }, select: { id: true } });
+    for (const m of missions) await this.missionService.cancel(m.id, userId).catch(() => undefined);
+    return { cancelled: missions.length };
+  }
+
   async runs(userId: number): Promise<TestRunResult[]> {
     const missions = await this.missionRepo.find({ where: { user_id: userId, source: Like('testset:%') }, order: { id: 'DESC' }, take: RUNS_SHOWN * TEST_SET.length });
     if (!missions.length) return [];

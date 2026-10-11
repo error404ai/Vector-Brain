@@ -1,5 +1,5 @@
 import { failureKind, type FailureKind } from '../failureKind';
-import type { BankKind, BankTask } from './taskBank';
+import { TASK_BANK, type BankKind, type BankTask } from './taskBank';
 
 /**
  * Test Lab, the pure part: settings, which jobs a night runs, and how their
@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS: TestLabSettings = {
   skip_kinds: [],
 };
 
+const BANK_PROMPTS = new Set(TASK_BANK.map((t) => t.prompt.replace(/\s+/g, ' ').trim().toLowerCase()));
 const MODEL_ID = /^[\w.-]+\/[\w.:-]+$/;
 const KINDS: BankKind[] = ['open', 'navigate', 'settings', 'read', 'web', 'search', 'media', 'count', 'social', 'install', 'input', 'form', 'multi'];
 const int = (v: unknown, min: number, max: number, fallback: number) => {
@@ -65,7 +66,8 @@ export function normaliseSettings(raw: unknown): TestLabSettings {
       const key = String(item.key ?? '').trim().replace(/[^\w-]/g, '').slice(0, 40) || `core-${i + 1}`;
       return { key: key.startsWith('core-') ? key : `core-${key}`, prompt };
     })
-    .filter((c) => c.prompt)
+    // A bank task pasted in as a core task is already in the bank: it would only run twice as often.
+    .filter((c) => c.prompt && !BANK_PROMPTS.has(c.prompt.toLowerCase()))
     .slice(0, 30);
   return {
     enabled: r.enabled === true,
@@ -139,7 +141,9 @@ export function planNight(settings: TestLabSettings, bank: readonly BankTask[], 
   if (!models.length) return [];
   const perTask = models.length >= 2 ? 2 : 1;
   const budget = Math.max(1, Math.floor(settings.runs_per_night / perTask));
-  const chosen: { key: string; kind: BankKind | 'core'; prompt: string; needs?: string[] }[] = settings.core.map((c) => ({ key: c.key, kind: 'core' as const, prompt: c.prompt }));
+  // Core tasks first, but never more than the night's budget: the least recently run ones go first.
+  const core = [...settings.core].sort((a, b) => (lastRun.get(a.key) ?? -1) - (lastRun.get(b.key) ?? -1)).slice(0, budget);
+  const chosen: { key: string; kind: BankKind | 'core'; prompt: string; needs?: string[] }[] = core.map((c) => ({ key: c.key, kind: 'core' as const, prompt: c.prompt }));
 
   const pool = bank.filter((t) => !settings.skip_kinds.includes(t.kind)).map((t) => ({ t, age: lastRun.get(t.key) ?? -1, r: random() }));
   const byKind = new Map<BankKind, typeof pool>();
@@ -157,7 +161,7 @@ export function planNight(settings: TestLabSettings, bank: readonly BankTask[], 
   }
 
   const jobs: LabJob[] = [];
-  chosen.slice(0, Math.max(budget, settings.core.length)).forEach((task, i) => {
+  chosen.slice(0, budget).forEach((task, i) => {
     const first: LabJob = { id: jobs.length + 1, key: task.key, kind: task.kind, prompt: task.prompt, model: models[i % models.length], status: 'queued', ...(task.needs ? { needs: task.needs } : {}) };
     jobs.push(first);
     if (perTask === 2) {
