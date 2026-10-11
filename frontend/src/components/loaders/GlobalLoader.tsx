@@ -1,9 +1,15 @@
 import { loaderVisible } from '@/_helpers/clientDiagnostics';
-import { Button, Center, Loader, Stack, Text } from '@/components/mui/core';
 import { useEffect, useState } from 'react';
 
 const SLOW_AFTER_MS = 15_000;
 
+const KEYFRAMES = `@keyframes vb-loader-dot{0%,80%,100%{transform:scale(.6);opacity:.35}40%{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.vb-loader-dot{animation:none!important;opacity:.7}}`;
+
+/**
+ * Full-screen loader for a cold load. Plain CSS, no MUI: it shows on every
+ * route, public pages included, and must not pull the MUI bundle in with it.
+ */
 export function GlobalLoader() {
   const [slow, setSlow] = useState(false);
 
@@ -19,28 +25,36 @@ export function GlobalLoader() {
   }, []);
 
   return (
-    <Center
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: '#f8fafc',
-        zIndex: 9999,
-      }}
+    <div
+      role="status"
+      aria-label="Loading"
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}
     >
-      <Stack align="center" gap="md">
-        <Loader size="lg" color="vector" type="dots" />
+      <style>{KEYFRAMES}</style>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, fontFamily: '"Inter", system-ui, sans-serif' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="vb-loader-dot"
+              style={{ width: 12, height: 12, borderRadius: '50%', background: '#2563eb', animation: `vb-loader-dot 1.2s ${i * 0.16}s infinite ease-in-out` }}
+            />
+          ))}
+        </div>
         {slow ? (
           <>
-            <Text size="sm" c="dimmed">
-              Taking longer than usual. This has been reported.
-            </Text>
-            <Button size="xs" variant="light" onClick={() => window.location.reload()}>
+            <p style={{ margin: 0, fontSize: 14, color: '#6b7280' }}>Taking longer than usual. This has been reported.</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{ padding: '6px 14px', border: 0, borderRadius: 8, background: 'rgba(37,99,235,.1)', color: '#1d4ed8', font: '700 13px "Inter", system-ui, sans-serif', cursor: 'pointer' }}
+            >
               Reload
-            </Button>
+            </button>
           </>
         ) : null}
-      </Stack>
-    </Center>
+      </div>
+    </div>
   );
 }
 

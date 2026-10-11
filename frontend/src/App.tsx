@@ -1,16 +1,29 @@
-import ErrorModal from '@/components/ui/ErrorModal';
 import { store, useAppSelector } from '@/store';
 import { Toaster } from 'react-hot-toast';
-import { useEffect, type ComponentType, type ReactNode } from 'react';
+import { lazy as lazyComponent, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
 import { createBrowserRouter, isRouteErrorResponse, Navigate, Outlet, RouterProvider, useMatches, useRouteError } from 'react-router-dom';
 import { report } from './_helpers/clientDiagnostics';
-import { AuthLayout } from './components/layout/AuthLayout';
-import { GuestLayout } from './components/layout/GuestLayout';
 import GlobalLoader from './components/loaders/GlobalLoader';
 import useAuthRedirect from './hooks/useAuthRedirect';
 import { canManageLandingShots } from './_helpers/landingAccess';
 import { isOwner } from './_helpers/ownerAccess';
-import { loadPage, pages, prefetchAppPages } from './pages/lazyPages';
+import { loadPage, pages } from './pages/lazyPages';
+
+// MUI stays out of the shared bundle: the app shells and the error modal bring
+// it with them (see components/layout/AppShells.tsx).
+const ErrorModalWithTheme = lazyComponent(() => import('./components/ui/ErrorModalWithTheme'));
+const shells = () => import('./components/layout/AppShells');
+
+/** The error modal's code is fetched the first time there is an error to show. */
+function ErrorModalGate() {
+  const isError = useAppSelector((state) => state.auth.error.isError);
+  if (!isError) return null;
+  return (
+    <Suspense fallback={null}>
+      <ErrorModalWithTheme />
+    </Suspense>
+  );
+}
 
 function RootShell() {
   // The not-found page is for everyone: no bounce to /login or /dashboard.
@@ -21,7 +34,7 @@ function RootShell() {
     <>
       {loading ? <GlobalLoader /> : null}
       <Outlet />
-      <ErrorModal />
+      <ErrorModalGate />
       <Toaster
         position="top-right"
         toastOptions={{
@@ -56,25 +69,6 @@ function RootError() {
         </button>
       </div>
     </div>
-  );
-}
-
-function GuestShell() {
-  return (
-    <GuestLayout>
-      <Outlet />
-    </GuestLayout>
-  );
-}
-
-function ProtectedShell() {
-  // Signed in: fetch the other app pages in the background so moving between
-  // them is instant, without making the first page wait for them.
-  useEffect(() => prefetchAppPages(), []);
-  return (
-    <AuthLayout>
-      <Outlet />
-    </AuthLayout>
   );
 }
 
@@ -139,14 +133,14 @@ export const router = createBrowserRouter([
       { path: '/privacy', lazy: lazy(pages.privacy) },
       { path: '/terms', lazy: lazy(pages.terms) },
       {
-        Component: GuestShell,
+        lazy: async () => ({ Component: (await shells()).GuestShell }),
         children: [
           { path: '/login', lazy: lazy(pages.login) },
           { path: '/signup', lazy: lazy(pages.signup) },
         ],
       },
       {
-        Component: ProtectedShell,
+        lazy: async () => ({ Component: (await shells()).ProtectedShell }),
         children: [
           { path: '/dashboard', lazy: lazy(pages.dashboard) },
           { path: '/android-agent', lazy: lazy(pages.androidAgent) },

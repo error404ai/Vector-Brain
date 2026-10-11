@@ -26,12 +26,18 @@ const fileFor = (p) => (p === '/' ? 'index.html' : `${p.slice(1).replace(/\//g, 
 fs.rmSync(preDir, { recursive: true, force: true });
 fs.mkdirSync(preDir, { recursive: true });
 
+// The headline font (Archivo, Latin, with the width axis the condensed headings
+// use) is the largest file a public page loads and the headline is usually the
+// largest paint: preload it so it starts with the HTML, not after the CSS.
+const fontFile = fs.readdirSync(path.join(out, 'assets')).find((f) => /^archivo-latin-wdth-normal-.*\.woff2$/.test(f));
+const fontPreload = fontFile ? `<link rel="preload" href="/assets/${fontFile}" as="font" type="font/woff2" crossorigin>\n` : '';
+
 const pages = {};
 for (const p of renderedPaths) {
   const { html, head } = render(p);
   if (!html.includes('<h1')) throw new Error(`Prerendered ${p} has no <h1>`);
   const doc = shell
-    .replace(SEO_BLOCK, head)
+    .replace(SEO_BLOCK, fontPreload + head)
     .replace(APP_BLOCK, '')
     .replace('<div id="root">', `<div id="root" data-prerendered="${p}">${html}`);
   const file = p === NOT_FOUND ? '404.html' : fileFor(p);

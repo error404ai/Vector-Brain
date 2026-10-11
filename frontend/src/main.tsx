@@ -5,7 +5,6 @@ import { Provider } from 'react-redux';
 import App, { router } from './App';
 import authManager from './_helpers/authManager';
 import { registerAuthProbe, startClientDiagnostics } from './_helpers/clientDiagnostics';
-import { MUIProvider } from './components/providers/MUIProvider';
 import './index.css';
 import { store } from './store/store';
 
@@ -48,9 +47,7 @@ void whenRouterReady().then(() => createRoot(container).render(
   <StrictMode>
     <HelmetProvider>
       <Provider store={store}>
-        <MUIProvider>
-          <App />
-        </MUIProvider>
+        <App />
       </Provider>
     </HelmetProvider>
   </StrictMode>
