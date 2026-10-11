@@ -28,6 +28,7 @@ import {
   withSeenElements,
   type ScreenElement,
   type ScreenModel,
+  cutText,
 } from './screenModel';
 
 /** Elements a vision model read off a screenshot, positions on the 0–1000 grid. */
@@ -206,6 +207,42 @@ export function announcedToggle(events: UiEvent[]): { on: boolean; text: string 
   return null;
 }
 
+/** The text in the field that has the cursor (else the only editable field); null when none can be read. */
+export function focusedFieldText(screen: { elements: { editable: boolean; focused?: boolean; password?: boolean; label: string }[] } | null): string | null {
+  if (!screen) return null;
+  const fields = screen.elements.filter((e) => e.editable && !e.password);
+  const field = fields.find((e) => e.focused) ?? (fields.length === 1 ? fields[0] : undefined);
+  if (!field) return null;
+  return field.label.split(' · ')[0].replace(/…$/, '').trim();
+}
+
+/** The field shows what was typed (labels are cut at 60 characters; spacing and case aside). */
+export function sameTyped(shown: string, typed: string): boolean {
+  const a = shown.replace(/\s+/g, ' ').trim().toLowerCase();
+  const b = typed.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!a) return !b;
+  // Formatting the field adds ("98765 43210", "+44 (0)…") is not a different value.
+  const bare = (t: string) => t.replace(/[\s()+\-.]/g, '');
+  return a === b || bare(a) === bare(b) || (a.length >= 50 && b.startsWith(a));
+}
+
+/** Messages forms show next to a field ("This blog address is invalid", "Already taken"). */
+const FIELD_MESSAGE = /\b(invalid|not (?:supported|available|valid|allowed)|already (?:taken|in use|exists|registered)|is required|required field|too (?:short|long)|must (?:be|contain|have|include)|try another|unavailable|doesn't match|does not match|incorrect)\b/i;
+
+/** Field messages on the new screen that were not on the old one. */
+export function newFieldMessages(before: { elements: { label: string }[] } | null, after: { elements: { label: string; tappable: boolean }[] } | null): string[] {
+  if (!after) return [];
+  const old = new Set((before?.elements ?? []).map((e) => e.label));
+  return after.elements
+    .filter((e) => !e.tappable && e.label.length <= 160 && FIELD_MESSAGE.test(e.label) && !old.has(e.label))
+    .map((e) => e.label)
+    .slice(0, 2);
+}
+
+/** Playback controls: an accessibility click works while a player hides its controls; a tap only shows them. */
+// Bare "Next" is a wizard button, not a player: only Next/Previous with what they move to.
+const MEDIA_CONTROL = /^(?:(?:pause|play|resume)(?: (?:video|song|track|music|episode))?|(?:next|previous) (?:video|song|track|episode)|skip ads?|skip (?:forward|back)(?:ward)?|(?:un)?mute(?: video)?)$/i;
+
 /** The task itself asks for an install (any language the user writes in, roughly). */
 export function asksToInstall(task?: string): boolean {
   return /\b(install|download|update|re-?install|get\s+the\s+app|daal(?:o|do|na)?|dalo|laga(?:o|do|na)?)\b|इंस्टॉल|डाउनलोड/i.test(task ?? '');
@@ -341,6 +378,8 @@ export class AndroidAgent extends Agent {
   /** The last toggle tapped (Like, Save…): a second tap on it before moving on would undo it. */
   private lastToggle: { grid: { x: number; y: number }; label: string; moves: number } | null = null;
   private toggleWarned = '';
+  /** Taps per spot (25-unit grid cells) in this run, for "you keep tapping here". */
+  private spotTaps = new Map<string, number>();
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
   /** The events that came with the latest read (toasts, announcements…). */
@@ -558,7 +597,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'type_text',
         description:
-          'Type text into a focused input field. Always tap the input field first. This only puts the text in the field; it does not submit it. To submit (search, send, go), call press_key with ENTER next — on Android 11+ that fires the keyboard\'s own Search/Go/Done action. If press_key is refused (older Android or the field ignores it), tap the Search, Go, Send or Done button on screen. For a web or YouTube search, opening the results URL with open_url is a quicker shortcut (e.g. https://www.google.com/search?q=... or https://www.youtube.com/results?search_query=...). If the field refuses the text (one-time code boxes, PIN pads), this retries through the Vector Keyboard by itself — do not fall back to tapping keyboard keys.',
+          'Type text into a focused input field. Always tap the input field first. It REPLACES everything in the field with this text (to add to what is there, type the whole new value). The result says what the field shows afterwards. This only puts the text in the field; it does not submit it. To submit (search, send, go), call press_key with ENTER next — on Android 11+ that fires the keyboard\'s own Search/Go/Done action. If press_key is refused (older Android or the field ignores it), tap the Search, Go, Send or Done button on screen. For a web or YouTube search, opening the results URL with open_url is a quicker shortcut (e.g. https://www.google.com/search?q=... or https://www.youtube.com/results?search_query=...). If the field refuses the text (one-time code boxes, PIN pads), this retries through the Vector Keyboard by itself — do not fall back to tapping keyboard keys.',
         parameters: {
           type: 'object',
           properties: {
@@ -590,7 +629,8 @@ export class AndroidAgent extends Agent {
             args,
           );
           if (!result.isError) this.lastTypedText = String(args.text || '');
-          return idx ? this.withNote(result, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : result;
+          const checked = result.isError ? result : await this.checkTyped(String(args.text || ''), result);
+          return idx ? this.withNote(checked, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : checked;
         },
       },
       {
@@ -1357,6 +1397,37 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * result is set only when the keyboard typed the text; note explains what
    * happened otherwise, so the model does not try paste or key taps blindly.
    */
+  /**
+   * What the field shows after typing. Web forms run their own scripts and the
+   * keyboard can slip a suggestion in: Blogger's address box read "iderlustjourneys742 by"
+   * after typing "wanderlustjourneys742" (Oct 12, 17 tries). When it differs, the field is
+   * cleared and the text put in another way (the Vector Keyboard, else the clipboard),
+   * and the result says what the field shows now.
+   */
+  private async checkTyped(typed: string, result: ToolResult): Promise<ToolResult> {
+    const shown = () => focusedFieldText(this.screen);
+    const first = shown();
+    if (first === null || sameTyped(first, typed)) return result;
+    let how = '';
+    const viaKeyboard = await this.typeWithVectorKeyboard(typed);
+    if (viaKeyboard.result) how = 'with the Vector Keyboard';
+    else {
+      const clip = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'SetClipboard', text: typed });
+      if (clip.status === 'SUCCESS') {
+        await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'PressKey', key: 'CLEAR' });
+        const pasted = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Paste' });
+        if (pasted.status === 'SUCCESS') how = 'by pasting it';
+      }
+    }
+    this.absorb(await this.observe());
+    const now = shown();
+    const fixed = now !== null && sameTyped(now, typed);
+    const note = fixed
+      ? `\n\nTYPED CHECK: the field first showed "${cutText(first, 60)}" (not what was typed), so it was cleared and the text put in ${how}. It now shows "${cutText(now ?? '', 60)}".`
+      : `\n\nTYPED CHECK: the field shows "${cutText(now ?? first, 60)}", not "${cutText(typed, 60)}"${how ? ` (retried ${how})` : ''}. Do not type pieces to patch it: press_key CLEAR, then type the whole value once.`;
+    return this.withNote(result, `${note.trim()}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`);
+  }
+
   private async typeWithVectorKeyboard(text: string): Promise<{ result?: ActionResult; note: string }> {
     const state = this.gatewayService.vectorKeyboard?.(this.hardwareDeviceId) ?? null;
     if (!state) return { note: '' };
@@ -1583,6 +1654,10 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (tap && !isError && meantToChange) {
       const change = buttonChange(screenBefore, this.screen, tap.grid, tap.label);
       if (change) summary = `${summary}\nCHANGED: "${change.from}" → "${change.to}"`;
+    }
+    // A form's own message next to a field ("This blog address is invalid or not supported").
+    if (!isError && ['Tap', 'ClickNode', 'SetText', 'PressKey', 'KeyboardType', 'Paste'].includes(action.type)) {
+      for (const message of newFieldMessages(screenBefore, this.screen)) summary = `${summary}\nFIELD MESSAGE: "${cutText(message, 140)}"`;
     }
 
     const cleared = isError ? '' : await this.clearObstacles();
@@ -1876,7 +1951,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const actionKey = `tap_${grid.x}_${grid.y}`;
     this.actionHistory.push(actionKey);
     if (this.actionHistory.length > 10) this.actionHistory.shift();
-    return this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
+    // The same spot again and again in one run, whatever happened in between (Oct 11:
+    // Blogger's sign-in button and account row tapped 4+ times each, 77 steps in a circle).
+    const spot = `${Math.round(grid.x / 25)}_${Math.round(grid.y / 25)}`;
+    const hits = (this.spotTaps.get(spot) ?? 0) + 1;
+    this.spotTaps.set(spot, hits);
+    const circling =
+      hits >= 4 && !TOGGLE.test(label.trim())
+        ? `\n\nCIRCLING: this is tap number ${hits} on this same spot${label ? ` ("${label.slice(0, 30)}")` : ''} in this run. Tapping it has not moved the task forward; take a different route (another button, a menu, open_url to the page you need), or finish and say what blocks you.`
+        : '';
+    // Play, Pause, Next…: players hide their controls, and a tap then only shows them.
+    // An accessibility click presses the control itself, shown or not (Oct 11: 8 phones
+    // tapped YouTube's Pause 10–20 times).
+    if (target && !target.seen && MEDIA_CONTROL.test(label.split(' · ')[0].trim())) {
+      const clicked = await this.runDeviceAction({ type: 'ClickNode', text: label.split(' · ')[0].trim() }, toolName, args, { grid, px, label });
+      if (!clicked.isError) return circling ? this.withNote(clicked, circling.trim()) : clicked;
+    }
+    const tapped = await this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
+    return circling ? this.withNote(tapped, circling.trim()) : tapped;
   }
 
   /**

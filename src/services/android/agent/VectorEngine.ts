@@ -358,6 +358,7 @@ export class VectorEngine implements AgentEngine {
     let verificationRetries = 0;
     /** Whether the agent was already asked once to reconsider giving up. */
     let gaveUpAsked = false;
+    let textOnlyReplies = 0;
     const maxCalls = this.options.maxModelCalls ?? 600;
 
     for (let call = 0; call < maxCalls; call += 1) {
@@ -393,6 +394,13 @@ export class VectorEngine implements AgentEngine {
       // trusted across responses (some reuse "call_0" every turn), so each
       // executed call gets our own id.
       const seen = new Set<string>();
+      // Some models write the call as text ("<tool_use>…<tool_name>open_app</tool_name>…",
+      // "<invoke name=…>", or JSON) instead of making it. Run it as the call it is (Oct 12,
+      // #3759: a run ended on its first reply because of this).
+      if (!turn.toolCalls.length && turn.text) {
+        const written = callsWrittenAsText(turn.text, new Set([...this.tools.map((t) => t.name), TASK_DONE]));
+        if (written.length) turn.toolCalls.push(...written.map((c, i) => ({ toolCallId: `text${++this.callCounter}_${i}`, ...c })));
+      }
       const calls = turn.toolCalls.filter((c) => {
         const key = `${c.toolCallId}|${c.toolName}|${JSON.stringify(c.input ?? {})}`;
         if (seen.has(key)) return false;
@@ -469,14 +477,20 @@ export class VectorEngine implements AgentEngine {
       }
 
       if (!done && calls.length === 0) {
-        // The model answered in text instead of calling task_done; take it as
-        // its final word, and let the check decide.
+        // A reply with no action does not end the run: only task_done does. Models
+        // write their progress ("Done so far… still need 7 sites") and stop; reading
+        // words like "failed" in it as giving up ended 6 of 10 runs on Oct 11. After
+        // two replies in a row with no action, the text is taken as the final word and
+        // the phone check decides, not the words.
         const text = turn.text.trim();
-        if (!text) {
-          notes.push('You returned nothing. Continue the task with a tool call, or call task_done.');
+        textOnlyReplies += 1;
+        if (!text || textOnlyReplies < 2) {
+          notes.push('Your last reply had no action. Make the next action now with a tool call — or, if the task is finished or truly blocked, call task_done.');
           continue;
         }
-        done = { success: !/\b(unable|cannot|can't|could not|couldn't|failed|not possible|impossible)\b/i.test(text), summary: text.slice(0, 500) };
+        done = { success: true, summary: text.slice(0, 500) };
+      } else {
+        textOnlyReplies = 0;
       }
       if (!done) continue;
 
@@ -816,4 +830,50 @@ export class VectorEngine implements AgentEngine {
       retries,
     );
   }
+}
+
+/**
+ * Tool calls a model wrote as text instead of making them: "<tool_use>…<tool_name>x</tool_name>
+ * <arguments>{…}</arguments>", "<invoke name="x"><parameter name="k">v</parameter>", or a JSON
+ * object {"name": "x", "arguments": {…}}. Only names of real tools are taken.
+ */
+export function callsWrittenAsText(text: string, tools: Set<string>): { toolName: string; input: Record<string, unknown> }[] {
+  const out: { toolName: string; input: Record<string, unknown> }[] = [];
+  const parseArgs = (raw: string | undefined): Record<string, unknown> => {
+    if (!raw) return {};
+    try {
+      const v = JSON.parse(raw.trim());
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  };
+  const named = [...text.matchAll(/<tool_name>\s*([\w-]+)\s*<\/tool_name>/g)];
+  named.forEach((m, i) => {
+    if (!tools.has(m[1])) return;
+    const rest = text.slice((m.index ?? 0) + m[0].length, named[i + 1]?.index ?? text.length);
+    const args = /<(arguments|parameters|input)>([\s\S]*?)<\/\1>/.exec(rest);
+    out.push({ toolName: m[1], input: parseArgs(args?.[2]) });
+  });
+  if (!out.length) {
+    for (const m of text.matchAll(/<invoke\s+name="([\w-]+)"\s*>([\s\S]*?)<\/invoke>/g)) {
+      if (!tools.has(m[1])) continue;
+      const input: Record<string, unknown> = {};
+      for (const p of m[2].matchAll(/<parameter\s+name="([\w-]+)"\s*>([\s\S]*?)<\/parameter>/g)) {
+        const raw = p[2].trim();
+        try {
+          input[p[1]] = JSON.parse(raw);
+        } catch {
+          input[p[1]] = raw;
+        }
+      }
+      out.push({ toolName: m[1], input });
+    }
+  }
+  if (!out.length) {
+    for (const m of text.matchAll(/\{\s*"(?:name|tool|tool_name)"\s*:\s*"([\w-]+)"\s*,\s*"(?:arguments|parameters|input|args)"\s*:\s*(\{[\s\S]*?\})\s*\}/g)) {
+      if (tools.has(m[1])) out.push({ toolName: m[1], input: parseArgs(m[2]) });
+    }
+  }
+  return out.slice(0, 3);
 }

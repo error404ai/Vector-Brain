@@ -18,10 +18,12 @@ function node(p: Omit<Partial<UiNodeSnapshot>, 'bounds'> & { bounds: [number, nu
   };
 }
 
-const SCREEN = node({
+// What the search box shows: its hint until something is typed (type_text reads it back).
+let typed: string | null = null;
+const screenNow = () => node({
   bounds: [0, 0, 1080, 2400],
   children: [
-    node({ text: 'Search YouTube', editable: true, clickable: true, bounds: [100, 100, 900, 200] }),
+    node({ text: typed ?? 'Search YouTube', editable: true, clickable: true, bounds: [100, 100, 900, 200] }),
     node({ text: 'I’ll pass this time', clickable: true, bounds: [100, 1800, 900, 1900] }),
     node({ text: 'Get Premium', clickable: true, bounds: [100, 1600, 900, 1700] }),
   ],
@@ -29,10 +31,12 @@ const SCREEN = node({
 
 function phone(overrides: Record<string, (a: Record<string, unknown>) => unknown> = {}) {
   const actions: Record<string, unknown>[] = [];
+  typed = null;
   const gateway = {
     executeAction: jest.fn(async (_hw: string, action: Record<string, unknown>) => {
       actions.push(action);
-      if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.google.android.youtube', root: SCREEN } };
+      if (action.type === 'SetText') typed = String(action.text);
+      if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.google.android.youtube', root: screenNow() } };
       const custom = overrides[String(action.type)];
       if (custom) return custom(action);
       return { status: 'SUCCESS', summary: `${action.type} done` };
