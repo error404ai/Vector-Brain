@@ -167,3 +167,10 @@ describe('secrets in prompts never reach an export (Oct 10, missions 267–268)'
     expect(clean.scrub('token usage went up')).toBe('token usage went up');
   });
 });
+
+describe('URLs the model passed in quotes', () => {
+  it('still show their site in exports', () => {
+    expect(scrubUrl('"https://www.theguardian.com/uk?x=1"')).toBe('https://www.theguardian.com/uk?x=*');
+    expect(scrubUrl('bbc.co.uk')).toBe('https://bbc.co.uk/');
+  });
+});

@@ -1332,6 +1332,9 @@ CRITICAL RULES:
 - open_url reuses the current browser tab by default. Only pass newTab: true when
   the user explicitly asked for separate tabs or to compare pages side by side;
   visiting many sites "one by one" should stay in a single tab.
+- Visiting several websites: a page counts as visited once it has opened. If a site's
+  cookie or consent pop-up does not close after 2 tries, leave it and open the next
+  site; do not spend more steps on it (Oct 11: two runs spent 15+ steps on one banner).
 - For research tasks: visit multiple sources, read content from each, summarize at the end.
 - Only mark task complete when ALL requested information has been collected.
 - Lines starting "AUTO-CLEARED:" mean the system already dismissed a popup (a

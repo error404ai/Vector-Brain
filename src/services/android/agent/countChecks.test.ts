@@ -86,3 +86,17 @@ describe('a number belongs to its own verb (Oct 10, #3485)', () => {
     expect(countChecks('like 2 posts', tally(0, 0, [{ from: 'Like', to: 'tapped once' }, { from: 'Like', to: 'tapped once' }])).met).toHaveLength(1);
   });
 });
+
+describe('sites opened, by name (Oct 11, #3700: one site opened twice)', () => {
+  const { openedHosts } = jest.requireActual('./contextBuilder') as typeof import('./contextBuilder');
+  const open = (url: string, isError = false) => ({ toolName: 'open_url', input: { url }, isError, thought: '', resultText: '' }) as unknown as StepRecord;
+  it('lists each site once, bare host, quotes and www stripped', () => {
+    const steps = [open('https://www.bbc.co.uk/'), open('"https://theguardian.com/uk"'), open('bbc.co.uk/news'), open('https://gov.uk', true), open('m.ebay.co.uk')];
+    expect(openedHosts(steps)).toEqual(['bbc.co.uk', 'theguardian.com', 'ebay.co.uk']);
+    expect(countActions(steps)).toMatch(/sites opened so far: bbc\.co\.uk, theguardian\.com, ebay\.co\.uk/);
+  });
+  it('one site opened many times (Special:Random) is not listed', () => {
+    const steps = [open('https://en.wikipedia.org/wiki/Special:Random'), open('https://en.wikipedia.org/wiki/Special:Random')];
+    expect(countActions(steps)).not.toMatch(/sites opened/);
+  });
+});

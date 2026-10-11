@@ -119,7 +119,9 @@ const SAFE_STRING_KEYS = new Set(['direction', 'action', 'key', 'packageName', '
 
 export function scrubUrl(raw: string): string {
   try {
-    const url = new URL(raw);
+    // Models sometimes pass the URL in quotes ("\"https://…\""); the phone opened it fine.
+    const bare = String(raw).trim().replace(/^["']+|["']+$/g, '');
+    const url = new URL(/^[a-z][\w+.-]*:\/\//i.test(bare) ? bare : `https://${bare}`);
     const keys = [...url.searchParams.keys()];
     const query = keys.length ? `?${keys.map((k) => `${k}=*`).join('&')}` : '';
     return `${url.protocol}//${url.host}${url.pathname.replace(LONG_DIGITS, '<n>')}${query}`;

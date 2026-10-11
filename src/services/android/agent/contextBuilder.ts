@@ -148,6 +148,11 @@ export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = ne
     per.set(step.toolName, entry);
   }
   const parts = [...per].map(([tool, e]) => `${tool}: ${e.ok} succeeded${e.distinct.size ? ` (${e.distinct.size} different)` : ''}${e.failed ? `, ${e.failed} failed` : ''}`);
+  // Which sites were opened, by name, so one is not opened twice (Oct 11, #3700:
+  // 11 opens but 9 different sites). Only with two or more: a link that serves a
+  // new page each visit (Special:Random) is one site, and is not a short count.
+  const hosts = openedHosts(steps);
+  if (hosts.length >= 2) parts.push(`sites opened so far: ${hosts.slice(0, 15).join(', ')}${hosts.length > 15 ? ` (+${hosts.length - 15} more)` : ''}`);
   const changes = buttonChanges(steps);
   if (changes.length) {
     const tally = new Map<string, number>();
@@ -155,6 +160,23 @@ export function countActions(steps: StepRecord[], skip: ReadonlySet<string> = ne
     parts.push(`buttons changed by your taps: ${[...tally].map(([k, n]) => `${k} ×${n}`).join(', ')}`);
   }
   return parts.join('; ');
+}
+
+/** The different sites open_url reached, in order, as bare hosts ("bbc.co.uk"). */
+export function openedHosts(steps: StepRecord[]): string[] {
+  const hosts: string[] = [];
+  for (const step of steps) {
+    if (step.toolName !== 'open_url' || step.isError) continue;
+    const raw = String(((step.input ?? {}) as Record<string, unknown>).url ?? '').trim().replace(/^["']+|["']+$/g, '');
+    if (!raw) continue;
+    try {
+      const host = new URL(/^[a-z][\w+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.replace(/^(www|m)\./, '');
+      if (host && !hosts.includes(host)) hosts.push(host);
+    } catch {
+      /* not a URL */
+    }
+  }
+  return hosts;
 }
 
 const CHANGED = /^CHANGED: "(.+?)" → "(.+?)"$/m;
