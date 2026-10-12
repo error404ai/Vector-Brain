@@ -44,7 +44,36 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../ui/Logo';
+import PrismBackground from '../ui/PrismBackground';
 import { Sidebar } from './Sidebar';
+
+/** Pages that lay out their own prism full-bleed; the layout leaves them alone. */
+const OWN_PRISM = ['/mission-control', '/settings', '/android-fleet', '/dashboard'];
+
+/**
+ * Every other app page sits on the prism too, and its outlined cards and papers
+ * turn to glass: one place, so a page needs no changes to match. Dialogs and
+ * menus render in a portal outside this tree and keep their normal look.
+ */
+const glassPages = {
+  '& .MuiPaper-outlined': {
+    bgcolor: 'rgba(255,255,255,.8)',
+    borderColor: 'rgba(255,255,255,.95)',
+    borderRadius: '20px',
+    boxShadow: '0 18px 44px rgba(30,40,90,.07)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+  },
+  // Nested outlined papers: a quieter inner surface, and no second blur to repaint.
+  '& .MuiPaper-outlined .MuiPaper-outlined': {
+    bgcolor: 'rgba(255,255,255,.7)',
+    borderColor: 'rgba(20,26,46,.07)',
+    borderRadius: '14px',
+    boxShadow: 'none',
+    backdropFilter: 'none',
+    WebkitBackdropFilter: 'none',
+  },
+} as const;
 
 interface AuthLayoutProps {
   children: ReactNode;
@@ -111,6 +140,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   }, [dispatch, user]);
 
   const drawerWidth = open ? DRAWER_WIDTH : MINI_DRAWER_WIDTH;
+  const ownPrism = OWN_PRISM.some((path) => location.pathname.startsWith(path));
   const currentMobileValue = useMemo(() => mobileNav.find((item) => location.pathname.startsWith(item.value))?.value ?? '/dashboard', [location.pathname]);
 
   const handleLogout = async () => {
@@ -305,6 +335,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       <Box
         component="main"
         sx={{
+          position: 'relative',
           ml: { md: `${drawerWidth}px` },
           pt: { xs: '76px', md: '88px' },
           px: { xs: 1.5, sm: 2, md: 3 },
@@ -313,7 +344,14 @@ export function AuthLayout({ children }: AuthLayoutProps) {
           transition: theme.transitions.create('margin-left', { duration: theme.transitions.duration.shorter }),
         }}
       >
-        {children}
+        {ownPrism ? (
+          children
+        ) : (
+          <>
+            <PrismBackground />
+            <Box sx={{ position: 'relative', zIndex: 1, ...glassPages }}>{children}</Box>
+          </>
+        )}
       </Box>
 
       <PaperBottomNav value={currentMobileValue} onChange={(value) => navigate(value)} />

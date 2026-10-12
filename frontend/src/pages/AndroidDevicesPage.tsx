@@ -137,11 +137,11 @@ export function AndroidDevicesPage() {
       {/* Header */}
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={2} sx={{ mb: 3 }}>
         <Box>
-          <Typography variant="h5" fontWeight={800} color="text.primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <PhoneAndroidIcon color="primary" />
-            Android Automation Devices
+          <Typography component="h1" sx={{ m: 0, display: 'flex', alignItems: 'center', gap: 1.25, fontSize: { xs: 30, md: 42 }, lineHeight: 1.05, fontWeight: 800, letterSpacing: '-0.045em', color: '#141a2e' }}>
+            <PhoneAndroidIcon sx={{ fontSize: { xs: 28, md: 36 }, color: '#3b4cff' }} />
+            Android Devices
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography sx={{ mt: 1, fontSize: 15, lineHeight: 1.55, color: '#3c435e' }}>
             Manage companion Android devices running native Accessibility & Screen Capture services.
           </Typography>
         </Box>

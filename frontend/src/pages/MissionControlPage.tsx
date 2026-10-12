@@ -2157,6 +2157,16 @@ export default function MissionControlPage() {
   const stickRef = useRef(true);
   const networkRefetchRef = useRef<number | undefined>(undefined);
   const refetchFleetRef = useRef<(() => unknown) | null>(null);
+  // Leaving the page drops the pending fleet refresh: once the page is gone its
+  // query is unsubscribed, and refetching it threw RTK error #38 on the next
+  // page (Diagnostics, Oct 10).
+  useEffect(
+    () => () => {
+      window.clearTimeout(networkRefetchRef.current);
+      refetchFleetRef.current = null;
+    },
+    [],
+  );
   // Last time the reader scrolled themselves (wheel, touch, keys, scrollbar).
   // Only their scrolling may unpin the thread: scroll events that come from our
   // own scrollTo, a smooth scroll still under way, or content loading in must
