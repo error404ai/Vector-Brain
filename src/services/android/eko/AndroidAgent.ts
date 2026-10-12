@@ -235,6 +235,62 @@ export function focusedFieldText(screen: { elements: { editable: boolean; focuse
   return field.label.split(' · ')[0].replace(/…$/, '').trim();
 }
 
+/** This phone's account emails, and every other phone's with its name (lower case). */
+export interface PhoneAccounts {
+  own: string[];
+  others: { email: string; device: string }[];
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const EMAILS_IN_TEXT = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[a-z]{2,}/gi;
+/** Rows that add or switch to a different account on a sign-in chooser. */
+const ANOTHER_ACCOUNT = /^(?:use another account|add another account|add account|add an account|sign in with (?:another|a different) account|use a different account|switch account)$/i;
+/** Menu buttons: hamburger, overflow, navigation drawer. */
+const MENU_LABEL = /^(?:main menu|menu|open menu|more options|more actions|more|options|navigation menu|open navigation drawer|show navigation drawer|navigate up menu|drawer|⋮|≡|☰)$/i;
+/** Actions that bring new content: a cycle containing one is progress through a feed or list. */
+const MOVES_ALONG = /^(?:swipe|scroll_element|scroll_until|drag|pinch):/;
+/** Tools that only look or wait: not part of "doing the same thing again". */
+const LOOK_TOOLS = new Set(['wait', 'read_ui_tree', 'capture_screen', 'wait_for_element', 'read_clipboard', 'read_notifications', 'list_apps']);
+
+/** The tool's arguments in a fixed order, without the px_ fields the engine adds. */
+export function stableArgs(args: Record<string, unknown> | undefined): string {
+  if (!args) return '';
+  return Object.keys(args)
+    .filter((k) => !k.startsWith('px_'))
+    .sort()
+    .map((k) => `${k}=${typeof args[k] === 'string' ? String(args[k]).replace(/["']/g, '').trim() : JSON.stringify(args[k])}`)
+    .join('&');
+}
+
+/**
+ * The last actions repeat as a cycle of 2 or 3 (twice over), or one navigation three times
+ * running. Swipes and scrolls alone are not a cycle: a feed is scrolled on purpose.
+ */
+export function actionCycle(trail: string[]): boolean {
+  const n = trail.length;
+  for (const p of [2, 3]) {
+    if (n < p * 2) continue;
+    const last = trail.slice(n - p);
+    const before = trail.slice(n - 2 * p, n - p);
+    // "Like, next reel, like, next reel" is a task, not a loop: a cycle with a scroll in it moves on.
+    if (last.some((a) => MOVES_ALONG.test(a))) continue;
+    if (last.every((a, i) => a === before[i]) && new Set(last).size > 1) return true;
+  }
+  if (n >= 3) {
+    const [a, b, c] = trail.slice(n - 3);
+    if (a === b && b === c && /^(?:open_url|global_action|open_app|open_settings|open_intent):/.test(a)) return true;
+  }
+  return false;
+}
+
+/** Two texts start the same way (a correction of the same value, not different text). */
+export function sameStart(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  const n = Math.min(8, x.length, y.length);
+  return n > 0 && x.slice(0, n) === y.slice(0, n);
+}
+
 /**
  * The same element on a re-read screen (after the keyboard closed and the page moved):
  * same type and label, nearest to where it was. An unlabelled one must still be close by.
@@ -444,6 +500,13 @@ export class AndroidAgent extends Agent {
   private shortTypeWarned = '';
   /** The last wait reported a settled screen. */
   private lastWaitSettled = false;
+  /** Values type_text put in fields this run (newest last): a field holding one is not overwritten blindly. */
+  private typedValues: string[] = [];
+  private overwriteWarned = '';
+  /** What the agent did, as tool+args, for "the same few actions round and round" (waits and reads aside). */
+  private actionTrail: string[] = [];
+  /** Labels tapped this run (lower case), so a menu never opened can be pointed out. */
+  private tappedLabels = new Set<string>();
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
   /** The events that came with the latest read (toasts, announcements…). */
@@ -458,7 +521,15 @@ export class AndroidAgent extends Agent {
      * is never offered a screenshot — a text-only model cannot read one, and
      * each capture cost ~80k tokens of base64 on every later call.
      */
-    private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string; screenshots?: ScreenshotMode; deviceFacts?: string } = {},
+    private readonly options: {
+      vision?: boolean;
+      grounder?: ScreenGrounder;
+      task?: string;
+      screenshots?: ScreenshotMode;
+      deviceFacts?: string;
+      /** This phone's own account emails and the other phones' (by name): no signing in with another phone's account. */
+      accounts?: PhoneAccounts;
+    } = {},
   ) {
     // Companion 0.32 options, decided per phone (an older build drops what it cannot parse).
     const keys2 = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'keys2'));
@@ -641,6 +712,9 @@ export class AndroidAgent extends Agent {
           // An idx from the screen list passed as a viewId or node path: tap that element.
           const idx = this.idxInSelector(args);
           if (idx) return this.withNote(await this.runTool('tap_element', { idx }), `("${idx}" is an idx from the screen list, so element ${idx} was tapped.)`);
+          const blocked = this.accountGuard(String(args.text ?? ''));
+          if (blocked) return { content: [{ type: 'text', text: blocked }], isError: true };
+          if (typeof args.text === 'string') this.tappedLabels.add(args.text.trim().toLowerCase());
           const result = await this.runDeviceAction(
             {
               type: 'ClickNode',
@@ -695,12 +769,30 @@ export class AndroidAgent extends Agent {
               };
             }
           }
+          // Another phone's email, or one the task never gave (Oct 13, #3866: the prompt named
+          // another phone's Gmail and the agent signed it in here).
+          const emailBlock = this.emailGuard(typing);
+          if (emailBlock) return { content: [{ type: 'text', text: emailBlock }], isError: true };
           // An idx from the screen list passed as a viewId or node path never matches a
           // view: tap that element so it has focus, then type into the focused field.
           const idx = this.idxInSelector(args);
           if (idx) {
             const tapped = await this.runTool('tap_element', { idx });
             if (tapped.isError) return tapped;
+          }
+          // The focused field already holds something typed earlier in this run, and this is
+          // different text: usually the wrong field (Oct 13, #3869: the post title went into the
+          // body, then the article replaced it and the post went out untitled). Asked once.
+          const holding = focusedFieldText(this.screen);
+          if (holding && holding.length >= 8 && this.typedValues.some((v) => sameTyped(holding, v)) && !sameTyped(holding, typing) && !sameStart(holding, typing)) {
+            const warnKey = `${holding}|${typing.slice(0, 40)}`;
+            if (this.overwriteWarned !== warnKey) {
+              this.overwriteWarned = warnKey;
+              return {
+                content: [{ type: 'text', text: `Not typed: the field with the cursor already holds "${cutText(holding, 60)}", which you typed earlier in this run. type_text REPLACES it, so that text would be lost. If this text belongs in another field (the title, the body, the next box), tap that field first — the row with flag F is the one with the cursor. If you really mean to replace it, call the same type_text again.` }],
+                isError: true,
+              };
+            }
           }
           const result = await this.runDeviceAction(
             {
@@ -712,7 +804,13 @@ export class AndroidAgent extends Agent {
             'type_text',
             args,
           );
-          if (!result.isError) this.lastTypedText = String(args.text || '');
+          if (!result.isError) {
+            this.lastTypedText = String(args.text || '');
+            if (typing.length >= 8) {
+              this.typedValues.push(typing);
+              if (this.typedValues.length > 10) this.typedValues.shift();
+            }
+          }
           const checked = result.isError ? result : await this.checkTyped(String(args.text || ''), result);
           return idx ? this.withNote(checked, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : checked;
         },
@@ -1445,6 +1543,10 @@ export class AndroidAgent extends Agent {
       const run = tool.execute.bind(tool);
       tool.execute = async (...args: Parameters<typeof run>) => {
         if (tool.name !== 'press_key') this.backspaceStreak = 0;
+        if (!LOOK_TOOLS.has(tool.name)) {
+          this.actionTrail.push(`${tool.name}:${stableArgs(args[0] as Record<string, unknown>)}`);
+          if (this.actionTrail.length > 9) this.actionTrail.shift();
+        }
         const result = await run(...args);
         this.sight = sightOfResult(result as never, {
           vision: Boolean(this.options.vision),
@@ -1661,6 +1763,9 @@ CRITICAL RULES:
 - Visiting several websites: a page counts as visited once it has opened. If a site's
   cookie or consent pop-up does not close after 2 tries, leave it and open the next
   site; do not spend more steps on it (Oct 11: two runs spent 15+ steps on one banner).
+- Something you need is not on screen (New blog, Create, Settings, Sign out): open the
+  page's own menu first (Main menu ≡, ⋮ More options, the account or item-name dropdown).
+  Never open_url an address you guessed; "page not found" means it does not exist.
 - The keyboard covers the bottom of the screen. press_key BACK closes it; BACKSPACE only
   deletes one letter. type_text replaces the whole field, so to fix text type the whole
   value again. A notice or banner over the page: tap its close/dismiss button first.
@@ -1825,6 +1930,13 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!isError && toolName === 'tap_coordinate' && tap?.label) {
       summary = `${summary} — the point tapped is "${tap.label.slice(0, 60)}"`;
     }
+    // Which element it was, so a stale idx (the list changed since) is noticed at once.
+    if (!isError && toolName === 'tap_element' && tap) {
+      const hit = elementAt(screenBefore, tap.grid.x, tap.grid.y);
+      summary = tap.label
+        ? `${summary} — tapped "${tap.label.slice(0, 60)}"`
+        : `${summary} — tapped an unlabelled ${hit?.type ?? 'element'} at ${tap.grid.x},${tap.grid.y}`;
+    }
 
     if (action.type === 'OpenApp' && !isError && launchedPackage !== String(action.packageName || '')) {
       summary = `${summary} (resolved to ${launchedPackage} on this device)`;
@@ -1959,7 +2071,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       // press animation, not progress: counted as no effect.
       this.noEffectStreak += 1;
       if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
-      checkNote = `\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.${this.closeHint()}`;
+      checkNote = `\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.${this.closeHint()}${this.menuHint()}`;
     } else if (keyAfter !== keyBefore) {
       this.noEffect = null;
       this.noEffectStreak = 0;
@@ -2254,9 +2366,9 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!thin && !stuck) return { note: read };
     const stuckNote =
       stuck === 'loop'
-        ? '\n\nSTUCK: you are going back and forth between the same two screens. Repeating it will not work. Take a completely different route (another element, the ⋮ menu, open_url or a deep link), or finish and report the reason.'
+        ? `\n\nSTUCK: you keep going round the same screens with the same actions. Repeating it will not work. Do not open URLs you guessed (a "page not found" means that address does not exist). Take a completely different route: open the page's own menu, another element, or finish and report the reason.${this.menuHint()}`
         : stuck === 'no_effect'
-        ? '\n\nSTUCK: your last actions changed nothing on the screen. Do not repeat them. Take a completely different route, or finish and report the reason.'
+        ? `\n\nSTUCK: your last actions changed nothing on the screen. Do not repeat them. Take a completely different route, or finish and report the reason.${this.menuHint()}`
         : '';
     // "Off" in settings: never an image or a helper reading; say so in words.
     if (this.options.screenshots === 'off') {
@@ -2344,6 +2456,10 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const k = this.recentKeys;
     const n = k.length;
     if (n >= 4 && k[n - 1] === k[n - 3] && k[n - 2] === k[n - 4] && k[n - 1] !== k[n - 2]) return 'loop';
+    // Three screens round and round (Oct 13, #3870: blogger.com → posts → a guessed URL's 404, 10 times).
+    if (n >= 6 && k[n - 1] === k[n - 4] && k[n - 2] === k[n - 5] && k[n - 3] === k[n - 6] && new Set(k.slice(-3)).size > 1) return 'loop';
+    // The same few actions over and over, whatever the screen keys did (a web page re-renders a little each load).
+    if (actionCycle(this.actionTrail)) return 'loop';
     if (this.noEffectStreak >= 2) return 'no_effect';
     return null;
   }
@@ -2390,6 +2506,9 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {
       return refuse('Not tapped: you tapped here a moment ago and the screen did not change. Try a different way — click_node with the visible text, a different element, scroll_element, or global_action BACK.');
     }
+    const accountBlock = this.accountGuard(label);
+    if (accountBlock) return refuse(accountBlock);
+    if (label) this.tappedLabels.add(label.split(' · ')[0].trim().toLowerCase());
     // The same spot on the very same screen, tapped again and again (Oct 12, #3863: Google
     // Account avatar on Blogger 6 times; #3864: NEXT under the keyboard 9 times). Toggles aside.
     const screenSpot = `${this.currentKey()}|${Math.round(grid.x / 25)}_${Math.round(grid.y / 25)}`;
@@ -2462,6 +2581,62 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       return false;
     }
     return this.screen?.keyboardTop === undefined;
+  }
+
+  /**
+   * Menus on this screen never opened in this run. What a task needs and the screen does
+   * not show (New blog, Settings, Sign out) is usually inside one (Oct 13, #3870: "Main menu"
+   * sat at idx 1 for 32 steps while the agent guessed URLs).
+   */
+  private menuHint(): string {
+    const menus = (this.screen?.elements ?? []).filter((e) => {
+      if (!e.tappable || e.disabled) return false;
+      const name = e.label.split(' · ')[0].trim();
+      return MENU_LABEL.test(name) && !this.tappedLabels.has(name.toLowerCase());
+    });
+    if (!menus.length) return '';
+    const list = menus.slice(0, 4).map((e) => `"${e.label.split(' · ')[0].trim().slice(0, 30)}" (idx ${e.idx})`).join(', ');
+    return ` Menus on this screen you have not opened yet: ${list}. What you need but cannot see is usually inside one of them — open it first.`;
+  }
+
+  /** Refusal text for tapping another phone's account, or "Use another account" the task did not ask for. */
+  private accountGuard(label: string): string | null {
+    const accounts = this.options.accounts;
+    if (!label) return null;
+    const lower = label.toLowerCase();
+    const other = accounts?.others.find((o) => lower.includes(o.email) && !accounts.own.includes(o.email));
+    if (other) return this.otherPhoneText(other);
+    if (ANOTHER_ACCOUNT.test(label.split(' · ')[0].trim()) && !this.newAccountInTask()) {
+      return `Not tapped: "${label.split(' · ')[0].trim()}" signs a different account in, and the task gives no other account to use. Use the account already on this phone${accounts?.own.length ? ` (${accounts.own.join(', ')})` : ''}: pick it on the chooser. If it is not offered, call task_done with success=false and say the phone's own account is not signed in.`;
+    }
+    return null;
+  }
+
+  /** Refusal text for typing an email that is not this phone's and not one the task gave as a new account. */
+  private emailGuard(text: string): string | null {
+    const email = text.trim().toLowerCase();
+    if (!EMAIL.test(email)) return null;
+    const accounts = this.options.accounts;
+    if (accounts?.own.includes(email)) return null;
+    const other = accounts?.others.find((o) => o.email === email);
+    if (other) return this.otherPhoneText(other);
+    // An address the task itself gives is fine (a sign-up, a contact form); only a made-up one is stopped.
+    if (accounts?.own.length && !(this.options.task ?? '').toLowerCase().includes(email) && /sign[ -]?in|log[ -]?in|account|gmail|google/i.test(this.lastUiTree ?? '')) {
+      return `Not typed: "${email}" is not this phone's account${accounts?.own.length ? ` (${accounts.own.join(', ')})` : ''} and the task does not give it. Never sign in with an address you made up or remembered: use the account already on this phone, or call task_done with success=false and say which account is missing.`;
+    }
+    return null;
+  }
+
+  private otherPhoneText(other: { email: string; device: string }): string {
+    const own = this.options.accounts?.own ?? [];
+    return `Not done: ${other.email} is the account of another phone ("${other.device}"), not this one${own.length ? ` — this phone's account is ${own.join(', ')}` : ''}. Never sign another phone's account in here. If the task named it, the task has the wrong phone's email: use this phone's own account, or call task_done with success=false and say so.`;
+  }
+
+  /** The task names an email that belongs to no phone: a new account the user wants signed in. */
+  private newAccountInTask(): boolean {
+    const accounts = this.options.accounts;
+    const known = new Set([...(accounts?.own ?? []), ...(accounts?.others ?? []).map((o) => o.email)]);
+    return (this.options.task ?? '').toLowerCase().match(EMAILS_IN_TEXT)?.some((e) => !known.has(e)) ?? false;
   }
 
   /** " A notice … close button is element N" when the screen has a button that only closes a notice. */

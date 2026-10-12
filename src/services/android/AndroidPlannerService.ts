@@ -7,7 +7,7 @@ import AppError from '@/helpers/AppError';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
 import { ApiResponse } from '@/types/ApiResponse';
-import { Service } from 'typedi';
+import { Container, Service } from 'typedi';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidGatewayService } from './AndroidGatewayService';
 import { AiConfigService, DecryptedAiConfig } from '../controllerService/AiConfigService';
@@ -15,7 +15,8 @@ import { ProxyRotationService } from './ProxyRotationService';
 import { TaskQueueService } from './TaskQueueService';
 import { AiProvider } from '@/entities/AiConfig';
 import { config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
-import { AndroidAgent } from './eko/AndroidAgent';
+import { AndroidAgent, type PhoneAccounts } from './eko/AndroidAgent';
+import { DeviceFactService } from './DeviceFactService';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
@@ -519,6 +520,29 @@ export class AndroidPlannerService {
   >();
   private activeDeviceTasks = new Map<string, number>();
   private startingDevices = new Set<string>();
+
+  /**
+   * This phone's account emails and every other phone's, for the agent's account guard.
+   * Undefined when nothing is known; a failure here never stops a run.
+   */
+  private async phoneAccounts(userId: number, deviceDbId: number | undefined): Promise<PhoneAccounts | undefined> {
+    try {
+      const facts = await Container.get(DeviceFactService).emailsByDevice(userId);
+      if (!facts.size) return undefined;
+      const listed = (await this.deviceService.listUserDevices(userId)).data as { id: number; device_name: string }[];
+      const names = new Map(listed.map((d) => [d.id, d.device_name]));
+      const own = deviceDbId ? (facts.get(deviceDbId)?.emails ?? []).map((e) => e.toLowerCase()) : [];
+      const others: PhoneAccounts['others'] = [];
+      for (const [id, view] of facts) {
+        if (id === deviceDbId) continue;
+        for (const email of view.emails) if (!own.includes(email.toLowerCase())) others.push({ email: email.toLowerCase(), device: names.get(id) ?? `phone ${id}` });
+      }
+      return { own, others };
+    } catch (error) {
+      Logger.warn(`[AndroidPlanner] could not read phone accounts: ${(error as Error).message}`);
+      return undefined;
+    }
+  }
 
   constructor(
     private deviceService: AndroidDeviceService,
@@ -1344,7 +1368,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
-    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info) });
+    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info), accounts: await this.phoneAccounts(userId, deviceDbId) });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.

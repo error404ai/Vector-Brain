@@ -187,7 +187,7 @@ describe('screenshots to the model', () => {
     await tapButton(agent, 'Next');
     await tapButton(agent, 'Open');
     const fourth = await tapButton(agent, 'Next');
-    expect(text(fourth)).toMatch(/STUCK: you are going back and forth/);
+    expect(text(fourth)).toMatch(/STUCK: you keep going round/);
     expect(hasImage(fourth)).toBe(true);
   });
 
