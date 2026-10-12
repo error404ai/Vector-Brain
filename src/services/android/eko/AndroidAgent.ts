@@ -8,6 +8,7 @@ import type { ActionResult, AutomationAction, CompanionFeature, DeviceKey, UiEve
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { CLOSE_NOTICE, findObstacle, type ObstacleId } from './obstacles';
+import { domainOf, lessonNote, lessonsFor, normalUrl, scopesInText, type AgentLesson } from '../experience/experience';
 import { compactSystemPrompt } from './compactPrompt';
 import type { ScreenshotMode } from './screenshotMode';
 import { createHash } from 'crypto';
@@ -507,6 +508,11 @@ export class AndroidAgent extends Agent {
   private actionTrail: string[] = [];
   /** Labels tapped this run (lower case), so a menu never opened can be pointed out. */
   private tappedLabels = new Set<string>();
+  /** Experience memory: lessons already shown, scopes already covered, and the last address opened. */
+  private shownLessons = new Set<number>();
+  private shownScopes = new Set<string>();
+  private lastUrl: string | null = null;
+  private firstExperience = true;
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
   /** The events that came with the latest read (toasts, announcements…). */
@@ -529,6 +535,8 @@ export class AndroidAgent extends Agent {
       deviceFacts?: string;
       /** This phone's own account emails and the other phones' (by name): no signing in with another phone's account. */
       accounts?: PhoneAccounts;
+      /** Experience memory: the account's lessons, shown when the run reaches their site or app. */
+      experience?: AgentLesson[];
     } = {},
   ) {
     // Companion 0.32 options, decided per phone (an older build drops what it cannot parse).
@@ -565,9 +573,10 @@ export class AndroidAgent extends Agent {
           });
 
           // Lite: the columns are explained in its system prompt, so the heading is the short one action results use.
+          const experience = this.experienceText();
           const text = this.compactText
-            ? `${cleared}CURRENT APP: ${pkg}\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}${extra.note}`
-            : `${cleared}CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
+            ? `${experience ? `${experience.trim()}\n\n` : ''}${cleared}CURRENT APP: ${pkg}\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}${extra.note}`
+            : `${experience ? `${experience.trim()}\n\n` : ''}${cleared}CURRENT VISIBLE APP: ${pkg}\n\nVISIBLE UI ELEMENTS (columns: idx|type|label|flags|tap_at — flags: t=tappable, e=editable, d=disabled; tap_at is x,y on a 0–1000 grid):\n${this.lastUiTree}${extra.note}`;
           return { content: extra.image ? [{ type: 'text', text }, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }] : [{ type: 'text', text }] };
         },
       },
@@ -925,6 +934,13 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          // An address an earlier run proved does not exist (experience memory).
+          const dead = (this.options.experience ?? []).find((l) => l.avoidUrl && normalUrl(String(args.url ?? '')) === l.avoidUrl);
+          if (dead) {
+            this.shownLessons.add(dead.id);
+            return { content: [{ type: 'text', text: `Not opened: earlier runs found that this address does not exist (${dead.text}) Use the site's own menus instead.${this.menuHint()}` }], isError: true };
+          }
+          this.lastUrl = String(args.url ?? '');
           this.actionHistory = []; // Reset history on URL open
           this.consecutiveFailures = 0;
           // Stay in the browser the task is about. Without this the phone's
@@ -2126,7 +2142,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       type: 'text' as const,
       text: isError
         ? `Action failed: ${summary}${stuckHint}`
-        : `Action succeeded: ${summary}${checkNote}${cleared ? `\n\n${cleared.trim()}` : ''}${phoneSaw ? `\n\n${phoneSaw}` : ''}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
+        : `Action succeeded: ${summary}${checkNote}${cleared ? `\n\n${cleared.trim()}` : ''}${phoneSaw ? `\n\n${phoneSaw}` : ''}${this.experienceText()}${this.lastForegroundApp ? `\n\nCURRENT APP: ${this.lastForegroundApp}` : ''}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}${extra.note}`,
     };
     if (extra.image) {
       return { content: [textPart, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError };
@@ -2597,6 +2613,46 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!menus.length) return '';
     const list = menus.slice(0, 4).map((e) => `"${e.label.split(' · ')[0].trim().slice(0, 30)}" (idx ${e.idx})`).join(', ');
     return ` Menus on this screen you have not opened yet: ${list}. What you need but cannot see is usually inside one of them — open it first.`;
+  }
+
+  /** Lesson ids this run was shown (experience memory), for scoring them when it ends. */
+  experienceUsed(): number[] {
+    return [...this.shownLessons];
+  }
+
+  /** Where the run is now: the app in front and the site in the address bar or last opened. */
+  private currentScopes(): string[] {
+    const scopes: string[] = [];
+    if (this.lastForegroundApp) scopes.push(this.lastForegroundApp.toLowerCase());
+    const bar = this.screen?.elements.find((e) => e.editable && /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]|$)/i.test(e.label.split(' · ')[0].trim()));
+    const domain = (bar ? domainOf(bar.label.split(' · ')[0].trim()) : null) ?? (this.lastUrl ? domainOf(this.lastUrl) : null);
+    if (domain) scopes.push(domain);
+    return scopes;
+  }
+
+  /**
+   * Lessons for the site or app the run just reached, once per scope: the first
+   * result also carries the ones the task itself names ("blogger.com").
+   */
+  private experienceText(): string {
+    const lessons = this.options.experience;
+    if (!lessons?.length) return '';
+    const known = [...new Set(lessons.map((l) => l.scope))];
+    const scopes = this.currentScopes();
+    if (this.firstExperience) {
+      this.firstExperience = false;
+      scopes.push(...scopesInText(this.options.task ?? '', known));
+    }
+    const notes: string[] = [];
+    for (const scope of [...new Set(scopes)]) {
+      if (this.shownScopes.has(scope)) continue;
+      const picked = lessonsFor(lessons, [scope], this.shownLessons);
+      this.shownScopes.add(scope);
+      if (!picked.length) continue;
+      for (const l of picked) this.shownLessons.add(l.id);
+      notes.push(lessonNote(scope, picked));
+    }
+    return notes.length ? `\n\n${notes.join('\n\n')}` : '';
   }
 
   /** Refusal text for tapping another phone's account, or "Use another account" the task did not ask for. */

@@ -34,6 +34,7 @@ export const pages = {
   schedules: () => import('./SchedulesPage'),
   missionControl: () => import('./MissionControlPage'),
   flows: () => import('./FlowsPage'),
+  experience: () => import('./ExperiencePage'),
   settings: () => import('./SettingsPage'),
   diagnostics: () => import('./DiagnosticsPage'),
   landingShots: () => import('./LandingShotsPage'),

@@ -156,6 +156,7 @@ export const router = createBrowserRouter([
           { path: '/schedules', lazy: lazy(pages.schedules) },
           { path: '/mission-control', lazy: lazy(pages.missionControl) },
           { path: '/flows', lazy: lazy(pages.flows) },
+          { path: '/experience', lazy: lazy(pages.experience) },
           { path: '/settings', lazy: lazy(pages.settings) },
           { path: '/diagnostics', lazy: lazy(pages.diagnostics, OwnerOnly) },
           { path: '/landing-shots', lazy: lazy(pages.landingShots, LandingShotsOnly) },

@@ -31,6 +31,7 @@ import { AndroidAgentController } from './controllers/AndroidAgentController';
 
 import { AndroidCompanionController } from './controllers/AndroidCompanionController';
 import { PhoneUploadsController } from './controllers/PhoneUploadsController';
+import { ExperienceController } from './controllers/ExperienceController';
 import { AndroidDeviceController } from './controllers/AndroidDeviceController';
 import { AndroidFileController } from './controllers/AndroidFileController';
 import { AuthController } from './controllers/AuthController';
@@ -129,6 +130,7 @@ useExpressServer(app, {
     AndroidAgentController,
     AndroidCompanionController,
     PhoneUploadsController,
+    ExperienceController,
     AndroidDeviceController,
     AndroidFileController,
     AuthController,

@@ -6,6 +6,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import BoltIcon from '@mui/icons-material/Bolt';
+import SchoolIcon from '@mui/icons-material/School';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { alpha, Box, Chip, Divider, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography, useTheme } from '@mui/material';
@@ -39,6 +40,7 @@ const mainItems: NavItem[] = [
   // My Rules (/my-rules) and Schedules (/schedules) are hidden for now; the
   // pages and routes still exist, so adding the two entries back restores them.
   { label: 'Flows', icon: <BoltIcon />, href: '/flows', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#0891b2' },
+  { label: 'Experience', icon: <SchoolIcon />, href: '/experience', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#7c3aed' },
 ];
 
 const systemItems: NavItem[] = [{ label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' }];

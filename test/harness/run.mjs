@@ -93,7 +93,8 @@ async function startBackend() {
   const out = fs.openSync(path.join(logDir, `backend-${backendRuns}.log`), 'w');
   // Run-diagnostics sync points at the fake GitHub below.
   // Short model-call limits so the Vector timeout scenarios finish in seconds.
-  Object.assign(env, { VECTOR_CALL_IDLE_MS: '3000', VECTOR_CALL_MAX_MS: '6000' });
+  Object.assign(env, { VECTOR_CALL_IDLE_MS: '3000', VECTOR_CALL_MAX_MS: '6000', EXPERIENCE_REFLECT: '0' });
+  // Experience memory still learns dead addresses (no model); the reflection call would only meet the fake LLM.
   const diag = { DIAG_GITHUB_REPO: 'harness/diagnostics', DIAG_GITHUB_TOKEN: 'harness-token', DIAG_GITHUB_API: 'http://127.0.0.1:4701' };
   backend = spawn(process.execPath, ['dist/app.js'], { cwd: root, env: { ...process.env, ...env, ...diag }, stdio: ['ignore', out, out] });
   const started = Date.now();

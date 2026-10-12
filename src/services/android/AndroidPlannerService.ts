@@ -17,6 +17,7 @@ import { AiProvider } from '@/entities/AiConfig';
 import { config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } from '@eko-ai/eko';
 import { AndroidAgent, type PhoneAccounts } from './eko/AndroidAgent';
 import { DeviceFactService } from './DeviceFactService';
+import { ExperienceService } from './experience/ExperienceService';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
@@ -1368,7 +1369,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
-    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info), accounts: await this.phoneAccounts(userId, deviceDbId) });
+    }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info), accounts: await this.phoneAccounts(userId, deviceDbId),
+      // Experience memory; a Test Lab run measures the model alone, so it gets none.
+      experience: flowOptions.aiOnly ? [] : await Container.get(ExperienceService).forRun(userId),
+    });
 
     // Kept in a variable so the harness simulation can drive the very same
     // step recording a real model run goes through.
@@ -2166,6 +2170,19 @@ Use the current visible Android screen and UI state as context. Continue from wh
           timed: Boolean(runUntil),
           // A Test Lab run is a measurement, not a path to replay later.
           followUp: Boolean(flowOptions.followUp) || Boolean(flowOptions.aiOnly),
+        });
+      }
+
+      // Experience memory: score the lessons this run was shown and learn from it. Not awaited.
+      if (!flowOptions.aiOnly && !this.shuttingDown) {
+        void Container.get(ExperienceService).afterRun({
+          userId,
+          taskId: agentTask.id,
+          succeeded: runSucceeded,
+          used: androidAgent.experienceUsed(),
+          // The run's own model writes the lessons (none in the harness's scripted runs).
+          model: AGENT_SIMULATION || process.env.EXPERIENCE_REFLECT === '0' ? null : modelFor(aiConfig),
+          prompt,
         });
       }
 
