@@ -172,10 +172,13 @@ describe('Vector Keyboard', () => {
 describe('browserFor', () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { browserFor } = require('./AndroidAgent');
-  it('keeps a URL in the browser the task is about', () => {
+  it('keeps a URL in the browser the task is about; Chrome when none is named', () => {
     expect(browserFor('com.android.chrome', 'open google')).toBe('com.android.chrome');
     expect(browserFor('com.instagram.android', 'Open Chrome, close tabs, then open google.co.uk')).toBe('com.android.chrome');
-    expect(browserFor(null, 'open bbc.com and read headlines')).toBeUndefined();
     expect(browserFor('org.mozilla.firefox', 'open bbc.com')).toBe('org.mozilla.firefox');
+    expect(browserFor('org.mozilla.firefox', 'open bbc.com in Chrome')).toBe('com.android.chrome');
+    // A phone maker's own browser shows the agent almost nothing (Oct 12, OPPO heytap): Chrome instead.
+    expect(browserFor(null, 'open bbc.com and read headlines')).toBe('com.android.chrome');
+    expect(browserFor('com.heytap.browser', 'open blogger.com')).toBe('com.android.chrome');
   });
 });

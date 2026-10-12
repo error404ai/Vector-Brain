@@ -132,3 +132,46 @@ describe('player controls and circling', () => {
     expect(last).toMatch(/CIRCLING: this is tap number 4 on this same spot \("Sign in"\)/);
   });
 });
+
+describe('sign-in walls and the browser a link opens in', () => {
+  it('a wrong password or account recovery stops the agent, said once', async () => {
+    let page = 'password';
+    const exec = jest.fn(async (_hw: string, action: { type: string; packageName?: string }) => {
+      if (action.type === 'ObserveScreen') {
+        const rows =
+          page === 'password'
+            ? [node({ text: 'Enter your password', box: [40, 300, 1040, 380] }), node({ text: '', editable: true, clickable: true, password: true, box: [40, 500, 1040, 600] }), node({ text: 'Next', clickable: true, box: [800, 1200, 1040, 1300] })]
+            : [node({ text: 'Wrong password. Try again or click Forgot password to reset it.', box: [40, 620, 1040, 680] }), node({ text: 'Try another way', clickable: true, box: [40, 1200, 400, 1300] }), node({ text: 'Next', clickable: true, box: [800, 1200, 1040, 1300] })];
+        return { status: 'SUCCESS', uiTree: { packageName: 'com.google.android.gms', root: screen(rows) } };
+      }
+      if (action.type === 'Tap') page = 'wrong';
+      return { status: 'SUCCESS', summary: `${action.type} done` };
+    });
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw');
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[] }> }[] }).tools;
+    const run = async (name: string, args: Record<string, unknown> = {}) => (await tools.find((t) => t.name === name)!.execute(args, {}, {})).content.map((c) => c.text ?? '').join('');
+    const list = await run('read_ui_tree');
+    const next = list.split('\n').find((r) => r.includes('|Next|'))!.split('|')[0];
+    const r = await run('tap_element', { idx: next });
+    expect(r).toMatch(/SIGN-IN BLOCKED: the screen says "Wrong password.*Call task_done with success=false/s);
+    const again = await run('tap_element', { idx: next });
+    expect(again).not.toMatch(/SIGN-IN BLOCKED/);
+  });
+
+  it('a link opens in Chrome; on a phone without Chrome, in its own browser', async () => {
+    const sent: (string | undefined)[] = [];
+    const exec = jest.fn(async (_hw: string, action: { type: string; packageName?: string }) => {
+      if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.heytap.browser', root: screen([node({ text: 'Blogger', box: [0, 0, 500, 100] })]) } };
+      if (action.type === 'OpenUrl') {
+        sent.push(action.packageName);
+        if (action.packageName === 'com.android.chrome') return { status: 'FAILURE', code: 'APP_NOT_FOUND', message: 'Chrome is not installed' };
+      }
+      return { status: 'SUCCESS', summary: `${action.type} done` };
+    });
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw');
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[]; isError?: boolean }> }[] }).tools;
+    const r = await tools.find((t) => t.name === 'open_url')!.execute({ url: 'blogger.com' }, {}, {});
+    expect(sent).toEqual(['com.android.chrome', undefined]);
+    expect(r.isError).toBeFalsy();
+  });
+});

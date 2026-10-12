@@ -23,6 +23,7 @@ CRITICAL RULES:
 - Max 7 scrolls in a row the same way (scroll_element and swipe count together); then try another approach.
 - After typing, submit (press_key ENTER or tap Search/Go).
 - open_url reuses the current tab. newTab: true only if the user asked for separate tabs or side-by-side; "one by one" stays in one tab.
+- Signing in: use the account already signed in on THIS phone; on an account chooser pick the one listed ("Continue as …"). Never "Add another account"/"Use another account", never type an email or password the task doesn't give exactly. Wrong password, a code, "Verify it's you" or recovery = blocker: never "Try another way"/"Forgot password"; task_done success=false, the user must sign in on this phone.
 - Research tasks: visit several sources, read each, summarize at the end.
 - Mark complete only when ALL requested info is collected.
 - Lines starting "AUTO-CLEARED:" mean the system already closed a popup (permission, rate app, update, network retry). Don't look for it; carry on.

@@ -87,10 +87,27 @@ const BROWSERS: [RegExp, string][] = [
  * task names, else none (the phone's default).
  */
 export function browserFor(foreground: string | null | undefined, task: string | undefined): string | undefined {
+  const named = BROWSERS.find(([name]) => name.test(task ?? ''));
+  if (named) return named[1];
   const inFront = BROWSERS.find(([, pkg]) => foreground === pkg);
   if (inFront) return inFront[1];
-  const named = BROWSERS.find(([name]) => name.test(task ?? ''));
-  return named?.[1];
+  // No browser named: Chrome. Phone makers' own browsers (OPPO/heytap, MIUI, Vivo)
+  // show the agent almost nothing of a page and add their own overlays; Oct 12, #3858
+  // and #3860 spent 50 steps on heytap's "Page protection" screen. Without Chrome
+  // installed, the open falls back to the phone's default browser.
+  return DEFAULT_BROWSER;
+}
+
+const DEFAULT_BROWSER = 'com.android.chrome';
+
+/** A sign-in the agent cannot get past on its own: a wrong password, a challenge, account recovery. */
+const SIGN_IN_WALL =
+  /wrong password|incorrect password|couldn['’]t sign you in|verify (?:it['’]s|that it['’]s) you|try another way|account recovery|recover your account|enter the last password|confirm (?:it['’]s|that it['’]s) you|unusual activity|this browser or app may not be secure/i;
+
+/** The wall's text on this screen, if any. */
+export function signInWall(screen: { elements: { label: string }[] } | null): string | null {
+  const hit = screen?.elements.find((e) => e.label.length <= 160 && SIGN_IN_WALL.test(e.label));
+  return hit ? hit.label : null;
 }
 
 
@@ -363,11 +380,12 @@ export class AndroidAgent extends Agent {
 
   /** Vision spend cap: images cost roughly 1k tokens each, so cap them per run. */
   private screenshotsUsed = 0;
-  private readonly screenshotBudget = 3;
+  /** capture_screen calls the model may make itself (thin screens also get one look each by themselves). */
+  private readonly screenshotBudget = 6;
 
   /** Separate cap for automatic fallback vision on accessibility-blind screens. */
   private autoVisionUsed = 0;
-  private readonly autoVisionBudget = 8;
+  private readonly autoVisionBudget = 12;
 
   /**
    * Repeated waits mean the model cannot tell whether the screen changed —
@@ -385,6 +403,10 @@ export class AndroidAgent extends Agent {
   private noEffectStreak = 0;
   /** The screen a forced look was last spent on, so one screen is not looked at twice. */
   private lastStuckLookKey = '';
+  /** The last thin screen shown as an image without being asked: list and picture. */
+  private thinLookKey = '';
+  private thinLookFrame = '';
+  private stepsSinceThinLook = 0;
   /** A coordinate tap on nothing in the list is questioned once per screen and point. */
   private blindTapWarned = '';
   /** Swipes, scrolls, BACK/HOME and app or page opens so far: "has the agent moved on since". */
@@ -760,16 +782,12 @@ export class AndroidAgent extends Agent {
           // Stay in the browser the task is about. Without this the phone's
           // default browser took the link: a Chrome task landed in Firefox.
           const browser = browserFor(this.lastForegroundApp, this.options.task);
-          return this.runDeviceAction(
-            {
-              type: 'OpenUrl',
-              url: withScheme(String(args.url || '')),
-              sameTab: USE_IN_APP_BROWSER,
-              ...(browser ? { packageName: browser } : {}),
-            },
-            'open_url',
-            args,
-          );
+          const open = (packageName?: string) =>
+            this.runDeviceAction({ type: 'OpenUrl', url: withScheme(String(args.url || '')), sameTab: USE_IN_APP_BROWSER, ...(packageName ? { packageName } : {}) }, 'open_url', args);
+          const opened = await open(browser);
+          // Chrome by default, but this phone may not have it: the phone's own browser then.
+          if (opened.isError && browser === DEFAULT_BROWSER && !BROWSERS[0][0].test(this.options.task ?? '')) return open();
+          return opened;
         },
       },
       {
@@ -1391,6 +1409,12 @@ CRITICAL RULES:
 - Visiting several websites: a page counts as visited once it has opened. If a site's
   cookie or consent pop-up does not close after 2 tries, leave it and open the next
   site; do not spend more steps on it (Oct 11: two runs spent 15+ steps on one banner).
+- Signing in: use the account already signed in on THIS phone. On an account chooser pick
+  the account it lists ("Continue as …"). Never tap "Add another account" / "Use another
+  account" and never type an email or password unless the task itself gives that exact
+  email or password. A wrong password, a code, "Verify it's you" or account recovery is a
+  blocker: never use "Try another way" or "Forgot password"; call task_done success=false
+  and say the user has to sign in on this phone.
 - For research tasks: visit multiple sources, read content from each, summarize at the end.
 - Only mark task complete when ALL requested information has been collected.
 - Lines starting "AUTO-CLEARED:" mean the system already dismissed a popup (a
@@ -1692,6 +1716,12 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!isError && ['Tap', 'ClickNode', 'SetText', 'PressKey', 'KeyboardType', 'Paste'].includes(action.type)) {
       for (const message of newFieldMessages(screenBefore, this.screen)) summary = `${summary}\nFIELD MESSAGE: "${cutText(message, 140)}"`;
     }
+    // A sign-in it cannot pass: say so once per screen, before it wanders into account recovery
+    // (Oct 12, #3857 and #3861: "Wrong password", then "Try another way" for 20 steps).
+    const wall = isError ? null : signInWall(this.screen);
+    if (wall && !signInWall(screenBefore)) {
+      summary = `${summary}\n\nSIGN-IN BLOCKED: the screen says "${cutText(wall, 100)}". Do not try other passwords, "Try another way", "Forgot password" or account recovery, and do not add another account. Call task_done with success=false: the user has to sign in on this phone themselves.`;
+    }
 
     const cleared = isError ? '' : await this.clearObstacles();
     if (cleared) freshShot = undefined;
@@ -1885,6 +1915,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // sent an image after nearly every open_url. (A text-only model still gets the
     // screen reader below; that is its own setting.)
     if (this.options.screenshots !== 'every_step' && !stuck && this.imagesToAi) {
+      // One look at each new screen the list cannot describe, when it arrives: waiting
+      // for "stuck" left the agent tapping blind first (Oct 12, Blogger's consent page:
+      // 3 of its own screenshots spent, then blind). Not again while the list and the
+      // picture stay the same, so a loading page is not paid for every step.
+      const image = shot ?? this.lastScreenshotBase64 ?? undefined;
+      const key = this.currentKey();
+      const frame = this.frameKey() ?? '';
+      if (image && this.autoVisionUsed < this.autoVisionBudget && (key !== this.thinLookKey || (frame && frame !== this.thinLookFrame && this.stepsSinceThinLook >= 2))) {
+        this.thinLookKey = key;
+        this.thinLookFrame = frame;
+        this.stepsSinceThinLook = 0;
+        this.autoVisionUsed += 1;
+        return {
+          note: '\n\nNOTE: this screen exposes little to the element list, so a screenshot is attached. Look at it for the button you need and tap it with tap_coordinate on the 0–1000 grid (500,500 is the middle of the screen).',
+          image,
+        };
+      }
+      this.stepsSinceThinLook += 1;
       return {
         note: '\n\nNOTE: this screen exposes little to the element list. Do not tap by guessing: use click_node with text you expect, wait_for_element for it, open_url or a deep link, or scroll_element. If you get stuck, you will be shown a screenshot.',
       };

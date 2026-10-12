@@ -23,10 +23,10 @@ describe('screenshots to the AI follow the setting', () => {
     expect((await extrasFor('off', 'no_effect')).image).toBeUndefined();
   });
 
-  it('when stuck: no image on a thin screen alone, an image once it is stuck', async () => {
+  it('when stuck: a thin screen is shown once when it arrives, and again once it is stuck', async () => {
     const thin = await extrasFor('stuck', null);
-    expect(thin.image).toBeUndefined();
-    expect(thin.note).toContain('If you get stuck, you will be shown a screenshot');
+    expect(thin.image).toBe('SHOT');
+    expect(thin.note).toContain('screenshot is attached');
     expect((await extrasFor('stuck', 'no_effect')).image).toBe('SHOT');
     expect((await extrasFor('stuck', 'loop')).image).toBe('SHOT');
   });
