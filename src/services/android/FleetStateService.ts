@@ -164,6 +164,8 @@ export class FleetStateService {
         accessibility: device.capabilities?.accessibility ?? null,
         app_version: device.capabilities?.appVersion ?? null,
         battery: typeof device.capabilities?.battery === 'number' ? device.capabilities.battery : null,
+        /** Companion 0.32: charging, temperature, network, memory, free storage. */
+        health: (device.capabilities as { health?: Record<string, unknown> } | null)?.health ?? null,
         tag: device.tag,
         /** Email accounts on the phone, as a run read them or the user entered them. */
         emails: emails.get(device.id) ?? null,

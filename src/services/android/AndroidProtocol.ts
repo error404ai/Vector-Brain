@@ -8,7 +8,33 @@ export type GlobalAction = 'BACK' | 'HOME' | 'RECENTS' | 'NOTIFICATIONS' | 'POWE
  * Kept to what the accessibility API can genuinely do — Android will not let a
  * service inject arbitrary key events — so this is not the full keyboard.
  */
-export type DeviceKey = 'ENTER' | 'BACKSPACE' | 'CLEAR';
+export type DeviceKey =
+  | 'ENTER'
+  | 'BACKSPACE'
+  | 'CLEAR'
+  // Companion 0.32 (feature "keys2"): real key presses through the Vector Keyboard.
+  | 'TAB'
+  | 'ESCAPE'
+  | 'DPAD_UP'
+  | 'DPAD_DOWN'
+  | 'DPAD_LEFT'
+  | 'DPAD_RIGHT'
+  | 'SEARCH'
+  | 'FORWARD_DEL'
+  | 'SPACE';
+
+/** One finger's path in screen pixels (companion 0.32, feature "gesture"). */
+export interface GestureStroke {
+  points: { x: number; y: number }[];
+  startMillis?: number;
+  durationMillis?: number;
+}
+
+/** A line OCR read off the screen, in screen pixels (companion 0.32, feature "ocr"). */
+export interface TextLine {
+  text: string;
+  bounds: NodeBounds;
+}
 
 export type ScrollDirection = 'FORWARD' | 'BACKWARD';
 
@@ -100,7 +126,17 @@ export type AutomationAction =
   /** Phone-side reading options (companion 0.30+, feature "options"). */
   | { type: 'SetOptions'; includeHidden?: boolean }
   /** Scrolls until text shows or the list ends (companion 0.31+, feature "scroll_until"). */
-  | { type: 'ScrollUntil'; text: string; direction?: 'FORWARD' | 'BACKWARD'; maxScrolls?: number };
+  | { type: 'ScrollUntil'; text: string; direction?: 'FORWARD' | 'BACKWARD'; maxScrolls?: number; viewId?: string }
+  /** Companion 0.32: any touch — a drag along points, a double tap, a pinch (feature "gesture"). */
+  | { type: 'Gesture'; strokes: GestureStroke[] }
+  /** Companion 0.32: on-device OCR of the screen (feature "ocr"). */
+  | { type: 'ReadText' }
+  /** Companion 0.32: press a notification's button, reply inline, or open it (feature "notif_actions"). */
+  | { type: 'NotificationAction'; key: string; actionIndex?: number; replyText?: string }
+  | { type: 'DismissNotification'; key: string }
+  /** Companion 0.32: the Download folder, and files to the server (feature "upload"). */
+  | { type: 'ListDownloads'; limit?: number }
+  | { type: 'UploadFile'; name?: string; latest?: boolean; screenshot?: boolean };
 
 /** What a companion build can do beyond the base protocol (DeviceCapabilities.features). */
 export type CompanionFeature =
@@ -112,7 +148,19 @@ export type CompanionFeature =
   | 'apps_info'
   | 'scroll_until'
   | 'observe_after'
-  | 'observe_no_frame';
+  | 'observe_no_frame'
+  // 0.32
+  | 'gesture'
+  | 'ocr'
+  | 'keys2'
+  | 'scroll_until_id'
+  | 'window_paths'
+  | 'notif_actions'
+  | 'upload'
+  | 'frame_after'
+  | 'preview_push'
+  | 'preview_binary'
+  | 'health';
 
 /**
  * Where the Vector Keyboard stands on a phone: active (it is the current
@@ -227,6 +275,8 @@ export type ActionResult =
       screenCapture?: ScreenCaptureSnapshot;
       /** Toasts, scrolls and new screens since the last read (companion 0.30+). */
       events?: UiEvent[];
+      /** ReadText (0.32): the lines OCR found. */
+      textLines?: TextLine[];
     }
   | {
       status: 'FAILURE';
@@ -250,6 +300,23 @@ export interface DeviceCapabilities {
   features?: CompanionFeature[];
   /** Companion 0.31+: can switch its accessibility service back on ("granted"), or needs the adb grant. */
   a11yRestore?: 'granted' | 'needs_adb';
+  /** Companion 0.32: the full notification reader is on. */
+  notificationAccess?: 'granted' | 'off';
+  /** Companion 0.32: files in Download can be read and sent. */
+  filesAccess?: 'granted' | 'off';
+  /** Companion 0.32: the latest health reading (kept with the capabilities). */
+  health?: DeviceHealth;
+}
+
+/** Companion 0.32: how the phone is doing, sent with each heartbeat. */
+export interface DeviceHealth {
+  charging?: boolean;
+  temperatureC?: number;
+  network?: string;
+  freeMemMb?: number;
+  totalMemMb?: number;
+  lowMemory?: boolean;
+  freeStorageMb?: number;
 }
 
 // WebSocket Message Envelopes
@@ -281,7 +348,14 @@ export type AndroidWsClientMessage =
         /** Companion build, recorded so a fleet can be checked for stale APKs. */
         appVersion?: string;
         capabilities?: DeviceCapabilities;
+        /** Companion 0.32. */
+        health?: DeviceHealth;
       };
+    }
+  | {
+      /** The phone's own live-screen loop (server:preview), JSON form. */
+      event: 'device:preview';
+      payload: { base64Data?: string; capturedAtEpochMillis?: number; error?: string };
     }
   | {
       event: 'device:action_response';
@@ -310,7 +384,14 @@ export type AndroidWsServerMessage =
         timeoutMillis?: number;
         safetyLevel?: SafetyLevel;
         observeAfter?: boolean;
+        /** Companion 0.32: a preview frame with the result (feature "frame_after"). */
+        frameAfter?: boolean;
       };
+    }
+  | {
+      /** Start or keep up the phone's own live-screen loop (30 s per message); binary frames on 0.32+. */
+      event: 'server:preview';
+      payload: { active: boolean; binary?: boolean };
     }
   | {
       event: 'server:cancel_action';

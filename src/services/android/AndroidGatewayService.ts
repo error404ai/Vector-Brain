@@ -1,7 +1,7 @@
 import { AgentTask } from '@/entities/AgentTask';
 import { AppDataSource } from '@/loaders/database';
 import Logger from '@/logger/index';
-import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction, CompanionFeature, DeviceCapabilities, VectorKeyboardState } from './AndroidProtocol';
+import { ActionResult, AndroidWsClientMessage, AndroidWsServerMessage, AutomationAction, CompanionFeature, DeviceCapabilities, DeviceHealth, VectorKeyboardState } from './AndroidProtocol';
 import { AndroidDeviceService } from './AndroidDeviceService';
 import { AndroidDeviceStatus } from '@/entities/AndroidDevice';
 import { Service } from 'typedi';
@@ -100,6 +100,7 @@ export class AndroidGatewayService {
 
     // Notify user web clients that device came online
     const device = await this.deviceService.getDeviceByHardwareId(deviceId);
+    if (device) this.deviceOwners.set(deviceId, device.user_id);
     if (device) {
       this.broadcastToUser(device.user_id, 'device:status_change', {
         deviceId,
@@ -169,7 +170,12 @@ export class AndroidGatewayService {
               ? { ...(msg.payload.capabilities ?? {}), ...(msg.payload.appVersion ? { appVersion: msg.payload.appVersion } : {}) }
               : undefined;
           this.noteKeyboard(devId, msg.payload.capabilities, false);
-          const reported = base && battery !== undefined ? { ...base, battery } : battery !== undefined ? { battery } : base;
+          const withBattery = base && battery !== undefined ? { ...base, battery } : battery !== undefined ? { battery } : base;
+          // Companion 0.32: charging, temperature, network, memory. Kept with the capabilities,
+          // left out of the "did anything change" comparison like the battery.
+          const health = msg.payload.health && typeof msg.payload.health === 'object' ? msg.payload.health : undefined;
+          if (health) this.health.set(devId, health);
+          const reported = health ? { ...(withBattery ?? {}), health } : withBattery;
           const capabilities = JSON.stringify(base || {});
           const lastPersistence = this.lastHeartbeatPersistence.get(devId);
           if (
@@ -186,6 +192,12 @@ export class AndroidGatewayService {
             ws.send(JSON.stringify({ event: 'server:heartbeat_ack', timestamp: Date.now() }));
           }
           break;
+
+        case 'device:preview': {
+          const frame = msg.payload?.base64Data;
+          if (frame) this.relayPreview(authenticatedDeviceId, frame);
+          break;
+        }
 
         case 'device:action_response': {
           const pending = this.pendingRequests.get(msg.requestId);
@@ -302,6 +314,70 @@ export class AndroidGatewayService {
   }
 
   private features = new Map<string, Set<string>>();
+  /** Owner of each connected phone, for relaying its live frames. */
+  private deviceOwners = new Map<string, number>();
+  /** Companion 0.32: the latest health reading per phone. */
+  private health = new Map<string, DeviceHealth>();
+  /** Manual actions (the live screen's taps) in flight per phone: the polling live loop steps aside. */
+  private manualInFlight = new Map<string, number>();
+
+  healthOf(deviceId: string): DeviceHealth | null {
+    return this.health.get(deviceId) ?? null;
+  }
+
+  /** True while a person's tap or an agent run is using this phone: the polling live view waits. */
+  liveShouldWait(deviceId: string): boolean {
+    if ((this.manualInFlight.get(deviceId) ?? 0) > 0) return true;
+    const session = this.serverSessions.get(deviceId);
+    return Boolean(session?.active);
+  }
+
+  /** A manual action from the live screen, with its new frame when the phone can attach one (0.32). */
+  async executeManual(deviceId: string, action: AutomationAction): Promise<ActionResult> {
+    this.manualInFlight.set(deviceId, (this.manualInFlight.get(deviceId) ?? 0) + 1);
+    try {
+      const frameAfter = this.hasFeature(deviceId, 'frame_after') && action.type !== 'CaptureScreen' && action.type !== 'ObserveScreen';
+      return await this.executeAction(deviceId, action, 15000, 'LOW', frameAfter ? { frameAfter: true } : {});
+    } finally {
+      const left = (this.manualInFlight.get(deviceId) ?? 1) - 1;
+      if (left > 0) this.manualInFlight.set(deviceId, left);
+      else this.manualInFlight.delete(deviceId);
+    }
+  }
+
+  /**
+   * The phone's own live-screen loop (server:preview): it captures only when idle
+   * and pushes frames, so a viewer's taps never wait behind the server's polling.
+   * 30 s per message on the phone; the live view renews it.
+   */
+  setPreview(deviceId: string, active: boolean): boolean {
+    const ws = this.deviceSockets.get(deviceId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    const message: AndroidWsServerMessage = { event: 'server:preview', payload: { active, ...(active && this.hasFeature(deviceId, 'preview_binary') ? { binary: true } : {}) } };
+    try {
+      ws.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A pushed frame to the phone owner's dashboards, in the same shape as a polled one. */
+  private relayPreview(deviceId: string, base64Data: string): void {
+    const userId = this.deviceOwners.get(deviceId);
+    if (!userId) return;
+    this.broadcastToUser(userId, 'device:screen_capture', { deviceId, result: { screenCapture: { base64Data } }, pushed: true });
+  }
+
+  /**
+   * Binary frames from the phone (0.32 "preview_binary"): "VP", version 1, the
+   * capture time (8 bytes), then the JPEG. A third smaller than base64 in JSON on
+   * the phone's own link.
+   */
+  handleDeviceBinary(data: Buffer, authenticatedDeviceId: string): void {
+    if (data.length < 12 || data[0] !== 0x56 || data[1] !== 0x50 || data[2] !== 1) return;
+    this.relayPreview(authenticatedDeviceId, data.subarray(11).toString('base64'));
+  }
 
   /** True when the phone's companion reported this feature (see DeviceCapabilities.features). */
   hasFeature(deviceId: string, feature: CompanionFeature): boolean {
@@ -314,7 +390,7 @@ export class AndroidGatewayService {
     timeoutMillis = 15000,
     safetyLevel: 'LOW' | 'USER_CONFIRMATION_REQUIRED' | 'BLOCKED' = 'LOW',
     /** observeAfter (companion 0.31+, feature "observe_after"): the new screen comes back with the result. */
-    options: { observeAfter?: boolean } = {},
+    options: { observeAfter?: boolean; frameAfter?: boolean } = {},
   ): Promise<ActionResult> {
     const ws = this.deviceSockets.get(deviceId);
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -336,6 +412,7 @@ export class AndroidGatewayService {
         timeoutMillis,
         safetyLevel,
         ...(options.observeAfter ? { observeAfter: true } : {}),
+        ...(options.frameAfter ? { frameAfter: true } : {}),
       },
     };
 

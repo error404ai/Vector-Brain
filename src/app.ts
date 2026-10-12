@@ -30,6 +30,7 @@ import { AiRuleController } from './controllers/AiRuleController';
 import { AndroidAgentController } from './controllers/AndroidAgentController';
 
 import { AndroidCompanionController } from './controllers/AndroidCompanionController';
+import { PhoneUploadsController } from './controllers/PhoneUploadsController';
 import { AndroidDeviceController } from './controllers/AndroidDeviceController';
 import { AndroidFileController } from './controllers/AndroidFileController';
 import { AuthController } from './controllers/AuthController';
@@ -127,6 +128,7 @@ useExpressServer(app, {
     AiRuleController,
     AndroidAgentController,
     AndroidCompanionController,
+    PhoneUploadsController,
     AndroidDeviceController,
     AndroidFileController,
     AuthController,

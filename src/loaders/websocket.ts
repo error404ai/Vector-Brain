@@ -64,8 +64,17 @@ export function initializeWebSocketServer(server: http.Server): WebSocketServer 
       }
     }
 
-    ws.on('message', (data) => {
+    ws.on('message', (data, isBinary) => {
       (ws as any).lastMessageAt = Date.now();
+      // Companion 0.32: live-screen frames arrive as binary (see handleDeviceBinary).
+      if (isBinary && clientType === 'device') {
+        try {
+          gatewayService.handleDeviceBinary(Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data), clientInfo.deviceId);
+        } catch (error) {
+          Logger.error('[WebSocket] Device binary frame failed:', error);
+        }
+        return;
+      }
       const str = data.toString();
       if (clientType === 'device') {
         void gatewayService.handleDeviceMessage(ws, str, clientInfo.deviceId).catch((error) => {

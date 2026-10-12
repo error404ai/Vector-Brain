@@ -5,6 +5,7 @@ import { AndroidDeviceService } from '@/services/android/AndroidDeviceService';
 import { AndroidGatewayService } from '@/services/android/AndroidGatewayService';
 import { DeviceFactService } from '@/services/android/DeviceFactService';
 import { LiveScreenService } from '@/services/android/LiveScreenService';
+import { gestureAsSwipe } from '@/services/android/gestures';
 import { AutomationAction } from '@/services/android/AndroidProtocol';
 import { ConfirmPairingValidation, DirectActionValidation, RequestPairingCodeValidation, UpdateDeviceValidation, UpdateDeviceTagValidation } from '@/validations/AndroidDeviceValidation';
 import { Authorized, Body, CurrentUser, Delete, Get, JsonController, Param, Patch, Post, Put, UseBefore } from 'routing-controllers';
@@ -184,7 +185,11 @@ export class AndroidDeviceController {
   ) {
     const device = await this.deviceService.getDeviceById(request.device_id, user.userId);
     const startedAt = Date.now();
-    const result = await this.gatewayService.executeAction(device.device_id, request.action as AutomationAction);
+    let action = request.action as AutomationAction;
+    // Older phones have no free-form gesture: the drag becomes the nearest swipe.
+    if (action.type === 'Gesture' && !this.gatewayService.hasFeature(device.device_id, 'gesture')) action = gestureAsSwipe(action);
+    // The live view's own action: the polling loop steps aside, and 0.32 phones attach the new frame.
+    const result = await this.gatewayService.executeManual(device.device_id, action);
     // Measured so the live view can show where its delay actually goes: time
     // spent on the phone (capture, encode, upload) versus everything else.
     // base64 carries 3 bytes per 4 characters.
@@ -197,3 +202,4 @@ export class AndroidDeviceController {
     };
   }
 }
+

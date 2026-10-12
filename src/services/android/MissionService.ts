@@ -35,6 +35,9 @@ const RESTART_TASK = /\b(restart|reboot)\b|रीस्टार्ट|रिस
 const RESTART_DROP = new Set(['DEVICE_OFFLINE', 'INTERRUPTED', 'TIMEOUT', 'STALLED', 'TASK_MISSING']);
 /** Most phones one mission may drive, whatever the request says. */
 const MAX_MISSION_DEVICES = 50;
+/** Battery temperature (°C) above which a phone is left to cool before a run starts. */
+const HOT_PHONE_C = Number(process.env.MISSION_HOT_PHONE_C) || 46;
+const HOT_WAIT_MAX_MS = 20 * 60_000;
 const TICK_MS = Number(process.env.MISSION_TICK_MS) || 3000;
 /** Wait before a retry, multiplied by the attempt number (15s, 30s, ...). */
 const RETRY_DELAY_MS = Number(process.env.MISSION_RETRY_DELAY_MS) || 15_000;
@@ -77,6 +80,7 @@ const RETRYABLE = new Set([
 ]);
 
 const PLAIN_REASON: Record<string, string> = {
+  PHONE_HOT: 'Waiting for the phone to cool down',
   DEVICE_OFFLINE: 'phone was offline',
   DEVICE_BUSY: 'phone was busy with another task',
   WAITING_PILOT: 'waiting for the first phone — its run becomes a saved flow for the rest',
@@ -579,7 +583,16 @@ export class MissionService {
         // can only fail and would use up a retry.
         if (hw && !this.gatewayService.isDeviceConnected(hw)) {
           await this.waitForPhone(mission, item);
+        } else if (hw && this.tooHot(hw, item)) {
+          // A hot phone throttles and drops runs half way: let it cool first (companion 0.32 reports it).
+          if (item.last_reason !== 'PHONE_HOT') {
+            item.last_reason = 'PHONE_HOT';
+            await this.itemRepo.save(item);
+            changed = true;
+          }
+          continue;
         } else {
+          if (item.last_reason === 'PHONE_HOT') item.last_reason = null;
           if (item.last_reason === 'WAITING_PILOT') item.last_reason = null;
           await this.dispatch(mission, item);
           if (pilot) pilotStarted = true;
@@ -599,6 +612,24 @@ export class MissionService {
     } else if (changed) {
       this.gatewayService.broadcastToUser(mission.user_id, 'mission:update', { id: mission.id });
     }
+  }
+
+  /** Items held back for heat, and since when: a phone that never cools runs anyway after HOT_WAIT_MAX_MS. */
+  private heatWaits = new Map<number, number>();
+
+  private tooHot(hardwareId: string, item: MissionItem): boolean {
+    const temperature = this.gatewayService.healthOf?.(hardwareId)?.temperatureC;
+    if (typeof temperature !== 'number' || temperature < HOT_PHONE_C) {
+      this.heatWaits.delete(item.id);
+      return false;
+    }
+    const since = this.heatWaits.get(item.id) ?? Date.now();
+    this.heatWaits.set(item.id, since);
+    if (Date.now() - since > HOT_WAIT_MAX_MS) {
+      this.heatWaits.delete(item.id);
+      return false;
+    }
+    return true;
   }
 
   private async dispatch(mission: Mission, item: MissionItem): Promise<void> {

@@ -89,7 +89,24 @@ export const AutomationActionValidation = z.discriminatedUnion('type', [
     timeoutMillis: z.number().int().min(250).max(15_000).optional(),
   }),
   z.object({ type: z.literal('ObserveScreen') }),
-  z.object({ type: z.literal('PressKey'), key: z.enum(['ENTER', 'BACKSPACE', 'CLEAR']) }),
+  z.object({
+    type: z.literal('PressKey'),
+    key: z.enum(['ENTER', 'BACKSPACE', 'CLEAR', 'TAB', 'ESCAPE', 'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'SEARCH', 'FORWARD_DEL', 'SPACE']),
+  }),
+  // The live screen's drag along the finger's real path (companion 0.32; turned into a Swipe for older phones).
+  z.object({
+    type: z.literal('Gesture'),
+    strokes: z
+      .array(
+        z.object({
+          points: z.array(z.object({ x: z.number().nonnegative(), y: z.number().nonnegative() })).min(1).max(64),
+          startMillis: z.number().int().min(0).max(10_000).optional(),
+          durationMillis: z.number().int().min(1).max(10_000).optional(),
+        }),
+      )
+      .min(1)
+      .max(4),
+  }),
   z.object({
     type: z.literal('ScrollNode'),
     nodePath: z.string().min(1).optional(),

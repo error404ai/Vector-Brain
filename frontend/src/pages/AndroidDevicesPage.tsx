@@ -1,4 +1,5 @@
 import DeviceNetworkTable from '@/components/android/DeviceNetworkTable';
+import PhoneFilesPanel from '@/components/android/PhoneFilesPanel';
 import {
   useGetAndroidDevicesQuery,
   useRenameDeviceMutation,
@@ -345,6 +346,8 @@ export function AndroidDevicesPage() {
       )}
 
       {/* Every phone's IP, DNS, language, timezone and clock, side by side. */}
+      <PhoneFilesPanel />
+
       {devices.length > 0 && <DeviceNetworkTable />}
 
       {/* Pairing Modal */}

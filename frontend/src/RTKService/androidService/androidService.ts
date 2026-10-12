@@ -121,6 +121,8 @@ export interface FleetStateDevice {
   app_version: string | null;
   /** Last battery percentage reported by the phone; null until it reports one. */
   battery?: number | null;
+  /** Companion 0.32: charging, battery temperature, network, memory, free storage. */
+  health?: { charging?: boolean; temperatureC?: number; network?: string; freeMemMb?: number; totalMemMb?: number; lowMemory?: boolean; freeStorageMb?: number } | null;
   tag: string | null;
   /** Email accounts on the phone: read by a run (source ai) or entered by the user. */
   emails?: DeviceEmails | null;

@@ -4,7 +4,7 @@ import { wrongPackageHint } from './playStoreLookup';
 import type { AgentContext } from '@eko-ai/eko';
 import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
-import type { ActionResult, AutomationAction, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
+import type { ActionResult, AutomationAction, CompanionFeature, DeviceKey, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
 import { findObstacle, type ObstacleId } from './obstacles';
@@ -38,6 +38,8 @@ export type ScreenGrounder = (screenshotBase64: string) => Promise<SeenElement[]
 
 /** Vision-helper reads per run: each is one small image call. */
 const GROUNDING_BUDGET = 25;
+/** On-device OCR reads per run (companion 0.32): free, but each is a capture on the phone. */
+const OCR_BUDGET = 30;
 /** A button that turns into its opposite right after a tap (Install → Cancel). */
 const STARTS_SOMETHING = /\b(install|update|download|get|buy|enable|turn on|start|subscribe)\b/i;
 const UNDOES_IT = /^(cancel|stop|uninstall|remove|delete|disable|turn off|unsubscribe)\b/i;
@@ -338,7 +340,7 @@ export function withScheme(url: string): string {
 /** Buttons that switch on and off in place, whose label often stays the same (Instagram's heart stays "Like"). */
 /** Actions after which the screen is read again; with companion 0.31+ it comes back with the result. */
 const SCREEN_CHANGING = new Set<AutomationAction['type']>([
-  'Tap', 'ClickNode', 'LongPress', 'Swipe', 'ScrollNode', 'ScrollUntil', 'Global', 'OpenApp', 'OpenUrl', 'OpenIntent', 'OpenSettings', 'PressKey', 'SetText', 'KeyboardType', 'Paste',
+  'Tap', 'ClickNode', 'LongPress', 'Swipe', 'ScrollNode', 'ScrollUntil', 'Global', 'OpenApp', 'OpenUrl', 'OpenIntent', 'OpenSettings', 'PressKey', 'SetText', 'KeyboardType', 'Paste', 'Gesture', 'NotificationAction', 'DismissNotification',
 ]);
 const TOGGLE = /^(?:like|liked|unlike|love|heart|save|saved|unsave|bookmark|favou?rite|star|upvote|downvote|vote|repost|subscribe|subscribed|join|joined)\b/i;
 /** Actions that move to another item or screen: after one, the same toggle is a new item. */
@@ -434,6 +436,9 @@ export class AndroidAgent extends Agent {
      */
     private readonly options: { vision?: boolean; grounder?: ScreenGrounder; task?: string; screenshots?: ScreenshotMode; deviceFacts?: string } = {},
   ) {
+    // Companion 0.32 options, decided per phone (an older build drops what it cannot parse).
+    const keys2 = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'keys2'));
+    const scrollById = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'scroll_until_id'));
     const tools: Tool[] = [
       {
         name: 'read_ui_tree',
@@ -827,8 +832,10 @@ export class AndroidAgent extends Agent {
           properties: {
             key: {
               type: 'string',
-              enum: ['ENTER', 'BACKSPACE', 'CLEAR'],
-              description: 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field',
+              enum: keys2 ? ['ENTER', 'BACKSPACE', 'CLEAR', 'TAB', 'ESCAPE', 'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'SEARCH', 'FORWARD_DEL', 'SPACE'] : ['ENTER', 'BACKSPACE', 'CLEAR'],
+              description: keys2
+                ? 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field. TAB = next field, ESCAPE, DPAD_* = arrow keys, SEARCH, FORWARD_DEL, SPACE are real key presses: they need the Vector Keyboard active (use_vector_keyboard first)'
+                : 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field',
             },
           },
           required: ['key'],
@@ -838,7 +845,7 @@ export class AndroidAgent extends Agent {
           const result = await this.runDeviceAction(
             {
               type: 'PressKey',
-              key: args.key as 'ENTER' | 'BACKSPACE' | 'CLEAR',
+              key: args.key as DeviceKey,
             },
             'press_key',
             args,
@@ -890,20 +897,23 @@ export class AndroidAgent extends Agent {
         parameters: {
           type: 'object',
           properties: {
-            text: { type: 'string', description: 'Visible text of the item to bring on screen' },
+            text: { type: 'string', description: 'Visible text (or content description) of the item to bring on screen' },
+            ...(scrollById ? { viewId: { type: 'string', description: 'Or the resource id of the item (e.g. app:id/save), when it has no text' } } : {}),
             direction: { type: 'string', enum: ['FORWARD', 'BACKWARD'], description: 'FORWARD = down or right, BACKWARD = up or left' },
             maxScrolls: { type: 'number', description: 'Give up after this many scrolls, 1 to 30 (default 10)' },
           },
-          required: ['text'],
+          required: scrollById ? [] : ['text'],
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
           const text = String(args.text ?? '').trim();
-          if (!text) return { content: [{ type: 'text', text: 'Say which text to scroll to.' }], isError: true };
+          const viewId = scrollById && typeof args.viewId === 'string' && args.viewId.trim() ? args.viewId.trim() : undefined;
+          if (!text && !viewId) return { content: [{ type: 'text', text: 'Say which text to scroll to.' }], isError: true };
           return this.runDeviceAction(
             {
               type: 'ScrollUntil',
               text,
+              ...(viewId ? { viewId } : {}),
               direction: (args.direction as 'FORWARD' | 'BACKWARD') || 'FORWARD',
               maxScrolls: Math.max(1, Math.min(30, Math.round(Number(args.maxScrolls) || 10))),
             },
@@ -940,6 +950,159 @@ export class AndroidAgent extends Agent {
               durationMillis: typeof args.durationMillis === 'number' ? args.durationMillis : undefined,
             },
             'long_press',
+            args,
+          );
+        },
+      },
+      {
+        name: 'drag',
+        description:
+          'Drag a finger from one point to another, following the path at the speed given: move a slider, drag and drop, pull a map, draw. Start from an element (idx) or a point; points are on the 0–1000 grid. For scrolling lists use scroll_element instead.',
+        parameters: {
+          type: 'object',
+          properties: {
+            idx: { type: 'string', description: 'Start on this element from the screen list (or give from_x/from_y)' },
+            from_x: { type: 'number', description: 'Start x on the 0–1000 grid' },
+            from_y: { type: 'number', description: 'Start y on the 0–1000 grid' },
+            to_x: { type: 'number', description: 'End x on the 0–1000 grid' },
+            to_y: { type: 'number', description: 'End y on the 0–1000 grid' },
+            durationMillis: { type: 'number', description: 'How long the drag takes, 100 to 3000 ms (default 500); slower for drag-and-drop' },
+          },
+          required: ['to_x', 'to_y'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const start = this.gridPoint(args.idx, args.from_x, args.from_y);
+          if (!start) return { content: [{ type: 'text', text: 'Give idx, or from_x and from_y, for where the drag starts.' }], isError: true };
+          const end = { x: Number(args.to_x), y: Number(args.to_y) };
+          const w = this.screen?.size.width ?? 1080;
+          const h = this.screen?.size.height ?? 2400;
+          const steps = 8;
+          const points = Array.from({ length: steps + 1 }, (_, i) => ({
+            x: toPixels(start.x + ((end.x - start.x) * i) / steps, w),
+            y: toPixels(start.y + ((end.y - start.y) * i) / steps, h),
+          }));
+          const duration = Math.max(100, Math.min(3000, Math.round(Number(args.durationMillis) || 500)));
+          return this.runDeviceAction({ type: 'Gesture', strokes: [{ points, durationMillis: duration }] }, 'drag', args);
+        },
+      },
+      {
+        name: 'double_tap',
+        description: 'Tap twice quickly on one spot: like a photo or video (Instagram), zoom in on a map or an image. Give idx or x and y on the 0–1000 grid.',
+        parameters: {
+          type: 'object',
+          properties: {
+            idx: { type: 'string', description: 'Element from the screen list' },
+            x: { type: 'number', description: 'x on the 0–1000 grid' },
+            y: { type: 'number', description: 'y on the 0–1000 grid' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const at = this.gridPoint(args.idx, args.x, args.y);
+          if (!at) return { content: [{ type: 'text', text: 'Give idx, or x and y, for where to double tap.' }], isError: true };
+          const p = { x: toPixels(at.x, this.screen?.size.width ?? 1080), y: toPixels(at.y, this.screen?.size.height ?? 2400) };
+          return this.runDeviceAction(
+            { type: 'Gesture', strokes: [{ points: [p], startMillis: 0, durationMillis: 60 }, { points: [p], startMillis: 160, durationMillis: 60 }] },
+            'double_tap',
+            args,
+          );
+        },
+      },
+      {
+        name: 'pinch',
+        description: 'Two-finger pinch around a point: OUT zooms in (fingers spread), IN zooms out. For maps, photos and documents. Point on the 0–1000 grid (default the middle).',
+        parameters: {
+          type: 'object',
+          properties: {
+            direction: { type: 'string', enum: ['IN', 'OUT'], description: 'OUT = zoom in, IN = zoom out' },
+            x: { type: 'number', description: 'Centre x on the 0–1000 grid (default 500)' },
+            y: { type: 'number', description: 'Centre y on the 0–1000 grid (default 500)' },
+          },
+          required: ['direction'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const w = this.screen?.size.width ?? 1080;
+          const h = this.screen?.size.height ?? 2400;
+          const cx = toPixels(typeof args.x === 'number' ? args.x : 500, w);
+          const cy = toPixels(typeof args.y === 'number' ? args.y : 500, h);
+          const near = Math.round(w * 0.06);
+          const far = Math.round(w * 0.3);
+          const [a, b] = args.direction === 'IN' ? [far, near] : [near, far];
+          const finger = (sign: number) => ({ points: [{ x: cx + sign * a, y: cy + sign * a }, { x: cx + sign * b, y: cy + sign * b }], durationMillis: 450 });
+          return this.runDeviceAction({ type: 'Gesture', strokes: [finger(-1), finger(1)] }, 'pinch', args);
+        },
+      },
+      {
+        name: 'notification_action',
+        description:
+          'Use a notification from read_notifications by its key: press one of its buttons (button = its number, e.g. "Mark as read"), reply inline (button of a reply button plus reply_text), or open it (no button).',
+        parameters: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'The notification key from read_notifications' },
+            button: { type: 'number', description: 'Button number from read_notifications; leave out to open the notification' },
+            reply_text: { type: 'string', description: 'Text to send with a reply button' },
+          },
+          required: ['key'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            {
+              type: 'NotificationAction',
+              key: String(args.key ?? ''),
+              actionIndex: typeof args.button === 'number' ? args.button : undefined,
+              replyText: typeof args.reply_text === 'string' ? args.reply_text : undefined,
+            },
+            'notification_action',
+            args,
+          );
+        },
+      },
+      {
+        name: 'dismiss_notification',
+        description: 'Clear one notification by its key from read_notifications.',
+        parameters: {
+          type: 'object',
+          properties: { key: { type: 'string', description: 'The notification key' } },
+          required: ['key'],
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction({ type: 'DismissNotification', key: String(args.key ?? '') }, 'dismiss_notification', args);
+        },
+      },
+      {
+        name: 'list_downloads',
+        description: "List the newest files in the phone's Download folder (name, size, date).",
+        parameters: {
+          type: 'object',
+          properties: { limit: { type: 'number', description: 'How many, 1 to 100 (default 20)' } },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction({ type: 'ListDownloads', limit: typeof args.limit === 'number' ? args.limit : undefined }, 'list_downloads', args);
+        },
+      },
+      {
+        name: 'upload_file',
+        description:
+          "Send a file from the phone to the user (it appears under Android Devices → Files from phones): a file from the Download folder by name, the newest download, or a full-size screenshot of the screen now. Up to 50 MB.",
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'File name in the Download folder (from list_downloads)' },
+            latest: { type: 'boolean', description: 'The newest file in Download' },
+            screenshot: { type: 'boolean', description: 'A full-size screenshot of the screen now' },
+          },
+          additionalProperties: false,
+        },
+        execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          return this.runDeviceAction(
+            { type: 'UploadFile', name: typeof args.name === 'string' ? args.name : undefined, latest: args.latest === true, screenshot: args.screenshot === true },
+            'upload_file',
             args,
           );
         },
@@ -1104,7 +1267,7 @@ export class AndroidAgent extends Agent {
       {
         name: 'read_notifications',
         description:
-          'Read notifications the phone has received. Use this for one-time codes, delivery alerts, or to check whether a message arrived. Only notifications posted since the Vector app started are visible — it cannot read what was already in the shade.',
+          'Read notifications the phone has received. Use this for one-time codes, delivery alerts, or to check whether a message arrived. With Notification access on (companion 0.32) it lists everything in the shade, each with a key and its buttons for notification_action; otherwise only notifications posted since the Vector app started.',
         parameters: {
           type: 'object',
           properties: {
@@ -1219,7 +1382,11 @@ export class AndroidAgent extends Agent {
           (tool.name !== 'capture_screen' || (options.vision && options.screenshots !== 'off')) &&
           // Only phones whose companion can start intents (0.30+) get these; an older build drops the action.
           ((tool.name !== 'open_intent' && tool.name !== 'open_app_info') || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'intent'))) &&
-          (tool.name !== 'scroll_until' || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'scroll_until'))),
+          (tool.name !== 'scroll_until' || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'scroll_until'))) &&
+          // Companion 0.32 tools, only for builds that have them.
+          (!['drag', 'double_tap', 'pinch'].includes(tool.name) || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'gesture'))) &&
+          (!['notification_action', 'dismiss_notification'].includes(tool.name) || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'notif_actions'))) &&
+          (!['list_downloads', 'upload_file'].includes(tool.name) || Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'upload'))),
       ),
       // The backup model (when the account set one) takes over if the main one fails.
       llms: ['default', 'fallback'],
@@ -1892,11 +2059,101 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   }
 
   private async screenExtras(shot?: string, stuck: 'loop' | 'no_effect' | null = null): Promise<{ note: string; image?: string }> {
+    this.readNote = '';
+    const extras = await this.screenExtrasInner(shot, stuck);
+    return this.readNote && !extras.note.includes(this.readNote) ? { ...extras, note: `${this.readNote}${extras.note}` } : extras;
+  }
+
+  /** A point on the 0–1000 grid: an element's centre by idx, else x and y as given. */
+  private gridPoint(idx: unknown, x: unknown, y: unknown): { x: number; y: number } | null {
+    if (idx !== undefined && idx !== null && String(idx).trim()) {
+      const key = String(idx).replace(/["']/g, '').trim();
+      const el = this.screen?.elements.find((e) => e.idx === key);
+      if (el) return el.grid;
+    }
+    if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+      return { x: Math.max(0, Math.min(1000, x)), y: Math.max(0, Math.min(1000, y)) };
+    }
+    return null;
+  }
+
+  /** What readMoreOfScreen added this time, said once with the screen. */
+  private readNote = '';
+  /** Screens already given their extra read (hidden views, OCR), so each costs at most one try. */
+  private readMoreKeys = new Set<string>();
+  private ocrReads = 0;
+  /** The screen whose rows v1… came from OCR: the paid vision reader is not asked about it. */
+  private ocrKey = '';
+  /** Hidden views made a thin screen readable once in this run: they stay on for it. */
+  private hiddenHelped = false;
+  private hiddenTried = new Set<string>();
+
+  /**
+   * A thin screen, once per screen: (1) re-read it with views apps mark "not
+   * important" (React Native, Flutter, some web buttons), and keep that on for the
+   * run if it helped; (2) companion 0.32: read its text on the phone (OCR) and add
+   * the lines as rows v1, v2… that can be tapped. Both are free; images cost.
+   */
+  private async readMoreOfScreen(): Promise<string> {
+    const key = this.currentKey();
+    if (this.readMoreKeys.has(key) || this.readMoreKeys.size > 40) return '';
+    this.readMoreKeys.add(key);
+    const has = (f: CompanionFeature) => Boolean(this.gatewayService.hasFeature?.(this.hardwareDeviceId, f));
+    try {
+      // Hidden views: one try per app per run (two extra round trips), kept on if it helped.
+      const app = this.lastForegroundApp ?? '';
+      if (has('options') && !this.hiddenHelped && !this.hiddenTried.has(app)) {
+        this.hiddenTried.add(app);
+        await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'SetOptions', includeHidden: true }, 5000);
+        const before = this.screen?.labelledCount ?? 0;
+        const res = await this.observe();
+        this.absorb(res);
+        if (this.screen && !isThin(this.screen) && this.screen.labelledCount > before) {
+          this.hiddenHelped = true;
+          this.readNote = '\n\nNOTE: this screen hid its controls from the list; they were read again with hidden views included.';
+          return this.readNote;
+        }
+        await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'SetOptions', includeHidden: false }, 5000);
+      }
+      if (has('ocr') && this.screen && this.ocrReads < OCR_BUDGET) {
+        this.ocrReads += 1;
+        const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ReadText' }, 10000);
+        const lines = res.status === 'SUCCESS' ? res.textLines ?? [] : [];
+        if (lines.length) {
+          const { width, height } = this.screen.size;
+          const seen: SeenElement[] = lines
+            .filter((l) => l.text.trim().length > 1)
+            .map((l) => ({
+              label: l.text,
+              x: (((l.bounds.left + l.bounds.right) / 2) / Math.max(1, width)) * 1000,
+              y: (((l.bounds.top + l.bounds.bottom) / 2) / Math.max(1, height)) * 1000,
+              kind: 'text',
+            }));
+          if (seen.length) {
+            this.screen = withSeenElements(this.screen, seen);
+            this.lastUiTree = formatScreen(this.screen);
+            this.ocrKey = key;
+            this.readNote = `\n\nNOTE: this screen tells the list little, so the phone read its text (OCR): rows v1, v2… are text on screen at their real place — tap them with tap_element (e.g. idx "v2").`;
+            return this.readNote;
+          }
+        }
+      }
+    } catch {
+      // Extra reads are a bonus; the list as it was still works.
+    }
+    return '';
+  }
+
+  private async screenExtrasInner(shot?: string, stuck: 'loop' | 'no_effect' | null = null): Promise<{ note: string; image?: string }> {
     if (!this.screen) return { note: '' };
     const sensor = this.sensorNote();
     if (sensor) return { note: sensor };
-    const thin = isThin(this.screen);
-    if (!thin && !stuck) return { note: '' };
+    let thin = isThin(this.screen);
+    // Cheaper than any image: ask the phone for more of this screen first (hidden views,
+    // then on-device OCR on 0.32). Often that alone makes the list usable.
+    const read = thin ? await this.readMoreOfScreen() : '';
+    if (read) thin = isThin(this.screen);
+    if (!thin && !stuck) return { note: read };
     const stuckNote =
       stuck === 'loop'
         ? '\n\nSTUCK: you are going back and forth between the same two screens. Repeating it will not work. Take a completely different route (another element, the ⋮ menu, open_url or a deep link), or finish and report the reason.'
@@ -1954,7 +2211,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       };
     }
     const reader = this.screenReader;
-    if (reader && image) {
+    if (reader && image && this.ocrKey !== this.currentKey()) {
       const key = this.currentKey();
       if (key !== this.groundedKey && this.groundingUsed < GROUNDING_BUDGET) {
         this.groundedKey = key;

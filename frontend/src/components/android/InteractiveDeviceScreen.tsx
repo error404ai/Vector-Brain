@@ -55,6 +55,8 @@ export default function InteractiveDeviceScreen({
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const pointerStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  /** The finger's path during a drag (browser pixels), so the phone repeats the real movement. */
+  const pointerPath = useRef<{ x: number; y: number }[]>([]);
   const busyRef = useRef(false);
   /** True while a tap/swipe is in flight, so frames yield the socket to it. */
   const actionBusyRef = useRef(false);
@@ -207,9 +209,14 @@ export default function InteractiveDeviceScreen({
     try {
       const res = await sendDirectAction({ device_id: deviceId, action }).unwrap();
       const base64 = res?.data?.screenCapture?.base64Data;
-      if (base64) onScreenshotRef.current?.(base64);
+      if (base64) {
+        // Companion 0.32 sends the new frame with the result: nothing more to fetch.
+        onScreenshotRef.current?.(base64);
+        actionBusyRef.current = false;
+        return;
+      }
 
-      // Most actions return no frame, so pull one right away rather than waiting
+      // Older phones return no frame, so pull one right away rather than waiting
       // for the next tick. The short delay lets the UI settle first.
       window.setTimeout(() => {
         actionBusyRef.current = false;
@@ -226,6 +233,18 @@ export default function InteractiveDeviceScreen({
   const handlePointerDown = (event: React.PointerEvent<HTMLImageElement>) => {
     if (!controlEnabled) return;
     pointerStart.current = { x: event.clientX, y: event.clientY, t: Date.now() };
+    pointerPath.current = [{ x: event.clientX, y: event.clientY }];
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLImageElement>) => {
+    if (!controlEnabled || !pointerStart.current) return;
+    const path = pointerPath.current;
+    const last = path[path.length - 1];
+    // A point every few pixels is enough to follow the finger; at most 48 of them.
+    if (!last || Math.hypot(event.clientX - last.x, event.clientY - last.y) >= 6) {
+      if (path.length < 48) path.push({ x: event.clientX, y: event.clientY });
+      else path[path.length - 1] = { x: event.clientX, y: event.clientY };
+    }
   };
 
   const handlePointerUp = async (event: React.PointerEvent<HTMLImageElement>) => {
@@ -245,14 +264,16 @@ export default function InteractiveDeviceScreen({
       return;
     }
 
-    // Map the drag onto the closest cardinal swipe the protocol supports.
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const direction =
-      Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'RIGHT' : 'LEFT') : dy > 0 ? 'DOWN' : 'UP';
-
+    // The drag as the finger really moved: the phone follows the same path at the
+    // same speed (companion 0.32; the server turns it into the nearest swipe on older phones).
+    const raw = [...pointerPath.current, { x: event.clientX, y: event.clientY }];
+    pointerPath.current = [];
+    const points = raw
+      .map((p) => toDeviceCoords(p.x, p.y))
+      .filter((p): p is { x: number; y: number } => Boolean(p))
+      .slice(-64);
     await runAction(
-      { type: 'Swipe', direction, durationMillis: Math.max(200, Math.min(800, Date.now() - start.t)) },
+      { type: 'Gesture', strokes: [{ points: points.length >= 2 ? points : [from, to], durationMillis: Math.max(100, Math.min(3000, Date.now() - start.t)) }] },
       'Swipe',
     );
   };
@@ -308,6 +329,7 @@ export default function InteractiveDeviceScreen({
             draggable={false}
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
+            onPointerMove={handlePointerMove}
             style={{
               width: '100%',
               height: '100%',

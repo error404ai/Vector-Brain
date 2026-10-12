@@ -844,6 +844,30 @@ export default function AndroidFleetPage() {
                       </Tooltip>
                     );
                   })()}
+                  {(() => {
+                    // Companion 0.32: a hot phone throttles and drops runs; missions wait for it to cool.
+                    const health = serverStateByDevice.get(device.id)?.health;
+                    const temp = health?.temperatureC;
+                    const lowStorage = typeof health?.freeStorageMb === 'number' && health.freeStorageMb < 500;
+                    if ((temp == null || temp < 43) && !health?.lowMemory && !lowStorage) return null;
+                    const label = temp != null && temp >= 43 ? `${Math.round(temp)}°C` : lowStorage ? 'Storage' : 'Memory';
+                    const why =
+                      temp != null && temp >= 43
+                        ? `Battery at ${temp.toFixed(1)}°C${health?.charging ? ' while charging' : ''} — missions wait for it to cool below 46°C`
+                        : lowStorage
+                          ? `Only ${health?.freeStorageMb} MB free — apps and downloads may fail`
+                          : 'The phone reports low memory — apps may be killed mid-run';
+                    return (
+                      <Tooltip title={why}>
+                        <Box
+                          component="span"
+                          sx={{ px: 0.7, py: '1px', borderRadius: 1, fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: 'warning.dark', bgcolor: alpha('#f59e0b', 0.16) }}
+                        >
+                          {label}
+                        </Box>
+                      </Tooltip>
+                    );
+                  })()}
                   <Box sx={{ flexGrow: 1 }} />
                   {(() => {
                     const laneId = proxyIdFor(device);

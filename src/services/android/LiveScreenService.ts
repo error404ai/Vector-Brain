@@ -26,7 +26,18 @@ interface StreamState {
   intervalMs: number;
   /** True while a capture is in flight, so slow devices do not queue up. */
   busy: boolean;
+  /**
+   * The phone pushes its own frames (server:preview): it captures only while idle,
+   * so taps never queue behind a capture, and it looks again right after an action.
+   * Companion 0.31+ (its loop shipped earlier, but 0.31 is the build it was checked on).
+   */
+  push: boolean;
+  /** Push mode: when the last server:preview went out (the phone keeps going 30 s per message). */
+  renewedAt: number;
 }
+
+/** Push mode: renew the phone's 30 s loop this often. */
+const PUSH_RENEW_MS = 20_000;
 
 /**
  * Pushes a phone's screen to the dashboard while someone is watching.
@@ -57,8 +68,13 @@ export class LiveScreenService {
     const existing = this.streams.get(key);
     if (existing) {
       existing.lastSeenAt = Date.now();
-      return { message: 'Streaming', data: { streaming: true, intervalMs: existing.intervalMs } };
+      if (existing.push && Date.now() - existing.renewedAt >= PUSH_RENEW_MS / 2) {
+        existing.renewedAt = Date.now();
+        this.gatewayService.setPreview(key, true);
+      }
+      return { message: 'Streaming', data: { streaming: true, intervalMs: existing.intervalMs, push: existing.push } };
     }
+    const push = this.gatewayService.hasFeature(key, 'preview_push') || this.gatewayService.hasFeature(key, 'observe_after');
 
     const state: StreamState = {
       deviceId: device.device_id,
@@ -68,11 +84,14 @@ export class LiveScreenService {
       lastSeenAt: Date.now(),
       intervalMs: Math.max(MIN_INTERVAL_MS, intervalMs ?? DEFAULT_INTERVAL_MS),
       busy: false,
+      push,
+      renewedAt: Date.now(),
     };
     this.streams.set(key, state);
+    if (push) this.gatewayService.setPreview(key, true);
     this.scheduleNext(key);
 
-    return { message: 'Streaming', data: { streaming: true, intervalMs: state.intervalMs } };
+    return { message: 'Streaming', data: { streaming: true, intervalMs: state.intervalMs, push } };
   }
 
   /** Stop streaming for a device. Called when the dashboard closes the view. */
@@ -88,6 +107,7 @@ export class LiveScreenService {
     if (!state) return;
     clearTimeout(state.timer);
     this.streams.delete(deviceId);
+    if (state.push) this.gatewayService.setPreview(deviceId, false);
   }
 
   private scheduleNext(key: string): void {
@@ -96,7 +116,7 @@ export class LiveScreenService {
 
     state.timer = setTimeout(() => {
       void this.tick(key);
-    }, state.intervalMs);
+    }, state.push ? PUSH_RENEW_MS : state.intervalMs);
   }
 
   private async tick(key: string): Promise<void> {
@@ -109,7 +129,19 @@ export class LiveScreenService {
       return;
     }
 
-    if (state.busy) {
+    // Push mode: the phone sends frames itself; only keep its loop alive.
+    if (state.push) {
+      state.renewedAt = Date.now();
+      if (!this.gatewayService.setPreview(key, true)) {
+        this.stop(key);
+        return;
+      }
+      this.scheduleNext(key);
+      return;
+    }
+
+    // A person's tap or an agent run is using the phone: its own frames come with it.
+    if (state.busy || this.gatewayService.liveShouldWait(key)) {
       this.scheduleNext(key);
       return;
     }

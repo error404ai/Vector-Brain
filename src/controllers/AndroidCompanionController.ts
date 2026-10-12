@@ -10,6 +10,7 @@ import { deviceTokenMiddleware } from '@/middleware/deviceTokenMiddleware';
 import { AiConfigService } from '@/services/controllerService/AiConfigService';
 import { AndroidPlannerService } from '@/services/android/AndroidPlannerService';
 import { DeviceFileService } from '@/services/android/DeviceFileService';
+import { DeviceUploadService, MAX_UPLOAD_BYTES } from '@/services/android/DeviceUploadService';
 import { Response } from 'express';
 import fs from 'fs';
 import { pipeline } from 'stream/promises';
@@ -39,7 +40,28 @@ export class AndroidCompanionController {
     private plannerService: AndroidPlannerService,
     private aiConfigService: AiConfigService,
     private networkService: DeviceNetworkService,
+    private uploadService: DeviceUploadService,
   ) {}
+
+  /**
+   * A file from the phone (companion 0.32 UploadFile): raw bytes as the body,
+   * the name in X-File-Name (URL-encoded), its type in X-File-Type. Read here as a
+   * stream, so no body parser holds 50 MB.
+   */
+  @Post('/uploads')
+  async upload(@Req() req: any) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > MAX_UPLOAD_BYTES) throw new AppError('Up to 50 MB can be sent', 413);
+      chunks.push(chunk);
+    }
+    const name = String(req.headers['x-file-name'] ?? 'file');
+    const type = String(req.headers['x-file-type'] ?? req.headers['content-type'] ?? 'application/octet-stream');
+    const saved = await this.uploadService.store(req.deviceToken.deviceId, req.deviceToken.userId, name, type, Buffer.concat(chunks));
+    return { message: 'Received', data: { id: saved.id, name: saved.file_name, size: saved.size_bytes } };
+  }
 
   /**
    * Resolves the phone's own database row from its token.
