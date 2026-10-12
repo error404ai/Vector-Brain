@@ -92,6 +92,8 @@ import DeviceTagChip, { TAG_COLORS, parseTag, type TagColor } from '@/components
 import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
+import PrismBackground from '@/components/ui/PrismBackground';
+import { monoLabel, PRISM_ACCENT, PRISM_INK, PRISM_MUTED, PRISM_PINK } from '@/components/settings/settingsStyle';
 import {
   useAssignDeviceProxyMutation,
   useCancelQueuedTaskMutation,
@@ -707,25 +709,28 @@ export default function AndroidFleetPage() {
                 variant="outlined"
                 sx={{
                   position: 'relative',
-                  borderRadius: 2,
+                  borderRadius: '22px',
                   overflow: 'hidden',
+                  // Near-opaque white instead of a blur: twenty cards with live
+                  // screens would make backdrop blur expensive to repaint.
+                  bgcolor: 'rgba(255,255,255,.88)',
                   borderWidth: isSelected || state.startError || state.isRunning ? 2 : 1,
                   borderColor: state.startError
                     ? 'error.main'
                     : state.isRunning
-                      ? 'primary.main'
+                      ? PRISM_ACCENT
                       : isSelected
-                        ? 'primary.main'
-                        : undefined,
-                  // A running card lifts off the grid; the rest stay flat.
-                  boxShadow: state.isRunning ? 6 : undefined,
+                        ? alpha(PRISM_ACCENT, 0.6)
+                        : 'rgba(255,255,255,.95)',
                   // Offline cards keep full contrast; the spine carries the state
                   // so the content stays readable.
                   display: 'flex',
                   flexDirection: 'column',
                   pl: '5px',
-                  transition: 'border-color 180ms ease, box-shadow 180ms ease',
-                  ...(state.isRunning && { boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.28)' }),
+                  boxShadow: state.isRunning ? '0 22px 48px rgba(59, 76, 255, 0.18)' : '0 18px 40px rgba(30, 40, 90, 0.08)',
+                  transition: 'border-color 180ms ease, box-shadow 250ms ease, transform 250ms cubic-bezier(.2,.8,.2,1)',
+                  '&:hover': { transform: 'translateY(-3px)', boxShadow: '0 28px 56px rgba(30, 40, 90, 0.14)' },
+                  '@media (prefers-reduced-motion: reduce)': { transition: 'none', '&:hover': { transform: 'none' } },
                 }}
               >
                 <FleetStatusSpine
@@ -1580,43 +1585,67 @@ export default function AndroidFleetPage() {
   // ---- Render ------------------------------------------------------------
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
-      <Box sx={{ flexGrow: 1, minWidth: 0, p: { xs: 2, md: 3 }, maxWidth: 1680, mx: 'auto' }}>
+    // Glass Grid: the page sits on the app's prism, like Mission Control and Settings.
+    // The negative margins cancel AuthLayout's padding so the prism fills the view.
+    <Box
+      sx={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'flex-start',
+        mx: { xs: -1.5, sm: -2, md: -3 },
+        mt: { xs: '-12px', md: '-24px' },
+        mb: { xs: -10, md: -3 },
+        minHeight: 'calc(100vh - 64px)',
+        overflow: 'hidden',
+        color: PRISM_INK,
+      }}
+    >
+      <PrismBackground />
+      <Box sx={{ position: 'relative', zIndex: 1, flexGrow: 1, minWidth: 0, px: { xs: 2, md: 4 }, pt: { xs: 3, md: 4 }, pb: { xs: 12, md: 6 }, maxWidth: 1680, mx: 'auto' }}>
       {/* Header */}
-      <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 2.5 }}>
+      <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 3 }}>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="h5" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
-            Device Fleet
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            Send one instruction to every phone at once
+          <Typography sx={{ ...monoLabel, color: '#3730a3' }}>Device fleet</Typography>
+          <Typography component="h1" sx={{ m: 0, mt: 0.75, fontSize: { xs: 32, md: 40, xl: 46 }, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.045em', color: PRISM_INK }}>
+            {devices.length > 0 ? `${devices.length} phone${devices.length === 1 ? '' : 's'}, one instruction.` : 'Device Fleet'}
           </Typography>
         </Box>
 
-        {/* Counters read as a board, not as chips: the number carries the
-            weight and the word underneath explains it. */}
-        <Stack direction="row" spacing={3} sx={{ ml: { md: 2 } }}>
+        {/* Counters as glass tiles: the number carries the weight, the word explains it. */}
+        <Stack direction="row" gap={1.25} flexWrap="wrap" sx={{ ml: { md: 1 } }}>
           {[
-            { value: onlineDevices.length, label: 'online', tone: 'success.main' },
-            { value: runningCount, label: 'running', tone: runningCount > 0 ? 'primary.main' : 'text.disabled' },
-            { value: devices.length - onlineDevices.length, label: 'offline', tone: 'text.disabled' },
+            { value: onlineDevices.length, label: 'Online', tone: '#15803d', bg: 'rgba(255,255,255,.78)' },
+            {
+              value: runningCount,
+              label: 'Running',
+              tone: runningCount > 0 ? PRISM_ACCENT : PRISM_MUTED,
+              bg: runningCount > 0 ? `linear-gradient(135deg, ${alpha(PRISM_ACCENT, 0.16)}, ${alpha(PRISM_PINK, 0.12)})` : 'rgba(255,255,255,.78)',
+            },
+            { value: devices.length - onlineDevices.length, label: 'Offline', tone: PRISM_MUTED, bg: 'rgba(255,255,255,.62)' },
           ].map((stat) => (
-            <Box key={stat.label}>
-              <Typography
-                sx={{ fontWeight: 800, fontSize: 26, lineHeight: 1, color: stat.tone, fontVariantNumeric: 'tabular-nums' }}
-              >
+            <Box
+              key={stat.label}
+              sx={{ minWidth: 92, px: 2, py: 1.25, borderRadius: '18px', background: stat.bg, border: '1px solid rgba(255,255,255,.95)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' }}
+            >
+              <Typography sx={{ ...monoLabel, color: stat.tone }}>{stat.label}</Typography>
+              <Typography sx={{ fontWeight: 800, fontSize: 28, lineHeight: 1.1, letterSpacing: '-0.04em', color: stat.label === 'Offline' ? PRISM_MUTED : PRISM_INK, fontVariantNumeric: 'tabular-nums' }}>
                 {stat.value}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {stat.label}
               </Typography>
             </Box>
           ))}
         </Stack>
 
         <Box sx={{ flexGrow: 1 }} />
+        {/* Page actions stay together when the header wraps. */}
+        <Stack direction="row" alignItems="center" gap={1} sx={{ alignSelf: 'center' }}>
         {runningCount > 0 && (
-          <Button size="small" color="error" variant="outlined" startIcon={<StopCircleIcon />} onClick={handleStopAll}>
+          <Button
+            size="small"
+            color="error"
+            startIcon={<StopCircleIcon />}
+            onClick={handleStopAll}
+            sx={{ height: 40, px: 1.75, borderRadius: '12px', fontWeight: 800, bgcolor: 'rgba(220,38,38,.1)', '&:hover': { bgcolor: 'rgba(220,38,38,.16)' } }}
+          >
             Stop all
           </Button>
         )}
@@ -1636,10 +1665,11 @@ export default function AndroidFleetPage() {
           </Tooltip>
         )}
         <Tooltip title="Refresh devices">
-          <IconButton size="small" onClick={() => refetch()}>
+          <IconButton aria-label="Refresh devices" onClick={() => refetch()} sx={{ width: 40, height: 40, borderRadius: '12px', bgcolor: 'rgba(255,255,255,.75)', '&:hover': { bgcolor: '#fff' } }}>
             <RefreshIcon />
           </IconButton>
         </Tooltip>
+        </Stack>
       </Stack>
 
       <FleetCoverageStrip devices={devices} />
@@ -1729,20 +1759,22 @@ export default function AndroidFleetPage() {
           overflow: 'hidden',
           p: 2.5,
           mb: 3,
-          borderRadius: 3,
+          borderRadius: '26px',
           border: '1px solid',
-          borderColor: selectedIds.length > 0 ? alpha('#2563eb', 0.45) : 'divider',
-          bgcolor: 'background.paper',
+          borderColor: selectedIds.length > 0 ? alpha(PRISM_ACCENT, 0.35) : 'rgba(255,255,255,.95)',
+          bgcolor: 'rgba(255,255,255,.8)',
+          backdropFilter: 'blur(22px)',
+          WebkitBackdropFilter: 'blur(22px)',
           boxShadow: selectedIds.length > 0
-            ? '0 8px 30px rgba(37, 99, 235, 0.10)'
-            : '0 1px 2px rgba(16, 24, 40, 0.04)',
+            ? '0 26px 60px rgba(59, 76, 255, 0.14)'
+            : '0 24px 56px rgba(30, 40, 90, 0.09)',
           transition: 'border-color 220ms ease, box-shadow 220ms ease',
           '&::before': {
             content: '""',
             position: 'absolute',
             top: 0, left: 0, right: 0,
             height: 3,
-            background: 'linear-gradient(90deg, #2563eb 0%, #0f766e 100%)',
+            background: `linear-gradient(90deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
             opacity: selectedIds.length > 0 ? 1 : 0.35,
             transition: 'opacity 220ms ease',
           },
@@ -1759,8 +1791,8 @@ export default function AndroidFleetPage() {
               width: 34, height: 34,
               borderRadius: 2,
               color: '#fff',
-              background: 'linear-gradient(135deg, #2563eb 0%, #0f766e 100%)',
-              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.30)',
+              background: `linear-gradient(135deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
+              boxShadow: '0 6px 16px rgba(59, 76, 255, 0.30)',
             }}
           >
             <SmartToyIcon sx={{ fontSize: 20 }} />
@@ -1935,16 +1967,18 @@ export default function AndroidFleetPage() {
               whiteSpace: 'nowrap',
               minWidth: 168,
               px: 2.5,
-              borderRadius: 2,
-              fontWeight: 700,
+              borderRadius: '16px',
+              fontWeight: 800,
               textTransform: 'none',
               fontSize: 15,
               color: '#fff',
-              background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
-              boxShadow: '0 6px 18px rgba(37, 99, 235, 0.32)',
+              background: `linear-gradient(120deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
+              boxShadow: '0 14px 30px rgba(59, 76, 255, 0.30)',
+              transition: 'transform 200ms ease, box-shadow 200ms ease',
               '&:hover': {
-                background: 'linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%)',
-                boxShadow: '0 8px 24px rgba(37, 99, 235, 0.44)',
+                background: `linear-gradient(120deg, #2f3ee0 0%, #db2777 100%)`,
+                boxShadow: '0 18px 36px rgba(59, 76, 255, 0.38)',
+                transform: 'translateY(-1px)',
               },
               '&.Mui-disabled': { background: '#e5e7eb', color: '#9ca3af', boxShadow: 'none' },
             }}
@@ -2058,7 +2092,7 @@ export default function AndroidFleetPage() {
           <CircularProgress />
         </Stack>
       ) : devices.length === 0 ? (
-        <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', borderRadius: 2 }}>
+        <Paper elevation={0} sx={{ p: 5, textAlign: 'center', borderRadius: '26px', bgcolor: 'rgba(255,255,255,.8)', border: '1px solid rgba(255,255,255,.95)', backdropFilter: 'blur(20px)' }}>
           <Typography color="text.secondary">No paired devices yet.</Typography>
           <Button sx={{ mt: 2 }} variant="contained" onClick={() => navigate('/android-devices')}>
             Pair a device
@@ -2078,17 +2112,18 @@ export default function AndroidFleetPage() {
                     useFlexGap
                     sx={{
                       mb: 1.5,
-                      px: 1.5,
-                      py: 1,
-                      borderRadius: 2,
-                      // The lane's own colour, faint enough to sit behind text.
-                      bgcolor: alpha(proxyColor(proxy.id) ?? '#888', 0.12),
-                      borderLeft: '5px solid',
-                      borderColor: proxyColor(proxy.id),
+                      px: 1.75,
+                      py: 1.1,
+                      borderRadius: '18px',
+                      // Glass, tinted with the lane's own colour.
+                      background: `linear-gradient(90deg, ${alpha(proxyColor(proxy.id) ?? '#888', 0.16)}, rgba(255,255,255,.72) 55%)`,
+                      border: '1px solid rgba(255,255,255,.95)',
+                      backdropFilter: 'blur(16px)',
+                      WebkitBackdropFilter: 'blur(16px)',
                     }}
                   >
-                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id) }} />
-                    <Typography sx={{ fontWeight: 800, fontSize: 15 }}>{proxy.name}</Typography>
+                    <Box sx={{ width: 12, height: 12, borderRadius: '4px', bgcolor: proxyColor(proxy.id) }} />
+                    <Typography component="h2" sx={{ m: 0, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em' }}>{proxy.name}</Typography>
                     <Chip
                       size="small"
                       label={`${laneDevices.length} device${laneDevices.length === 1 ? '' : 's'}`}
@@ -2135,16 +2170,17 @@ export default function AndroidFleetPage() {
                     useFlexGap
                     sx={{
                       mb: 1.5,
-                      px: 1.5,
-                      py: 1,
-                      borderRadius: 2,
-                      bgcolor: 'action.hover',
-                      borderLeft: '5px solid',
-                      borderColor: 'divider',
+                      px: 1.75,
+                      py: 1.1,
+                      borderRadius: '18px',
+                      bgcolor: 'rgba(255,255,255,.66)',
+                      border: '1px solid rgba(255,255,255,.95)',
+                      backdropFilter: 'blur(16px)',
+                      WebkitBackdropFilter: 'blur(16px)',
                     }}
                   >
-                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: 'text.disabled' }} />
-                    <Typography sx={{ fontWeight: 800, fontSize: 15 }}>No proxy</Typography>
+                    <Box sx={{ width: 12, height: 12, borderRadius: '4px', bgcolor: '#9aa0b8' }} />
+                    <Typography component="h2" sx={{ m: 0, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em' }}>No proxy</Typography>
                     <Chip
                       size="small"
                       label={`${lanes.unassigned.length} device${lanes.unassigned.length === 1 ? '' : 's'}`}
