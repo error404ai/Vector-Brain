@@ -15,13 +15,12 @@ import InteractiveDeviceScreen from '@/components/android/InteractiveDeviceScree
 import FleetCoverageStrip from '@/components/android/FleetCoverageStrip';
 import {
   DeviceStatusBadge,
-  FleetStatusSummary,
   RetryButton,
+  statusAccent,
   TaskProgress,
   type FleetCounts,
   type FleetStatus,
 } from '@/components/android/FleetStatusUI';
-import FleetStatusSpine from '@/components/android/FleetStatusSpine';
 import { isInterruption, reasonLabel } from '@/components/android/taskReasons';
 import PhoneFrame3D from '@/components/android/PhoneFrame3D';
 import SendFileDialog from '@/components/android/SendFileDialog';
@@ -39,7 +38,6 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ReplayIcon from '@mui/icons-material/Replay';
 import SendIcon from '@mui/icons-material/Send';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
@@ -50,7 +48,6 @@ import {
   Card,
   CardContent,
   Checkbox,
-  FormControlLabel,
   Chip,
   CircularProgress,
   Dialog,
@@ -68,6 +65,7 @@ import {
   Menu,
 } from '@mui/material';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { keyframes } from '@mui/material/styles';
 import toast from 'react-hot-toast';
 import { useGetProfileQuery } from '@/RTKService/authService/authService';
 import { canManageLandingShots } from '@/_helpers/landingAccess';
@@ -89,7 +87,6 @@ import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import DeviceEmailRow from '@/components/android/DeviceEmailRow';
 import DeviceNetworkRow from '@/components/android/DeviceNetworkRow';
 import DeviceTagChip, { TAG_COLORS, parseTag, type TagColor } from '@/components/android/DeviceTagChip';
-import FleetActivityPanel from '@/components/android/FleetActivityPanel';
 import ProxyManagerDialog from '@/components/android/ProxyManagerDialog';
 import { proxyColor, proxyShortName } from '@/components/android/proxyColors';
 import PrismBackground from '@/components/ui/PrismBackground';
@@ -102,6 +99,58 @@ import {
   useClearAllQueuedMutation,
 } from '@/RTKService/androidService/proxyService';
 import { useNavigate } from 'react-router-dom';
+
+const riseIn = keyframes`from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; }`;
+const barSlide = keyframes`to { background-position: 200% 0; }`;
+const haloShift = keyframes`0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; }`;
+
+/** The status bar's order: live work first, then outcomes, then phones that cannot run. */
+const statusOrder: FleetStatus[] = ['running', 'waiting', 'failed', 'interrupted', 'cancelled', 'completed', 'idle', 'needs_setup', 'offline'];
+const statusLabel: Record<FleetStatus, string> = {
+  running: 'running',
+  waiting: 'waiting',
+  failed: 'failed',
+  interrupted: 'interrupted',
+  cancelled: 'cancelled',
+  completed: 'done',
+  idle: 'ready',
+  needs_setup: 'need setup',
+  offline: 'offline',
+};
+
+/** A run option under the instruction pill. */
+const glassChip = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 0.75,
+  height: 40,
+  px: 1.75,
+  border: 0,
+  borderRadius: '999px',
+  bgcolor: 'rgba(255,255,255,.7)',
+  boxShadow: '0 0 0 1px rgba(20,26,46,.07)',
+  font: 'inherit',
+  fontSize: 13.5,
+  color: PRISM_INK,
+} as const;
+const glassField = {
+  height: 40,
+  borderRadius: '999px',
+  bgcolor: 'rgba(255,255,255,.7)',
+  fontSize: 13.5,
+  '& fieldset': { borderColor: 'rgba(20,26,46,.07)' },
+} as const;
+const toolButton = {
+  height: 36,
+  px: 1.5,
+  borderRadius: '12px',
+  whiteSpace: 'nowrap',
+  textTransform: 'none',
+  fontWeight: 700,
+  color: PRISM_INK,
+  bgcolor: 'rgba(255,255,255,.8)',
+  '&:hover': { bgcolor: '#fff' },
+} as const;
 
 /** Live state tracked per device from the WebSocket stream. */
 /** One line of a device's run, kept so the chat panel can show a transcript. */
@@ -657,6 +706,17 @@ export default function AndroidFleetPage() {
     { total: 0, running: 0, waiting: 0, failed: 0, completed: 0, idle: 0, needs_setup: 0, interrupted: 0, cancelled: 0, offline: 0 } as FleetCounts,
   );
 
+  /** The instruction a phone last ran: this page's live copy, else the server's record. */
+  const lastPromptOf = (deviceId: number): string | undefined =>
+    runtime[deviceId]?.prompt ?? serverStateByDevice.get(deviceId)?.task?.prompt ?? undefined;
+
+  /** Failed or interrupted, online, and with an instruction to send again. User-cancelled runs are left alone. */
+  const isRetryable = (device: AndroidDevice): boolean => {
+    const status = deviceStatusOf(device);
+    return (status === 'failed' || status === 'interrupted') && device.status === 'ONLINE' && Boolean(lastPromptOf(device.id));
+  };
+  const retryableCount = devices.filter(isRetryable).length;
+
   // When a status filter is active, a device is shown only if it matches.
   const tagKeyOf = (device: AndroidDevice): string => {
     const parsed = parseTag(device.tag);
@@ -709,57 +769,30 @@ export default function AndroidFleetPage() {
                 variant="outlined"
                 sx={{
                   position: 'relative',
-                  borderRadius: '22px',
+                  borderRadius: '26px',
                   overflow: 'hidden',
                   // Near-opaque white instead of a blur: twenty cards with live
                   // screens would make backdrop blur expensive to repaint.
-                  bgcolor: 'rgba(255,255,255,.88)',
-                  borderWidth: isSelected || state.startError || state.isRunning ? 2 : 1,
-                  borderColor: state.startError
-                    ? 'error.main'
-                    : state.isRunning
-                      ? PRISM_ACCENT
-                      : isSelected
-                        ? alpha(PRISM_ACCENT, 0.6)
-                        : 'rgba(255,255,255,.95)',
-                  // Offline cards keep full contrast; the spine carries the state
-                  // so the content stays readable.
+                  bgcolor: 'rgba(255,255,255,.84)',
+                  border: 0,
                   display: 'flex',
                   flexDirection: 'column',
-                  pl: '5px',
-                  boxShadow: state.isRunning ? '0 22px 48px rgba(59, 76, 255, 0.18)' : '0 18px 40px rgba(30, 40, 90, 0.08)',
-                  transition: 'border-color 180ms ease, box-shadow 250ms ease, transform 250ms cubic-bezier(.2,.8,.2,1)',
-                  '&:hover': { transform: 'translateY(-3px)', boxShadow: '0 28px 56px rgba(30, 40, 90, 0.14)' },
+                  // State shows as a ring: red when a run could not start, the
+                  // accent while selected, a soft white edge otherwise. Running
+                  // phones get the moving halo behind the handset instead.
+                  boxShadow: [
+                    state.startError
+                      ? 'inset 0 0 0 2px #dc2626'
+                      : isSelected
+                        ? `inset 0 0 0 2px ${alpha(PRISM_ACCENT, 0.7)}`
+                        : 'inset 0 0 0 1px rgba(255,255,255,.95)',
+                    state.isRunning ? '0 26px 56px -20px rgba(59, 76, 255, 0.4)' : '0 18px 40px -24px rgba(30, 40, 90, 0.3)',
+                  ].join(', '),
+                  transition: 'box-shadow 250ms ease, transform 250ms cubic-bezier(.2,.8,.2,1)',
+                  '&:hover': { transform: 'translateY(-3px)' },
                   '@media (prefers-reduced-motion: reduce)': { transition: 'none', '&:hover': { transform: 'none' } },
                 }}
               >
-                <FleetStatusSpine
-                  state={(() => {
-                    const current = deviceStatusOf(device);
-                    return current === 'running' ||
-                      current === 'failed' ||
-                      current === 'completed' ||
-                      current === 'interrupted' ||
-                      current === 'cancelled' ||
-                      current === 'offline'
-                      ? current
-                      : 'idle';
-                  })()}
-                />
-                {/* The lane's colour, inset beside the status spine, so which
-                    proxy a phone is on is readable without opening anything. */}
-                {proxyIdFor(device) && (
-                  <Box
-                    sx={{
-                      position: 'absolute',
-                      left: '5px',
-                      top: 0,
-                      bottom: 0,
-                      width: '4px',
-                      bgcolor: proxyColor(proxyIdFor(device)),
-                    }}
-                  />
-                )}
                 {/* Header */}
                 <Stack direction="row" alignItems="center" gap={0.5} sx={{ px: 1, pt: 1 }}>
                   <Checkbox size="small" checked={isSelected} disabled={!isOnline} onChange={() => toggleDevice(device.id)} />
@@ -970,6 +1003,30 @@ export default function AndroidFleetPage() {
                     most of its area on black bars and shrank the actual frame to a
                     sliver. Constraining by height instead keeps the real 9:16 shape
                     and gives every card the same row height. */}
+                <Box sx={{ position: 'relative' }}>
+                {/* Running: a slow prism halo behind the handset, so live work is
+                    visible from across the page. Only running phones pay for it. */}
+                {state.isRunning && (
+                  <Box
+                    aria-hidden
+                    sx={{
+                      position: 'absolute',
+                      left: '50%',
+                      top: 12,
+                      bottom: 12,
+                      width: 286,
+                      transform: 'translateX(-50%)',
+                      borderRadius: '56px',
+                      background: `linear-gradient(120deg, ${PRISM_ACCENT}, ${PRISM_PINK}, #22d3ee, ${PRISM_ACCENT})`,
+                      backgroundSize: '300% 300%',
+                      filter: 'blur(18px)',
+                      opacity: 0.55,
+                      animation: `${haloShift} 5s linear infinite`,
+                      pointerEvents: 'none',
+                      '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
+                    }}
+                  />
+                )}
                 <PhoneFrame3D
                   width={248}
                   // 9:19, matching the Android Agent page's mockup, so the two
@@ -1000,8 +1057,9 @@ export default function AndroidFleetPage() {
                     isAgentRunning={state.isRunning}
                   />
                 </PhoneFrame3D>
+                </Box>
 
-                <Divider />
+                <Divider sx={{ borderColor: 'rgba(20,26,46,.06)' }} />
 
                 {/* Status — the visual priority of the card. Rendered from
                     reusable status components so every state looks consistent. */}
@@ -1221,6 +1279,104 @@ export default function AndroidFleetPage() {
             <MemoCard key={device.id} render={() => renderDeviceCard(device)} deps={cardDeps(device)} />
           ))}
         </Box>
+    );
+  };
+
+  /**
+   * One proxy lane as a glass shelf: its name and exit IP, what is running and
+   * waiting on it, and a Retry for the phones on it that failed.
+   *
+   * No backdrop blur on the shelf: it holds live screens and sits over the
+   * animated prism, so a blur would be recomputed across the whole shelf on
+   * every frame.
+   */
+  const renderLane = ({
+    key,
+    name,
+    color,
+    ip,
+    laneDevices,
+    note,
+    emptyText,
+  }: {
+    key: number | string;
+    name: string;
+    color: string;
+    ip?: string | null;
+    laneDevices: AndroidDevice[];
+    note: string;
+    emptyText?: string;
+  }) => {
+    const running = laneDevices.filter((device) => runtime[device.id]?.isRunning).length;
+    const waiting = laneDevices.filter((device) => queuedByDevice.has(device.id)).length;
+    const failed = laneDevices.filter(isRetryable).length;
+    const initials = name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/).map((word) => word[0]).join('').slice(0, 2).toUpperCase() || '—';
+    return (
+      <Box
+        key={key}
+        component="section"
+        sx={{
+          borderRadius: { xs: '24px', md: '32px' },
+          p: { xs: 1.25, md: 2.25 },
+          bgcolor: 'rgba(255,255,255,.46)',
+          border: '1px solid rgba(255,255,255,.9)',
+          boxShadow: '0 40px 80px -56px rgba(20,26,46,.45)',
+        }}
+      >
+        <Stack direction="row" alignItems="center" gap={1.25} flexWrap="wrap" useFlexGap sx={{ mb: 2, px: { xs: 0.5, md: 0.5 } }}>
+          <Box
+            sx={{
+              width: 42,
+              height: 42,
+              flexShrink: 0,
+              borderRadius: '13px',
+              display: 'grid',
+              placeItems: 'center',
+              color: '#fff',
+              fontWeight: 800,
+              fontSize: 14,
+              background: `linear-gradient(140deg, ${color}, ${alpha(color, 0.72)})`,
+              boxShadow: `0 10px 22px -10px ${alpha(color, 0.8)}`,
+            }}
+          >
+            {initials}
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography component="h2" sx={{ m: 0, fontWeight: 800, fontSize: { xs: 18, md: 22 }, letterSpacing: '-0.02em', lineHeight: 1.15 }} noWrap>
+              {name}
+            </Typography>
+            <Typography sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: PRISM_MUTED }} noWrap>
+              {ip ? `${ip} · ` : ''}
+              {laneDevices.length} phone{laneDevices.length === 1 ? '' : 's'}
+            </Typography>
+          </Box>
+          <Box sx={{ flexGrow: 1 }} />
+          {failed > 0 && (
+            <Button
+              size="small"
+              startIcon={<ReplayIcon />}
+              disabled={isDispatching}
+              onClick={() => void retryFailedIn(laneDevices)}
+              sx={{ height: 34, px: 1.5, borderRadius: 999, fontWeight: 800, textTransform: 'none', color: '#b91c1c', bgcolor: 'rgba(220,38,38,.1)', '&:hover': { bgcolor: 'rgba(220,38,38,.16)' } }}
+            >
+              {failed} failed · Retry
+            </Button>
+          )}
+          <Box sx={{ height: 34, px: 1.5, borderRadius: 999, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'rgba(255,255,255,.82)', fontSize: 13, color: PRISM_INK, whiteSpace: 'nowrap' }}>
+            <Box component="span" sx={{ fontWeight: 800, color: running ? PRISM_ACCENT : PRISM_MUTED }}>{running} running</Box>
+            <Box component="span" sx={{ color: PRISM_MUTED }}>·</Box>
+            <Box component="span" sx={{ fontWeight: 700, color: waiting ? '#b45309' : PRISM_MUTED }}>{waiting} waiting</Box>
+          </Box>
+          <Typography sx={{ fontSize: 12.5, color: PRISM_MUTED, fontWeight: 600 }}>{note}</Typography>
+        </Stack>
+        {laneDevices.length === 0 ? (
+          <Typography variant="caption" color="text.secondary" sx={{ pl: 1 }}>
+            {emptyText}
+          </Typography>
+        ) : (
+          renderDeviceGrid(laneDevices)
+        )}
+      </Box>
     );
   };
 
@@ -1506,14 +1662,26 @@ export default function AndroidFleetPage() {
     setPromptResetSignal((value) => value + 1);
   };
 
-  // Stable identity for the activity panel's retry, so the memoized panel does
-  // not redraw its whole list on every page render. The ref always points at the
-  // latest dispatchTo, so a retry never runs with stale settings.
-  const dispatchRef = useRef(dispatchTo);
-  dispatchRef.current = dispatchTo;
-  const retryFromPanel = useCallback((deviceId: number, taskPrompt: string) => {
-    void dispatchRef.current([deviceId], taskPrompt);
-  }, []);
+  /**
+   * Re-runs every failed or interrupted phone in `list` with the instruction it
+   * last ran. This is what the floating run-activity panel's per-row retry did;
+   * it now sits on the status bar (whole fleet) and on each lane's header.
+   * Phones that ran different instructions are sent each their own.
+   */
+  const retryFailedIn = async (list: AndroidDevice[]) => {
+    const targets = list.filter(isRetryable);
+    if (targets.length === 0) {
+      toast('Nothing to retry');
+      return;
+    }
+    if (!ensureReady()) return;
+    const byPrompt = new Map<string, number[]>();
+    for (const device of targets) {
+      const text = lastPromptOf(device.id) as string;
+      byPrompt.set(text, [...(byPrompt.get(text) ?? []), device.id]);
+    }
+    for (const [text, ids] of byPrompt) await dispatchTo(ids, text);
+  };
 
   const handleRetryFailed = async () => {
     if (!lastDispatch?.failedIds.length) return;
@@ -1626,51 +1794,303 @@ export default function AndroidFleetPage() {
     >
       <PrismBackground />
       <Box sx={{ position: 'relative', zIndex: 1, flexGrow: 1, minWidth: 0, px: { xs: 2, md: 4 }, pt: { xs: 3, md: 4 }, pb: { xs: 12, md: 6 }, maxWidth: 1680, mx: 'auto' }}>
-      {/* Header */}
-      <Stack direction="row" alignItems="flex-end" flexWrap="wrap" gap={2} sx={{ mb: 3 }}>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography sx={{ ...monoLabel, color: '#3730a3' }}>Device fleet</Typography>
-          <Typography component="h1" sx={{ m: 0, mt: 0.75, fontSize: { xs: 32, md: 40, xl: 46 }, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.045em', color: PRISM_INK }}>
-            {devices.length > 0 ? `${devices.length} phone${devices.length === 1 ? '' : 's'}, one instruction.` : 'Device Fleet'}
-          </Typography>
+      {/* Prism Orbit: the instruction is the centre of the page and the phones
+          sit below it in their lanes. */}
+      <Stack alignItems="center" gap={2} sx={{ mb: 3, textAlign: 'center', animation: `${riseIn} .6s cubic-bezier(.2,.8,.2,1) both`, '@media (prefers-reduced-motion: reduce)': { animation: 'none' } }}>
+        <Typography sx={{ ...monoLabel, color: '#3730a3' }}>
+          Device fleet · {devices.length} phone{devices.length === 1 ? '' : 's'} · {onlineDevices.length} online
+        </Typography>
+        <Typography
+          component="h1"
+          sx={{ m: 0, maxWidth: 940, fontSize: { xs: 32, sm: 44, md: 58, xl: 66 }, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.05em', color: PRISM_INK, textWrap: 'balance' }}
+        >
+          What should{' '}
+          <Box component="span" sx={{ background: `linear-gradient(100deg, ${PRISM_ACCENT}, #a855f7 50%, ${PRISM_PINK})`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+            {selectedIds.length > 0
+              ? `${selectedIds.length} selected phone${selectedIds.length === 1 ? '' : 's'}`
+              : `your ${onlineDevices.length || ''} phone${onlineDevices.length === 1 ? '' : 's'}`.replace('  ', ' ')}
+          </Box>{' '}
+          do next?
+        </Typography>
+
+        {/* The instruction pill. The field keeps its own draft (typing must not
+            redraw twenty live cards), the button reads the debounced copy. */}
+        <Box
+          sx={{
+            width: '100%',
+            maxWidth: 920,
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: 1,
+            p: 1,
+            pl: { sm: 2 },
+            borderRadius: { xs: '24px', sm: '999px' },
+            bgcolor: 'rgba(255,255,255,.76)',
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+            boxShadow: selectedIds.length > 0
+              ? `0 0 0 2px ${alpha(PRISM_ACCENT, 0.35)}, 0 30px 60px -30px rgba(59,76,255,.55)`
+              : '0 0 0 1px rgba(255,255,255,.95), 0 30px 60px -30px rgba(59,76,255,.4)',
+            transition: 'box-shadow 220ms ease',
+            textAlign: 'left',
+            '& .MuiOutlinedInput-root': { fontSize: 17, bgcolor: 'transparent', '& fieldset': { border: 0 } },
+          }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} resetSignal={promptResetSignal} />
+          </Box>
+          <Button
+            variant="contained"
+            disableElevation
+            startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+            disabled={isDispatching || selectedIds.length === 0 || !prompt.trim()}
+            onClick={() => void handleRunOnSelected()}
+            sx={{
+              flexShrink: 0,
+              height: 52,
+              px: 3,
+              borderRadius: '999px',
+              fontWeight: 800,
+              textTransform: 'none',
+              fontSize: 15,
+              color: '#fff',
+              whiteSpace: 'nowrap',
+              background: `linear-gradient(110deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
+              boxShadow: '0 14px 30px rgba(59, 76, 255, 0.30)',
+              '&:hover': { background: 'linear-gradient(110deg, #2f3ee0 0%, #db2777 100%)' },
+              '&.Mui-disabled': { background: 'rgba(20,26,46,.08)', color: PRISM_MUTED, boxShadow: 'none' },
+            }}
+          >
+            {isDispatching ? 'Starting…' : selectedIds.length ? `Run on ${selectedIds.length}` : 'Select phones'}
+          </Button>
         </Box>
 
-        {/* Counters as glass tiles: the number carries the weight, the word explains it. */}
-        <Stack direction="row" gap={1.25} flexWrap="wrap" sx={{ ml: { md: 1 } }}>
-          {[
-            { value: onlineDevices.length, label: 'Online', tone: '#15803d', bg: 'rgba(255,255,255,.78)' },
-            {
-              value: runningCount,
-              label: 'Running',
-              tone: runningCount > 0 ? PRISM_ACCENT : PRISM_MUTED,
-              bg: runningCount > 0 ? `linear-gradient(135deg, ${alpha(PRISM_ACCENT, 0.16)}, ${alpha(PRISM_PINK, 0.12)})` : 'rgba(255,255,255,.78)',
-            },
-            { value: devices.length - onlineDevices.length, label: 'Offline', tone: PRISM_MUTED, bg: 'rgba(255,255,255,.62)' },
-          ].map((stat) => (
-            <Box
-              key={stat.label}
-              sx={{ minWidth: 92, px: 2, py: 1.25, borderRadius: '18px', background: stat.bg, border: '1px solid rgba(255,255,255,.95)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' }}
-            >
-              <Typography sx={{ ...monoLabel, color: stat.tone }}>{stat.label}</Typography>
-              <Typography sx={{ fontWeight: 800, fontSize: 28, lineHeight: 1.1, letterSpacing: '-0.04em', color: stat.label === 'Offline' ? PRISM_MUTED : PRISM_INK, fontVariantNumeric: 'tabular-nums' }}>
-                {stat.value}
-              </Typography>
+        {/* Run options as quiet glass chips under the pill. */}
+        <Stack direction="row" justifyContent="center" alignItems="center" flexWrap="wrap" useFlexGap gap={1}>
+          <Box
+            component="button"
+            type="button"
+            onClick={selectAllOnline}
+            disabled={onlineDevices.length === 0}
+            sx={{ ...glassChip, cursor: 'pointer', fontWeight: 700, color: selectedIds.length ? PRISM_ACCENT : PRISM_INK }}
+          >
+            {selectedIds.length} / {onlineDevices.length} selected ·{' '}
+            {selectedIds.length === onlineDevices.length && onlineDevices.length > 0 ? 'Clear' : 'Select all'}
+          </Box>
+          <TextField
+            select
+            size="small"
+            aria-label="Model"
+            value={broadcastConfigId}
+            onChange={(event) => setBroadcastConfigId(Number(event.target.value))}
+            sx={{ minWidth: 200, '& .MuiOutlinedInput-root': { ...glassField } }}
+          >
+            <MenuItem value={0}>Model · {activeAiConfig?.model ?? 'none'}</MenuItem>
+            {aiConfigs.map((config) => (
+              <MenuItem key={config.id} value={config.id}>
+                {config.model}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            type="number"
+            aria-label="Steps"
+            value={maxSteps}
+            onChange={(event) => setMaxSteps(Number(event.target.value))}
+            onBlur={() => setMaxSteps((prev) => Math.min(20000, Math.max(1, prev || 200)))}
+            inputProps={{ min: 1, max: 20000 }}
+            InputProps={{ startAdornment: <Typography component="span" sx={{ fontSize: 13, color: PRISM_MUTED, mr: 0.75 }}>Steps</Typography> }}
+            sx={{ width: 132, '& .MuiOutlinedInput-root': { ...glassField, fontWeight: 700 } }}
+          />
+          <Tooltip title="For work that never opens the internet — settings, in-app steps. These run straight away instead of waiting for the proxy lane, and they neither hold the lane nor rotate its IP.">
+            <Box component="label" sx={{ ...glassChip, cursor: 'pointer' }}>
+              <Checkbox size="small" checked={skipProxyLane} onChange={(event) => setSkipProxyLane(event.target.checked)} sx={{ p: 0.25, ml: -0.5 }} />
+              No internet needed · skip the proxy queue
             </Box>
-          ))}
+          </Tooltip>
         </Stack>
 
-        <Box sx={{ flexGrow: 1 }} />
-        {/* Page actions stay together when the header wraps. */}
-        <Stack direction="row" alignItems="center" gap={1} sx={{ alignSelf: 'center' }}>
-        {runningCount > 0 && (
-          <Button
+        {/* The whole fleet in one bar. Each legend entry filters the lanes below;
+            failures carry their own Retry, which is what the old floating run
+            activity panel was for. */}
+        {fleetCounts.total > 0 && (
+          <Stack alignItems="center" gap={1.25} sx={{ width: '100%', maxWidth: 640 }}>
+            <Box role="img" aria-label="Fleet status" sx={{ width: '100%', display: 'flex', gap: '3px', height: 10, borderRadius: 999, overflow: 'hidden' }}>
+              {statusOrder
+                .filter((key) => fleetCounts[key] > 0)
+                .map((key) => (
+                  <Box
+                    key={key}
+                    sx={{
+                      flexGrow: fleetCounts[key],
+                      flexBasis: 0,
+                      transition: 'flex-grow 400ms ease',
+                      ...(key === 'running'
+                        ? { background: `linear-gradient(90deg, ${PRISM_ACCENT}, ${PRISM_PINK}, ${PRISM_ACCENT})`, backgroundSize: '200% 100%', animation: `${barSlide} 2s linear infinite` }
+                        : { bgcolor: statusAccent(key) }),
+                      opacity: statusFilter && statusFilter !== key ? 0.3 : 1,
+                    }}
+                  />
+                ))}
+            </Box>
+            <Stack direction="row" justifyContent="center" flexWrap="wrap" useFlexGap gap={0.5}>
+              {statusOrder
+                .filter((key) => fleetCounts[key] > 0 || statusFilter === key)
+                .map((key) => {
+                  const active = statusFilter === key;
+                  return (
+                    <Box
+                      key={key}
+                      component="button"
+                      type="button"
+                      onClick={() => setStatusFilter(active ? null : key)}
+                      aria-pressed={active}
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.75,
+                        px: 1.25,
+                        height: 30,
+                        border: 0,
+                        borderRadius: 999,
+                        cursor: 'pointer',
+                        font: 'inherit',
+                        fontSize: 13,
+                        color: active ? '#fff' : PRISM_INK,
+                        bgcolor: active ? statusAccent(key) : 'transparent',
+                        '&:hover': { bgcolor: active ? statusAccent(key) : 'rgba(255,255,255,.7)' },
+                      }}
+                    >
+                      <Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: active ? '#fff' : statusAccent(key) }} />
+                      <b>{fleetCounts[key]}</b> {statusLabel[key]}
+                    </Box>
+                  );
+                })}
+              {retryableCount > 0 && (
+                <Button
+                  size="small"
+                  startIcon={<ReplayIcon />}
+                  disabled={isDispatching}
+                  onClick={() => void retryFailedIn(devices)}
+                  sx={{ height: 30, borderRadius: 999, px: 1.5, fontWeight: 800, textTransform: 'none', color: '#b91c1c', bgcolor: 'rgba(220,38,38,.1)', '&:hover': { bgcolor: 'rgba(220,38,38,.16)' } }}
+                >
+                  Retry {retryableCount} failed
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+        )}
+      </Stack>
+
+      {/* Fleet-wide controls in one glass bar: what goes to the selection, then
+          the page's own tools. */}
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 1,
+          p: 1,
+          mb: 2,
+          mx: 'auto',
+          width: 'fit-content',
+          maxWidth: '100%',
+          borderRadius: '22px',
+          bgcolor: 'rgba(255,255,255,.66)',
+          border: '1px solid rgba(255,255,255,.95)',
+          boxShadow: '0 20px 44px -30px rgba(20,26,46,.35)',
+        }}
+      >
+        <Typography sx={{ ...monoLabel, color: PRISM_MUTED, px: 1 }}>
+          {selectedIds.length || 0} selected
+        </Typography>
+        <DeviceControls
+          deviceIds={selectedIds}
+          variant="full"
+          onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
+        />
+        <PasteToDevices deviceIds={selectedIds} />
+        {proxies.length > 0 && (
+          <TextField
+            select
             size="small"
-            color="error"
-            startIcon={<StopCircleIcon />}
-            onClick={handleStopAll}
-            sx={{ height: 40, px: 1.75, borderRadius: '12px', fontWeight: 800, bgcolor: 'rgba(220,38,38,.1)', '&:hover': { bgcolor: 'rgba(220,38,38,.16)' } }}
+            label="Assign selected to"
+            value=""
+            disabled={selectedIds.length === 0}
+            onChange={async (event) => {
+              const raw = event.target.value;
+              const proxyId = raw === 'none' ? null : Number(raw);
+              // Applied locally first, for the same reason as the per-device
+              // picker: the list only refreshes on its poll.
+              setProxyOverrides((current) => {
+                const next = { ...current };
+                for (const deviceId of selectedIds) next[deviceId] = proxyId;
+                return next;
+              });
+
+              try {
+                for (const deviceId of selectedIds) {
+                  await assignProxy({ device_id: deviceId, proxy_id: proxyId }).unwrap();
+                }
+                refetchProxies();
+                toast.success(`Assigned ${selectedIds.length} device${selectedIds.length === 1 ? '' : 's'}`);
+              } catch {
+                refetch();
+                toast.error('Could not assign all devices');
+              }
+            }}
+            sx={{ minWidth: 190, '& .MuiOutlinedInput-root': { borderRadius: '14px', bgcolor: 'rgba(255,255,255,.8)' } }}
           >
-            Stop all
+            {proxies.map((proxy) => (
+              <MenuItem key={proxy.id} value={proxy.id}>
+                <Box
+                  component="span"
+                  sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id), mr: 1, display: 'inline-block' }}
+                />
+                {proxy.name}
+              </MenuItem>
+            ))}
+            <MenuItem value="none">No proxy</MenuItem>
+          </TextField>
+        )}
+
+        <Box sx={{ width: '1px', alignSelf: 'stretch', bgcolor: 'rgba(20,26,46,.1)', mx: 0.5, display: { xs: 'none', md: 'block' } }} />
+
+        <Tooltip title={onlineDevices.length ? `Pull a fresh frame from all ${onlineDevices.length} online phones` : 'No devices online'}>
+          <span>
+            <Button
+              size="small"
+              startIcon={isRefreshingFrames ? <CircularProgress size={14} color="inherit" /> : <PhotoCameraIcon fontSize="small" />}
+              disabled={isRefreshingFrames || onlineDevices.length === 0}
+              onClick={() => handleRefreshAllFrames(false)}
+              sx={toolButton}
+            >
+              Screens
+            </Button>
+          </span>
+        </Tooltip>
+        <Tooltip title={selectedIds.length ? `Send one file to ${selectedIds.length} selected device${selectedIds.length === 1 ? '' : 's'}` : 'Select devices first'}>
+          <span>
+            <Button
+              size="small"
+              startIcon={isSendingFile ? <CircularProgress size={14} color="inherit" /> : <AttachFileIcon fontSize="small" />}
+              disabled={isSendingFile || selectedIds.length === 0}
+              onClick={() => fileInputRef.current?.click()}
+              sx={toolButton}
+            >
+              Send file
+            </Button>
+          </span>
+        </Tooltip>
+        <Button size="small" startIcon={<PublicIcon fontSize="small" />} onClick={() => setProxyDialogOpen(true)} sx={toolButton}>
+          Proxies{proxies.length > 0 ? ` (${proxies.length})` : ''}
+        </Button>
+        {proxies.length > 0 && (
+          <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={toolButton}>
+            {groupByProxy ? 'Ungroup' : 'Group by proxy'}
           </Button>
         )}
         {isAdmin && (
@@ -1678,30 +2098,78 @@ export default function AndroidFleetPage() {
             <span>
               <Button
                 size="small"
-                variant="outlined"
-                startIcon={<PhotoCameraIcon />}
+                startIcon={<PhotoCameraIcon fontSize="small" />}
                 disabled={capturingLanding || onlineDevices.length === 0}
                 onClick={() => void captureForLanding(selectedIds.length ? selectedIds : onlineDevices.map((d) => d.id))}
+                sx={toolButton}
               >
                 {selectedIds.length ? `Capture ${selectedIds.length}` : 'Capture all'}
               </Button>
             </span>
           </Tooltip>
         )}
+        {runningCount > 0 && (
+          <Button
+            size="small"
+            startIcon={<StopCircleIcon />}
+            onClick={handleStopAll}
+            sx={{ ...toolButton, color: '#b91c1c', bgcolor: 'rgba(220,38,38,.1)', '&:hover': { bgcolor: 'rgba(220,38,38,.16)' } }}
+          >
+            Stop all
+          </Button>
+        )}
         <Tooltip title="Refresh devices">
-          <IconButton aria-label="Refresh devices" onClick={() => refetch()} sx={{ width: 40, height: 40, borderRadius: '12px', bgcolor: 'rgba(255,255,255,.75)', '&:hover': { bgcolor: '#fff' } }}>
-            <RefreshIcon />
+          <IconButton aria-label="Refresh devices" onClick={() => refetch()} sx={{ width: 36, height: 36, borderRadius: '12px', bgcolor: 'rgba(255,255,255,.8)', '&:hover': { bgcolor: '#fff' } }}>
+            <RefreshIcon fontSize="small" />
           </IconButton>
         </Tooltip>
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            // Cleared straight away so picking the same file twice still fires.
+            event.target.value = '';
+            if (file) void handleSendFile(file);
+          }}
+        />
+      </Box>
+
+      {/* What the last Run did: started, waiting or refused. */}
+      {lastDispatch && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          flexWrap="wrap"
+          useFlexGap
+          gap={1}
+          sx={{ mx: 'auto', mb: 2, px: 1.5, py: 1, width: 'fit-content', maxWidth: '100%', borderRadius: '18px', bgcolor: 'rgba(255,255,255,.72)', border: '1px solid rgba(255,255,255,.95)' }}
+        >
+          <Typography sx={{ fontSize: 13, color: PRISM_MUTED, maxWidth: 360 }} noWrap>
+            “{lastDispatch.prompt}”
+          </Typography>
+          {lastDispatch.startedIds.length > 0 && (
+            <Chip size="small" icon={<CheckCircleIcon />} color="success" variant="outlined" label={`${lastDispatch.startedIds.length} started`} />
+          )}
+          {lastDispatch.failedIds.length > 0 && (
+            <Chip size="small" icon={<ErrorOutlineIcon />} color="error" variant="outlined" label={`${lastDispatch.failedIds.length} failed`} />
+          )}
+          {lastDispatch.failedIds.length > 0 && (
+            <Button size="small" startIcon={<ReplayIcon />} onClick={handleRetryFailed} disabled={isDispatching}>
+              Retry failed
+            </Button>
+          )}
+          <Button size="small" color="inherit" onClick={handleDismissDispatch}>
+            Dismiss
+          </Button>
         </Stack>
-      </Stack>
+      )}
 
       <FleetCoverageStrip devices={devices} />
 
-      <FleetStatusSummary counts={fleetCounts} activeFilter={statusFilter} onFilter={setStatusFilter} />
-
       {tagSummary.tags.length > 0 && (
-        <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap" useFlexGap sx={{ mt: -1, mb: 2 }}>
+        <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
           <Stack direction="row" alignItems="center" gap={0.5} sx={{ color: 'text.secondary', mr: 0.25 }}>
             <LocalOfferIcon sx={{ fontSize: 15 }} />
             <Typography variant="caption" sx={{ fontWeight: 600 }}>
@@ -1714,7 +2182,8 @@ export default function AndroidFleetPage() {
             return (
               <Box
                 key={tag.key}
-                role="button"
+                component="button"
+                type="button"
                 onClick={() => setTagFilter(active ? null : tag.key)}
                 sx={{
                   display: 'inline-flex',
@@ -1724,7 +2193,7 @@ export default function AndroidFleetPage() {
                   py: 0.4,
                   borderRadius: 5,
                   cursor: 'pointer',
-                  userSelect: 'none',
+                  font: 'inherit',
                   fontSize: 12.5,
                   fontWeight: 700,
                   color: active ? '#fff' : color,
@@ -1736,10 +2205,7 @@ export default function AndroidFleetPage() {
                 }}
               >
                 {tag.text}
-                <Box
-                  component="span"
-                  sx={{ px: 0.6, borderRadius: 2, fontSize: 11, bgcolor: active ? 'rgba(255,255,255,0.25)' : alpha(color, 0.14) }}
-                >
+                <Box component="span" sx={{ px: 0.6, borderRadius: 2, fontSize: 11, bgcolor: active ? 'rgba(255,255,255,0.25)' : alpha(color, 0.14) }}>
                   {tag.count}
                 </Box>
               </Box>
@@ -1747,14 +2213,15 @@ export default function AndroidFleetPage() {
           })}
           {tagSummary.untagged > 0 && (
             <Box
-              role="button"
+              component="button"
+              type="button"
               onClick={() => setTagFilter(tagFilter === UNTAGGED ? null : UNTAGGED)}
               sx={{
                 px: 1.25,
                 py: 0.4,
                 borderRadius: 5,
                 cursor: 'pointer',
-                userSelect: 'none',
+                font: 'inherit',
                 fontSize: 12.5,
                 fontWeight: 600,
                 border: '1px dashed',
@@ -1774,342 +2241,6 @@ export default function AndroidFleetPage() {
         </Stack>
       )}
 
-      {/* Broadcast bar — the primary control on the page, so it is raised out of
-          the flat outlined-paper treatment the rest of the page uses. */}
-      <Paper
-        elevation={0}
-        sx={{
-          position: 'relative',
-          overflow: 'hidden',
-          p: 2.5,
-          mb: 3,
-          borderRadius: '26px',
-          border: '1px solid',
-          borderColor: selectedIds.length > 0 ? alpha(PRISM_ACCENT, 0.35) : 'rgba(255,255,255,.95)',
-          bgcolor: 'rgba(255,255,255,.8)',
-          backdropFilter: 'blur(22px)',
-          WebkitBackdropFilter: 'blur(22px)',
-          boxShadow: selectedIds.length > 0
-            ? '0 26px 60px rgba(59, 76, 255, 0.14)'
-            : '0 24px 56px rgba(30, 40, 90, 0.09)',
-          transition: 'border-color 220ms ease, box-shadow 220ms ease',
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            top: 0, left: 0, right: 0,
-            height: 3,
-            background: `linear-gradient(90deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
-            opacity: selectedIds.length > 0 ? 1 : 0.35,
-            transition: 'opacity 220ms ease',
-          },
-        }}
-      >
-        {/* Header row: title on the left, live selection count + select-all on
-            the right. Utilities moved to their own toolbar below so this row
-            stays clean and the count is always visible. */}
-        <Stack direction="row" alignItems="center" gap={1.25} sx={{ mb: 2 }}>
-          <Box
-            sx={{
-              display: 'grid',
-              placeItems: 'center',
-              width: 34, height: 34,
-              borderRadius: 2,
-              color: '#fff',
-              background: `linear-gradient(135deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
-              boxShadow: '0 6px 16px rgba(59, 76, 255, 0.30)',
-            }}
-          >
-            <SmartToyIcon sx={{ fontSize: 20 }} />
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-              Run one task on many devices
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              One instruction, every selected phone at once
-            </Typography>
-          </Box>
-          <Box sx={{ flexGrow: 1 }} />
-          <Box
-            sx={{
-              px: 1.25, py: 0.5,
-              borderRadius: 5,
-              fontSize: 12,
-              fontWeight: 700,
-              color: selectedIds.length > 0 ? 'primary.dark' : 'text.secondary',
-              bgcolor: selectedIds.length > 0 ? alpha('#2563eb', 0.10) : 'action.hover',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {selectedIds.length} / {onlineDevices.length} selected
-          </Box>
-          <Button size="small" variant="text" onClick={selectAllOnline} disabled={onlineDevices.length === 0} sx={{ fontWeight: 600 }}>
-            {selectedIds.length === onlineDevices.length && onlineDevices.length > 0 ? 'Clear' : 'Select all'}
-          </Button>
-        </Stack>
-
-        {/* Utility toolbar: fleet-wide tools grouped and right-aligned, visually
-            separated from the run form. A subtle surface + border sets it apart
-            from the prompt row without competing with the primary Run button. */}
-        <Box
-          sx={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 0.5,
-            mb: 1.5,
-            p: 0.5,
-            borderRadius: 2,
-            bgcolor: 'background.default',
-            border: '1px solid',
-            borderColor: 'divider',
-          }}
-        >
-          <Tooltip title={onlineDevices.length ? `Pull a fresh frame from all ${onlineDevices.length} online phones` : 'No devices online'}>
-            <span>
-              <Button
-                size="small"
-                startIcon={isRefreshingFrames ? <CircularProgress size={14} color="inherit" /> : <PhotoCameraIcon fontSize="small" />}
-                disabled={isRefreshingFrames || onlineDevices.length === 0}
-                onClick={() => handleRefreshAllFrames(false)}
-                sx={{ whiteSpace: 'nowrap' }}
-              >
-                Screens
-              </Button>
-            </span>
-          </Tooltip>
-
-          <Tooltip title={selectedIds.length ? `Send one file to ${selectedIds.length} selected device${selectedIds.length === 1 ? '' : 's'}` : 'Select devices first'}>
-            <span>
-              <Button
-                size="small"
-                startIcon={isSendingFile ? <CircularProgress size={14} color="inherit" /> : <AttachFileIcon fontSize="small" />}
-                disabled={isSendingFile || selectedIds.length === 0}
-                onClick={() => fileInputRef.current?.click()}
-                sx={{ whiteSpace: 'nowrap' }}
-              >
-                Send file
-              </Button>
-            </span>
-          </Tooltip>
-
-          <Button size="small" startIcon={<PublicIcon fontSize="small" />} onClick={() => setProxyDialogOpen(true)} sx={{ whiteSpace: 'nowrap' }}>
-            Proxies{proxies.length > 0 ? ` (${proxies.length})` : ''}
-          </Button>
-
-          {proxies.length > 0 && (
-            <Button size="small" onClick={() => setGroupByProxy((value) => !value)} sx={{ whiteSpace: 'nowrap' }}>
-              {groupByProxy ? 'Ungroup' : 'Group by proxy'}
-            </Button>
-          )}
-
-          <Box sx={{ flexGrow: 1 }} />
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              // Cleared straight away so picking the same file twice still fires.
-              event.target.value = '';
-              if (file) void handleSendFile(file);
-            }}
-          />
-        </Box>
-
-        <Stack direction={{ xs: 'column', md: 'row' }} gap={1.25} alignItems="stretch">
-          <FleetPromptField onDraftChange={setPrompt} onSubmit={(text) => void handleRunOnSelected(text)} resetSignal={promptResetSignal} />
-          <TextField
-            select
-            size="small"
-            label="Model"
-            value={broadcastConfigId}
-            onChange={(event) => setBroadcastConfigId(Number(event.target.value))}
-            sx={{
-              minWidth: 210,
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-                bgcolor: 'background.default',
-                '& fieldset': { borderColor: 'divider' },
-                '&:hover fieldset': { borderColor: alpha('#2563eb', 0.5) },
-              },
-            }}
-          >
-            <MenuItem value={0}>Active — {activeAiConfig?.model ?? 'none'}</MenuItem>
-            {aiConfigs.map((config) => (
-              <MenuItem key={config.id} value={config.id}>
-                {config.model}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            size="small"
-            type="number"
-            label="Steps"
-            value={maxSteps}
-            onChange={(event) => setMaxSteps(Number(event.target.value))}
-            onBlur={() => setMaxSteps((prev) => Math.min(20000, Math.max(1, prev || 200)))}
-            inputProps={{ min: 1, max: 20000 }}
-            sx={{
-              width: 96,
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-                bgcolor: 'background.default',
-                fontWeight: 700,
-                '& fieldset': { borderColor: 'divider' },
-                '&:hover fieldset': { borderColor: alpha('#2563eb', 0.5) },
-              },
-            }}
-          />
-          <Tooltip title="For work that never opens the internet — settings, in-app steps. These run straight away instead of waiting for the proxy lane, and they neither hold the lane nor rotate its IP.">
-            <FormControlLabel
-              sx={{ mr: 0, ml: 0.5 }}
-              control={
-                <Checkbox
-                  size="small"
-                  checked={skipProxyLane}
-                  onChange={(event) => setSkipProxyLane(event.target.checked)}
-                />
-              }
-              label={
-                <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-                  No internet needed
-                  <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                    skip the proxy queue
-                  </Typography>
-                </Typography>
-              }
-            />
-          </Tooltip>
-          <Button
-            variant="contained"
-            disableElevation
-            startIcon={isDispatching ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
-            disabled={isDispatching || selectedIds.length === 0 || !prompt.trim()}
-            onClick={() => void handleRunOnSelected()}
-            sx={{
-              whiteSpace: 'nowrap',
-              minWidth: 168,
-              px: 2.5,
-              borderRadius: '16px',
-              fontWeight: 800,
-              textTransform: 'none',
-              fontSize: 15,
-              color: '#fff',
-              background: `linear-gradient(120deg, ${PRISM_ACCENT} 0%, ${PRISM_PINK} 100%)`,
-              boxShadow: '0 14px 30px rgba(59, 76, 255, 0.30)',
-              transition: 'transform 200ms ease, box-shadow 200ms ease',
-              '&:hover': {
-                background: `linear-gradient(120deg, #2f3ee0 0%, #db2777 100%)`,
-                boxShadow: '0 18px 36px rgba(59, 76, 255, 0.38)',
-                transform: 'translateY(-1px)',
-              },
-              '&.Mui-disabled': { background: '#e5e7eb', color: '#9ca3af', boxShadow: 'none' },
-            }}
-          >
-            {isDispatching ? 'Starting…' : `Run on ${selectedIds.length || 0}`}
-          </Button>
-        </Stack>
-
-        {/* Same controls as each card, aimed at the selection. Setting up a
-            fleet means sending Home or Back to every phone far more often than
-            to any one of them. */}
-        <Stack direction="row" alignItems="center" gap={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-            Controls for {selectedIds.length || 0} selected
-          </Typography>
-          <DeviceControls
-            deviceIds={selectedIds}
-            variant="full"
-            onFrame={(deviceId, base64) => patchRuntime(deviceId, { screenshot: base64 })}
-          />
-          <PasteToDevices deviceIds={selectedIds} />
-
-          {proxies.length > 0 && (
-            <TextField
-              select
-              size="small"
-              label="Assign selected to"
-              value=""
-              disabled={selectedIds.length === 0}
-              onChange={async (event) => {
-                const raw = event.target.value;
-                const proxyId = raw === 'none' ? null : Number(raw);
-                // Applied locally first, for the same reason as the per-device
-                // picker: the list only refreshes on its poll.
-                setProxyOverrides((current) => {
-                  const next = { ...current };
-                  for (const deviceId of selectedIds) next[deviceId] = proxyId;
-                  return next;
-                });
-
-                try {
-                  for (const deviceId of selectedIds) {
-                    await assignProxy({ device_id: deviceId, proxy_id: proxyId }).unwrap();
-                  }
-                  refetchProxies();
-                  toast.success(`Assigned ${selectedIds.length} device${selectedIds.length === 1 ? '' : 's'}`);
-                } catch {
-                  refetch();
-                  toast.error('Could not assign all devices');
-                }
-              }}
-              sx={{ minWidth: 190 }}
-            >
-              {proxies.map((proxy) => (
-                <MenuItem key={proxy.id} value={proxy.id}>
-                  <Box
-                    component="span"
-                    sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: proxyColor(proxy.id), mr: 1, display: 'inline-block' }}
-                  />
-                  {proxy.name}
-                </MenuItem>
-              ))}
-              <MenuItem value="none">No proxy</MenuItem>
-            </TextField>
-          )}
-        </Stack>
-
-        {/* Dispatch result strip */}
-        {lastDispatch && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            flexWrap="wrap"
-            gap={1}
-            sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}
-          >
-            {lastDispatch.startedIds.length > 0 && (
-              <Chip
-                size="small"
-                icon={<CheckCircleIcon />}
-                color="success"
-                variant="outlined"
-                label={`${lastDispatch.startedIds.length} started`}
-              />
-            )}
-            {lastDispatch.failedIds.length > 0 && (
-              <Chip
-                size="small"
-                icon={<ErrorOutlineIcon />}
-                color="error"
-                variant="outlined"
-                label={`${lastDispatch.failedIds.length} failed`}
-              />
-            )}
-            <Box sx={{ flexGrow: 1 }} />
-            {lastDispatch.failedIds.length > 0 && (
-              <Button size="small" startIcon={<ReplayIcon />} onClick={handleRetryFailed} disabled={isDispatching}>
-                Retry failed
-              </Button>
-            )}
-            <Button size="small" color="inherit" onClick={handleDismissDispatch}>
-              Dismiss
-            </Button>
-          </Stack>
-        )}
-      </Paper>
-
       {/* Grid */}
       {isLoading ? (
         <Stack alignItems="center" sx={{ py: 6 }}>
@@ -2126,100 +2257,34 @@ export default function AndroidFleetPage() {
         <Box>
           {groupByProxy && proxies.length > 0 ? (
             <Stack spacing={3}>
-              {lanes.groups.map(({ proxy, devices: laneDevices }) => (
-                <Box key={proxy.id}>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    gap={1}
-                    flexWrap="wrap"
-                    useFlexGap
-                    sx={{
-                      mb: 1.5,
-                      px: 1.75,
-                      py: 1.1,
-                      borderRadius: '18px',
-                      // Glass, tinted with the lane's own colour.
-                      background: `linear-gradient(90deg, ${alpha(proxyColor(proxy.id) ?? '#888', 0.16)}, rgba(255,255,255,.72) 55%)`,
-                      border: '1px solid rgba(255,255,255,.95)',
-                      backdropFilter: 'blur(16px)',
-                      WebkitBackdropFilter: 'blur(16px)',
-                    }}
-                  >
-                    <Box sx={{ width: 12, height: 12, borderRadius: '4px', bgcolor: proxyColor(proxy.id) }} />
-                    <Typography component="h2" sx={{ m: 0, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em' }}>{proxy.name}</Typography>
-                    <Chip
-                      size="small"
-                      label={`${laneDevices.length} device${laneDevices.length === 1 ? '' : 's'}`}
-                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
-                    />
-                    {proxy.last_ip && (
-                      <Chip size="small" variant="outlined" label={proxy.last_ip} sx={{ fontFamily: 'monospace', bgcolor: 'background.paper' }} />
-                    )}
-                    <Box sx={{ flexGrow: 1 }} />
-                    <Chip
-                      size="small"
-                      color="primary"
-                      label={`${laneDevices.filter((device) => runtime[device.id]?.isRunning).length} running`}
-                      sx={{ fontWeight: 800 }}
-                    />
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      label={`${laneDevices.filter((device) => queuedByDevice.has(device.id)).length} waiting`}
-                      sx={{ fontWeight: 700, color: 'text.secondary', borderStyle: 'dashed', bgcolor: 'transparent' }}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                      max {proxy.concurrency} at once
-                    </Typography>
-                  </Stack>
-
-                  {laneDevices.length === 0 ? (
-                    <Typography variant="caption" color="text.secondary" sx={{ pl: 1.5 }}>
-                      No devices on this proxy yet.
-                    </Typography>
-                  ) : (
-                    renderDeviceGrid(laneDevices)
-                  )}
-                </Box>
-              ))}
-
-              {lanes.unassigned.length > 0 && (
-                <Box>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    gap={1}
-                    flexWrap="wrap"
-                    useFlexGap
-                    sx={{
-                      mb: 1.5,
-                      px: 1.75,
-                      py: 1.1,
-                      borderRadius: '18px',
-                      bgcolor: 'rgba(255,255,255,.66)',
-                      border: '1px solid rgba(255,255,255,.95)',
-                      backdropFilter: 'blur(16px)',
-                      WebkitBackdropFilter: 'blur(16px)',
-                    }}
-                  >
-                    <Box sx={{ width: 12, height: 12, borderRadius: '4px', bgcolor: '#9aa0b8' }} />
-                    <Typography component="h2" sx={{ m: 0, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em' }}>No proxy</Typography>
-                    <Chip
-                      size="small"
-                      label={`${lanes.unassigned.length} device${lanes.unassigned.length === 1 ? '' : 's'}`}
-                      sx={{ fontWeight: 700, bgcolor: 'background.paper' }}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      These run straight away, without queueing or rotation
-                    </Typography>
-                  </Stack>
-                  {renderDeviceGrid(lanes.unassigned)}
-                </Box>
+              {lanes.groups.map(({ proxy, devices: laneDevices }) =>
+                renderLane({
+                  key: proxy.id,
+                  name: proxy.name,
+                  color: proxyColor(proxy.id) ?? '#8b93a7',
+                  ip: proxy.last_ip,
+                  laneDevices,
+                  note: `max ${proxy.concurrency} at once`,
+                  emptyText: 'No devices on this proxy yet.',
+                }),
               )}
+              {lanes.unassigned.length > 0 &&
+                renderLane({
+                  key: 'none',
+                  name: 'No proxy',
+                  color: '#8b93a7',
+                  laneDevices: lanes.unassigned,
+                  note: 'These run straight away, without queueing or rotation',
+                })}
             </Stack>
           ) : (
-            renderDeviceGrid(orderedDevices)
+            renderLane({
+              key: 'all',
+              name: 'All phones',
+              color: PRISM_ACCENT,
+              laneDevices: orderedDevices,
+              note: proxies.length > 0 ? 'Not grouped by proxy' : '',
+            })
           )}
         </Box>
       )}
@@ -2377,26 +2442,6 @@ export default function AndroidFleetPage() {
       </Dialog>
     
       <ProxyManagerDialog open={proxyDialogOpen} onClose={() => { setProxyDialogOpen(false); refetchProxies(); refetch(); }} />
-      </Box>
-
-      {/* Live run activity, floated bottom-right at half height — it grows up
-          from the corner rather than filling the whole side, and stays put as
-          the grid scrolls. Collapsible from its own header. Hidden on narrow
-          screens where it would cover the grid. */}
-      <Box
-        sx={{
-          display: { xs: 'none', lg: 'block' },
-          position: 'fixed',
-          right: 16,
-          bottom: 16,
-          width: 340,
-          maxHeight: '55vh',
-          zIndex: (theme) => theme.zIndex.drawer,
-          boxShadow: '0 10px 40px rgba(16, 24, 40, 0.18)',
-          borderRadius: 3,
-        }}
-      >
-        <FleetActivityPanel tasks={tasks} devices={devices} onRetry={retryFromPanel} />
       </Box>
     </Box>
   );
