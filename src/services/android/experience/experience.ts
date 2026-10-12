@@ -10,7 +10,8 @@
  */
 
 export type LessonKind = 'path' | 'avoid' | 'widget' | 'behave' | 'limit' | 'field';
-export type LessonStatus = 'candidate' | 'trusted' | 'off';
+/** unverified: learned by a run that did not succeed; the agent does not see it until a successful run teaches it too. */
+export type LessonStatus = 'unverified' | 'candidate' | 'trusted' | 'off';
 export const LESSON_KINDS: LessonKind[] = ['path', 'avoid', 'widget', 'behave', 'limit', 'field'];
 
 /** What the agent gets for a run: the lesson, and for an "avoid" with an address, the address it must not open. */
@@ -44,6 +45,9 @@ export interface DraftLesson {
 /** Lessons sent at once; more would crowd the screen list out. */
 export const MAX_LESSONS_PER_NOTE = 4;
 export const MAX_TEXT = 200;
+/** Lessons one run's reflection may add, and active lessons one site may have. */
+export const MAX_FROM_REFLECTION = 2;
+export const MAX_ACTIVE_PER_SCOPE = 12;
 /** A candidate is trusted after helping this many finished runs. */
 export const TRUST_AFTER = 2;
 /** Switched off after this many failed runs that used it, when it has hurt more than helped. */
@@ -117,16 +121,20 @@ export function lessonNote(scope: string, lessons: AgentLesson[]): string {
   return `EXPERIENCE on ${scope} (learned by earlier runs on your phones; use it, but trust the screen when it differs):\n${lines.join('\n')}`;
 }
 
-const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2));
-/** Same scope and kind, and most of the words in common: one lesson, not two. */
+const STOP_WORDS = new Set(['the', 'and', 'this', 'that', 'for', 'with', 'from', 'into', 'are', 'was', 'not', 'does', 'can', 'cannot', 'its', 'one', 'you', 'your', 'then', 'there', 'when', 'way']);
+const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w)));
+/**
+ * Same place and most of the words in common: one lesson, not two — whatever type the
+ * reflection gave it (Oct 13: the same Reels swipe note as both "avoid" and "behaviour").
+ */
 export function sameLesson(a: { scope: string; kind: string; text: string }, b: { scope: string; kind: string; text: string }): boolean {
-  if (a.scope.toLowerCase() !== b.scope.toLowerCase() || a.kind !== b.kind) return false;
+  if (a.scope.toLowerCase() !== b.scope.toLowerCase()) return false;
   const x = words(a.text);
   const y = words(b.text);
   if (!x.size || !y.size) return false;
   let both = 0;
   for (const w of x) if (y.has(w)) both += 1;
-  return both / (x.size + y.size - both) >= 0.55;
+  return both / (x.size + y.size - both) >= 0.45;
 }
 
 /** Text a lesson may not hold: addresses of people, passwords, codes. */
@@ -185,7 +193,7 @@ export function traceText(steps: RunStep[], max = 70): string {
 
 export const REFLECT_PROMPT = `You review one finished run of an AI agent that controls an Android phone, and write down what the NEXT run on the same site or app should know.
 
-Write 0 to 4 lessons. Each lesson is ONE short sentence (max 160 characters) about the site or app itself, true for any phone and any account:
+Write 0, 1 or 2 lessons — only the ones that would have saved the most steps. Each lesson is ONE short sentence (max 160 characters) about the site or app itself, true for any phone and any account:
 - path: the way to reach something ("New blog: Main menu → blog name dropdown → New Blog...").
 - avoid: a dead end that wasted steps ("Create new post (+) makes a post, not a blog").
 - widget: how to work a specific control or pop-up ("The EU notice closes with Cancel notification button.").
@@ -199,6 +207,8 @@ Rules:
 - Never include emails, names, passwords, codes, phone numbers or anything about the user.
 - Nothing generic ("wait for pages to load", "read the screen"); only things specific to this site or app.
 - scope is the site's domain (blogger.com) or the app's package (com.instagram.android) as it appears in the steps.
+- Never write about things the system already handles by itself: toggles (Like/Save undo on a second tap), the keyboard, cookie or consent banners, pop-ups, swipe or scroll direction, counting, waiting for loads.
+- "X does not work" only when the steps show X tried at least two different ways and failing each time; a single failed attempt is the agent's mistake, not a fact about the site.
 - No lesson is better than a weak one.
 
 Answer with JSON only: {"lessons":[{"scope":"...","kind":"path|avoid|widget|behave|limit|field","text":"..."}]}`;
@@ -217,7 +227,8 @@ export function parseLessons(raw: string, run: { domains: Set<string>; apps: Set
   const list = (parsed as { lessons?: unknown }).lessons;
   if (!Array.isArray(list)) return [];
   const out: DraftLesson[] = [];
-  for (const item of list.slice(0, 4)) {
+  for (const item of list.slice(0, 6)) {
+    if (out.length >= MAX_FROM_REFLECTION) break;
     const scopeRaw = String((item as { scope?: unknown }).scope ?? '').trim().toLowerCase();
     const kind = String((item as { kind?: unknown }).kind ?? '').trim().toLowerCase() as LessonKind;
     const text = String((item as { text?: unknown }).text ?? '').replace(/\s+/g, ' ').trim();

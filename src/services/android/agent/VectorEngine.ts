@@ -377,7 +377,8 @@ export class VectorEngine implements AgentEngine {
 
       // The counts code can tally, against the rule list: "posts liked 2 of 5".
       const ruleCounts = rules && steps.length ? rulesProgress(rules, runTally(steps)) : '';
-      if (ruleCounts && !this.options.compact) notes.push(`RULE COUNTS (counted by the system, exact): ${ruleCounts}`);
+      // Lite too: the model's own tally drifted (Oct 13, #3878: "3 of 5" after 2 likes, ended at 4).
+      if (ruleCounts) notes.push(`${this.options.compact ? 'COUNT' : 'RULE COUNTS'} (counted by the system, exact — trust this, not your own count): ${ruleCounts}`);
       const actions = this.options.compact ? countActions(steps, LOOK_ONLY) : '';
       const context = buildContext({
         task: prompt,

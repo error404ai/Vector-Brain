@@ -347,3 +347,97 @@ describe('refused again and again (Oct 13, #3873: one refused tap 30 times, 60 s
     expect(last.text).toMatch(/^Not tapped/);
   });
 });
+
+describe('swipes tell the truth (Oct 13: every swipe went the wrong way, 56 of 95 moved nothing)', () => {
+  /** A reels feed: item n on screen; finger UP shows n+1, DOWN shows n-1, stuck when `stuck` says so. */
+  function feed(opts: { stuckUp?: 'short' | 'always'; start?: number } = {}) {
+    let item = opts.start ?? 1;
+    const exec: Exec = jest.fn(async (_hw, action) => {
+      if (action.type === 'ObserveScreen') {
+        return {
+          status: 'SUCCESS',
+          uiTree: { packageName: 'com.instagram.android', root: screen([node({ text: `creator_${item}`, clickable: true, box: [40, 1800, 600, 1880] }), node({ contentDescription: 'Like', clickable: true, box: [900, 1200, 1040, 1320] })]) },
+        };
+      }
+      const up = (action.type === 'Swipe' && action.direction === 'UP') || (action.type === 'Gesture' && (action.strokes as { points: { y: number }[] }[])[0].points[0].y > 1500);
+      const down = (action.type === 'Swipe' && action.direction === 'DOWN') || (action.type === 'Gesture' && (action.strokes as { points: { y: number }[] }[])[0].points[0].y < 900);
+      const strong = action.type === 'Gesture' || (action.type === 'Swipe' && action.durationMillis === 250);
+      if (up && !(opts.stuckUp === 'always' || (opts.stuckUp === 'short' && !strong))) item += 1;
+      if (down && item > 1) item -= 1;
+      return { status: 'SUCCESS', summary: 'Gesture completed' };
+    });
+    return { exec, ...harness(exec), now: () => item };
+  }
+
+  it('UP goes to the phone as UP and says MOVED', async () => {
+    const { run, exec, now } = feed();
+    await run('read_ui_tree');
+    const r = await run('swipe', { direction: 'UP' });
+    expect(sent(exec)[0]).toMatchObject({ type: 'Swipe', direction: 'UP' });
+    expect(r.text).toMatch(/MOVED: new content is on screen/);
+    expect(now()).toBe(2);
+  });
+
+  it('a short swipe that is ignored is made again, longer and faster', async () => {
+    const { run, now } = feed({ stuckUp: 'short' });
+    await run('read_ui_tree');
+    const r = await run('swipe', { direction: 'UP' });
+    expect(r.text).toMatch(/first swipe moved nothing, so a longer, faster one was made/);
+    expect(now()).toBe(2);
+  });
+
+  it('at the end of a list it tries the other way once and says the screen shows the previous item', async () => {
+    const { run, now } = feed({ stuckUp: 'always', start: 3 });
+    await run('read_ui_tree');
+    const r = await run('swipe', { direction: 'UP' });
+    expect(r.text).toMatch(/NOTHING MOVED going UP \(tried twice\)\. Going DOWN did move.*PREVIOUS item/s);
+    expect(now()).toBe(2);
+  });
+});
+
+describe('a run that goes nowhere is stopped', () => {
+  const still = (opts: ConstructorParameters<typeof AndroidAgent>[3] = {}) => {
+    const exec: Exec = jest.fn(async (_hw, action) => {
+      if (action.type === 'ObserveScreen') {
+        return { status: 'SUCCESS', uiTree: { packageName: 'com.android.chrome', root: screen(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'].map((t, i) => node({ text: `Item ${t}`, clickable: true, box: [40, 100 + i * 120, 1040, 200 + i * 120] }))) } };
+      }
+      return { status: 'SUCCESS', summary: 'done' };
+    });
+    const onStuck = jest.fn();
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw', { onStuck }, opts);
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[]; isError?: boolean }> }[] }).tools;
+    const run = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await tools.find((t) => t.name === name)!.execute(args, {}, {});
+      return { text: r.content.map((c) => c.text ?? '').join(''), isError: Boolean(r.isError) };
+    };
+    return { run, onStuck };
+  };
+
+  it('12 actions with no new screen and nothing changed stop it (NO_PROGRESS), with a warning at 8', async () => {
+    const { run, onStuck } = still();
+    await run('read_ui_tree');
+    const texts: string[] = [];
+    // The first tap meets the screen for the first time (progress); the next 12 bring nothing.
+    for (let i = 0; i < 13; i += 1) texts.push((await run('tap_element', { idx: String(i) })).text);
+    expect(texts.join('\n')).toMatch(/NO PROGRESS: your last 8 actions/);
+    expect(onStuck).toHaveBeenCalledWith(expect.stringMatching(/12 actions in a row/), 'NO_PROGRESS');
+  });
+
+  it('the same steps a third time stop it sooner (AGENT_LOOP)', async () => {
+    const { run, onStuck } = still();
+    await run('read_ui_tree');
+    for (let i = 0; i < 3; i += 1) {
+      await run('tap_element', { idx: '1' });
+      await run('tap_element', { idx: '2' });
+      await run('tap_element', { idx: '3' });
+    }
+    expect(onStuck).toHaveBeenCalledWith(expect.stringMatching(/same 3 steps 3 times/), 'AGENT_LOOP');
+  });
+
+  it('a timed run is never stopped for staying put', async () => {
+    const { run, onStuck } = still({ timed: true });
+    await run('read_ui_tree');
+    for (let i = 0; i < 14; i += 1) await run('tap_element', { idx: String(i) });
+    expect(onStuck).not.toHaveBeenCalled();
+  });
+});

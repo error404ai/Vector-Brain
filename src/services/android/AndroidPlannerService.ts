@@ -1369,10 +1369,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
-      onStuck: (reason) => stopForSafety(reason, 'AGENT_STUCK'),
+      onStuck: (reason, code) => stopForSafety(reason, code ?? 'AGENT_STUCK'),
     }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info), accounts: await this.phoneAccounts(userId, deviceDbId),
       // Experience memory; a Test Lab run measures the model alone, so it gets none.
       experience: flowOptions.aiOnly ? [] : await Container.get(ExperienceService).forRun(userId),
+      // A timed run stays on purpose ("watch reels for 10 minutes"): no no-progress stop.
+      timed: Boolean(runUntil),
     });
 
     // Kept in a variable so the harness simulation can drive the very same

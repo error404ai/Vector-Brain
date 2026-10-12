@@ -55,12 +55,17 @@ describe('experience memory: learning', () => {
     expect(lessons).toEqual([{ scope: 'blogger.com', kind: 'widget', text: 'The EU notice closes with Cancel notification button.' }]);
     // A path is only learned from a run that succeeded.
     expect(parseLessons(raw, { ...run, succeeded: true }).map((l) => l.kind)).toEqual(['widget', 'path']);
+    // Two at most per run.
+    const many = `{"lessons":[${Array.from({ length: 5 }, (_, i) => `{"scope":"blogger.com","kind":"widget","text":"Lesson number ${'abcde'[i]} about the post editor toolbar"}`).join(',')}]}`;
+    expect(parseLessons(many, run)).toHaveLength(2);
     expect(parseLessons('no json', run)).toEqual([]);
   });
 
   it('merges the same lesson and scores by how runs end', () => {
     expect(sameLesson({ scope: 'blogger.com', kind: 'path', text: 'New blog: Main menu → blog name dropdown → New Blog...' }, { scope: 'blogger.com', kind: 'path', text: 'New blog is in Main menu, blog name dropdown, then New Blog...' })).toBe(true);
-    expect(sameLesson({ scope: 'blogger.com', kind: 'path', text: 'New blog: Main menu → dropdown' }, { scope: 'blogger.com', kind: 'avoid', text: 'New blog: Main menu → dropdown' })).toBe(false);
+    // The same lesson under another type is still the same lesson (Oct 13: one Reels note saved twice).
+    expect(sameLesson({ scope: 'instagram', kind: 'avoid', text: 'Swiping UP in the Reels feed does not advance to the next reel; the list stays on the same item' }, { scope: 'instagram', kind: 'behave', text: 'Swiping UP in the Reels feed does nothing — the reel stays on the same item, so it cannot advance to the next reel' })).toBe(true);
+    expect(sameLesson({ scope: 'blogger.com', kind: 'path', text: 'New blog: Main menu → dropdown' }, { scope: 'medium.com', kind: 'path', text: 'New blog: Main menu → dropdown' })).toBe(false);
     let l = { status: 'candidate' as const, helped: 0, hurt: 0, source: 'auto' };
     let next = scoreLesson(l, true);
     next = scoreLesson({ ...l, ...next }, true);

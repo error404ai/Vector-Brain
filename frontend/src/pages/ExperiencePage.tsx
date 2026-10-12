@@ -88,6 +88,15 @@ function Mark({ scope, size = 32 }: { scope: string; size?: number }) {
 
 function StatusLabel({ status }: { status: LessonStatus }) {
   const color = status === 'trusted' ? 'success.main' : status === 'candidate' ? 'warning.main' : 'text.disabled';
+  if (status === 'unverified') {
+    return (
+      <Tooltip title="Learned by a run that did not succeed. The agent does not see it until a successful run teaches the same.">
+        <Typography component="span" sx={{ fontSize: 12, fontWeight: 700, color: 'text.secondary', display: 'inline-flex', gap: 0.5, alignItems: 'center' }}>
+          ◌ Unverified
+        </Typography>
+      </Tooltip>
+    );
+  }
   return (
     <Typography component="span" sx={{ fontSize: 12, fontWeight: 700, color, display: 'inline-flex', gap: 0.5, alignItems: 'center' }}>
       {status === 'trusted' ? '● Trusted' : status === 'candidate' ? '◐ Learning' : '○ Off'}
@@ -195,7 +204,7 @@ function LessonCard({ lesson, index, onEdit }: { lesson: Lesson; index: number; 
   const [update] = useUpdateLessonMutation();
   const [remove] = useDeleteLessonMutation();
   const [confirming, setConfirming] = useState(false);
-  const on = lesson.status !== 'off';
+  const on = lesson.status === 'trusted' || lesson.status === 'candidate';
   return (
     <Card
       variant="outlined"
@@ -252,7 +261,7 @@ function LessonCard({ lesson, index, onEdit }: { lesson: Lesson; index: number; 
         </Tooltip>
       </Stack>
       <Typography sx={{ fontWeight: 650, fontSize: 15, lineHeight: 1.45 }}>{lesson.text}</Typography>
-      {lesson.off_reason && !on && <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>{lesson.off_reason}</Typography>}
+      {lesson.off_reason && lesson.status === 'off' && <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>{lesson.off_reason}</Typography>}
       <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" useFlexGap sx={{ color: 'text.secondary', fontSize: 12 }}>
         <span>
           Helped <b style={{ fontVariantNumeric: 'tabular-nums' }}>{lesson.helped}</b> · Hurt <b style={{ fontVariantNumeric: 'tabular-nums' }}>{lesson.hurt}</b> · Shown in{' '}
@@ -281,10 +290,17 @@ export default function ExperiencePage() {
   const [saveSettings] = useSaveExperienceSettingsMutation();
   const [picked, setPicked] = useState<string | null>(null);
   const [tab, setTab] = useState<'lessons' | 'runs'>('lessons');
+  const [show, setShow] = useState<'use' | 'unverified' | 'off' | 'all'>('use');
   const [dialog, setDialog] = useState<Draft | null>(null);
   const ov = data?.data;
   const scope = picked ?? ov?.scopes[0]?.scope ?? null;
-  const lessons = useMemo(() => (ov?.lessons ?? []).filter((l) => l.scope === scope), [ov, scope]);
+  const lessons = useMemo(
+    () =>
+      (ov?.lessons ?? []).filter(
+        (l) => l.scope === scope && (show === 'all' || (show === 'use' ? l.status === 'trusted' || l.status === 'candidate' : l.status === show)),
+      ),
+    [ov, scope, show],
+  );
 
   const toggle = (key: 'enabled' | 'learn', value: boolean) =>
     void saveSettings({ [key]: value })
@@ -423,6 +439,24 @@ export default function ExperiencePage() {
                 </Box>
               </Stack>
             )}
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {(
+                [
+                  ['use', 'In use'],
+                  ['unverified', 'Unverified'],
+                  ['off', 'Off'],
+                  ['all', 'All'],
+                ] as const
+              ).map(([key, name]) => {
+                const n = (ov.lessons ?? []).filter((l) => l.scope === scope && (key === 'all' || (key === 'use' ? l.status === 'trusted' || l.status === 'candidate' : l.status === key))).length;
+                return (
+                  <Button key={key} size="small" variant={show === key ? 'contained' : 'text'} color="inherit" onClick={() => setShow(key)} sx={{ borderRadius: 99, px: 1.5, fontWeight: 700, fontSize: 12, minWidth: 0 }}>
+                    {name} · {n}
+                  </Button>
+                );
+              })}
+            </Stack>
+            {lessons.length === 0 && <Typography sx={{ color: 'text.secondary', fontSize: 14, py: 2 }}>Nothing here.</Typography>}
             {lessons.map((l, i) => (
               <LessonCard key={l.id} lesson={l} index={i} onEdit={() => setDialog({ id: l.id, scope: l.scope, kind: l.kind, text: l.text })} />
             ))}

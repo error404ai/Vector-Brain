@@ -1,7 +1,7 @@
 import { baseApi, TAGS } from '../baseApi';
 
 export type LessonKind = 'path' | 'avoid' | 'widget' | 'behave' | 'limit' | 'field';
-export type LessonStatus = 'trusted' | 'candidate' | 'off';
+export type LessonStatus = 'trusted' | 'candidate' | 'unverified' | 'off';
 
 export interface Lesson {
   id: number;
@@ -22,7 +22,7 @@ export interface Lesson {
 
 export interface ExperienceOverview {
   settings: { enabled: boolean; learn: boolean };
-  stats: { active: number; trusted: number; runs_helped_week: number; runs_with_memory_week: number };
+  stats: { active: number; trusted: number; unverified: number; runs_helped_week: number; runs_with_memory_week: number };
   scopes: { scope: string; lessons: number; trusted: number; helped: number }[];
   lessons: Lesson[];
   runs: { task_id: number; succeeded: boolean; created_at: string; used: { id: number; text: string }[]; learned: { id: number; text: string }[] }[];

@@ -273,7 +273,7 @@ describe('swipe guard', () => {
     for (let i = 0; i < 4; i += 1) await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
     const blocked = await tool(agent, 'swipe').execute({ direction: 'UP' }, {}, {});
     expect(blocked.isError).toBe(true);
-    expect(text(blocked)).toMatch(/Blocked: already scrolled 4 times in this direction with nothing changing/);
+    expect(text(blocked)).toMatch(/Blocked: already swiped 4 times in this direction with nothing moving/);
   });
 });
 

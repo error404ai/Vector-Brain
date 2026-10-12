@@ -614,7 +614,7 @@ describe('the task rule list', () => {
     expect(text).toContain('DO NOT: like or comment');
     // Two swipes and task_done: the code count fails it and sends the agent back.
     expect(text).toMatch(/SYSTEM CHECK FAILED: Counted by the system: scrolls \(swipe\/scroll_element\): 2 of 3/);
-    expect(text).toMatch(/RULE COUNTS \(counted by the system, exact\): reels scrolled: 2 of 3/);
+    expect(text).toMatch(/RULE COUNTS \(counted by the system, exact — trust this, not your own count\): reels scrolled: 2 of 3/);
     expect(r.calls.swipe).toBe(3);
     expect(result).toMatchObject({ success: true, verification: { status: 'verified', method: 'judge', rules: { counts: [{ kind: 'scrolls', n: 3 }] } } });
     // The judge read the rule list.

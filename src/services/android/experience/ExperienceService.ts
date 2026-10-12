@@ -11,6 +11,7 @@ import { Service } from 'typedi';
 import { tagWaste, type StepLite } from '../runDiagnostics';
 import {
   LESSON_KINDS,
+  MAX_ACTIVE_PER_SCOPE,
   MAX_TEXT,
   REFLECT_PROMPT,
   domainOf,
@@ -150,14 +151,16 @@ export class ExperienceService {
 
   /** Adds the lesson, or folds it into the same one already known (more evidence; trusted after a second successful run). */
   private async store(userId: number, draft: DraftLesson, taskId: number, succeeded: boolean): Promise<number | null> {
-    const existing = await this.lessonRepo.find({ where: { user_id: userId, scope: draft.scope, kind: draft.kind } });
+    const existing = await this.lessonRepo.find({ where: { user_id: userId, scope: draft.scope } });
     const same = existing.find((e) => (draft.avoidUrl && e.avoid_url === draft.avoidUrl) || sameLesson(e, draft));
     if (same) {
       const evidence = [...new Set([...(same.evidence ?? []), taskId])].slice(-MAX_EVIDENCE);
       if (evidence.length === (same.evidence ?? []).length) return null;
-      const confirmations = evidence.length;
-      const promote = same.status === 'candidate' && (succeeded || draft.kind === 'avoid') && confirmations >= 2;
-      await this.lessonRepo.update({ id: same.id }, { evidence, ...(promote ? { status: 'trusted' } : {}) });
+      // A successful run that teaches it too: an unverified lesson becomes usable; a second confirmation makes it trusted.
+      let status = same.status;
+      if (same.status === 'unverified' && succeeded) status = 'candidate';
+      if (status === 'candidate' && (succeeded || draft.kind === 'avoid') && evidence.length >= 2) status = 'trusted';
+      await this.lessonRepo.update({ id: same.id }, { evidence, status });
       return same.id;
     }
     const saved = await this.lessonRepo.save(
@@ -166,14 +169,28 @@ export class ExperienceService {
         scope: draft.scope,
         kind: draft.kind,
         text: draft.text.slice(0, MAX_TEXT),
-        // A page that answered "not found" is a fact, not an opinion.
-        status: draft.avoidUrl ? 'trusted' : 'candidate',
+        // A page that answered "not found" is a fact. A run that did not succeed may have
+        // learned its own mistake (Oct 13: "swipe UP does nothing" was our swipe bug), so its
+        // lessons wait, unseen, until a successful run teaches the same.
+        status: draft.avoidUrl ? 'trusted' : succeeded ? 'candidate' : 'unverified',
         source: 'auto',
         avoid_url: draft.avoidUrl ?? null,
         evidence: [taskId],
       }),
     );
+    await this.capScope(userId, draft.scope);
     return saved.id;
+  }
+
+  /** At most MAX_ACTIVE_PER_SCOPE lessons in use per site: the weakest learned ones are switched off. */
+  private async capScope(userId: number, scope: string) {
+    const active = await this.lessonRepo.find({ where: { user_id: userId, scope, status: In(['trusted', 'candidate']) } });
+    if (active.length <= MAX_ACTIVE_PER_SCOPE) return;
+    const weakest = active
+      .filter((l) => l.source !== 'user')
+      .sort((a, b) => a.helped - a.hurt - (b.helped - b.hurt) || (a.status === b.status ? 0 : a.status === 'candidate' ? -1 : 1) || a.id - b.id)
+      .slice(0, active.length - MAX_ACTIVE_PER_SCOPE);
+    for (const l of weakest) await this.lessonRepo.update({ id: l.id }, { status: 'off', off_reason: `Switched off by itself: this site has more than ${MAX_ACTIVE_PER_SCOPE} lessons and this one had helped least.` });
   }
 
   // ---------- the Experience page ----------
@@ -199,7 +216,8 @@ export class ExperienceService {
     return {
       settings,
       stats: {
-        active: lessons.filter((l) => l.status !== 'off').length,
+        active: lessons.filter((l) => l.status === 'trusted' || l.status === 'candidate').length,
+        unverified: lessons.filter((l) => l.status === 'unverified').length,
         trusted: lessons.filter((l) => l.status === 'trusted').length,
         runs_helped_week: week.filter((r) => (r.used ?? []).length && r.succeeded).length,
         runs_with_memory_week: week.filter((r) => (r.used ?? []).length).length,
@@ -246,7 +264,7 @@ export class ExperienceService {
       Object.assign(patch, v, { source: 'user' });
     }
     if (input.status !== undefined) {
-      if (!['candidate', 'trusted', 'off'].includes(input.status)) throw new AppError('status must be trusted, candidate or off', 400);
+      if (!['candidate', 'trusted', 'off', 'unverified'].includes(input.status)) throw new AppError('status must be trusted, candidate, unverified or off', 400);
       patch.status = input.status;
       if (input.status !== 'off') patch.off_reason = null;
       else patch.off_reason = 'Switched off by you.';

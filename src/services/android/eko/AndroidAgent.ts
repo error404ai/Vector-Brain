@@ -206,8 +206,8 @@ export interface AndroidAgentCallbacks {
   onRecovery?: (id: ObstacleId, detail: string) => void;
   /** A long tool (install_app) is still working: proof the phone is alive. */
   onHeartbeat?: () => void;
-  /** The agent keeps repeating refused calls: the run should stop. */
-  onStuck?: (reason: string) => void;
+  /** The run is going nowhere (refusals, a loop, no progress): it should stop, with this code. */
+  onStuck?: (reason: string, code?: 'AGENT_STUCK' | 'AGENT_LOOP' | 'NO_PROGRESS') => void;
 }
 
 /**
@@ -250,6 +250,32 @@ const EMAILS_IN_TEXT = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[a-z]{2,}/gi;
 const ANOTHER_ACCOUNT = /^(?:use another account|add another account|add account|add an account|sign in with (?:another|a different) account|use a different account|switch account)$/i;
 /** Menu buttons: hamburger, overflow, navigation drawer. */
 const MENU_LABEL = /^(?:main menu|menu|open menu|more options|more actions|more|options|navigation menu|open navigation drawer|show navigation drawer|navigate up menu|drawer|⋮|≡|☰)$/i;
+const OPPOSITE = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' } as const;
+/** Actions in a row with no progress: a warning, then the run stops. */
+const NO_PROGRESS_WARN = 8;
+const NO_PROGRESS_STOP = 12;
+/** The same unchanged read this many times in a row ends the run. */
+const LOOKS_STOP = 15;
+/** Long tools whose wait is the work (never counted as "no progress"). */
+const NO_PROGRESS_EXEMPT = new Set(['install_app', 'list_apps', 'read_notifications', 'list_downloads', 'use_vector_keyboard', 'upload_file']);
+
+/**
+ * The longest repetition at the end of the trail: the same 2–10 actions done `times` times
+ * in a row. Cycles with a swipe or scroll that brought new content are progress through a
+ * feed, not a loop.
+ */
+export function cycleRepeats(trail: string[]): { length: number; times: number } {
+  let best = { length: 0, times: 0 };
+  for (let p = 2; p <= 10; p += 1) {
+    const last = trail.slice(-p);
+    if (last.length < p || last.some((a) => MOVES_ALONG.test(a)) || new Set(last).size < 2) continue;
+    let times = 1;
+    while (trail.length >= (times + 1) * p && trail.slice(-(times + 1) * p, -times * p).every((a, i) => a === last[i])) times += 1;
+    if (times >= 2 && times > best.times) best = { length: p, times };
+  }
+  return best;
+}
+
 /** A guard's refusal: the call did not reach the phone. */
 const REFUSAL = /^(?:Not (?:tapped|typed|waited|opened|pressed|done)\b|Blocked:)/;
 /** Refusals in a row that end the run (Oct 13, #3873: the same refused tap 30 times, 60 steps). */
@@ -516,6 +542,17 @@ export class AndroidAgent extends Agent {
   private labelTaps = new Map<string, number>();
   /** Refused calls in a row (looking in between does not count): the run stops at REFUSALS_STOP. */
   private refusalStreak = 0;
+  /** Progress, as the phone shows it: set by a tool when new content came (a swipe that moved). */
+  private progressMade = false;
+  /** Screens met this run, as sets of their buttons' labels (with app and address). */
+  private seenScreens: { place: string; labels: Set<string> }[] = [];
+  /** Actions in a row that made no progress, and whether the warning went out. */
+  private noProgress = 0;
+  private noProgressWarned = false;
+  /** Looks in a row that read the same thing. */
+  private sameLooks = 0;
+  private lastLook = '';
+  private loopWarned = '';
   /** Labels tapped this run (lower case), so a menu never opened can be pointed out. */
   private tappedLabels = new Set<string>();
   /** Experience memory: lessons already shown, scopes already covered, and the last address opened. */
@@ -547,6 +584,8 @@ export class AndroidAgent extends Agent {
       accounts?: PhoneAccounts;
       /** Experience memory: the account's lessons, shown when the run reaches their site or app. */
       experience?: AgentLesson[];
+      /** A timed run ("watch reels for 10 minutes"): staying put is the task, so no-progress stops are off. */
+      timed?: boolean;
     } = {},
   ) {
     // Companion 0.32 options, decided per phone (an older build drops what it cannot parse).
@@ -837,15 +876,14 @@ export class AndroidAgent extends Agent {
       {
         name: 'swipe',
         description:
-          'LAST RESORT scrolling — try scroll_element first, which asks the list itself to scroll and always moves the right container. Use swipe only when scroll_element reports that nothing on screen is scrollable, or for a horizontal drag such as a carousel or an image gallery. Direction is the direction your FINGER drags: UP reveals what is further down the page, DOWN goes back towards the top. (This wording used to be inverted, which sent the agent swinging up and down without getting anywhere.) Do not swipe more than twice in the same direction without something changing.',
+          'Swipe the screen with one finger. UP = the finger moves from the bottom to the top: the content moves up and what is BELOW comes into view (the next reel, the next post, further down a page). DOWN = the finger moves from the top to the bottom: what is ABOVE comes back (the previous reel, the top of the page, a refresh). LEFT = the next photo/card/tab, RIGHT = the previous one. For a list inside a page prefer scroll_element. The result says MOVED or NOTHING MOVED; when nothing moved the system already retried with a longer swipe and, if needed, the other way, and says where you are now.',
         parameters: {
           type: 'object',
           properties: {
             direction: {
               type: 'string',
               enum: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
-              description:
-                'UP = drag upward, which reveals content below. DOWN = drag downward, which goes back towards the top.',
+              description: 'UP = next / what is below. DOWN = previous / what is above. LEFT = next photo or tab. RIGHT = previous one.',
             },
             durationMillis: {
               type: 'number',
@@ -861,20 +899,17 @@ export class AndroidAgent extends Agent {
           const recentScrolls = this.actionHistory.filter(a => a === scrollKey).length;
           if (recentScrolls >= 4) {
             return {
-              content: [{ type: 'text', text: `Blocked: already scrolled ${recentScrolls} times in this direction with nothing changing. Stop scrolling — read the screen, work with the elements that are visible, or reach the target another way (for example open_url).` }],
+              content: [{ type: 'text', text: `Blocked: already swiped ${recentScrolls} times in this direction with nothing moving. Stop swiping — read the screen, work with the elements that are visible, or reach the target another way (for example open_url).` }],
               isError: true,
             };
           }
           this.actionHistory.push(scrollKey);
           if (this.actionHistory.length > 10) this.actionHistory.shift();
 
-          // The tool speaks in content terms ("show me what is below"), while
-          // the device expects the finger's direction — which is the opposite.
-          // Exposing the raw gesture was making the model scroll the wrong way
-          // and then bounce back and forth hunting for the item.
-          const requested = args.direction as 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
-          const gesture =
-            requested === 'DOWN' ? 'UP' : requested === 'UP' ? 'DOWN' : requested === 'RIGHT' ? 'LEFT' : 'RIGHT';
+          // The finger's direction, exactly as asked. Until Oct 13 this was flipped on its
+          // way to the phone while the description said "finger direction": every UP went
+          // DOWN (56 of 95 Instagram swipes moved nothing, #3875-#3894).
+          const direction = String(args.direction ?? '').toUpperCase() as 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
           // A swipe that starts on the keyboard glide-types a word into the field: Blogger's title
           // became "Wanderlust Diaries by by by" after four swipes (Oct 12, #3864). Close it first.
@@ -882,28 +917,42 @@ export class AndroidAgent extends Agent {
           const before = this.currentKey();
           const frameBefore = this.frameKey();
           const swiped = await this.runDeviceAction(
-            {
-              type: 'Swipe',
-              direction: gesture,
-              durationMillis: args.durationMillis ? Number(args.durationMillis) : 400,
-            },
+            { type: 'Swipe', direction, durationMillis: args.durationMillis ? Number(args.durationMillis) : 400 },
             'swipe',
             args,
           );
-          const result = keyboardClosed ? this.withNote(swiped, '(The keyboard was open, so it was closed first: a swipe over it types words into the field.)') : swiped;
-          // Only swipes that changed nothing count towards the block above. A swipe
-          // that brought new content (the next reel, more of a list) is progress:
-          // "scroll Reels 5 times" was blocked at the 5th on Oct 9 (run #3229).
-          // Changed = the element list or the picture changed. A feed of videos or
-          // photos (Reels, Shorts, a gallery) can show the same list for every
-          // item, so the list alone called real scrolls "nothing changing".
-          const frameAfter = this.frameKey();
-          const pictureChanged = Boolean(frameBefore && frameAfter && frameBefore !== frameAfter);
-          if (!result.isError && (this.currentKey() !== before || pictureChanged)) {
+          let result = keyboardClosed ? this.withNote(swiped, '(The keyboard was open, so it was closed first: a swipe over it types words into the field.)') : swiped;
+          if (result.isError) return result;
+          let moved = this.contentMoved(before, frameBefore);
+          let note: string;
+          if (moved) {
+            note = 'MOVED: new content is on screen.';
+          } else {
+            // Nothing moved. A short or slow swipe is often ignored by video feeds: one longer,
+            // faster swipe the same way, then once the other way to learn where the list ends.
+            const strong = await this.strongSwipe(direction, before, frameBefore);
+            if (strong) {
+              moved = true;
+              note = 'MOVED: the first swipe moved nothing, so a longer, faster one was made; new content is on screen.';
+            } else {
+              const back = OPPOSITE[direction];
+              const backMoved = await this.strongSwipe(back, before, frameBefore);
+              note = backMoved
+                ? `NOTHING MOVED going ${direction} (tried twice). Going ${back} did move: the list is at its end in the ${direction} direction, and the screen now shows the PREVIOUS item, not a new one. Do not act on it as a new item; to get new items use another way (a tab, a "next" button, scroll_element, or open the feed again).`
+                : `NOTHING MOVED in either direction: this screen does not scroll by swiping. It still shows the SAME item, so do not like or tap it again as if it were new (a second tap on Like undoes it). Use scroll_element, a tab or button that opens the next item, or another route.`;
+              // Not progress through a feed: a cycle with this swipe in it is a loop.
+              const at = this.actionTrail.length - 1;
+              if (at >= 0 && this.actionTrail[at].startsWith('swipe:')) this.actionTrail[at] = this.actionTrail[at].replace(/^swipe:/, 'swipe~still:');
+            }
+            result = this.withNote(result, `${note}${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`);
+            note = '';
+          }
+          if (moved) {
+            this.progressMade = true;
             const at = this.actionHistory.lastIndexOf(scrollKey);
             if (at >= 0) this.actionHistory.splice(at, 1);
           }
-          return result;
+          return note ? this.withNote(result, note) : result;
         },
       },
       {
@@ -1571,7 +1620,8 @@ export class AndroidAgent extends Agent {
         if (tool.name !== 'press_key') this.backspaceStreak = 0;
         if (!LOOK_TOOLS.has(tool.name)) {
           this.actionTrail.push(`${tool.name}:${stableArgs(args[0] as Record<string, unknown>)}`);
-          if (this.actionTrail.length > 9) this.actionTrail.shift();
+          if (this.actionTrail.length > 30) this.actionTrail.shift();
+          this.progressMade = false;
         }
         let result = await run(...args);
         if (!LOOK_TOOLS.has(tool.name)) {
@@ -1583,6 +1633,10 @@ export class AndroidAgent extends Agent {
           } else if (refused && this.refusalStreak >= 3) {
             result = this.withNote(result, `REFUSED ${this.refusalStreak} TIMES IN A ROW: the run stops at ${REFUSALS_STOP}. Do something you have not done on this screen.${this.untriedHint()}`);
           }
+          if (!refused) result = this.checkProgress(tool.name, result, first?.text ?? '');
+          else this.countNoProgress();
+        } else {
+          this.checkLook(result);
         }
         this.sight = sightOfResult(result as never, {
           vision: Boolean(this.options.vision),
@@ -2615,6 +2669,42 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   }
 
   /**
+   * Whether new content came on screen since before/frameBefore. The element list is
+   * the test: a video feed's picture changes all the time, so the picture only counts
+   * on a screen whose list says almost nothing.
+   */
+  private contentMoved(before: string, frameBefore: string | null): boolean {
+    if (this.currentKey() !== before) return true;
+    const frameAfter = this.frameKey();
+    return Boolean(this.screen && isThin(this.screen) && frameBefore && frameAfter && frameBefore !== frameAfter);
+  }
+
+  /** A long, fast swipe (85% → 15% of the screen in 250 ms); true when new content came on screen. */
+  private async strongSwipe(direction: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT', before: string, frameBefore: string | null): Promise<boolean> {
+    const w = this.fullScreen?.width ?? this.screen?.size.width ?? 1080;
+    const h = this.fullScreen?.height ?? this.screen?.size.height ?? 2400;
+    const line: Record<string, [number, number, number, number]> = {
+      UP: [w / 2, h * 0.85, w / 2, h * 0.15],
+      DOWN: [w / 2, h * 0.15, w / 2, h * 0.85],
+      LEFT: [w * 0.88, h / 2, w * 0.12, h / 2],
+      RIGHT: [w * 0.12, h / 2, w * 0.88, h / 2],
+    };
+    const [x1, y1, x2, y2] = line[direction].map((v) => Math.round(v));
+    const action: AutomationAction = this.gatewayService.hasFeature?.(this.hardwareDeviceId, 'gesture')
+      ? { type: 'Gesture', strokes: [{ points: [{ x: x1, y: y1 }, { x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) }, { x: x2, y: y2 }], durationMillis: 250 }] }
+      : { type: 'Swipe', direction, durationMillis: 250 };
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+    if (res.status !== 'SUCCESS') return false;
+    await sleep(600);
+    try {
+      this.absorb(await this.observe());
+    } catch {
+      return false;
+    }
+    return this.contentMoved(before, frameBefore);
+  }
+
+  /**
    * Closes the open keyboard with BACK and reads the screen again. True when the
    * keyboard is gone. Only called when the phone reported a keyboard window, so
    * BACK does not leave the page.
@@ -2686,6 +2776,93 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       notes.push(lessonNote(scope, picked));
     }
     return notes.length ? `\n\n${notes.join('\n\n')}` : '';
+  }
+
+  /**
+   * After an action: did the task move on? Progress is what the phone shows — a screen
+   * not met before in this run (judged by its buttons, so an ad or a clock does not
+   * count), new content from a swipe, a button that changed (Like → on), text that
+   * landed. Too long without it ends the run (NO_PROGRESS); the same few actions round
+   * and round with nothing gained ends it sooner (AGENT_LOOP). A timed run is exempt.
+   */
+  private checkProgress(toolName: string, result: ToolResult, text: string): ToolResult {
+    if (this.options.timed) return result;
+    const progress =
+      !result.isError &&
+      (this.progressMade ||
+      /(?:^|\n)(?:TOGGLED|CHANGED):/.test(text) ||
+        (toolName === 'type_text' && !/TYPED CHECK: the field shows|TYPED AGAIN|FIELD LIMIT/.test(text)) ||
+        this.newScreen());
+    if (progress) {
+      this.noProgress = 0;
+      this.noProgressWarned = false;
+      return result;
+    }
+    if (NO_PROGRESS_EXEMPT.has(toolName)) return result;
+    this.countNoProgress();
+    const loop = cycleRepeats(this.actionTrail);
+    if (loop.times >= 3 && this.noProgress >= loop.length * 2) {
+      this.callbacks?.onStuck?.(`The agent repeated the same ${loop.length} steps ${loop.times} times without getting anywhere, so the run was stopped instead of spending more steps.`, 'AGENT_LOOP');
+      return result;
+    }
+    if (this.noProgress >= NO_PROGRESS_STOP) {
+      this.callbacks?.onStuck?.(`${this.noProgress} actions in a row changed nothing that matters (no new screen, nothing liked or typed), so the run was stopped instead of spending more steps.`, 'NO_PROGRESS');
+      return result;
+    }
+    const notes: string[] = [];
+    const sig = `${loop.length}|${this.actionTrail.slice(-loop.length).join('>')}`;
+    if (loop.times === 2 && this.loopWarned !== sig) {
+      this.loopWarned = sig;
+      notes.push(`LOOP: you have now done the same ${loop.length} steps twice and are back where you started. A third time stops the run. Do something different.${this.untriedHint()}`);
+    }
+    if (this.noProgress >= NO_PROGRESS_WARN && !this.noProgressWarned) {
+      this.noProgressWarned = true;
+      notes.push(`NO PROGRESS: your last ${this.noProgress} actions brought no new screen and changed nothing. The run stops at ${NO_PROGRESS_STOP}. Change approach now, or call task_done with success=false and say what blocks you.${this.untriedHint()}`);
+    }
+    return notes.length ? this.withNote(result, notes.join('\n\n')) : result;
+  }
+
+  private countNoProgress() {
+    if (!this.options.timed) this.noProgress += 1;
+  }
+
+  /** Reading the same thing over and over (the screen, notifications) with nothing done in between. */
+  private checkLook(result: ToolResult) {
+    if (this.options.timed) return;
+    const text = (result.content ?? []).map((c) => ('text' in c ? c.text : '')).join('').replace(/\d+(?:\.\d+)?s\b/g, '');
+    this.sameLooks = text === this.lastLook ? this.sameLooks + 1 : 0;
+    this.lastLook = text;
+    if (this.sameLooks >= LOOKS_STOP) this.callbacks?.onStuck?.(`The agent read the same unchanged screen ${this.sameLooks} times without doing anything, so the run was stopped.`, 'NO_PROGRESS');
+  }
+
+  /** True the first time this screen (app, address and set of buttons) is met in this run. */
+  private newScreen(): boolean {
+    if (!this.screen) return false;
+    const place = `${this.lastForegroundApp ?? ''}|${this.currentPath()}`;
+    const labels = new Set(
+      this.screen.elements
+        .filter((e) => e.tappable && !e.seen)
+        .map((e) => e.label.split(' · ')[0].toLowerCase().replace(/[0-9]+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 30))
+        .filter(Boolean),
+    );
+    const same = this.seenScreens.some((s) => {
+      if (s.place !== place) return false;
+      if (!s.labels.size && !labels.size) return true;
+      let both = 0;
+      for (const l of labels) if (s.labels.has(l)) both += 1;
+      return both / (s.labels.size + labels.size - both) >= 0.8;
+    });
+    if (same) return false;
+    this.seenScreens.push({ place, labels });
+    if (this.seenScreens.length > 300) this.seenScreens.shift();
+    return true;
+  }
+
+  /** The web address in the address bar without query (or the last one opened), '' in apps. */
+  private currentPath(): string {
+    const bar = this.screen?.elements.find((e) => e.editable && /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]|$)/i.test(e.label.split(' · ')[0].trim()));
+    const url = bar ? bar.label.split(' · ')[0].trim() : '';
+    return url ? normalUrl(url) : '';
   }
 
   /** Tappable things on this screen not tapped in this run (menus first), for a stuck agent. */
