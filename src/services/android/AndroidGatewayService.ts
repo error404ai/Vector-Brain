@@ -311,6 +311,22 @@ export class AndroidGatewayService {
     // an unknown action type is dropped on the phone and the call only times out.
     if (Array.isArray(caps?.features)) this.features.set(deviceId, new Set(caps.features));
     else if (registering) this.features.delete(deviceId);
+    if (caps && (caps.notificationAccess || caps.filesAccess)) {
+      this.access.set(deviceId, { notifications: caps.notificationAccess ?? null, files: caps.filesAccess ?? null });
+    } else if (registering) this.access.delete(deviceId);
+  }
+
+  /** Companion 0.32: Notification access and All files access as the phone last reported them. */
+  private access = new Map<string, { notifications: 'granted' | 'off' | null; files: 'granted' | 'off' | null }>();
+
+  accessOf(deviceId: string): { notifications: 'granted' | 'off' | null; files: 'granted' | 'off' | null } | null {
+    return this.access.get(deviceId) ?? null;
+  }
+
+  /** After EnableAccess, before the next heartbeat says so. */
+  noteAccess(deviceId: string, which: 'notifications' | 'files', granted: boolean) {
+    const now = this.access.get(deviceId) ?? { notifications: null, files: null };
+    this.access.set(deviceId, { ...now, [which]: granted ? 'granted' : 'off' });
   }
 
   private features = new Map<string, Set<string>>();

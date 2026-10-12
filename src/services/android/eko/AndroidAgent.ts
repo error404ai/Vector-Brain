@@ -7,7 +7,7 @@ import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { ActionResult, AutomationAction, CompanionFeature, DeviceKey, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
-import { findObstacle, type ObstacleId } from './obstacles';
+import { CLOSE_NOTICE, findObstacle, type ObstacleId } from './obstacles';
 import { compactSystemPrompt } from './compactPrompt';
 import type { ScreenshotMode } from './screenshotMode';
 import { createHash } from 'crypto';
@@ -235,6 +235,20 @@ export function focusedFieldText(screen: { elements: { editable: boolean; focuse
   return field.label.split(' · ')[0].replace(/…$/, '').trim();
 }
 
+/**
+ * The same element on a re-read screen (after the keyboard closed and the page moved):
+ * same type and label, nearest to where it was. An unlabelled one must still be close by.
+ */
+export function sameElementAgain(screen: ScreenModel | null, was: ScreenElement): ScreenElement | null {
+  if (!screen) return null;
+  const want = was.label.trim();
+  const dist = (e: ScreenElement) => Math.hypot(e.grid.x - was.grid.x, e.grid.y - was.grid.y);
+  const pool = screen.elements.filter((e) => !e.seen && e.type === was.type && (want ? e.label.trim() === want : true)).sort((a, b) => dist(a) - dist(b));
+  const best = pool[0];
+  if (!best || (!want && dist(best) > 150)) return null;
+  return best;
+}
+
 /** The field shows what was typed (labels are cut at 60 characters; spacing and case aside). */
 export function sameTyped(shown: string, typed: string): boolean {
   const a = shown.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -420,6 +434,16 @@ export class AndroidAgent extends Agent {
   private spotTaps = new Map<string, number>();
   /** Values that did not end up in their field as typed, and what the field showed. */
   private typedMisses = new Map<string, { times: number; shown: string }>();
+  /** Taps per spot on one exact screen ("screenKey|spot"): the same tap on the same screen again and again is a loop. */
+  private screenSpotTaps = new Map<string, number>();
+  /** Taps whose list stayed the same while the picture changed, per screen and spot. */
+  private sameListTaps = new Map<string, number>();
+  /** BACKSPACE presses in a row (free models pressed it 20 times meaning BACK, Oct 12 #3864). */
+  private backspaceStreak = 0;
+  /** A short type_text over a longer value already questioned (field|text). */
+  private shortTypeWarned = '';
+  /** The last wait reported a settled screen. */
+  private lastWaitSettled = false;
   /** What the phone reported between reads (toasts, scrolls, new screens), shown once with the next result. */
   private phoneSaw = '';
   /** The events that came with the latest read (toasts, announcements…). */
@@ -654,6 +678,23 @@ export class AndroidAgent extends Agent {
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
           // Reset loop counter on new text input
           this.consecutiveFailures = 0;
+          // type_text replaces the field: a few letters "added" to a value typed earlier wipe it
+          // (Oct 12, #3864: "s" typed to finish "Wanderlust Diarie" left the field "s"). Asked once.
+          const typing = String(args.text ?? '').trim();
+          const inField = focusedFieldText(this.screen);
+          const earlier = (this.lastTypedText ?? '').trim().toLowerCase();
+          if (inField && earlier && typing.length <= 3 && inField.length >= typing.length + 4) {
+            const shownLower = inField.toLowerCase();
+            const ours = earlier.startsWith(shownLower) || shownLower.startsWith(earlier);
+            const warnKey = `${inField}|${typing}`;
+            if (ours && this.shortTypeWarned !== warnKey) {
+              this.shortTypeWarned = warnKey;
+              return {
+                content: [{ type: 'text', text: `Not typed: type_text REPLACES the whole field. The field shows "${cutText(inField, 60)}"; typing "${typing}" would leave only "${typing}". Type the whole value you want in one call (for example "${cutText(this.lastTypedText ?? '', 60)}"). If you really want only "${typing}" in the field, call the same type_text again.` }],
+                isError: true,
+              };
+            }
+          }
           // An idx from the screen list passed as a viewId or node path never matches a
           // view: tap that element so it has focus, then type into the focused field.
           const idx = this.idxInSelector(args);
@@ -718,9 +759,12 @@ export class AndroidAgent extends Agent {
           const gesture =
             requested === 'DOWN' ? 'UP' : requested === 'UP' ? 'DOWN' : requested === 'RIGHT' ? 'LEFT' : 'RIGHT';
 
+          // A swipe that starts on the keyboard glide-types a word into the field: Blogger's title
+          // became "Wanderlust Diaries by by by" after four swipes (Oct 12, #3864). Close it first.
+          const keyboardClosed = this.screen?.keyboardTop !== undefined ? await this.hideKeyboard() : false;
           const before = this.currentKey();
           const frameBefore = this.frameKey();
-          const result = await this.runDeviceAction(
+          const swiped = await this.runDeviceAction(
             {
               type: 'Swipe',
               direction: gesture,
@@ -729,6 +773,7 @@ export class AndroidAgent extends Agent {
             'swipe',
             args,
           );
+          const result = keyboardClosed ? this.withNote(swiped, '(The keyboard was open, so it was closed first: a swipe over it types words into the field.)') : swiped;
           // Only swipes that changed nothing count towards the block above. A swipe
           // that brought new content (the next reel, more of a list) is progress:
           // "scroll Reels 5 times" was blocked at the 5th on Oct 9 (run #3229).
@@ -832,16 +877,42 @@ export class AndroidAgent extends Agent {
           properties: {
             key: {
               type: 'string',
-              enum: keys2 ? ['ENTER', 'BACKSPACE', 'CLEAR', 'TAB', 'ESCAPE', 'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'SEARCH', 'FORWARD_DEL', 'SPACE'] : ['ENTER', 'BACKSPACE', 'CLEAR'],
+              enum: keys2
+                ? ['ENTER', 'BACKSPACE', 'CLEAR', 'BACK', 'HIDE_KEYBOARD', 'TAB', 'ESCAPE', 'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'SEARCH', 'FORWARD_DEL', 'SPACE']
+                : ['ENTER', 'BACKSPACE', 'CLEAR', 'BACK', 'HIDE_KEYBOARD'],
               description: keys2
-                ? 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field. TAB = next field, ESCAPE, DPAD_* = arrow keys, SEARCH, FORWARD_DEL, SPACE are real key presses: they need the Vector Keyboard active (use_vector_keyboard first)'
-                : 'ENTER = submit, BACKSPACE = delete one character, CLEAR = empty the field',
+                ? 'ENTER = submit, BACKSPACE = delete ONE character (never use it to close the keyboard), CLEAR = empty the field, BACK / HIDE_KEYBOARD = close the keyboard. TAB = next field, ESCAPE, DPAD_* = arrow keys, SEARCH, FORWARD_DEL, SPACE are real key presses: they need the Vector Keyboard active (use_vector_keyboard first)'
+                : 'ENTER = submit, BACKSPACE = delete ONE character (never use it to close the keyboard), CLEAR = empty the field, BACK / HIDE_KEYBOARD = close the keyboard',
             },
           },
           required: ['key'],
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          const key = String(args.key ?? '').toUpperCase();
+          if (key === 'BACK' || key === 'HIDE_KEYBOARD') {
+            const open = this.screen?.keyboardTop !== undefined;
+            if (!open && key === 'HIDE_KEYBOARD') {
+              return { content: [{ type: 'text', text: 'The keyboard is not open. Carry on with the screen as listed.' }] };
+            }
+            const back = await this.runDeviceAction({ type: 'Global', action: 'BACK' }, 'press_key', args);
+            return this.withNote(back, open ? '(The keyboard was open, so BACK closed it.)' : '(No keyboard was open, so BACK went back one screen.)');
+          }
+          if (key === 'BACKSPACE') {
+            this.backspaceStreak += 1;
+            if (this.backspaceStreak > 3) {
+              const field = focusedFieldText(this.screen);
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Not pressed: that would be BACKSPACE number ${this.backspaceStreak} in a row${field !== null ? `, and the field shows "${cutText(field, 60)}"` : ''}. BACKSPACE deletes one letter; it does not close the keyboard. To fix the text, call type_text with the WHOLE correct value (it replaces what is there). To close the keyboard, press_key BACK.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+          }
           const result = await this.runDeviceAction(
             {
               type: 'PressKey',
@@ -1343,6 +1414,19 @@ export class AndroidAgent extends Agent {
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
+          // Waiting on a screen that already settled twice changes nothing (Oct 12, #3863/#3864:
+          // 4–6 waits in a row on a finished page). Refused, with the screen as it is.
+          if (this.consecutiveWaits >= 2 && this.lastWaitSettled) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Not waited: you already waited ${this.consecutiveWaits} times in a row and the screen is settled — nothing is loading. Waiting again changes nothing. Act on the screen as it is: tap an element, scroll_element, press_key BACK${this.imagesToAi ? ', or capture_screen to look at it' : ''}.${this.lastUiTree ? `\n\nCURRENT SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}`,
+                },
+              ],
+              isError: true,
+            };
+          }
           return this.runDeviceAction(
             {
               type: 'Wait',
@@ -1360,6 +1444,7 @@ export class AndroidAgent extends Agent {
     for (const tool of tools) {
       const run = tool.execute.bind(tool);
       tool.execute = async (...args: Parameters<typeof run>) => {
+        if (tool.name !== 'press_key') this.backspaceStreak = 0;
         const result = await run(...args);
         this.sight = sightOfResult(result as never, {
           vision: Boolean(this.options.vision),
@@ -1576,6 +1661,9 @@ CRITICAL RULES:
 - Visiting several websites: a page counts as visited once it has opened. If a site's
   cookie or consent pop-up does not close after 2 tries, leave it and open the next
   site; do not spend more steps on it (Oct 11: two runs spent 15+ steps on one banner).
+- The keyboard covers the bottom of the screen. press_key BACK closes it; BACKSPACE only
+  deletes one letter. type_text replaces the whole field, so to fix text type the whole
+  value again. A notice or banner over the page: tap its close/dismiss button first.
 - Signing in: use the account already signed in on THIS phone. On an account chooser pick
   the account it lists ("Continue as …"). Never tap "Add another account" / "Use another
   account" and never type an email or password unless the task itself gives that exact
@@ -1683,6 +1771,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (action.type === 'Wait') {
       // Not a blind pause: watch the screen and return once it is still.
       const settled = await this.waitUntilSettled(Number(action.durationMillis) || 4000);
+      this.lastWaitSettled = settled.settled;
       res = { status: 'SUCCESS', summary: settled.settled ? `Screen settled after ${(settled.ms / 1000).toFixed(1)}s` : `Screen was still changing after ${(settled.ms / 1000).toFixed(1)}s (something is loading or downloading)` } as typeof res;
     } else {
       // Companion 0.31+: the new screen comes back with the result, one round trip instead of two.
@@ -1853,15 +1942,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       // made agents tap again and undo it (Oct 10, mission 256: 15 of 15 runs).
       summary = `${summary}\nTOGGLED: "${tap.label.trim().slice(0, 30)}"`;
       checkNote = `\n\nNOTE: "${tap.label.trim().slice(0, 30)}" is a toggle; apps often change only its icon, so the list looks the same. Count it as done and do NOT tap it again here (a second tap undoes it). Move on to the next item.`;
-    } else if (!isError && meantToChange && keyAfter === keyBefore && frameBefore && frameAfter && frameBefore !== frameAfter) {
+    } else if (
+      !isError &&
+      meantToChange &&
+      keyAfter === keyBefore &&
+      frameBefore &&
+      frameAfter &&
+      frameBefore !== frameAfter &&
+      !this.listSameAgain(keyAfter, tap?.grid)
+    ) {
       // The list is the same but the picture is not: something changed that the list does not show.
       checkNote =
         '\n\nNOTE: the element list is the same, but the screen image changed, so the tap probably did something the list does not show (an icon, a colour). Do not repeat it blindly; carry on, and check the result if it matters.';
     } else if (!isError && meantToChange && keyAfter === keyBefore) {
+      // A second "picture changed, list the same" on one spot is a blinking cursor or a key
+      // press animation, not progress: counted as no effect.
       this.noEffectStreak += 1;
       if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
-      checkNote =
-        '\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.';
+      checkNote = `\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.${this.closeHint()}`;
     } else if (keyAfter !== keyBefore) {
       this.noEffect = null;
       this.noEffectStreak = 0;
@@ -2250,6 +2348,15 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     return null;
   }
 
+  /** Counts a "list the same, picture changed" tap; true from the second one on this screen and spot. */
+  private listSameAgain(key: string, grid?: { x: number; y: number }): boolean {
+    if (!grid) return false;
+    const spot = `${key}|${Math.round(grid.x / 25)}_${Math.round(grid.y / 25)}`;
+    const n = (this.sameListTaps.get(spot) ?? 0) + 1;
+    this.sameListTaps.set(spot, n);
+    return n >= 2;
+  }
+
   /** Every tap goes through here: guards first, then the phone, then the check. */
   private async tapAt(grid: { x: number; y: number }, target: ScreenElement | null, toolName: string, args: Record<string, unknown>, atGrid = false): Promise<ToolResult> {
     const refuse = (text: string): ToolResult => ({ content: [{ type: 'text', text }], isError: true });
@@ -2283,9 +2390,38 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {
       return refuse('Not tapped: you tapped here a moment ago and the screen did not change. Try a different way — click_node with the visible text, a different element, scroll_element, or global_action BACK.');
     }
+    // The same spot on the very same screen, tapped again and again (Oct 12, #3863: Google
+    // Account avatar on Blogger 6 times; #3864: NEXT under the keyboard 9 times). Toggles aside.
+    const screenSpot = `${this.currentKey()}|${Math.round(grid.x / 25)}_${Math.round(grid.y / 25)}`;
+    const onThisScreen = this.screenSpotTaps.get(screenSpot) ?? 0;
+    if (onThisScreen >= 3 && !TOGGLE.test(label.trim())) {
+      return refuse(
+        `Not tapped: you have tapped this spot${label ? ` ("${label.slice(0, 40)}")` : ''} ${onThisScreen} times on this exact screen and it did not move the task on. Do something different: another element, press_key BACK, scroll_element, open_url to the page you need${this.imagesToAi ? ', capture_screen to look' : ''}, or finish and say what blocks you.${this.closeHint()}`,
+      );
+    }
+    this.screenSpotTaps.set(screenSpot, onThisScreen + 1);
     const width = this.screen?.size.width ?? 1080;
     const height = this.screen?.size.height ?? 2400;
-    const px = !atGrid && target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
+    let px = !atGrid && target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
+    // The element is under the open keyboard: a tap there hits a key, not the button
+    // (Oct 12, #3864: NEXT tapped through the keyboard 9 times). Close it, find the element again.
+    let keyboardNote = '';
+    const kbTop = this.screen?.keyboardTop;
+    if (target && !target.seen && !target.window && kbTop !== undefined && px.y >= kbTop) {
+      const closed = await this.hideKeyboard();
+      if (closed) {
+        const again = sameElementAgain(this.screen, target);
+        if (!again) {
+          return {
+            content: [{ type: 'text', text: `The keyboard was covering "${label.slice(0, 40) || 'that spot'}", so it was closed first (nothing tapped yet). Pick the element from the updated list.${this.lastUiTree ? `\n\nUPDATED SCREEN ELEMENTS:\n${this.lastUiTree}` : ''}` }],
+          };
+        }
+        target = again;
+        grid = again.grid;
+        px = again.px;
+        keyboardNote = '(The keyboard was covering it, so the keyboard was closed first.)';
+      }
+    }
     const actionKey = `tap_${grid.x}_${grid.y}`;
     this.actionHistory.push(actionKey);
     if (this.actionHistory.length > 10) this.actionHistory.shift();
@@ -2306,7 +2442,32 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (!clicked.isError) return circling ? this.withNote(clicked, circling.trim()) : clicked;
     }
     const tapped = await this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
-    return circling ? this.withNote(tapped, circling.trim()) : tapped;
+    const noted = keyboardNote ? this.withNote(tapped, keyboardNote) : tapped;
+    return circling ? this.withNote(noted, circling.trim()) : noted;
+  }
+
+  /**
+   * Closes the open keyboard with BACK and reads the screen again. True when the
+   * keyboard is gone. Only called when the phone reported a keyboard window, so
+   * BACK does not leave the page.
+   */
+  private async hideKeyboard(): Promise<boolean> {
+    if (this.screen?.keyboardTop === undefined) return false;
+    const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'Global', action: 'BACK' });
+    if (res.status !== 'SUCCESS') return false;
+    await sleep(350);
+    try {
+      this.absorb(await this.observe());
+    } catch {
+      return false;
+    }
+    return this.screen?.keyboardTop === undefined;
+  }
+
+  /** " A notice … close button is element N" when the screen has a button that only closes a notice. */
+  private closeHint(): string {
+    const close = this.screen?.elements.find((e) => e.tappable && !e.disabled && CLOSE_NOTICE.test(e.label.replace(/\s+/g, ' ').trim()));
+    return close ? ` A notice or popup may be covering the page: its close button is element ${close.idx} ("${close.label.slice(0, 40)}") — tap that first.` : '';
   }
 
   /**

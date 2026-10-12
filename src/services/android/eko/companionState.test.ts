@@ -58,7 +58,7 @@ describe('what companion 0.30 says about each row', () => {
     expect(model.elements.find((e) => e.label === 'Allow')?.window).toBe('com.google.android.permissioncontroller');
     expect(model.elements.at(-1)?.label).toBe('Home');
     const table = formatScreen(model);
-    expect(table).toMatch(/^WINDOWS: keyboard open \(covers the screen below y=625; BACK closes it\); a picture-in-picture video floats at 769,721.*; a window from com\.google\.android\.permissioncontroller is over the app/m);
+    expect(table).toMatch(/^WINDOWS: keyboard open \(covers the screen below y=625; press_key BACK closes it — BACKSPACE only deletes a letter\); a picture-in-picture video floats at 769,721.*; a window from com\.google\.android\.permissioncontroller is over the app/m);
     expect(table).toMatch(/^SCREEN: InstagramMainActivity$/m);
   });
 

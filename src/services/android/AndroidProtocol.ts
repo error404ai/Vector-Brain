@@ -136,6 +136,11 @@ export type AutomationAction =
   | { type: 'DismissNotification'; key: string }
   /** Companion 0.32: the Download folder, and files to the server (feature "upload"). */
   | { type: 'ListDownloads'; limit?: number }
+  /**
+   * Companion 0.33 'enable_access': opens the Settings page for Notification access or
+   * All files access and flips Vector's own switch through accessibility (no adb).
+   */
+  | { type: 'EnableAccess'; access: 'NOTIFICATIONS' | 'FILES' }
   | { type: 'UploadFile'; name?: string; latest?: boolean; screenshot?: boolean };
 
 /** What a companion build can do beyond the base protocol (DeviceCapabilities.features). */
@@ -160,7 +165,9 @@ export type CompanionFeature =
   | 'frame_after'
   | 'preview_push'
   | 'preview_binary'
-  | 'health';
+  | 'health'
+  // 0.33
+  | 'enable_access';
 
 /**
  * Where the Vector Keyboard stands on a phone: active (it is the current

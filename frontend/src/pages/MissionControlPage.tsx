@@ -116,6 +116,9 @@ interface LiveFeed {
   sight: Record<number, RunSight>;
 }
 
+/** A password written into the prompt ("password: x", "pass is x"). */
+const PASSWORD_IN_PROMPT = /\b(?:pass(?:word|wd)?|pwd)\b\s*(?:[:=-]|is|hai|h)?\s*(?!(?:field|box|reset|manager|screen|page|prompt)\b)\S{4,}/i;
+
 const MAX_STEPS_KEPT = 40;
 const NO_STEPS: LiveStep[] = [];
 
@@ -2352,7 +2355,7 @@ export default function MissionControlPage() {
   };
 
   // The active conversation is stored on the server; a reload picks it back up.
-  const { data: historyData, isFetching: fetchingHistory } = useGetChatHistoryQuery(conversationId ?? undefined, {
+  const { data: historyData, isFetching: fetchingHistory, refetch: refetchHistory } = useGetChatHistoryQuery(conversationId ?? undefined, {
     refetchOnMountOrArgChange: true,
   });
   const loadingHistory = fetchingHistory;
@@ -2362,7 +2365,14 @@ export default function MissionControlPage() {
   const wantKey = conversationId ?? 'first';
   const gotId = historyData?.data.conversation_id ?? null;
   const matches = conversationId === null ? true : gotId === conversationId;
-  if (historyData && !fetchingHistory && matches && loadedFor !== wantKey) {
+  // The server was still working on the last message (the wait for it was lost): its
+  // reply replaces "still working" once a poll brings it.
+  const lastLocal = turns[turns.length - 1];
+  const waitingOnServer = lastLocal?.role === 'assistant' && Boolean(lastLocal.reply.working);
+  const serverTurns = historyData?.data.turns ?? [];
+  const serverLast = serverTurns[serverTurns.length - 1];
+  const serverDone = Boolean(serverLast && !(serverLast.role === 'assistant' && serverLast.reply.working));
+  if (historyData && !fetchingHistory && matches && (loadedFor !== wantKey || (waitingOnServer && serverDone))) {
     setLoadedFor(wantKey);
     if (conversationId === null && gotId) setConversationId(gotId);
     jumpRef.current = true;
@@ -2460,6 +2470,35 @@ export default function MissionControlPage() {
 
   const pushTurn = (turn: ChatTurn) => setTurns((prev) => [...prev, turn]);
 
+  // While the server is still on a message whose wait was lost, ask every few seconds.
+  useEffect(() => {
+    if (!waitingOnServer) return;
+    const timer = window.setInterval(() => void refetchHistory(), 4000);
+    return () => window.clearInterval(timer);
+  }, [waitingOnServer, refetchHistory]);
+
+  /**
+   * The wait for a reply failed (the app went to the background, the network
+   * blipped, the server restarted). The server may still have answered, or
+   * still be working: its history says which, instead of a bare error.
+   */
+  const recoverFromHistory = async (text: string): Promise<boolean> => {
+    try {
+      const fresh = await refetchHistory().unwrap();
+      const list = fresh.data.turns;
+      const lastUser = list.map((t) => t.role).lastIndexOf('user');
+      if (lastUser < 0 || lastUser === list.length - 1) return false;
+      const asked = list[lastUser];
+      if (asked.role !== 'user' || asked.text.trim() !== text) return false;
+      if (fresh.data.conversation_id && fresh.data.conversation_id !== conversationId) setConversationId(fresh.data.conversation_id);
+      setLoadedFor(fresh.data.conversation_id ?? 'first');
+      setTurns(list.map((t): ChatTurn => (t.role === 'user' ? { id: `h${t.id}`, role: 'user', text: t.text } : { id: `h${t.id}`, role: 'assistant', reply: t.reply })));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   /** Sends the attached file to the phones named in the message (or all online ones). */
   const sendFile = () => {
     if (!attached) return;
@@ -2516,6 +2555,7 @@ export default function MissionControlPage() {
     } catch (error) {
       if (stoppedIdsRef.current.has(requestId)) return; // Stop already said so
       reportChatError(error, 'send', sentAt);
+      if (await recoverFromHistory(text)) return;
       pushTurn({ id: nextId('a'), role: 'assistant', reply: { kind: 'error', text: errorMessage(error) } });
     } finally {
       if (inFlightRef.current?.id === requestId) inFlightRef.current = null;
@@ -2784,6 +2824,15 @@ export default function MissionControlPage() {
         />
         {/* After the field, so the textarea exists when it measures itself against it. */}
         <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
+        {PASSWORD_IN_PROMPT.test(input) && (
+          <Typography
+            role="note"
+            variant="caption"
+            sx={{ display: 'block', px: 0.75, mt: 0.5, color: 'warning.dark', fontWeight: 600, animation: 'vbFadeIn 240ms ease-out', '@keyframes vbFadeIn': { from: { opacity: 0, transform: 'translateY(-3px)' }, to: { opacity: 1, transform: 'none' } } }}
+          >
+            No need for a password here: the agent uses the Google account already signed in on each phone. A password typed here stays in the chat and mission history.
+          </Typography>
+        )}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
           <AttachChip onPick={attachFile} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />

@@ -85,7 +85,12 @@ export interface ChatReply {
   result?: TaskAnswer;
   /** A Confirm that ran out: the request, so the chat can offer "Ask again". */
   ask_again?: string;
+  /** History only: the server is still working on the message above (the browser lost the wait). */
+  working?: boolean;
 }
+
+/** A last message with no reply and nothing working on it, older than this, is said to be unanswered. */
+const UNANSWERED_AFTER_MS = 20_000;
 
 /**
  * The Command chat: plain language in, one bounded step out.
@@ -97,6 +102,7 @@ export interface ChatReply {
  * actions. It can never delete, and a setting change waits for the user's yes.
  */
 @Service()
+
 export class CommandChatService {
   private proxyRepo = AppDataSource.getRepository(DeviceProxy);
   private messageRepo = AppDataSource.getRepository(ChatMessage);
@@ -108,6 +114,8 @@ export class CommandChatService {
   /** A Stop that arrived before its message did (it can overtake it on the wire). */
   private stoppedEarly = new Map<string, number>();
   private lastShotSweep = 0;
+  /** Conversations with a message being worked on right now, and how many. */
+  private workingOn = new Map<number, number>();
 
   constructor(
     private aiService: AiService,
@@ -199,9 +207,21 @@ export class CommandChatService {
   }
 
   private async handleMessage(userId: number, message: string, conversationId?: number, stop?: AbortSignal): Promise<ApiResponse> {
-    let text = String(message ?? '').trim();
+    const text = String(message ?? '').trim();
     if (!text) throw new AppError('Type something for the chat to do', 400);
     const conversation = await this.resolveConversation(userId, conversationId, text);
+    this.workingOn.set(conversation.id, (this.workingOn.get(conversation.id) ?? 0) + 1);
+    try {
+      return await this.answerMessage(userId, text, conversation, stop);
+    } finally {
+      const left = (this.workingOn.get(conversation.id) ?? 1) - 1;
+      if (left > 0) this.workingOn.set(conversation.id, left);
+      else this.workingOn.delete(conversation.id);
+    }
+  }
+
+  private async answerMessage(userId: number, message: string, conversation: Conversation, stop?: AbortSignal): Promise<ApiResponse> {
+    let text = message;
 
     // Harness only: "[agent:{turns:[...]}]" scripts Vector's agent model.
     let scripted: Brain | null = null;
@@ -463,6 +483,23 @@ export class CommandChatService {
       if (reply.kind === 'screens' && !reply.screens?.some((s) => s.shot_id)) reply = { kind: 'answer', text: reply.text };
       return { id: row.id, role: 'assistant' as const, reply };
     });
+    // The last message has no reply. Either it is still being worked on (the browser lost
+    // its wait: the app went to the background, a network blip), or the server stopped
+    // before answering (a restart during a deploy). Said either way, instead of silence.
+    const last = ordered[ordered.length - 1];
+    if (last?.role === 'user') {
+      const working = this.workingOn.has(conversation.id);
+      const age = now - new Date(last.created_at).getTime();
+      if (working) {
+        turns.push({ id: -last.id, role: 'assistant' as const, reply: { kind: 'answer', text: 'Vector is still working on this…', working: true } });
+      } else if (age > UNANSWERED_AFTER_MS) {
+        turns.push({
+          id: -last.id,
+          role: 'assistant' as const,
+          reply: { kind: 'answer', text: 'This message got no reply: Vector stopped before answering (the server restarted or the connection dropped). If a task had already started, it is on the Missions page.', ask_again: last.text },
+        });
+      }
+    }
     return { message: 'Chat history', data: { conversation_id: conversation.id, turns } };
   }
 

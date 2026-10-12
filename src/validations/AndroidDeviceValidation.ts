@@ -134,6 +134,7 @@ export const AutomationActionValidation = z.discriminatedUnion('type', [
       'ABOUT', 'ROOT',
     ]),
   }),
+  z.object({ type: z.literal('EnableAccess'), access: z.enum(['NOTIFICATIONS', 'FILES']) }),
   z.object({
     type: z.literal('ReadNotifications'),
     packageName: z.string().min(1).max(255).optional(),

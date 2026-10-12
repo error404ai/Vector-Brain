@@ -33,7 +33,17 @@ export interface ObstacleRule {
   press: string[];
   /** Skip the rule when the task itself is about this (e.g. "update WhatsApp"). */
   unlessTask?: RegExp;
+  /** When none of `press` is on screen: a button whose whole label only closes the notice. */
+  closeLike?: RegExp;
 }
+
+/**
+ * Labels that only close a notice or banner. Oct 12, #3863/#3864: Blogger's EU
+ * cookie notice had one way out, "Cancel notification button.", and a free model
+ * tapped the notice text 9 times instead.
+ */
+export const CLOSE_NOTICE =
+  /^(?:close|dismiss|cancel notification(?: button)?|close (?:notice|banner|notification|message|announcement|dialog|pop-?up|this)|dismiss (?:notice|banner|notification|message|announcement)|hide (?:notice|banner)|×|✕|x)\.?$/i;
 
 export const OBSTACLE_RULES: ObstacleRule[] = [
   {
@@ -80,9 +90,11 @@ export const OBSTACLE_RULES: ObstacleRule[] = [
     id: 'cookie_banner',
     label: 'Cookie banner',
     packages: /chrome|browser|firefox|sbrowser|opera|edge|brave|\.webview|dev\.tarung/,
-    text: /\bcookies?\b/i,
+    // Labels are cut at 60 characters, so "cookies" can be past the cut: the EU notice's own words count too.
+    text: /\bcookies?\b|european union (?:laws?|visitors?)|\bEU (?:laws?|cookie)|^notices? \(\d+\)$/im,
     // The least tracking choice when there is one; otherwise just close it.
     press: ['Reject all', 'Reject All', 'Only necessary', 'Necessary only', 'Decline', 'Accept all', 'Accept All', 'Accept', 'I agree', 'Got it', 'OK'],
+    closeLike: CLOSE_NOTICE,
     unlessTask: /\bcookies?\b/i,
   },
   {
@@ -121,6 +133,10 @@ export function findObstacle(screen: ScreenModel | null, packageName: string | n
     for (const choice of rule.press) {
       const want = norm(choice);
       const element = screen.elements.find((e) => !e.seen && !e.disabled && e.tappable && norm(e.label) === want);
+      if (element) return { rule, element };
+    }
+    if (rule.closeLike) {
+      const element = screen.elements.find((e) => !e.seen && !e.disabled && e.tappable && rule.closeLike!.test(norm(e.label)));
       if (element) return { rule, element };
     }
   }

@@ -69,6 +69,8 @@ export interface ScreenModel {
   windowNotes?: string[];
   /** Companion 0.30+: the foreground app's activity ("ProfileActivity"). */
   activity?: string;
+  /** Companion 0.30+: the keyboard is open; its top edge in device pixels. */
+  keyboardTop?: number;
 }
 
 /**
@@ -288,6 +290,8 @@ export function buildScreenModel(
   if (popup) model.popup = true;
   const notes = windowNotes(extras?.windows ?? [], size, covering);
   if (notes.length) model.windowNotes = notes;
+  const keyboard = (extras?.windows ?? []).find((w) => w.type === 'keyboard' && w.bounds.bottom > w.bounds.top);
+  if (keyboard) model.keyboardTop = keyboard.bounds.top;
   if (extras?.activity) model.activity = extras.activity.split('.').pop();
   if (adRows.length) model.adRows = adRows;
   if (skipRow !== null) model.adPlaying = skipRow;
@@ -299,7 +303,7 @@ export function buildScreenModel(
 function windowNotes(windows: WindowSnapshot[], size: ScreenSize, covering: WindowSnapshot[]): string[] {
   const notes: string[] = [];
   const keyboard = windows.find((w) => w.type === 'keyboard' && w.bounds.bottom > w.bounds.top);
-  if (keyboard) notes.push(`keyboard open (covers the screen below y=${toGrid(keyboard.bounds.top, size.height)}; BACK closes it)`);
+  if (keyboard) notes.push(`keyboard open (covers the screen below y=${toGrid(keyboard.bounds.top, size.height)}; press_key BACK closes it — BACKSPACE only deletes a letter)`);
   const pip = windows.find((w) => w.pictureInPicture);
   if (pip) notes.push(`a picture-in-picture video floats at ${toGrid((pip.bounds.left + pip.bounds.right) / 2, size.width)},${toGrid((pip.bounds.top + pip.bounds.bottom) / 2, size.height)}; taps there hit the video`);
   for (const w of covering) notes.push(`a window from ${w.packageName || w.type}${w.title ? ` ("${cutText(w.title, 30)}")` : ''} is over the app; its rows come first`);
