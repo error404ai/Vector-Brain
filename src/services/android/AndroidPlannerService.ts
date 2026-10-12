@@ -1369,6 +1369,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
         noteActivity();
         noteDeviceAction();
       },
+      onStuck: (reason) => stopForSafety(reason, 'AGENT_STUCK'),
     }, { vision, grounder, task: prompt, screenshots: engineSettings.screenshots, deviceFacts: deviceFactsText(device?.network_info), accounts: await this.phoneAccounts(userId, deviceDbId),
       // Experience memory; a Test Lab run measures the model alone, so it gets none.
       experience: flowOptions.aiOnly ? [] : await Container.get(ExperienceService).forRun(userId),

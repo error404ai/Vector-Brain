@@ -302,3 +302,48 @@ describe('going round the same screens (Oct 13, #3870: 32 steps of guessed URLs,
     expect(fourth.text).toMatch(/STUCK: you keep going round.*Menus on this screen you have not opened yet: "Main menu" \(idx 0\)/s);
   });
 });
+
+describe('refused again and again (Oct 13, #3873: one refused tap 30 times, 60 steps)', () => {
+  it('names untried options from the 3rd refusal and stops the run at the 6th; a re-tapped chip is called out', async () => {
+    const exec: Exec = jest.fn(async (_hw, action) => {
+      if (action.type === 'ObserveScreen') {
+        return {
+          status: 'SUCCESS',
+          uiTree: {
+            packageName: 'com.android.chrome',
+            root: screen([
+              node({ text: 'Choose 3 topics or more to continue', box: [40, 200, 1040, 300] }),
+              node({ text: 'Technology', clickable: true, box: [40, 400, 400, 480] }),
+              node({ text: 'AI', clickable: true, box: [440, 400, 700, 480] }),
+              node({ text: 'Android', clickable: true, box: [40, 520, 400, 600] }),
+              node({ text: 'Continue', clickable: true, box: [600, 2000, 1040, 2100] }),
+            ]),
+          },
+        };
+      }
+      return { status: 'SUCCESS', summary: 'done' };
+    });
+    const onStuck = jest.fn();
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw', { onStuck });
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[]; isError?: boolean }> }[] }).tools;
+    const run = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await tools.find((t) => t.name === name)!.execute(args, {}, {});
+      return { text: r.content.map((c) => c.text ?? '').join(''), isError: Boolean(r.isError) };
+    };
+    await run('read_ui_tree');
+    await run('tap_element', { idx: '2' });
+    const again = await run('tap_element', { idx: '1' });
+    expect(again.text).not.toMatch(/ALREADY TAPPED/);
+    const third = await run('tap_element', { idx: '2' });
+    expect(third.text).toMatch(/ALREADY TAPPED: "AI" was tapped 1 time before/);
+    // Now the same refused tap over and over, with looks in between.
+    let last = { text: '', isError: false };
+    for (let i = 0; i < 6; i += 1) {
+      last = await run('tap_element', { idx: '2' });
+      await run('read_ui_tree');
+    }
+    expect(last.isError).toBe(true);
+    expect(onStuck).toHaveBeenCalledTimes(1);
+    expect(last.text).toMatch(/^Not tapped/);
+  });
+});

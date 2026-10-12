@@ -206,6 +206,8 @@ export interface AndroidAgentCallbacks {
   onRecovery?: (id: ObstacleId, detail: string) => void;
   /** A long tool (install_app) is still working: proof the phone is alive. */
   onHeartbeat?: () => void;
+  /** The agent keeps repeating refused calls: the run should stop. */
+  onStuck?: (reason: string) => void;
 }
 
 /**
@@ -248,6 +250,10 @@ const EMAILS_IN_TEXT = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[a-z]{2,}/gi;
 const ANOTHER_ACCOUNT = /^(?:use another account|add another account|add account|add an account|sign in with (?:another|a different) account|use a different account|switch account)$/i;
 /** Menu buttons: hamburger, overflow, navigation drawer. */
 const MENU_LABEL = /^(?:main menu|menu|open menu|more options|more actions|more|options|navigation menu|open navigation drawer|show navigation drawer|navigate up menu|drawer|⋮|≡|☰)$/i;
+/** A guard's refusal: the call did not reach the phone. */
+const REFUSAL = /^(?:Not (?:tapped|typed|waited|opened|pressed|done)\b|Blocked:)/;
+/** Refusals in a row that end the run (Oct 13, #3873: the same refused tap 30 times, 60 steps). */
+const REFUSALS_STOP = 6;
 /** Actions that bring new content: a cycle containing one is progress through a feed or list. */
 const MOVES_ALONG = /^(?:swipe|scroll_element|scroll_until|drag|pinch):/;
 /** Tools that only look or wait: not part of "doing the same thing again". */
@@ -506,6 +512,10 @@ export class AndroidAgent extends Agent {
   private overwriteWarned = '';
   /** What the agent did, as tool+args, for "the same few actions round and round" (waits and reads aside). */
   private actionTrail: string[] = [];
+  /** Taps per label on one screen ("screenKey|label"), for "this tap may have undone the last one". */
+  private labelTaps = new Map<string, number>();
+  /** Refused calls in a row (looking in between does not count): the run stops at REFUSALS_STOP. */
+  private refusalStreak = 0;
   /** Labels tapped this run (lower case), so a menu never opened can be pointed out. */
   private tappedLabels = new Set<string>();
   /** Experience memory: lessons already shown, scopes already covered, and the last address opened. */
@@ -1563,7 +1573,17 @@ export class AndroidAgent extends Agent {
           this.actionTrail.push(`${tool.name}:${stableArgs(args[0] as Record<string, unknown>)}`);
           if (this.actionTrail.length > 9) this.actionTrail.shift();
         }
-        const result = await run(...args);
+        let result = await run(...args);
+        if (!LOOK_TOOLS.has(tool.name)) {
+          const first = (result.content ?? []).find((c) => c.type === 'text') as { text?: string } | undefined;
+          const refused = Boolean(result.isError && REFUSAL.test(first?.text ?? ''));
+          this.refusalStreak = refused ? this.refusalStreak + 1 : 0;
+          if (refused && this.refusalStreak >= REFUSALS_STOP) {
+            this.callbacks?.onStuck?.(`The agent kept repeating actions the system refused (${this.refusalStreak} in a row), so the run was stopped instead of spending more steps.`);
+          } else if (refused && this.refusalStreak >= 3) {
+            result = this.withNote(result, `REFUSED ${this.refusalStreak} TIMES IN A ROW: the run stops at ${REFUSALS_STOP}. Do something you have not done on this screen.${this.untriedHint()}`);
+          }
+        }
         this.sight = sightOfResult(result as never, {
           vision: Boolean(this.options.vision),
           grounder: Boolean(this.options.grounder),
@@ -2086,7 +2106,12 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       // A second "picture changed, list the same" on one spot is a blinking cursor or a key
       // press animation, not progress: counted as no effect.
       this.noEffectStreak += 1;
-      if (tap) this.noEffect = { grid: tap.grid, key: keyAfter };
+      if (tap) {
+        this.noEffect = { grid: tap.grid, key: keyAfter };
+        // Taps that changed nothing, per screen and spot: the 4th is refused (a menu that opens and closes is not counted).
+        const spotKey = `${keyBefore}|${Math.round(tap.grid.x / 25)}_${Math.round(tap.grid.y / 25)}`;
+        this.screenSpotTaps.set(spotKey, (this.screenSpotTaps.get(spotKey) ?? 0) + 1);
+      }
       checkNote = `\n\nCHECK: the screen did NOT change after this. Do not tap the same spot again. Try a different way: click_node with the visible text, tap_element on the element that holds it, scroll_element to bring it fully on screen, or global_action BACK. If something may still be loading, use wait once.${this.closeHint()}${this.menuHint()}`;
     } else if (keyAfter !== keyBefore) {
       this.noEffect = null;
@@ -2531,10 +2556,17 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const onThisScreen = this.screenSpotTaps.get(screenSpot) ?? 0;
     if (onThisScreen >= 3 && !TOGGLE.test(label.trim())) {
       return refuse(
-        `Not tapped: you have tapped this spot${label ? ` ("${label.slice(0, 40)}")` : ''} ${onThisScreen} times on this exact screen and it did not move the task on. Do something different: another element, press_key BACK, scroll_element, open_url to the page you need${this.imagesToAi ? ', capture_screen to look' : ''}, or finish and say what blocks you.${this.closeHint()}`,
+        `Not tapped: you have tapped this spot${label ? ` ("${label.slice(0, 40)}")` : ''} ${onThisScreen} times on this exact screen and the screen did not change. Do something different: another element, press_key BACK, scroll_element, open_url to the page you need${this.imagesToAi ? ', capture_screen to look' : ''}, or finish and say what blocks you.${this.closeHint()}`,
       );
     }
-    this.screenSpotTaps.set(screenSpot, onThisScreen + 1);
+    // A label tapped before on this screen: on a chip, checkbox or menu the next tap undoes the last
+    // (Oct 13, #3873: Medium's topic "Technology" selected and unselected over and over).
+    const labelKey = `${this.currentKey()}|${label.split(' · ')[0].trim().toLowerCase()}`;
+    const before = label ? (this.labelTaps.get(labelKey) ?? 0) : 0;
+    if (label) this.labelTaps.set(labelKey, before + 1);
+    const againNote = before >= 1 && !TOGGLE.test(label.trim())
+      ? `ALREADY TAPPED: "${label.split(' · ')[0].trim().slice(0, 40)}" was tapped ${before} time${before === 1 ? '' : 's'} before on this screen. If it is a chip, checkbox, tab or menu, this tap may have undone the last one: check its state, and pick the OTHER options you still need.`
+      : '';
     const width = this.screen?.size.width ?? 1080;
     const height = this.screen?.size.height ?? 2400;
     let px = !atGrid && target && Math.hypot(target.grid.x - grid.x, target.grid.y - grid.y) < 1 ? target.px : { x: toPixels(grid.x, width), y: toPixels(grid.y, height) };
@@ -2577,7 +2609,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       if (!clicked.isError) return circling ? this.withNote(clicked, circling.trim()) : clicked;
     }
     const tapped = await this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
-    const noted = keyboardNote ? this.withNote(tapped, keyboardNote) : tapped;
+    const withKeyboard = keyboardNote ? this.withNote(tapped, keyboardNote) : tapped;
+    const noted = againNote && !tapped.isError ? this.withNote(withKeyboard, againNote) : withKeyboard;
     return circling ? this.withNote(noted, circling.trim()) : noted;
   }
 
@@ -2653,6 +2686,14 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       notes.push(lessonNote(scope, picked));
     }
     return notes.length ? `\n\n${notes.join('\n\n')}` : '';
+  }
+
+  /** Tappable things on this screen not tapped in this run (menus first), for a stuck agent. */
+  private untriedHint(): string {
+    const els = (this.screen?.elements ?? []).filter((e) => e.tappable && !e.disabled && e.label.trim() && !this.tappedLabels.has(e.label.split(' · ')[0].trim().toLowerCase()));
+    if (!els.length) return ' Nothing else on this screen is left to try: go BACK, open another page, or finish and say what blocks you.';
+    const list = els.slice(0, 8).map((e) => `"${e.label.split(' · ')[0].trim().slice(0, 28)}" (idx ${e.idx})`).join(', ');
+    return ` Not tapped yet on this screen: ${list}.${this.menuHint()}`;
   }
 
   /** Refusal text for tapping another phone's account, or "Use another account" the task did not ask for. */
