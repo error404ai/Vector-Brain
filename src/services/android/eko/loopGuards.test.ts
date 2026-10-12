@@ -441,3 +441,40 @@ describe('a run that goes nowhere is stopped', () => {
     expect(onStuck).not.toHaveBeenCalled();
   });
 });
+
+describe('a Like that is already on (Oct 13: 84 reels liked by earlier runs were unliked, then liked again)', () => {
+  const reel = (selected: () => boolean) => {
+    const exec: Exec = jest.fn(async (_hw, action) => {
+      if (action.type === 'ObserveScreen') {
+        return { status: 'SUCCESS', uiTree: { packageName: 'com.instagram.android', root: screen([node({ text: 'creator_1', clickable: true, box: [40, 1800, 600, 1880] }), node({ contentDescription: 'Like', clickable: true, selected: selected(), box: [900, 1200, 1040, 1320] })]) } };
+      }
+      return { status: 'SUCCESS', summary: 'done' };
+    });
+    return exec;
+  };
+
+  it('is not tapped when the task is to like, and is tapped when the task is to unlike', async () => {
+    const exec = reel(() => true);
+    const { run } = harness(exec, { task: 'Like 5 reels' });
+    await run('read_ui_tree');
+    const r = await run('tap_element', { idx: '1' });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/"Like" is already ON here.*Skip this one/s);
+    expect(sent(exec).some((a) => a.type === 'Tap')).toBe(false);
+    const undo = reel(() => true);
+    const other = harness(undo, { task: 'Unlike the last 3 reels I liked' });
+    await other.run('read_ui_tree');
+    expect((await other.run('tap_element', { idx: '1' })).isError).toBe(false);
+  });
+
+  it('a state read right after a swipe is checked again before refusing', async () => {
+    let reads = 0;
+    // The first read still shows the last reel's Like as on; the fresh read shows this one is off.
+    const exec = reel(() => (reads += 1) <= 1);
+    const { run } = harness(exec, { task: 'Like 5 reels' });
+    await run('read_ui_tree');
+    const r = await run('tap_element', { idx: '1' });
+    expect(r.isError).toBe(false);
+    expect(sent(exec).some((a) => a.type === 'Tap')).toBe(true);
+  });
+});

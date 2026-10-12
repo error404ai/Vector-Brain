@@ -251,6 +251,9 @@ const ANOTHER_ACCOUNT = /^(?:use another account|add another account|add account
 /** Menu buttons: hamburger, overflow, navigation drawer. */
 const MENU_LABEL = /^(?:main menu|menu|open menu|more options|more actions|more|options|navigation menu|open navigation drawer|show navigation drawer|navigate up menu|drawer|⋮|≡|☰)$/i;
 const OPPOSITE = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' } as const;
+/** Tasks that mean to turn a toggle OFF: there, tapping one that is on is the point. */
+const UNDO_TASK = /\b(?:un-?(?:like|follow|save|subscribe|star|bookmark|heart|favou?rite)|remove (?:the |my |all )?(?:likes?|saves?|bookmarks?|stars?)|dislike|undo)\b/i;
+const isOn = (e: ScreenElement) => e.on === true || e.selected === true;
 /** Actions in a row with no progress: a warning, then the run stops. */
 const NO_PROGRESS_WARN = 8;
 const NO_PROGRESS_STOP = 12;
@@ -2603,6 +2606,27 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     }
     const accountBlock = this.accountGuard(label);
     if (accountBlock) return refuse(accountBlock);
+    // A Like/Save/Star the phone reports as already ON: tapping it would undo it (Oct 13: 84 taps on
+    // reels liked by earlier runs turned them OFF, then took a second tap to put back). The state
+    // read right after a swipe can be the last item's, so it is read again before refusing.
+    if (target && !target.seen && TOGGLE.test(label.split(' · ')[0].trim()) && isOn(target) && !UNDO_TASK.test(this.options.task ?? '')) {
+      await sleep(300);
+      try {
+        this.absorb(await this.observe());
+      } catch {
+        /* keep the list we had */
+      }
+      const fresh = sameElementAgain(this.screen, target);
+      if (fresh && isOn(fresh)) {
+        return refuse(
+          `Not tapped: "${label.split(' · ')[0].trim().slice(0, 30)}" is already ON here (the phone reports it selected): this item was done before. Tapping it would undo it. Skip this one and go to the next item (swipe UP or scroll).`,
+        );
+      }
+      if (fresh) {
+        target = fresh;
+        grid = fresh.grid;
+      }
+    }
     if (label) this.tappedLabels.add(label.split(' · ')[0].trim().toLowerCase());
     // The same spot on the very same screen, tapped again and again (Oct 12, #3863: Google
     // Account avatar on Blogger 6 times; #3864: NEXT under the keyboard 9 times). Toggles aside.
