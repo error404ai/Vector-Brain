@@ -1,3 +1,4 @@
+import { easeFor, frameGate } from '@/components/ui/gpu';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
@@ -361,10 +362,14 @@ export function startVectorBot(canvas: HTMLCanvasElement, opts: Options = {}): B
   let frameNo = 0;
   let ready = false;
   const m = reduce ? 0 : 1;
+  // 30 frames a second: the robot idles and gestures; 60 or 120 only doubled
+  // the GPU work while the chat beside it was being typed in.
+  const gate = frameGate(30);
   const frame = () => {
     raf = requestAnimationFrame(frame);
     if (!visible || document.hidden) return;
-    const dt = Math.min(clock.getDelta(), 0.05);
+    if (!gate(performance.now())) return;
+    const dt = Math.min(clock.getDelta(), 0.1);
     const t = clock.elapsedTime;
     frameNo++;
     if (t > nextBlink) {
@@ -372,8 +377,8 @@ export function startVectorBot(canvas: HTMLCanvasElement, opts: Options = {}): B
       nextBlink = t + 2.2 + Math.random() * 3;
     }
     blink = Math.max(0, blink - dt * 9);
-    look.x += (target.x - look.x) * 0.08;
-    look.y += (target.y - look.y) * 0.08;
+    look.x += (target.x - look.x) * easeFor(0.08, dt * 1000);
+    look.y += (target.y - look.y) * easeFor(0.08, dt * 1000);
     float.position.y = m * (Math.sin(t * 1.6) * 0.08 + (mood === 'work' ? Math.sin(t * 9) * 0.015 : 0));
     const hop = Math.max(0, 1 - (t - hopT) / 0.9);
     float.position.y += m * Math.sin((1 - hop) * Math.PI) * hop * 0.45;

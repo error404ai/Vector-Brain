@@ -217,7 +217,21 @@ app.use((req, res, next) => {
 app.use('/__pre', (_req, res) => res.status(404).end());
 
 // index.html is never cached, so a deploy is picked up on the next load.
-app.use(express.static(PUBLIC_DIR, { index: false, setHeaders: (res, path) => path.endsWith('.html') && res.setHeader('Cache-Control', 'no-cache') }));
+// Images, video and fonts outside /assets have no hash in their name, so they
+// get a week rather than a year: long enough that a returning visitor and
+// Cloudflare (whose own default is 4 hours) keep them, short enough that a
+// replaced file shows up within days. Text files (robots, sitemap, llms.txt)
+// keep the default.
+const STATIC_MEDIA = /\.(?:jpe?g|png|webp|avif|gif|svg|ico|mp4|webm|woff2?)$/i;
+app.use(
+  express.static(PUBLIC_DIR, {
+    index: false,
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+      else if (STATIC_MEDIA.test(path)) res.setHeader('Cache-Control', 'public, max-age=604800');
+    },
+  }),
+);
 
 app.get('*', (req, res, next) => {
   if (res.headersSent) {

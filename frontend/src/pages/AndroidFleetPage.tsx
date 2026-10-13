@@ -102,7 +102,7 @@ import { useNavigate } from 'react-router-dom';
 
 const riseIn = keyframes`from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; }`;
 const barSlide = keyframes`to { background-position: 200% 0; }`;
-const haloShift = keyframes`0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; }`;
+const haloPulse = keyframes`0%, 100% { opacity: .38; } 50% { opacity: .62; }`;
 
 /** The status bar's order: live work first, then outcomes, then phones that cannot run. */
 const statusOrder: FleetStatus[] = ['running', 'waiting', 'failed', 'interrupted', 'cancelled', 'completed', 'idle', 'needs_setup', 'offline'];
@@ -1017,11 +1017,12 @@ export default function AndroidFleetPage() {
                       width: 286,
                       transform: 'translateX(-50%)',
                       borderRadius: '56px',
-                      background: `linear-gradient(120deg, ${PRISM_ACCENT}, ${PRISM_PINK}, #22d3ee, ${PRISM_ACCENT})`,
-                      backgroundSize: '300% 300%',
+                      // Static gradient, blurred once; only opacity animates, which
+                      // the compositor does without repainting the blur each frame.
+                      background: `linear-gradient(160deg, ${PRISM_ACCENT}, ${PRISM_PINK} 55%, #22d3ee)`,
                       filter: 'blur(18px)',
-                      opacity: 0.55,
-                      animation: `${haloShift} 5s linear infinite`,
+                      willChange: 'opacity',
+                      animation: `${haloPulse} 2.6s ease-in-out infinite`,
                       pointerEvents: 'none',
                       '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
                     }}

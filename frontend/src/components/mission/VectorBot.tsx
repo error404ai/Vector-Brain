@@ -1,3 +1,4 @@
+import { hasHardwareWebGL } from '@/components/ui/gpu';
 import { Box, useMediaQuery } from '@mui/material';
 import { memo, useEffect, useRef, useState } from 'react';
 import type { BotHandle, BotMood } from './vectorBotScene';
@@ -5,13 +6,9 @@ import type { BotHandle, BotMood } from './vectorBotScene';
 /** Still of the robot, shown until the 3D scene is up, or instead of it. */
 const STILL = '/brand/vector-bot.png';
 
+/** A real GPU, not WebGL emulated on the CPU (which froze Mission Control at ~90% CPU). */
 function webglAvailable(): boolean {
-  try {
-    const c = document.createElement('canvas');
-    return !!(c.getContext('webgl2') || c.getContext('webgl'));
-  } catch {
-    return false;
-  }
+  return hasHardwareWebGL();
 }
 
 /**

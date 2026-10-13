@@ -46,6 +46,9 @@ export default defineConfig({
   build: {
     outDir: '../public',
     emptyOutDir: true,
+    // Read by scripts/prerender.mjs to link each public page's own CSS in its
+    // HTML (then deleted, so it is never served).
+    manifest: true,
   },
   server: {
     port: 5173,

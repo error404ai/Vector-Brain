@@ -369,7 +369,7 @@ export default function HomePage() {
                   <video
                     className="fl-live-video"
                     src={`/landing/live/l${i + 1}.mp4`}
-                    poster={`/landing/live/l${i + 1}.jpg`}
+                    poster={`/landing/live/l${i + 1}.webp`}
                     muted
                     loop
                     playsInline

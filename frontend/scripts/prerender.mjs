@@ -32,12 +32,57 @@ fs.mkdirSync(preDir, { recursive: true });
 const fontFile = fs.readdirSync(path.join(out, 'assets')).find((f) => /^archivo-latin-wdth-normal-.*\.woff2$/.test(f));
 const fontPreload = fontFile ? `<link rel="preload" href="/assets/${fontFile}" as="font" type="font/woff2" crossorigin>\n` : '';
 
+// Each page's own CSS (its lazy chunk and the chunks it imports), linked in its
+// HTML. Without it the stylesheet arrived only after the JavaScript, so the
+// home page's headline painted ~3.5 s late on a mobile connection. Vite's
+// loader sees these <link>s and does not fetch the same file again.
+const viteManifestPath = path.join(out, '.vite', 'manifest.json');
+const viteManifest = JSON.parse(fs.readFileSync(viteManifestPath, 'utf8'));
+const entrySource = fs.readFileSync(path.join(frontend, 'src/entry-server.tsx'), 'utf8');
+const sourceOf = new Map(); // component name -> src/... file
+for (const m of entrySource.matchAll(/import\s+(?:(\w+)|\{([^}]+)\})\s+from\s+'\.\/(pages\/[^']+)'/g)) {
+  const names = m[1] ? [m[1]] : m[2].split(',').map((n) => n.trim()).filter(Boolean);
+  for (const name of names) sourceOf.set(name, `src/${m[3]}.tsx`);
+}
+const pageComponent = new Map(); // path -> component name
+for (const m of entrySource.matchAll(/^\s*(?:'([^']+)'|\[NOT_FOUND\]):\s*(\w+),/gm)) pageComponent.set(m[1] ?? NOT_FOUND, m[2]);
+const entryCss = new Set(Object.values(viteManifest).filter((c) => c.isEntry).flatMap((c) => c.css ?? []));
+const cssFor = (key, seen = new Set()) => {
+  const chunk = viteManifest[key];
+  if (!chunk || seen.has(key)) return [];
+  seen.add(key);
+  return [...(chunk.css ?? []), ...(chunk.imports ?? []).flatMap((k) => cssFor(k, seen))];
+};
+// A page is keyed by its source path, or, when it is a shared lazy chunk (the
+// router imports it too), by its chunk name: "_HomePage-<hash>.js".
+const chunkKeyFor = (source) => {
+  if (viteManifest[source]) return source;
+  const base = path.basename(source, '.tsx');
+  return Object.keys(viteManifest).find((k) => k.startsWith(`_${base}-`) && k.endsWith('.js'));
+};
+const pageCssLinks = (p) => {
+  const source = sourceOf.get(pageComponent.get(p));
+  const key = source && chunkKeyFor(source);
+  if (!key) return '';
+  // Inlined, so the first paint needs no extra round trip for it. The print-only
+  // <link> beside it is never applied on screen; it is there so Vite's loader
+  // finds the file already linked and does not fetch it again.
+  return [...new Set(cssFor(key))]
+    .filter((f) => !entryCss.has(f))
+    .map((f) => {
+      const css = fs.readFileSync(path.join(out, f), 'utf8');
+      if (css.length > 64 * 1024) return `<link rel="stylesheet" crossorigin href="/${f}">\n`;
+      return `<style>${css.replace(/<\/style/gi, '<\\/style')}</style><link rel="stylesheet" crossorigin href="/${f}" media="print">\n`;
+    })
+    .join('');
+};
+
 const pages = {};
 for (const p of renderedPaths) {
   const { html, head } = render(p);
   if (!html.includes('<h1')) throw new Error(`Prerendered ${p} has no <h1>`);
   const doc = shell
-    .replace(SEO_BLOCK, fontPreload + head)
+    .replace(SEO_BLOCK, fontPreload + pageCssLinks(p) + head)
     .replace(APP_BLOCK, '')
     .replace('<div id="root">', `<div id="root" data-prerendered="${p}">${html}`);
   const file = p === NOT_FOUND ? '404.html' : fileFor(p);
@@ -53,6 +98,9 @@ const appSource = fs.readFileSync(path.join(frontend, 'src/App.tsx'), 'utf8');
 const appRoutes = [...appSource.matchAll(/path:\s*'([^']+)'/g)]
   .map((m) => m[1])
   .filter((r) => r !== '*' && !(r in pages));
+
+// The Vite manifest was only for the step above; it is not served.
+fs.rmSync(path.join(out, '.vite'), { recursive: true, force: true });
 
 fs.writeFileSync(path.join(preDir, 'manifest.json'), JSON.stringify({ pages, notFound: '404.html', appRoutes }, null, 2));
 

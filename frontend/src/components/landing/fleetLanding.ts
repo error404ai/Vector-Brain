@@ -1,3 +1,4 @@
+import { hasHardwareWebGL } from '@/components/ui/gpu';
 import { fetchPublicLandingShots, publicShotUrl, type PublicLandingShot } from '@/RTKService/landingShotService/landingShotService';
 import type { FleetScene } from './fleetScene';
 import { paintScreen, type ScreenKind } from './screens';
@@ -243,15 +244,24 @@ export function startFleetLanding(root: HTMLElement): () => void {
   let scene: FleetScene | null = null;
   const heroImages = new Map<number, HTMLImageElement>();
   const applyHero = () => heroImages.forEach((img, i) => scene?.setScreenImage(i, img));
-  if (canvas) {
-    import('./fleetScene')
-      .then(({ startFleetScene }) => {
-        if (!alive) return;
-        scene = startFleetScene(canvas, state);
-        if (!scene) root.classList.add('nogl');
-        applyHero();
-      })
-      .catch(() => alive && root.classList.add('nogl'));
+  if (canvas && !hasHardwareWebGL()) {
+    // No real GPU: the CSS fallback, and three.js (~110 KB) is never fetched.
+    root.classList.add('nogl');
+  } else if (canvas) {
+    // Fetched and started once the page is idle, so the 3D scene never competes
+    // with the first paint or the first taps.
+    const start = () =>
+      import('./fleetScene')
+        .then(({ startFleetScene }) => {
+          if (!alive) return;
+          scene = startFleetScene(canvas, state);
+          if (!scene) root.classList.add('nogl');
+          applyHero();
+        })
+        .catch(() => alive && root.classList.add('nogl'));
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    if (idle) idle(() => void start(), { timeout: 1500 });
+    else setTimeout(() => void start(), 600);
   }
 
   // Real screenshots, approved in Landing shots, replace the drawn stand-ins.

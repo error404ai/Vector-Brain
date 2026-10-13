@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SCREEN_H, SCREEN_W, paintScreen, type ScreenKind } from './screens';
 import { clamp, doneFrac, ease, fleetCount, lerp, type FleetState } from './fleetState';
+import { easeFor, frameGate, hasHardwareWebGL } from '@/components/ui/gpu';
 
 /**
  * The landing page's WebGL still life: five detailed phones float in a light
@@ -17,6 +18,9 @@ export interface FleetScene {
 }
 
 export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): FleetScene | null {
+  // Without a real GPU the scene would run on the CPU and freeze the page (see
+  // gpu.ts); the page shows its CSS fallback instead.
+  if (!hasHardwareWebGL()) return null;
   let renderer: THREE.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -278,21 +282,29 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): F
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), V = new THREE.Vector3(), S = new THREE.Vector3();
   let camZ = Z0, camY = 0, raf = 0, frames = 0, slow = 0, last = performance.now(), degraded = false, n0 = 0;
 
+  // 30 frames a second: the scene drifts, it does not need 60 or 120, and every
+  // skipped frame is GPU time and battery the rest of the page gets back.
+  const gate = frameGate(30);
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame);
+    if (document.hidden || state.covered) {
+      last = now;
+      return;
+    }
+    if (!gate(now)) return;
     const dt = now - last;
     last = now;
-    if (document.hidden || state.covered) return;
-    // Weak GPUs: drop resolution once instead of stuttering all the way down the page.
-    if (!degraded && ++frames > 30 && frames < 150 && dt > 45 && ++slow > 40) {
+    // Weak GPUs: drop resolution once instead of stuttering all the way down the
+    // page. A healthy frame here is ~33 ms; well over 60 means it cannot keep up.
+    if (!degraded && ++frames > 15 && frames < 75 && dt > 66 && ++slow > 20) {
       degraded = true;
       dpr = 0.7;
       renderer.setPixelRatio(dpr);
       resize();
     }
     const t = now / 1000, ph = state.phase;
-    mX += (state.mouseX - mX) * 0.06;
-    mY += (state.mouseY - mY) * 0.06;
+    mX += (state.mouseX - mX) * easeFor(0.06, dt);
+    mY += (state.mouseY - mY) * easeFor(0.06, dt);
 
     HERO.forEach((hp, i) => {
       const { pos, rot, s } = heroPose(i, ph, t);
@@ -345,8 +357,8 @@ export function startFleetScene(canvas: HTMLCanvasElement, state: FleetState): F
       const e = ext[Math.min(N - 1, Math.max(1, Math.ceil(shown)) - 1)];
       tz = Math.max(5.2, Math.max((e[1] + 0.7) / TAN, (e[0] + 0.5) / (TAN * aspect)) * (narrow ? 1.7 : 1.75));
     }
-    camZ += (tz - camZ) * (cmd ? 0.08 : 0.2);
-    camY += (0 - camY) * 0.1;
+    camZ += (tz - camZ) * easeFor(cmd ? 0.08 : 0.2, dt);
+    camY += (0 - camY) * easeFor(0.1, dt);
     const par = cmd ? 0.1 : 0.35;
     camera.position.set(mX * par, camY - mY * par * 0.6, camZ);
     camera.lookAt(0, camY, 0);
