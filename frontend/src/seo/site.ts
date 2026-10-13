@@ -11,8 +11,14 @@ export const SITE = {
   name: 'FLEET',
   /** The longer form used where FLEET alone would be ambiguous. */
   fullName: 'FLEET by Vector Brain',
-  /** The company behind it. */
+  /** The company behind it (the legal name in the terms and privacy policy). */
   org: 'Vector AI Agent',
+  /**
+   * FLEET's earlier site; the domain lapsed and is no longer ours. Said once in
+   * llms.txt and the schema so search and AI tools can tell old mentions of it
+   * apart from whoever holds that domain now.
+   */
+  formerDomain: 'vectoragent.io',
   email: 'support@vectoragent.in',
   shareImage: '/og/fleet-share.png',
   /** One sentence that defines the product. Reused verbatim. */
@@ -146,6 +152,17 @@ export const PUBLIC_PAGES: PublicPage[] = [
     kind: 'article',
   },
   {
+    path: '/compare/ai-android-automation-tools',
+    title: 'AI Android Automation Tools Compared (2026) | FLEET',
+    description:
+      'FLEET, Mobilerun (DroidRun), HeyPico, PokeClaw, LaiCai, Momentic, Sofy and Apptest.ai side by side: whose phones, how you drive them, and how many at once.',
+    label: 'AI Android automation tools',
+    parents: [{ name: 'Compare', path: '/compare/appium' }],
+    priority: 0.7,
+    changefreq: 'monthly',
+    kind: 'article',
+  },
+  {
     path: '/docs',
     title: 'FLEET Docs — Pair Phones, Run Missions, Fix Problems',
     description:
@@ -158,7 +175,7 @@ export const PUBLIC_PAGES: PublicPage[] = [
   {
     path: '/contact',
     title: 'Contact FLEET Support | FLEET',
-    description: 'Questions, bugs, account or data requests for FLEET by Vector AI Agent: email support@vectoragent.in.',
+    description: 'Questions, bugs, account or data requests for FLEET by Vector Brain (made by Vector AI Agent): email support@vectoragent.in.',
     label: 'Contact',
     priority: 0.4,
     changefreq: 'yearly',
@@ -176,7 +193,7 @@ export const PUBLIC_PAGES: PublicPage[] = [
   {
     path: '/terms',
     title: 'Terms of Service | FLEET',
-    description: 'The terms for using FLEET by Vector AI Agent, including acceptable use, your AI provider keys and the limits of the service.',
+    description: 'The terms for using FLEET by Vector Brain, including acceptable use, your AI provider keys and the limits of the service.',
     label: 'Terms of service',
     priority: 0.3,
     changefreq: 'yearly',
@@ -216,6 +233,7 @@ export const FOOTER_GROUPS: { title: string; links: Crumb[] }[] = [
       { name: 'Geo testing', path: '/use-cases/geo-testing' },
       { name: 'FLEET vs Appium', path: '/compare/appium' },
       { name: 'Own phones vs device farms', path: '/compare/cloud-device-farms' },
+      { name: 'AI Android automation tools', path: '/compare/ai-android-automation-tools' },
     ],
   },
   {

@@ -133,6 +133,7 @@ export const router = createBrowserRouter([
       { path: '/use-cases/install-apps-on-many-phones', lazy: lazy(pages.installApps) },
       { path: '/use-cases/geo-testing', lazy: lazy(pages.geoTesting) },
       { path: '/compare/cloud-device-farms', lazy: lazy(pages.compareDeviceFarms) },
+      { path: '/compare/ai-android-automation-tools', lazy: lazy(pages.compareAiTools) },
       { path: '/contact', lazy: lazy(pages.contact) },
       { path: '/privacy', lazy: lazy(pages.privacy) },
       { path: '/terms', lazy: lazy(pages.terms) },

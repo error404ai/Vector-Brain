@@ -20,6 +20,7 @@ export const pages = {
   installApps: () => import('./site/InstallAppsPage'),
   geoTesting: () => import('./site/GeoTestingPage'),
   compareDeviceFarms: () => import('./site/CompareDeviceFarmsPage'),
+  compareAiTools: () => import('./site/CompareAiToolsPage'),
   contact: () => import('./site/LegalPages').then((m) => ({ default: m.ContactPage })),
   privacy: () => import('./site/LegalPages').then((m) => ({ default: m.PrivacyPage })),
   terms: () => import('./site/LegalPages').then((m) => ({ default: m.TermsPage })),

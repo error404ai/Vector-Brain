@@ -12,6 +12,7 @@ import { StaticRouter } from 'react-router-dom';
 import DocsPage from './pages/DocsPage';
 import HomePage from './pages/HomePage';
 import CompareAppiumPage from './pages/site/CompareAppiumPage';
+import CompareAiToolsPage from './pages/site/CompareAiToolsPage';
 import CompareDeviceFarmsPage from './pages/site/CompareDeviceFarmsPage';
 import GeoTestingPage from './pages/site/GeoTestingPage';
 import InstallAppsPage from './pages/site/InstallAppsPage';
@@ -40,6 +41,7 @@ const PAGES: Record<string, ComponentType> = {
   '/use-cases/install-apps-on-many-phones': InstallAppsPage,
   '/use-cases/geo-testing': GeoTestingPage,
   '/compare/cloud-device-farms': CompareDeviceFarmsPage,
+  '/compare/ai-android-automation-tools': CompareAiToolsPage,
   '/contact': ContactPage,
   '/privacy': PrivacyPage,
   '/terms': TermsPage,

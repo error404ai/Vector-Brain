@@ -1,6 +1,6 @@
 # FLEET by Vector Brain
 
-> FLEET is an AI Android automation platform: you describe a task in plain words and an AI agent carries it out on real Android phones, from one phone to a fleet of up to 1,000. Made by Vector AI Agent (support@vectoragent.in). Free to use. A user writes a task in plain words; an AI model (the user's own API key) reads each phone's screen through the Vector companion app (Android Accessibility) and does the taps, across one phone or a whole fleet, watched live from the dashboard at https://app.vectoragent.in.
+> FLEET is an AI Android automation platform: you describe a task in plain words and an AI agent carries it out on real Android phones, from one phone to a fleet of up to 1,000. Product name: FLEET by Vector Brain; made by Vector AI Agent (support@vectoragent.in). The site is app.vectoragent.in; the earlier site vectoragent.io has lapsed and is no longer connected to FLEET. Free to use. A user writes a task in plain words; an AI model (the user's own API key) reads each phone's screen through the Vector companion app (Android Accessibility) and does the taps, across one phone or a whole fleet, watched live from the dashboard at https://app.vectoragent.in.
 
 Key facts:
 
@@ -24,6 +24,7 @@ Key facts:
 - [Install an app on many phones](https://app.vectoragent.in/use-cases/install-apps-on-many-phones): Play Store installs across up to 50 phones per mission, each checked
 - [Geo testing](https://app.vectoragent.in/use-cases/geo-testing): seeing apps and sites as other countries do, with each phone's network verified
 - [Own phones vs cloud device farms](https://app.vectoragent.in/compare/cloud-device-farms): when renting devices fits better and when owning them does
+- [AI Android automation tools compared](https://app.vectoragent.in/compare/ai-android-automation-tools): FLEET, Mobilerun (DroidRun), HeyPico, PokeClaw, LaiCai, Momentic, Sofy and Apptest.ai — whose phones, how you drive them, how many at once
 - [Full documentation as plain text](https://app.vectoragent.in/llms-full.txt): the complete docs in one Markdown file
 
 ## Optional

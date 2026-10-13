@@ -16,10 +16,11 @@ export const organization = (): Json => ({
   '@type': 'Organization',
   '@id': ORG_ID,
   name: SITE.org,
+  alternateName: ['Vector Brain'],
   url: SITE.origin,
   email: SITE.email,
   logo: `${SITE.origin}/favicon.svg`,
-  brand: { '@type': 'Brand', name: SITE.name },
+  brand: { '@type': 'Brand', name: SITE.fullName, alternateName: SITE.name },
   contactPoint: { '@type': 'ContactPoint', contactType: 'customer support', email: SITE.email },
 });
 
@@ -38,6 +39,7 @@ export const software = (): Json => ({
   name: SITE.name,
   alternateName: [SITE.fullName, 'Vector Brain'],
   description: SITE.definition,
+  disambiguatingDescription: `${SITE.fullName}, at ${SITE.origin.replace('https://', '')}. Its earlier site was ${SITE.formerDomain}, a domain that has since lapsed and is no longer connected to FLEET.`,
   applicationCategory: 'BusinessApplication',
   applicationSubCategory: 'AI Android automation',
   operatingSystem: 'Web, Android 10 or newer',
