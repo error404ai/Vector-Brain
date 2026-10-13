@@ -31,6 +31,8 @@ export class MissionTargetMissing extends AppError {
 const MAX_ATTEMPTS = 3;
 /** A task that restarts the phone (English / Hinglish / Hindi). */
 const RESTART_TASK = /\b(restart|reboot)\b|रीस्टार्ट|रिस्टार्ट/i;
+/** A task that powers the phone off: dropping off IS the result (it stays off until someone switches it on). */
+const POWER_OFF_TASK = /\b(?:power(?:ed)?[ -]?off|shut ?down|switch(?:ed)? off)\b/i;
 /** How a run ends when its phone goes down to restart. */
 const RESTART_DROP = new Set(['DEVICE_OFFLINE', 'INTERRUPTED', 'TIMEOUT', 'STALLED', 'TASK_MISSING']);
 /** Most phones one mission may drive, whatever the request says. */
@@ -819,6 +821,14 @@ export class MissionService {
 
     // A restart task: the phone dropping off mid-run IS the restart. Counting it
     // as a failure retried the run, and each retry restarted the phone again.
+    if (POWER_OFF_TASK.test(mission.prompt ?? mission.request) && !RESTART_TASK.test(mission.prompt ?? mission.request) && !options.neverStarted && RESTART_DROP.has(reason)) {
+      item.status = 'SUCCEEDED';
+      item.last_reason = null;
+      item.last_message = 'The phone powered off. It stays off until someone presses its power button.';
+      item.next_attempt_at = null;
+      await this.itemRepo.save(item);
+      return;
+    }
     if (RESTART_TASK.test(mission.prompt ?? mission.request) && !options.neverStarted && RESTART_DROP.has(reason)) {
       item.status = 'SUCCEEDED';
       item.last_reason = null;

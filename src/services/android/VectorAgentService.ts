@@ -1,4 +1,5 @@
 import { networkForChat, type DeviceNetworkInfo } from './deviceNetwork';
+import { irreversibleWarning } from './agent/irreversible';
 import { askFromText, asksForPhones, phoneOptions } from './askButtons';
 import { claimsActivity, claimsStart, stripRecords, type HistoryEntry } from './chatClaims';
 import { modelErrorText } from '@/services/ai/modelErrors';
@@ -38,6 +39,8 @@ import { ProxyRotationService } from './ProxyRotationService';
 /** Above this many phones, or this many minutes, a task needs Confirm. */
 const CONFIRM_PHONES = 5;
 const CONFIRM_MINUTES = 10;
+
+
 const MAX_MODEL_TURNS = 6;
 /** How far back the mission estimate looks at the user's runs. */
 const ESTIMATE_HISTORY_DAYS = 30;
@@ -101,6 +104,8 @@ export interface ProposalPlan {
   duration_minutes?: number;
   lanes?: string[];
   setting?: string;
+  /** What the task cannot take back (power off, factory reset, delete), shown in red on the card. */
+  warning?: string;
 }
 
 /**
@@ -697,14 +702,15 @@ export class VectorAgentService {
       const instruction =
         group.instructions.length === 1 ? group.instructions[0] : `Do these in order:\n${group.instructions.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
       const durationSeconds = group.minutes ? Math.round(group.minutes * 60) : undefined;
-      if (group.deviceIds.length > CONFIRM_PHONES || group.minutes >= CONFIRM_MINUTES) {
+      const warning = irreversibleWarning(instruction);
+      if (warning || group.deviceIds.length > CONFIRM_PHONES || group.minutes >= CONFIRM_MINUTES) {
         if (result.proposal) continue; // one Confirm at a time
         const estimate = await this.estimateFor(ctx.userId, group.instructions, group.deviceIds.length, group.minutes);
         const phoneNames = await this.namesFor(ctx.userId, group.deviceIds);
         result.proposal = {
           action: { type: 'run_mission', instruction, device_ids: group.deviceIds, duration_seconds: durationSeconds, estimate_usd: estimate.costUsd },
-          summary: `Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phones — ${estimateLine(estimate)}`,
-          plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: group.minutes || undefined },
+          summary: `${warning ? `${warning} ` : ''}Run "${instruction.replace(/\n/g, ' ')}" on ${group.deviceIds.length} phone${group.deviceIds.length === 1 ? '' : 's'} — ${estimateLine(estimate)}`,
+          plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: group.minutes || undefined, ...(warning ? { warning } : {}) },
         };
         continue;
       }
@@ -833,7 +839,7 @@ export class VectorAgentService {
             (result.planned ??= []).push({ instruction, deviceIds, minutes });
             // Big or long runs become a Confirm card after the reply (runPlanned).
             // Say so now, or the model tells the user it already started.
-            if (deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
+            if (irreversibleWarning(instruction) || deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
               return JSON.stringify({
                 status: 'needs_confirmation',
                 phones: deviceIds.length,
@@ -843,14 +849,15 @@ export class VectorAgentService {
             return JSON.stringify({ status: 'accepted', phones: deviceIds.length, note: 'Runs when you finish replying.' });
           }
           const durationSeconds = minutes ? Math.round(minutes * 60) : undefined;
-          if (deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
+          const warning = irreversibleWarning(instruction);
+          if (warning || deviceIds.length > CONFIRM_PHONES || minutes >= CONFIRM_MINUTES) {
             const estimate = await this.estimateFor(ctx.userId, [instruction], deviceIds.length, minutes);
-            const summary = `Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — ${estimateLine(estimate)}`;
+            const summary = `${warning ? `${warning} ` : ''}Run "${instruction}" on ${deviceIds.length} phone${deviceIds.length === 1 ? '' : 's'}${minutes ? ` for ${minutes} min` : ''} — ${estimateLine(estimate)}`;
             const phoneNames = await this.namesFor(ctx.userId, deviceIds);
             result.proposal = {
               action: { type: 'run_mission', instruction, device_ids: deviceIds, duration_seconds: durationSeconds, estimate_usd: estimate.costUsd },
               summary,
-              plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: minutes || undefined },
+              plan: { kind: 'mission', instruction, phones: phoneNames, steps: estimate.steps, cost_usd: estimate.costUsd, cost_note: estimateNote(estimate), duration_minutes: minutes || undefined, ...(warning ? { warning } : {}) },
             };
             return JSON.stringify({ status: 'needs_confirmation', summary });
           }
@@ -1143,8 +1150,9 @@ export class VectorAgentService {
       '- Settings (proxy rotation, lane concurrency) are only proposed; the user presses Confirm. Rotation 0 means OFF. Propose ON only if the user clearly asked for it.',
       '- A message can hold several requests (e.g. a task plus a rotation change): handle each with its tool.',
       '- "no", "cancel", "stop", "leave it" right after something waits for Confirm means cancel_pending_confirmation. "stop" while a mission runs means stop_mission. "pause" / "ruko" / "hold" means pause_mission; "resume" / "continue" / "phir se chalao" on a paused mission means resume_mission.',
-      '- You CAN restart (reboot) phones: call run_mission with the instruction "Open the power menu and tap Restart. Never power off." The run ends by itself once the phone goes down to restart, and it reconnects in a minute or two. Mention that a phone with a PIN or pattern lock stops at the lock screen after a restart. Never say you cannot restart phones.',
-      '- Never say something was done unless a tool result says so. You cannot delete anything or change accounts; say so if asked.',
+      '- You CAN restart (reboot) phones: call run_mission with the instruction "Open the power menu and tap Restart." The run ends by itself once the phone goes down to restart, and it reconnects in a minute or two. Mention that a phone with a PIN or pattern lock stops at the lock screen after a restart. Never say you cannot restart phones.',
+      '- You CAN power phones off when the user asks to switch off / power off / shut down phones: call run_mission with the instruction "Open the power menu and tap Power off (confirm if the phone asks)." The system shows a Confirm card warning that the phones cannot be switched back on from Vector. Never refuse it; the user decides.',
+      '- Never say something was done unless a tool result says so. Deleting, uninstalling or changing accounts ON THE PHONES are ordinary tasks: run them with run_mission (the system asks for Confirm on anything that cannot be undone). What you cannot do is delete Vector\'s own records (missions, phones, settings) from the chat.',
       '- Whether a task started, is running or finished comes ONLY from tool results in this turn and from `Fleet now` below (its running missions). Earlier replies are not proof: lines in them marked [record: …] are the system\'s facts about what really happened, and a reply without "[record: … started mission …]" started nothing. When asked what is running or how a task went, call fleet_status or mission_results first.',
       'Scope — these are the user\'s OWN phones and accounts. Do ordinary automation without questioning why: browsing any website for any length of time, building browsing history, searching, installing/opening/closing apps, filling forms with the user\'s own or test details, messaging/posting from the user\'s own accounts, testing apps and sites. Do not ask about intent and do not add warnings.',
       '- Ask only when you genuinely cannot tell; otherwise act.',

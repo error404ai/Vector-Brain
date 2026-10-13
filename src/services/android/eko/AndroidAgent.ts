@@ -279,6 +279,9 @@ export function cycleRepeats(trail: string[]): { length: number; times: number }
   return best;
 }
 
+/** A task that asks for the same thing over and over: its repeats are progress, not a loop. */
+export const REPEAT_TASK = /(\d+)\s*(?:times?|x|baar|bar|dafa|martaba)\b|\bevery\s+\d+|\bhar\s+\d+|\bbaar[- ]baar\b|\bagain and again\b|\brepeatedly\b|\bkeep\s+(?:on\s+)?[a-z]+ing\b|\bnon-?stop\b|\bin a loop\b/i;
+
 /** A guard's refusal: the call did not reach the phone. */
 const REFUSAL = /^(?:Not (?:tapped|typed|waited|opened|pressed|done)\b|Blocked:)/;
 /** Refusals in a row that end the run (Oct 13, #3873: the same refused tap 30 times, 60 steps). */
@@ -555,6 +558,19 @@ export class AndroidAgent extends Agent {
   /** Looks in a row that read the same thing. */
   private sameLooks = 0;
   private lastLook = '';
+  private warnedEmails = new Set<string>();
+
+  /** The task itself asks for repeats ("50 times", "every 5 minutes", "again and again"): those are not loops. */
+  private get userRepeats(): boolean {
+    return REPEAT_TASK.test(this.options.task ?? '');
+  }
+
+  /** No-progress actions that end the run: more when the task asks for many repeats. */
+  private get noProgressStop(): number {
+    if (!this.userRepeats) return NO_PROGRESS_STOP;
+    const counts = [...(this.options.task ?? '').matchAll(/(\d+)\s*(?:times?|x|baar|bar|dafa|martaba)\b/gi)].map((m) => Number(m[1]));
+    return Math.max(NO_PROGRESS_STOP, 60, ...counts.map((n) => n * 2 + 10));
+  }
   private loopWarned = '';
   /** Labels tapped this run (lower case), so a menu never opened can be pointed out. */
   private tappedLabels = new Set<string>();
@@ -873,7 +889,9 @@ export class AndroidAgent extends Agent {
             }
           }
           const checked = result.isError ? result : await this.checkTyped(String(args.text || ''), result);
-          return idx ? this.withNote(checked, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : checked;
+          const warnedType = this.otherPhoneWarning(typing);
+          const typedResult = warnedType && !checked.isError ? this.withNote(checked, warnedType) : checked;
+          return idx ? this.withNote(typedResult, `("${idx}" is an idx from the screen list: element ${idx} was tapped first, then the text typed into it.)`) : typedResult;
         },
       },
       {
@@ -1019,14 +1037,14 @@ export class AndroidAgent extends Agent {
       {
         name: 'global_action',
         description:
-          'Trigger Android system navigation. BACK = go back, HOME = home screen, RECENTS = recents, NOTIFICATIONS = pull down the shade, POWER_DIALOG = open the power menu. To reboot the phone, call POWER_DIALOG then tap Restart in the menu that appears — there is no power-off action, and never turn the phone off, only restart it.',
+          'Trigger Android system navigation. BACK = go back, HOME = home screen, RECENTS = recents, NOTIFICATIONS = pull down the shade, POWER_DIALOG = open the power menu. To reboot the phone, call POWER_DIALOG then tap Restart in the menu that appears. To switch the phone off, call POWER_DIALOG then tap Power off (and confirm if asked) — only when the task itself says to power off / switch off / shut down the phone, never on your own.',
         parameters: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
               enum: ['BACK', 'HOME', 'RECENTS', 'NOTIFICATIONS', 'POWER_DIALOG'],
-              description: 'BACK = go back one screen, HOME = go to home screen, POWER_DIALOG = open the power menu (then tap Restart to reboot)',
+              description: 'BACK = go back one screen, HOME = go to home screen, POWER_DIALOG = open the power menu (then tap Restart to reboot, or Power off when the task says to switch the phone off)',
             },
           },
           required: ['action'],
@@ -1632,7 +1650,7 @@ export class AndroidAgent extends Agent {
           const refused = Boolean(result.isError && REFUSAL.test(first?.text ?? ''));
           this.refusalStreak = refused ? this.refusalStreak + 1 : 0;
           if (refused && this.refusalStreak >= REFUSALS_STOP) {
-            this.callbacks?.onStuck?.(`The agent kept repeating actions the system refused (${this.refusalStreak} in a row), so the run was stopped instead of spending more steps.`);
+            this.callbacks?.onStuck?.(`The AI got stuck: it kept repeating actions the system refused (${this.refusalStreak} in a row), so the run was stopped instead of spending more steps. The task itself was fine; run it again.`);
           } else if (refused && this.refusalStreak >= 3) {
             result = this.withNote(result, `REFUSED ${this.refusalStreak} TIMES IN A ROW: the run stops at ${REFUSALS_STOP}. Do something you have not done on this screen.${this.untriedHint()}`);
           }
@@ -2601,7 +2619,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       }
     }
     // The same spot again on a screen that did not react last time.
-    if (this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {
+    if (!this.userRepeats && this.noEffect && this.noEffect.key === this.currentKey() && Math.hypot(this.noEffect.grid.x - grid.x, this.noEffect.grid.y - grid.y) < 40) {
       return refuse('Not tapped: you tapped here a moment ago and the screen did not change. Try a different way — click_node with the visible text, a different element, scroll_element, or global_action BACK.');
     }
     const accountBlock = this.accountGuard(label);
@@ -2632,7 +2650,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     // Account avatar on Blogger 6 times; #3864: NEXT under the keyboard 9 times). Toggles aside.
     const screenSpot = `${this.currentKey()}|${Math.round(grid.x / 25)}_${Math.round(grid.y / 25)}`;
     const onThisScreen = this.screenSpotTaps.get(screenSpot) ?? 0;
-    if (onThisScreen >= 3 && !TOGGLE.test(label.trim())) {
+    if (onThisScreen >= 3 && !TOGGLE.test(label.trim()) && !this.userRepeats) {
       return refuse(
         `Not tapped: you have tapped this spot${label ? ` ("${label.slice(0, 40)}")` : ''} ${onThisScreen} times on this exact screen and the screen did not change. Do something different: another element, press_key BACK, scroll_element, open_url to the page you need${this.imagesToAi ? ', capture_screen to look' : ''}, or finish and say what blocks you.${this.closeHint()}`,
       );
@@ -2688,7 +2706,9 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     }
     const tapped = await this.runDeviceAction({ type: 'Tap', x: px.x, y: px.y }, toolName, args, { grid, px, label });
     const withKeyboard = keyboardNote ? this.withNote(tapped, keyboardNote) : tapped;
-    const noted = againNote && !tapped.isError ? this.withNote(withKeyboard, againNote) : withKeyboard;
+    const withAgain = againNote && !tapped.isError ? this.withNote(withKeyboard, againNote) : withKeyboard;
+    const accountWarning = !tapped.isError ? this.otherPhoneWarning(label) : '';
+    const noted = accountWarning ? this.withNote(withAgain, accountWarning) : withAgain;
     return circling ? this.withNote(noted, circling.trim()) : noted;
   }
 
@@ -2825,23 +2845,24 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (NO_PROGRESS_EXEMPT.has(toolName)) return result;
     this.countNoProgress();
     const loop = cycleRepeats(this.actionTrail);
-    if (loop.times >= 3 && this.noProgress >= loop.length * 2) {
-      this.callbacks?.onStuck?.(`The agent repeated the same ${loop.length} steps ${loop.times} times without getting anywhere, so the run was stopped instead of spending more steps.`, 'AGENT_LOOP');
+    // Repeats the user asked for ("tap it 50 times", "refresh every 5 minutes") are the task, not a loop.
+    if (!this.userRepeats && loop.times >= 3 && this.noProgress >= loop.length * 2) {
+      this.callbacks?.onStuck?.(`The AI got stuck in a loop: it repeated the same ${loop.length} steps ${loop.times} times without getting anywhere, so the run was stopped instead of spending more steps. The task itself was fine; run it again.`, 'AGENT_LOOP');
       return result;
     }
-    if (this.noProgress >= NO_PROGRESS_STOP) {
-      this.callbacks?.onStuck?.(`${this.noProgress} actions in a row changed nothing that matters (no new screen, nothing liked or typed), so the run was stopped instead of spending more steps.`, 'NO_PROGRESS');
+    if (this.noProgress >= this.noProgressStop) {
+      this.callbacks?.onStuck?.(`The AI got stuck: ${this.noProgress} actions in a row changed nothing (no new screen, nothing liked or typed), so the run was stopped instead of spending more steps. The task itself was fine; run it again.`, 'NO_PROGRESS');
       return result;
     }
     const notes: string[] = [];
     const sig = `${loop.length}|${this.actionTrail.slice(-loop.length).join('>')}`;
-    if (loop.times === 2 && this.loopWarned !== sig) {
+    if (!this.userRepeats && loop.times === 2 && this.loopWarned !== sig) {
       this.loopWarned = sig;
       notes.push(`LOOP: you have now done the same ${loop.length} steps twice and are back where you started. A third time stops the run. Do something different.${this.untriedHint()}`);
     }
     if (this.noProgress >= NO_PROGRESS_WARN && !this.noProgressWarned) {
       this.noProgressWarned = true;
-      notes.push(`NO PROGRESS: your last ${this.noProgress} actions brought no new screen and changed nothing. The run stops at ${NO_PROGRESS_STOP}. Change approach now, or call task_done with success=false and say what blocks you.${this.untriedHint()}`);
+      notes.push(`NO PROGRESS: your last ${this.noProgress} actions brought no new screen and changed nothing. The run stops at ${this.noProgressStop}. Change approach now, or call task_done with success=false and say what blocks you.${this.untriedHint()}`);
     }
     return notes.length ? this.withNote(result, notes.join('\n\n')) : result;
   }
@@ -2856,7 +2877,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const text = (result.content ?? []).map((c) => ('text' in c ? c.text : '')).join('').replace(/\d+(?:\.\d+)?s\b/g, '');
     this.sameLooks = text === this.lastLook ? this.sameLooks + 1 : 0;
     this.lastLook = text;
-    if (this.sameLooks >= LOOKS_STOP) this.callbacks?.onStuck?.(`The agent read the same unchanged screen ${this.sameLooks} times without doing anything, so the run was stopped.`, 'NO_PROGRESS');
+    if (this.sameLooks >= LOOKS_STOP) this.callbacks?.onStuck?.(`The AI got stuck: it read the same unchanged screen ${this.sameLooks} times without doing anything, so the run was stopped. The task itself was fine; run it again.`, 'NO_PROGRESS');
   }
 
   /** True the first time this screen (app, address and set of buttons) is met in this run. */
@@ -2902,7 +2923,9 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const accounts = this.options.accounts;
     if (!label) return null;
     const lower = label.toLowerCase();
-    const other = accounts?.others.find((o) => lower.includes(o.email) && !accounts.own.includes(o.email));
+    const task = (this.options.task ?? '').toLowerCase();
+    // Another phone's account the user named in the task is theirs to use (warned, not refused).
+    const other = accounts?.others.find((o) => lower.includes(o.email) && !accounts.own.includes(o.email) && !task.includes(o.email));
     if (other) return this.otherPhoneText(other);
     if (ANOTHER_ACCOUNT.test(label.split(' · ')[0].trim()) && !this.newAccountInTask()) {
       return `Not tapped: "${label.split(' · ')[0].trim()}" signs a different account in, and the task gives no other account to use. Use the account already on this phone${accounts?.own.length ? ` (${accounts.own.join(', ')})` : ''}: pick it on the chooser. If it is not offered, call task_done with success=false and say the phone's own account is not signed in.`;
@@ -2916,6 +2939,8 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (!EMAIL.test(email)) return null;
     const accounts = this.options.accounts;
     if (accounts?.own.includes(email)) return null;
+    // The user named it in the task: their call. Typed, with a warning (never refused).
+    if ((this.options.task ?? '').toLowerCase().includes(email)) return null;
     const other = accounts?.others.find((o) => o.email === email);
     if (other) return this.otherPhoneText(other);
     // An address the task itself gives is fine (a sign-up, a contact form); only a made-up one is stopped.
@@ -2930,11 +2955,19 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     return `Not done: ${other.email} is the account of another phone ("${other.device}"), not this one${own.length ? ` — this phone's account is ${own.join(', ')}` : ''}. Never sign another phone's account in here. If the task named it, the task has the wrong phone's email: use this phone's own account, or call task_done with success=false and say so.`;
   }
 
-  /** The task names an email that belongs to no phone: a new account the user wants signed in. */
+  /** The task names an email that is not this phone's own: an account the user wants signed in here. */
   private newAccountInTask(): boolean {
-    const accounts = this.options.accounts;
-    const known = new Set([...(accounts?.own ?? []), ...(accounts?.others ?? []).map((o) => o.email)]);
-    return (this.options.task ?? '').toLowerCase().match(EMAILS_IN_TEXT)?.some((e) => !known.has(e)) ?? false;
+    const own = new Set(this.options.accounts?.own ?? []);
+    return (this.options.task ?? '').toLowerCase().match(EMAILS_IN_TEXT)?.some((e) => !own.has(e)) ?? false;
+  }
+
+  /** "This email is phone X's": said once when the user's own task uses another phone's account here. */
+  private otherPhoneWarning(text: string): string {
+    const lower = text.toLowerCase();
+    const other = this.options.accounts?.others.find((o) => lower.includes(o.email) && (this.options.task ?? '').toLowerCase().includes(o.email));
+    if (!other || this.warnedEmails.has(other.email)) return '';
+    this.warnedEmails.add(other.email);
+    return `WARNING (doing it, as the task asks): ${other.email} is the account of another phone ("${other.device}"). It is being used on this phone because the task names it.`;
   }
 
   /** " A notice … close button is element N" when the screen has a button that only closes a notice. */

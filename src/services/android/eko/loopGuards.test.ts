@@ -212,22 +212,27 @@ describe('another phone\'s account (Oct 13, #3866 signed phone 68\'s Gmail into 
     return { exec, ...harness(exec, { task: 'Open blogger.com and sign in with kai@gmail.com', accounts }) };
   };
 
-  it('never types or picks it, even when the task names it, and says whose it is', async () => {
+  it('when the task names it, it is used with a warning (the user decides); a made-up one is still refused', async () => {
     const { run, exec } = chooser();
     await run('read_ui_tree');
     const typed = await run('type_text', { text: 'kai@gmail.com' });
-    expect(typed.isError).toBe(true);
-    expect(typed.text).toMatch(/account of another phone \("OPPO B"\).*this phone's account is lucy@gmail\.com/s);
+    expect(typed.isError).toBe(false);
+    expect(typed.text).toMatch(/WARNING \(doing it, as the task asks\): kai@gmail\.com is the account of another phone \("OPPO B"\)/);
+    expect(sent(exec).some((a) => a.type === 'SetText')).toBe(true);
     const picked = await run('tap_element', { idx: '2' });
-    expect(picked.isError).toBe(true);
-    expect((await run('click_node', { text: 'Kai Harding kai@gmail.com' })).isError).toBe(true);
-    expect(sent(exec).filter((a) => a.type === 'Tap' || a.type === 'SetText' || a.type === 'ClickNode')).toHaveLength(0);
+    expect(picked.isError).toBe(false);
+    // Not named by the task: still never used.
+    const quiet = harness(jest.fn(async (_hw, action) => (action.type === 'ObserveScreen' ? (await chooser().exec('hw', action)) : { status: 'SUCCESS', summary: 'done' })) as Exec, { task: 'Open blogger.com and sign in', accounts });
+    await quiet.run('read_ui_tree');
+    expect((await quiet.run('type_text', { text: 'kai@gmail.com' })).text).toMatch(/account of another phone \("OPPO B"\)/);
+    expect((await quiet.run('tap_element', { idx: '2' })).isError).toBe(true);
   });
 
   it('"Use another account" only for an account the task gives that no phone has', async () => {
     const { run } = chooser();
     await run('read_ui_tree');
-    expect((await run('tap_element', { idx: '3' })).text).toMatch(/signs a different account in/);
+    // The task names kai@gmail.com, so "Use another account" is the user's call too.
+    expect((await run('tap_element', { idx: '3' })).isError).toBe(false);
     expect((await run('tap_element', { idx: '1' })).isError).toBe(false);
     const fresh = harness(jest.fn(async (_hw, action) => (action.type === 'ObserveScreen' ? (await chooser().exec('hw', action)) : { status: 'SUCCESS', summary: 'done' })) as Exec, {
       task: 'Sign in with new.person@gmail.com',
@@ -476,5 +481,23 @@ describe('a Like that is already on (Oct 13: 84 reels liked by earlier runs were
     const r = await run('tap_element', { idx: '1' });
     expect(r.isError).toBe(false);
     expect(sent(exec).some((a) => a.type === 'Tap')).toBe(true);
+  });
+});
+
+describe('repeats the user asked for are not loops', () => {
+  it('"tap it 30 times" taps the same spot over and over without a refusal or a stop', async () => {
+    const exec: Exec = jest.fn(async (_hw, action) => {
+      if (action.type === 'ObserveScreen') return { status: 'SUCCESS', uiTree: { packageName: 'com.example', root: screen([node({ text: 'Count', clickable: true, box: [40, 400, 1040, 520] })]) } };
+      return { status: 'SUCCESS', summary: 'done' };
+    });
+    const onStuck = jest.fn();
+    const agent = new AndroidAgent({ executeAction: exec } as never, 'hw', { onStuck }, { task: 'Open the counter app and tap Count 30 times' });
+    const tools = (agent as unknown as { tools: { name: string; execute: (a: Record<string, unknown>, c: unknown, t: unknown) => Promise<{ content: { text?: string }[]; isError?: boolean }> }[] }).tools;
+    const tap = async () => (await tools.find((t) => t.name === 'tap_element')!.execute({ idx: '0' }, {}, {})).isError;
+    await tools.find((t) => t.name === 'read_ui_tree')!.execute({}, {}, {});
+    const refused: boolean[] = [];
+    for (let i = 0; i < 30; i += 1) refused.push(Boolean(await tap()));
+    expect(refused.filter(Boolean)).toHaveLength(0);
+    expect(onStuck).not.toHaveBeenCalled();
   });
 });

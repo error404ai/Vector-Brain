@@ -60,6 +60,8 @@ export interface ChatReply {
     cost_usd?: number | null;
     /** Where the estimate comes from. */
     cost_note?: string;
+    /** What the task cannot take back (power off, factory reset, delete). */
+    warning?: string;
     duration_minutes?: number;
     lanes?: string[];
     setting?: string;

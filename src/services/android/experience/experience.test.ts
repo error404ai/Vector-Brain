@@ -124,3 +124,16 @@ describe('experience memory: what the agent sees', () => {
     expect(agent.experienceUsed().sort()).toEqual([1, 2, 3]);
   });
 });
+
+import { irreversibleWarning } from '../agent/irreversible';
+describe('tasks that cannot be taken back wait for Confirm with a warning, never a refusal', () => {
+  it('names what happens', () => {
+    expect(irreversibleWarning('Switch off all phones')).toMatch(/^POWER OFF/);
+    expect(irreversibleWarning('power off the phone')).toMatch(/^POWER OFF/);
+    expect(irreversibleWarning('turn off wifi')).toBeNull();
+    expect(irreversibleWarning('turn off the screen')).toBeNull();
+    expect(irreversibleWarning('factory reset the phone')).toMatch(/^FACTORY RESET/);
+    expect(irreversibleWarning('uninstall TikTok')).toMatch(/cannot be undone/);
+    expect(irreversibleWarning('like 5 reels')).toBeNull();
+  });
+});

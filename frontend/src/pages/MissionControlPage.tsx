@@ -55,7 +55,7 @@ import { useGetDeviceProxiesQuery, useUpdateDeviceProxyMutation } from '@/RTKSer
 import ReplayIcon from '@mui/icons-material/Replay';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { Badge, Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
+import { alpha, Badge, Box, Button, Chip, CircularProgress, Dialog, Drawer, FormControlLabel, IconButton, Paper, Switch, TextField, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
 import FleetPanel from '@/components/mission/FleetPanel';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -1643,6 +1643,31 @@ function PlanCard({
           </Typography>
         )}
       </Box>
+      {plan.warning && (
+        <Box
+          role="alert"
+          sx={(t) => ({
+            mx: 2,
+            mb: 1.25,
+            px: 1.5,
+            py: 1,
+            borderRadius: 2,
+            display: 'flex',
+            gap: 1,
+            alignItems: 'flex-start',
+            color: 'error.main',
+            bgcolor: alpha(t.palette.error.main, 0.08),
+            border: `1px solid ${alpha(t.palette.error.main, 0.3)}`,
+            animation: `${riseIn} 320ms ${ease}`,
+            ...reducedMotion,
+          })}
+        >
+          <WarningAmberRoundedIcon fontSize="small" sx={{ mt: 0.15 }} />
+          <Typography variant="body2" sx={{ fontWeight: 700, color: 'error.main' }}>
+            {plan.warning}
+          </Typography>
+        </Box>
+      )}
       <Box sx={{ px: 2, pb: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
         {rows.map((row) => (
           <Box key={row.label} sx={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 1.5, alignItems: 'start' }}>
@@ -1654,8 +1679,8 @@ function PlanCard({
         ))}
       </Box>
       <Box sx={{ display: 'flex', gap: 1, px: 2, py: 1.25, bgcolor: 'action.hover' }}>
-        <Button variant="contained" disabled={confirming} onClick={onConfirm} sx={{ fontWeight: 700 }}>
-          {confirming ? 'Confirmed' : 'Confirm'}
+        <Button variant="contained" color={plan.warning ? 'error' : 'primary'} disabled={confirming} onClick={onConfirm} sx={{ fontWeight: 700 }}>
+          {confirming ? 'Confirmed' : plan.warning ? 'Confirm anyway' : 'Confirm'}
         </Button>
         <Button disabled={confirming} onClick={onCancel}>
           Cancel

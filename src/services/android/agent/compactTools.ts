@@ -27,7 +27,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   swipe: 'Last-resort scroll (scroll_element first). Direction = finger: UP shows content below. Max twice same way without change.',
   open_app: 'Launch by package name; result says if it reached foreground. To search in an app, open_url its search URL.',
   open_url: 'Open a URL (may open new tab; some domains open their app, BACK returns).',
-  global_action: 'System navigation. Reboot: POWER_DIALOG then tap Restart; never power off.',
+  global_action: 'System navigation. Reboot: POWER_DIALOG then tap Restart. Power off: POWER_DIALOG then Power off, only when the task says so.',
   press_key: 'Key on focused field. ENTER submits (where Enter fails, the Search/Go button or matching suggestion is tapped for you). BACK/HIDE_KEYBOARD closes the keyboard; BACKSPACE deletes one letter.',
   scroll_element: 'Scroll a list/container (preferred over swipe). Refused = at that end.',
   long_press: 'Press and hold (menus, text select). Selector or x,y on 0–1000 grid.',
