@@ -1,113 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import source from '@/docs/docs.md?raw';
-import { inline, parseDocs, type DocBlock } from '@/docs/parseDocs';
+import { Block } from '@/docs/DocsContent';
+import { docs } from '@/docs/docsData';
 import '@/docs/docs.css';
 import { SiteFooter } from '@/components/site/SiteChrome';
 import Seo from '@/seo/Seo';
 import '@/seo/fonts';
-
-const docs = parseDocs(source);
-
-/** Every heading by its text, so "*Proxy rotation*" in a sentence links to that section. */
-const anchors = new Map<string, string>();
-for (const s of docs.sections) {
-  anchors.set(s.title.toLowerCase(), s.id);
-  for (const b of s.blocks) if (b.t === 'h3') anchors.set(b.text.toLowerCase(), b.id);
-}
-
-function Text({ value }: { value: string }) {
-  return (
-    <>
-      {inline(value).map((run, i) => {
-        if (run.k === 'code') return <code key={i}>{run.v}</code>;
-        if (run.k === 'b') return <strong key={i}>{run.v}</strong>;
-        if (run.k === 'link') {
-          const external = /^https?:/.test(run.href);
-          return (
-            <a key={i} href={run.href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}>
-              {run.v.replace(/^https?:\/\//, '')}
-            </a>
-          );
-        }
-        if (run.k === 'i') {
-          const id = anchors.get(run.v.toLowerCase());
-          return id ? (
-            <a key={i} className="xref" href={`#${id}`}>
-              {run.v}
-            </a>
-          ) : (
-            <em key={i}>{run.v}</em>
-          );
-        }
-        return <Fragment key={i}>{run.v}</Fragment>;
-      })}
-    </>
-  );
-}
-
-function Block({ block }: { block: DocBlock }): ReactNode {
-  switch (block.t) {
-    case 'h3':
-      return (
-        <h3 id={block.id}>
-          <a href={`#${block.id}`}>{block.text}</a>
-        </h3>
-      );
-    case 'p':
-      return (
-        <p>
-          <Text value={block.text} />
-        </p>
-      );
-    case 'ul':
-    case 'ol': {
-      const List = block.t;
-      return (
-        <List>
-          {block.items.map((item, i) => (
-            <li key={i}>
-              <Text value={item} />
-            </li>
-          ))}
-        </List>
-      );
-    }
-    case 'table':
-      return (
-        <div className="table" role="region" tabIndex={0} aria-label="Table">
-          <table>
-            <thead>
-              <tr>
-                {block.head.map((h, i) => (
-                  <th key={i} scope="col">
-                    <Text value={h} />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {block.rows.map((row, r) => (
-                <tr key={r}>
-                  {row.map((cell, c) => (
-                    <td key={c}>
-                      <Text value={cell} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    case 'code':
-      return (
-        <pre>
-          <code>{block.text}</code>
-        </pre>
-      );
-  }
-}
 
 /**
  * Public documentation at /docs, read from docs.md (the same file served to AI

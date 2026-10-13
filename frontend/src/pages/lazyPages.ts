@@ -10,6 +10,7 @@ type Loader = () => Promise<PageModule>;
 export const pages = {
   home: () => import('./HomePage'),
   docs: () => import('./DocsPage'),
+  guide: () => import('./GuidePage'),
   howItWorks: () => import('./site/HowItWorksPage'),
   fleetAutomation: () => import('./site/FleetAutomationPage'),
   phoneFarm: () => import('./site/PhoneFarmPage'),

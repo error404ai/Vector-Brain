@@ -85,6 +85,18 @@ A mission can include up to **50 phones**. For *"any 3 phones"*, phones are spre
 
 A mission on **more than 5 phones**, or one that runs **10 minutes or longer**, waits for your OK. The Confirm card shows the phones, the task, the duration and a rough step and cost estimate. Reply **yes** (or *ok*, *haan*, *chala do*, *start now*) or press **Confirm**; *no* or *cancel* drops it. An unconfirmed proposal expires after 10 minutes. Rotation or lane changes you ask for in the chat are always proposed first and never applied without your confirmation.
 
+### Tasks that can't be undone
+
+Some tasks cannot be taken back once they run, so Vector never refuses them — it shows a Confirm card with a **red warning** and a single **Confirm anyway** button, no matter how many phones or how short the run. You see exactly what will happen before anything starts:
+
+| Task | The warning |
+|---|---|
+| Power off / switch off the phones | The phones go offline and **cannot be switched back on from Vector**. Someone has to press the power button on each one. A powered-off phone counts as a success, not a failure |
+| Delete, uninstall, erase or clear something | It is removed on the phone and **cannot be undone from Vector** |
+| Factory reset | **Erases everything** on the phone |
+
+Turning off Wi-Fi, the screen, Bluetooth and the like are ordinary tasks — they are reversible, so they run without the red card. The rule is about actions you cannot reverse from the dashboard, not about the word "off".
+
 ### Watch, pause, stop
 
 - A running mission card shows a **live screen** for the phones that are working, with a step-by-step feed of what each is doing. When a phone finishes, its card shows the **final screenshot** of that run, not whatever the phone is doing later.
@@ -98,6 +110,19 @@ A mission on **more than 5 phones**, or one that runs **10 minutes or longer**, 
 - A phone that is **busy** with another task waits its turn without using a try.
 - An **offline** phone is waited for up to **10 minutes** (60 seconds for *"any N phones"*), then counted as failed.
 - When a mission ends you can **Retry failed**, **Run again** on all phones, or **Continue** a phone that ran out of steps.
+
+### When the AI stops itself
+
+A model can get stuck on a screen — pressing the same button that does nothing, bouncing between two pages, or waiting on a dialog that never comes. Left alone it would burn your tokens doing nothing, so FLEET watches the run and stops it when there is clearly no progress. What it catches:
+
+- **No progress**: the screen has not meaningfully changed for many steps in a row (it compares the app, the page and the buttons on screen). It warns first, then stops.
+- **Going in circles**: the same short loop of actions repeated several times.
+- **Same spot, no effect**: tapping the same place on the same screen with nothing happening, three times or more.
+- **Refusing over and over**: the model saying it cannot do something many times in a row.
+
+When FLEET stops a run this way the reason reads *"The AI got stuck — the task itself was fine, run it again."* These guards are about the model spinning its wheels, **not** about your instruction. They are deliberately separate from what you asked for.
+
+**Repeat tasks run as many times as you say.** If you ask for something a set number of times — *"like 30 reels"*, *"refresh 50 times"* — the loop guards step aside for that run, because repeating the same action is the task, not a bug. The no-progress limit also grows with the count so a long repeat is never cut short.
 
 ### Answers
 
@@ -233,6 +258,43 @@ If your main model is text only, add a **vision helper** under **Settings › Ag
 - During a run, each step shows whether its screenshot was seen by the AI, read by the helper, or not used, and why.
 - After a run, a line says how many screenshots the AI saw.
 
+## Settings
+
+Open **Settings** on the dashboard. Everything here applies to the **next** run; phones already working keep the settings they started with. The rail across the top jumps to each section.
+
+### AI models
+
+Your API keys live here. **Add AI Provider** for OpenAI, Google Gemini, Anthropic, DeepSeek, Groq, OpenRouter, or a Custom OpenAI-compatible endpoint. Each card shows the provider, whether it **Sees screenshots** or is **Text only**, and chips for free models (daily cap), recommended or caution models, and duplicates. Buttons: the circle marks a model **active** (the one that runs your tasks), **Test** checks the key and shows the latency, the pencil edits it, the bin deletes it. See *Add your AI key* for how keys are stored.
+
+### Agent engine
+
+Picks how the AI drives a phone. Three engines:
+
+| Engine | What it is |
+|---|---|
+| Eko · stable | A planning call first, then step by step; long runs are compressed with extra AI calls |
+| Vector · beta | Acts from the first call, keeps its own history within a token budget with no extra calls, finishes with a system check of the phone |
+| Lite · cheapest | The Vector engine at a fraction of the cost — short tool descriptions, a shorter step history, the repeated part of each call cached, no hidden reasoning. Same tools, screenshots and checks |
+
+- **Plan before acting** (Vector and Lite): one short planning pass before the run starts.
+- **Think before acting** (Lite only): *Hard steps* (thinks only where acting straight away tends to go wrong — the first step, an error, a frozen screen, a loop, before giving up; small extra cost), *Every step* (thinks a few lines before every action; most careful, roughly up to twice the output), or *Off* (acts straight away; cheapest, but slips where the screen does not show what happened, like a Like heart).
+- **Screenshots to the AI** and the **Screen reader (vision model)** are described under *Screenshots and the vision helper*.
+- **Backup model**: a second model that takes over for the rest of a run when the main one is rate-limited or has used up its daily limit, instead of the run failing.
+
+### Saved flows
+
+Four switches control how flows (see *Flows*) are made and used:
+
+- **Save successful tasks as flows** — keep a replayable copy whenever a task finishes cleanly.
+- **Use a saved flow first** — when a task matches a saved flow, the phone replays it with no AI; each step checks it is on the right screen and finds the button by its label, not its old position. In a mission, one phone runs first and the others replay its flow.
+- **When a step breaks, the AI fixes that step only** — a broken replay step is handed to the AI to repair, rather than failing the whole flow.
+- **Use step fixes on my other phones** — reuse those repairs across phones.
+
+### Telegram and Storage
+
+- **Telegram**: link a Telegram account to get run results and alerts there.
+- **Storage**: shows how much screenshot and file storage you are using, with controls to clear it.
+
 ## Flows
 
 A flow is a saved run that replays **without the AI**: it costs no tokens and runs as fast as the phone.
@@ -250,6 +312,38 @@ Only the phone actions are kept: open app, open URL, taps, swipes, back/home and
 - **Typed text is not replayed** (it is never stored). Typing steps are skipped.
 - A replay runs on **one phone** at a time and stops at the first step that fails. If that happens, the screen has changed since recording: run the original instruction with the agent and save it again.
 - Flows cannot be started from the Mission Control chat.
+
+## Experience
+
+FLEET remembers what worked and what didn't on the apps and sites your phones use, so later runs don't relearn the same lesson. It is free — the notes are short text the agent reads at the start of a run, not extra AI calls. Open **Experience** from the sidebar.
+
+### What it learns
+
+After a run, the agent may write up to **2 short lessons** about a place it actually visited (an app or a website), each one of a few kinds:
+
+- **way** — the path that worked, e.g. *New blog: Main menu › blog-name dropdown › New Blog…*
+- **avoid** — a dead end, e.g. a URL that returns "page not found" (a real 404 becomes a trusted avoid automatically).
+- **note** — how a screen behaves, e.g. *the name dialog appears a second after the keyboard*.
+
+Secrets, codes and passwords are never saved, and a lesson is only kept if it is about a place the run really went.
+
+### Field Notes and the run journal
+
+The page has two parts:
+
+- **Field Notes**: every lesson, grouped by app or site. Filter by status, edit the wording, add your own note, or switch one off. A note **you** write is trusted straight away and is never auto-disabled.
+- **Run journal**: what each recent run learned or reused.
+
+### How a lesson earns trust
+
+| Status | Meaning |
+|---|---|
+| Unverified | Just written, not yet shown to help |
+| Candidate | Seen in a run, still proving itself |
+| Trusted | Helped at least twice — shown first to the agent |
+| Off | Hurt more than it helped, or you switched it off |
+
+A lesson is used at most a handful per run, and only for the apps and sites that run touches (plus any the task names by address). Duplicate notes about the same thing are merged, even when saved under different kinds.
 
 ## Troubleshooting
 

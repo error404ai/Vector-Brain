@@ -7,6 +7,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import BoltIcon from '@mui/icons-material/Bolt';
 import SchoolIcon from '@mui/icons-material/School';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { alpha, Box, Chip, Divider, List, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography, useTheme } from '@mui/material';
@@ -43,7 +44,10 @@ const mainItems: NavItem[] = [
   { label: 'Experience', icon: <SchoolIcon />, href: '/experience', roles: ['admin', 'user', 'guest'], badge: 'New', color: '#7c3aed' },
 ];
 
-const systemItems: NavItem[] = [{ label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' }];
+const systemItems: NavItem[] = [
+  { label: 'Guide', icon: <MenuBookIcon />, href: '/guide', roles: ['admin', 'user', 'guest'], color: '#0ea5e9' },
+  { label: 'Settings', icon: <SettingsIcon />, href: '/settings', roles: ['admin', 'user', 'guest'], color: '#475569' },
+];
 
 function NavSection({ title, items, collapsed, onNavigate }: { title: string; items: NavItem[]; collapsed: boolean; onNavigate?: () => void }) {
   const theme = useTheme();
