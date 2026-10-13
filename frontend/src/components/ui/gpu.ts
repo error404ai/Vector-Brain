@@ -18,6 +18,8 @@ let cached: boolean | null = null;
 
 export function hasHardwareWebGL(): boolean {
   if (cached !== null) return cached;
+  // ?gl=force runs the 3D anyway (used to capture the still fallbacks).
+  if (typeof location !== 'undefined' && /[?&]gl=force\b/.test(location.search)) return (cached = true);
   cached = false;
   try {
     const canvas = document.createElement('canvas');

@@ -18,6 +18,8 @@ export function startFleetLanding(root: HTMLElement): () => void {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const state: FleetState = { phase: 0, p3: 0, covered: false, reduceMotion, mouseX: 0, mouseY: 0 };
   const cleanups: (() => void)[] = [];
+  /** Set when the page shows still frames instead of the 3D scene; follows the scroll. */
+  let stillSync: ((phase: number) => void) | null = null;
   const on = <K extends keyof WindowEventMap>(type: K, fn: (e: WindowEventMap[K]) => void, opts?: AddEventListenerOptions) => {
     window.addEventListener(type, fn, opts);
     cleanups.push(() => window.removeEventListener(type, fn, opts));
@@ -63,6 +65,7 @@ export function startFleetLanding(root: HTMLElement): () => void {
       if (i === 3) state.p3 = p;
     });
     state.phase = ph;
+    stillSync?.(ph);
     let a = 0;
     const list = visibleLabelled();
     list.forEach((el, i) => {
@@ -244,9 +247,48 @@ export function startFleetLanding(root: HTMLElement): () => void {
   let scene: FleetScene | null = null;
   const heroImages = new Map<number, HTMLImageElement>();
   const applyHero = () => heroImages.forEach((img, i) => scene?.setScreenImage(i, img));
-  if (canvas && !hasHardwareWebGL()) {
-    // No real GPU: the CSS fallback, and three.js (~110 KB) is never fetched.
+  // Without the 3D scene the hero, the product sheet and the 1,000-phone grid
+  // would be empty space, so each chapter shows a still frame of what the scene
+  // draws there (captured from the scene itself, public/landing/still). Only
+  // pages without a real GPU ever fetch them: ~70 KB on a desktop screen.
+  const useStills = () => {
     root.classList.add('nogl');
+    if (!canvas || root.querySelector('.fl-still')) return;
+    const box = document.createElement('div');
+    box.className = 'fl-still';
+    box.setAttribute('aria-hidden', 'true');
+    const imgs = [0, 1, 2, 3].map(() => {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      box.appendChild(img);
+      return img;
+    });
+    // The scene lays itself out differently on tall screens (aspect < 0.9).
+    const setSources = () => {
+      const kind = window.innerWidth / window.innerHeight < 0.9 ? 'm' : 'd';
+      imgs.forEach((img, i) => {
+        const src = `/landing/still/s${i}-${kind}.webp`;
+        if (img.getAttribute('src') !== src) img.src = src;
+      });
+    };
+    setSources();
+    on('resize', setSources, { passive: true });
+    canvas.after(box);
+    let shown = -1;
+    stillSync = (phase) => {
+      // Hero, product sheet, manifesto; the grid once the count is under way.
+      const i = phase < 0.98 ? 0 : phase < 1.98 ? 1 : phase < 3.35 ? 2 : 3;
+      if (i === shown) return;
+      shown = i;
+      imgs.forEach((img, k) => img.classList.toggle('on', k === i));
+    };
+    stillSync(state.phase);
+  };
+
+  if (canvas && !hasHardwareWebGL()) {
+    // No real GPU: still frames, and three.js (~110 KB) is never fetched.
+    useStills();
   } else if (canvas) {
     // Fetched and started once the page is idle, so the 3D scene never competes
     // with the first paint or the first taps.
@@ -255,10 +297,10 @@ export function startFleetLanding(root: HTMLElement): () => void {
         .then(({ startFleetScene }) => {
           if (!alive) return;
           scene = startFleetScene(canvas, state);
-          if (!scene) root.classList.add('nogl');
+          if (!scene) useStills();
           applyHero();
         })
-        .catch(() => alive && root.classList.add('nogl'));
+        .catch(() => alive && useStills());
     const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
     if (idle) idle(() => void start(), { timeout: 1500 });
     else setTimeout(() => void start(), 600);

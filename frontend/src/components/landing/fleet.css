@@ -158,9 +158,12 @@
 .fl .foot-links a:hover,.fl .foot-links a:focus-visible{color:var(--clay)}
 .fl .foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:110px;padding-top:16px;border-top:1px solid #1E293B;color:#64748B}
 .fl.nogl .fl-gl{display:none}
-.fl.nogl .stage.hero::before{content:"";position:absolute;right:12%;top:50%;width:min(170px,26vw);aspect-ratio:.485;transform:translateY(-50%) rotate(6deg);border-radius:22px;background:var(--ink);box-shadow:0 60px 40px -40px rgba(0,0,0,.35)}
-/* The stand-in phone sits beside the headline only where there is room for it; on narrower screens it covered the words. */
-@media (max-width:1180px){.fl.nogl .stage.hero::before{display:none}}
+/* Still frames of the 3D scene where it cannot run (see useStills in fleetLanding.ts). */
+.fl .fl-still{position:fixed;inset:0;z-index:0;pointer-events:none}
+.fl .fl-still img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease}
+.fl .fl-still img.on{opacity:1}
+@media (prefers-reduced-motion:reduce){.fl .fl-still img{transition:none}}
+
 @media (max-width:900px){.fl .rail{display:none}
 .fl .lbl{left:var(--g);top:auto;bottom:calc(64px + env(safe-area-inset-bottom,0px));transform:none;width:min(300px,calc(100% - 2 * var(--g)))}
 .fl .lbl .no{font-size:44px}
