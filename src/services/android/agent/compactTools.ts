@@ -29,7 +29,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   open_url: 'Open a URL (may open new tab; some domains open their app, BACK returns).',
   global_action: 'System navigation. Reboot: POWER_DIALOG then tap Restart. Power off: POWER_DIALOG then Power off, only when the task says so.',
   press_key: 'Key on focused field. ENTER submits (where Enter fails, the Search/Go button or matching suggestion is tapped for you). BACK/HIDE_KEYBOARD closes the keyboard; BACKSPACE deletes one letter.',
-  scroll_element: 'Scroll a list/container (preferred over swipe). Refused = at that end.',
+  scroll_element: 'Scroll a list/container (preferred over swipe). amount small = a little, page = default. Result says how far it moved. Refused = at that end.',
   long_press: 'Press and hold (menus, text select). Selector or x,y on 0–1000 grid.',
   list_apps: 'Launchable apps with package names. Use before open_app if unsure.',
   install_app: 'Install from Play and verify (waits up to 3 min). Always use for "install X". Still downloading: call again. Never buy.',
@@ -56,7 +56,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
 /** Parameter hints that are needed to call a tool correctly; every other parameter description is dropped. */
 const PARAM_HINTS: Record<string, Record<string, string>> = {
   tap_element: { idx: 'idx from the latest screen list, e.g. "12" or "v3"' },
-  scroll_element: { direction: 'FORWARD = down/right, BACKWARD = up/left' },
+  scroll_element: { direction: 'FORWARD = down/right, BACKWARD = up/left', amount: 'small (a quarter screen), half, or page (default)' },
   swipe: { direction: 'finger direction: UP shows content below' },
   wait_for_element: { timeoutMillis: '250–15000' },
   wait: { durationMillis: 'max 15000' },

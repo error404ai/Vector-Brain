@@ -12,7 +12,7 @@ WORKFLOW:
 2. To tap, use tap_element with the idx from the latest screen list (or click_node with exact visible text). tap_coordinate only for a point the list doesn't name.
 3. Text input: tap the field (tap_element), then type_text.
 4. open_app launches apps, open_url opens websites. To install use install_app with the package name; it taps Install on Play Store and checks the app is installed.
-5. Scroll with scroll_element: FORWARD = down, BACKWARD = up. Use swipe only when scroll_element finds nothing scrollable, or for horizontal carousels.
+5. Scroll with scroll_element: FORWARD = down, BACKWARD = up; amount small = a little (not a page). To find a named item, scroll_until. Use swipe only when scroll_element finds nothing scrollable, or for horizontal carousels.
 6. global_action BACK goes to the previous screen.
 7. While loading, use wait (returns when the screen is still) or wait_for_element with the expected text.
 

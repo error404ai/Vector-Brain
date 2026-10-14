@@ -535,3 +535,39 @@ export function isThin(model: ScreenModel): boolean {
 export function screenKey(pkg: string | null, table: string | null): string {
   return `${pkg ?? ''}\n${table ?? ''}`;
 }
+
+/**
+ * How far the content moved up or down between two screens, in grid units (0–1000 is
+ * the screen's height): positive = the content went up (scrolled down the page).
+ * Measured on rows whose label appears once on each screen and moved; rows that kept
+ * their place (a toolbar, a tab bar) are left out. `shift` is null when no row from
+ * before is still on screen, which means it moved by more than the visible part;
+ * `kept` of `total` rows from before are still on screen.
+ */
+export function verticalShift(before: ScreenModel | null, after: ScreenModel | null): { shift: number | null; kept: number; total: number } {
+  if (!before || !after) return { shift: null, kept: 0, total: 0 };
+  const once = (m: ScreenModel) => {
+    const seen = new Map<string, ScreenElement | null>();
+    for (const e of m.elements) {
+      const label = e.label.trim();
+      if (!label || e.window || e.seen) continue;
+      seen.set(label, seen.has(label) ? null : e);
+    }
+    return seen;
+  };
+  const a = once(before);
+  const b = once(after);
+  const total = [...a.values()].filter(Boolean).length;
+  const moved: number[] = [];
+  let kept = 0;
+  for (const [label, e] of a) {
+    const f = b.get(label);
+    if (!e || !f) continue;
+    kept += 1;
+    const d = e.grid.y - f.grid.y;
+    if (Math.abs(d) >= 8) moved.push(d);
+  }
+  if (!moved.length) return { shift: kept ? 0 : null, kept, total };
+  moved.sort((x, y) => x - y);
+  return { shift: moved[Math.floor(moved.length / 2)], kept, total };
+}

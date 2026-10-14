@@ -26,6 +26,7 @@ import {
   screenKey,
   toPixels,
   uncoveredPoint,
+  verticalShift,
   withSeenElements,
   type ScreenElement,
   type ScreenModel,
@@ -544,6 +545,8 @@ export class AndroidAgent extends Agent {
   private overwriteWarned = '';
   /** What the agent did, as tool+args, for "the same few actions round and round" (waits and reads aside). */
   private actionTrail: string[] = [];
+  /** Up/down scrolls this run, newest last (F = further down the page, B = back up): for "back and forth". */
+  private scrollTrail: ('F' | 'B')[] = [];
   /** Taps per label on one screen ("screenKey|label"), for "this tap may have undone the last one". */
   private labelTaps = new Map<string, number>();
   /** Refused calls in a row (looking in between does not count): the run stops at REFUSALS_STOP. */
@@ -610,6 +613,8 @@ export class AndroidAgent extends Agent {
     // Companion 0.32 options, decided per phone (an older build drops what it cannot parse).
     const keys2 = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'keys2'));
     const scrollById = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'scroll_until_id'));
+    // Companion 0.32: a finger drag, so scroll_element can move a set distance instead of a page.
+    const gestures = Boolean(gatewayService.hasFeature?.(hardwareDeviceId, 'gesture'));
     const tools: Tool[] = [
       {
         name: 'read_ui_tree',
@@ -972,6 +977,7 @@ export class AndroidAgent extends Agent {
             this.progressMade = true;
             const at = this.actionHistory.lastIndexOf(scrollKey);
             if (at >= 0) this.actionHistory.splice(at, 1);
+            if (direction === 'UP' || direction === 'DOWN') note = `${note}${this.noteScroll(direction === 'UP' ? 'F' : 'B')}`.trim();
           }
           return note ? this.withNote(result, note) : result;
         },
@@ -1138,21 +1144,45 @@ export class AndroidAgent extends Agent {
             viewId: { type: 'string', description: 'Optional stable resource ID' },
             text: { type: 'string', description: 'Optional visible text of an element inside the list' },
             direction: { type: 'string', enum: ['FORWARD', 'BACKWARD'], description: 'FORWARD = down or right, BACKWARD = up or left' },
+            ...(gestures
+              ? {
+                  amount: {
+                    type: 'string',
+                    enum: ['small', 'half', 'page'],
+                    description: 'How far, up or down: small = about a quarter of the screen (to see a little more), half, or page (the default, as far as the list scrolls in one go).',
+                  },
+                }
+              : {}),
           },
           additionalProperties: false,
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
-          return this.runDeviceAction(
-            {
-              type: 'ScrollNode',
-              nodePath: args.nodePath as string | undefined,
-              viewId: args.viewId as string | undefined,
-              text: args.text as string | undefined,
-              direction: (args.direction as 'FORWARD' | 'BACKWARD') || 'FORWARD',
-            },
-            'scroll_element',
-            args,
-          );
+          const direction = String(args.direction ?? 'FORWARD').toUpperCase() === 'BACKWARD' ? 'BACKWARD' : 'FORWARD';
+          const amount = String(args.amount ?? 'page').toLowerCase();
+          const before = this.currentKey();
+          const frameBefore = this.frameKey();
+          const screenBefore = this.screen;
+          // A list's own scroll moves a whole page (often more on web pages), so "a little" came
+          // out as a jump past the target and the run went up and down for dozens of steps
+          // (Oct 14: 87 reversals in 28 runs; #3979 reversed ~45 times). small/half drag a finger
+          // slowly over a set distance instead.
+          const fraction = amount === 'small' ? 0.25 : amount === 'half' ? 0.45 : 0;
+          const result =
+            fraction && gestures && this.screen
+              ? await this.dragScroll(direction, fraction, args)
+              : await this.runDeviceAction(
+                  {
+                    type: 'ScrollNode',
+                    nodePath: args.nodePath as string | undefined,
+                    viewId: args.viewId as string | undefined,
+                    text: args.text as string | undefined,
+                    direction,
+                  },
+                  'scroll_element',
+                  args,
+                );
+          if (result.isError) return result;
+          return this.withNote(result, this.scrollReport(direction, fraction ? amount : 'page', before, frameBefore, screenBefore));
         },
       },
       {
@@ -1850,8 +1880,10 @@ WORKFLOW:
    app use install_app with its package name — it opens the Play Store page, taps
    Install and checks the app is really on the phone.
 5. To scroll, use scroll_element with direction FORWARD to move down a list and
-   BACKWARD to move back up. Fall back to swipe only when scroll_element says
-   nothing is scrollable, or for horizontal carousels.
+   BACKWARD to move back up; amount small moves about a quarter of the screen,
+   for when you only need to see a little more. To bring a named item on screen,
+   use scroll_until with its text. Fall back to swipe only when scroll_element
+   says nothing is scrollable, or for horizontal carousels.
 6. Use global_action BACK to go back to previous screen.
 7. When something is loading, use wait (it returns as soon as the screen is still)
    or wait_for_element with the text you expect.
@@ -2133,7 +2165,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     const keyAfter = this.currentKey();
     const meantToChange = ['Tap', 'ClickNode', 'LongPress'].includes(action.type);
     let checkNote = '';
-    if (!isError && MOVES_ON.has(action.type)) this.moves += 1;
+    if (!isError && (MOVES_ON.has(action.type) || (action.type === 'Gesture' && toolName === 'scroll_element'))) this.moves += 1;
     const toggle = Boolean(tap && TOGGLE.test(tap.label.trim()));
     const frameAfter = this.frameKey();
     // Companion 0.30+ reports a button's on/off state: what changed is then known, not guessed.
@@ -2721,6 +2753,63 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     if (this.currentKey() !== before) return true;
     const frameAfter = this.frameKey();
     return Boolean(this.screen && isThin(this.screen) && frameBefore && frameAfter && frameBefore !== frameAfter);
+  }
+
+  /**
+   * scroll_element with an amount: a slow one-finger drag over a set share of the screen,
+   * down the middle. Slow, so the list does not fling on past the distance when the
+   * finger lifts; a little extra for the pixels Android ignores before a drag starts.
+   */
+  private async dragScroll(direction: 'FORWARD' | 'BACKWARD', fraction: number, args: Record<string, unknown>): Promise<ToolResult> {
+    if (this.screen?.keyboardTop !== undefined) await this.hideKeyboard();
+    const w = this.fullScreen?.width ?? this.screen?.size.width ?? 1080;
+    const h = this.fullScreen?.height ?? this.screen?.size.height ?? 2400;
+    const span = h * (fraction + 0.02);
+    const mid = h * 0.55;
+    const [y1, y2] = direction === 'FORWARD' ? [mid + span / 2, mid - span / 2] : [mid - span / 2, mid + span / 2];
+    const x = Math.round(w / 2);
+    const steps = 8;
+    const points = Array.from({ length: steps + 1 }, (_, i) => ({ x, y: Math.round(y1 + ((y2 - y1) * i) / steps) }));
+    return this.runDeviceAction({ type: 'Gesture', strokes: [{ points, durationMillis: Math.round(1000 + fraction * 2000) }] }, 'scroll_element', args);
+  }
+
+  /**
+   * What a scroll_element did, measured on the screen: how far it moved, or that it did
+   * not. Before, a scroll that moved nothing read as a plain success and one that jumped
+   * a whole page looked like any other, so the model could not tell it had overshot.
+   */
+  private scrollReport(direction: 'FORWARD' | 'BACKWARD', amount: string, before: string, frameBefore: string | null, screenBefore: ScreenModel | null): string {
+    const way = direction === 'FORWARD' ? 'down' : 'up';
+    if (!this.contentMoved(before, frameBefore)) {
+      return `NOTHING MOVED: the list did not scroll ${way}. It is at its end that way, or this part of the screen does not scroll. Do not repeat it; work with what is on screen, scroll the other way, or try swipe.`;
+    }
+    const smallHint = this.canDrag() && amount === 'page' ? ' If you wanted only a little, scroll back with amount small.' : '';
+    const { shift, kept, total } = verticalShift(screenBefore, this.screen);
+    let line: string;
+    if (shift && Math.abs(shift) >= 8) {
+      line = `MOVED: about ${Math.round(Math.abs(shift) / 10)}% of the screen ${shift > 0 ? 'further down' : 'back up'} the page.`;
+    } else if (shift === null || (total >= 6 && kept <= total * 0.3)) {
+      line = `MOVED: more than a screen ${way}; nothing that was on screen before is still in view.${smallHint}`;
+    } else {
+      line = 'MOVED: new content is on screen.';
+    }
+    return `${line}${this.noteScroll(direction === 'FORWARD' ? 'F' : 'B')}`;
+  }
+
+  /** Companion 0.32+: finger drags, so scroll_element takes an amount. */
+  private canDrag(): boolean {
+    return Boolean(this.gatewayService.hasFeature?.(this.hardwareDeviceId, 'gesture'));
+  }
+
+  /** Records an up/down scroll that moved; says so when the run keeps going down and back up. */
+  private noteScroll(way: 'F' | 'B'): string {
+    this.scrollTrail.push(way);
+    if (this.scrollTrail.length > 8) this.scrollTrail.shift();
+    const last = this.scrollTrail.slice(-4);
+    const alternating = last.length === 4 && last.every((d, i) => i === 0 || d !== last[i - 1]);
+    if (!alternating) return '';
+    const small = this.canDrag() ? '; to move only a little, use scroll_element with amount small' : '';
+    return `\nBACK AND FORTH: the last four scrolls went down and up in turn, each one going past what you are looking for. To bring a named item on screen use scroll_until with its text${small}. Or read what is on screen now and carry on with it.`;
   }
 
   /** A long, fast swipe (85% → 15% of the screen in 250 ms); true when new content came on screen. */
