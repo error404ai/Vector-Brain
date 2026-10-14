@@ -7,7 +7,7 @@ import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { ActionResult, AutomationAction, CompanionFeature, DeviceKey, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
 import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
-import { CLOSE_NOTICE, findObstacle, type ObstacleId } from './obstacles';
+import { CLOSE_NOTICE, findObstacle, noticeWithoutButtons, type ObstacleId } from './obstacles';
 import { domainOf, lessonNote, lessonsFor, normalUrl, scopesInText, type AgentLesson } from '../experience/experience';
 import { compactSystemPrompt } from './compactPrompt';
 import type { ScreenshotMode } from './screenshotMode';
@@ -547,6 +547,8 @@ export class AndroidAgent extends Agent {
   private actionTrail: string[] = [];
   /** Up/down scrolls this run, newest last (F = further down the page, B = back up): for "back and forth". */
   private scrollTrail: ('F' | 'B')[] = [];
+  /** Times this run scrolled a long notice to find its buttons (at most 3). */
+  private noticeScrolls = 0;
   /** Taps per label on one screen ("screenKey|label"), for "this tap may have undone the last one". */
   private labelTaps = new Map<string, number>();
   /** Refused calls in a row (looking in between does not count): the run stops at REFUSALS_STOP. */
@@ -3074,7 +3076,12 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   private async clearObstacles(): Promise<string> {
     const notes: string[] = [];
     for (let round = 0; round < 3 && this.obstaclesCleared < OBSTACLE_BUDGET; round += 1) {
-      const match = findObstacle(this.screen, this.lastForegroundApp, this.options.task ?? '');
+      let match = findObstacle(this.screen, this.lastForegroundApp, this.options.task ?? '');
+      if (!match) {
+        const scrolled = await this.scrollNoticeToButtons();
+        if (scrolled) notes.push(scrolled.note);
+        match = scrolled?.match ?? null;
+      }
       if (!match) break;
       const before = this.currentKey();
       const attempt = `${match.rule.id}|${before}`;
@@ -3098,6 +3105,40 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       this.callbacks?.onRecovery?.(match.rule.id, match.element.label);
     }
     return notes.length ? `${notes.join('\n')}\n\n` : '';
+  }
+
+  /**
+   * A notice taller than the screen (a site's privacy consent) shows its wording but
+   * not its buttons: scroll it, up to four times, until one of the rule's buttons is
+   * on screen. Once per screen. Null when there is no such notice.
+   */
+  private async scrollNoticeToButtons(): Promise<{ match: ReturnType<typeof findObstacle>; note: string } | null> {
+    const rule = noticeWithoutButtons(this.screen, this.lastForegroundApp, this.options.task ?? '');
+    if (!rule) return null;
+    const attempt = `scroll:${rule.id}|${this.currentKey()}`;
+    if (this.obstacleTried.has(attempt) || this.noticeScrolls >= 3) return null;
+    this.obstacleTried.add(attempt);
+    this.noticeScrolls += 1;
+    const w = this.fullScreen?.width ?? this.screen?.size.width ?? 1080;
+    const h = this.fullScreen?.height ?? this.screen?.size.height ?? 2400;
+    for (let i = 0; i < 4; i += 1) {
+      const before = this.currentKey();
+      const action: AutomationAction = this.canDrag()
+        ? { type: 'Gesture', strokes: [{ points: [{ x: Math.round(w / 2), y: Math.round(h * 0.75) }, { x: Math.round(w / 2), y: Math.round(h * 0.5) }, { x: Math.round(w / 2), y: Math.round(h * 0.3) }], durationMillis: 600 }] }
+        : { type: 'ScrollNode', direction: 'FORWARD' };
+      const res = await this.gatewayService.executeAction(this.hardwareDeviceId, action);
+      if (res.status !== 'SUCCESS') break;
+      await sleep(500);
+      try {
+        this.absorb(await this.observe());
+      } catch {
+        break;
+      }
+      const match = findObstacle(this.screen, this.lastForegroundApp, this.options.task ?? '');
+      if (match?.rule.id === rule.id) return { match, note: `NOTE: a ${rule.label} covered the page with its buttons below the text; the system scrolled it to them.` };
+      if (this.currentKey() === before) break;
+    }
+    return { match: null, note: `NOTE: a ${rule.label} covers the page and its buttons could not be found by scrolling it. Close it before anything else (look for its buttons: Reject all, Do not consent, Accept, Agree, or a close button); the page behind it cannot be read or used until it is gone.` };
   }
 
   /** Packages of the phone's launchable apps (ListApps). Null when the phone could not say. */

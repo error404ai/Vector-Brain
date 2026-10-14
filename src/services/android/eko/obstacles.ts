@@ -19,6 +19,11 @@ export type ObstacleId =
   | 'app_crashed'
   | 'chrome_setup'
   | 'cookie_banner'
+  | 'privacy_consent'
+  | 'chrome_password'
+  | 'site_notifications'
+  | 'sign_in_nag'
+  | 'play_account_setup'
   | 'network_retry'
   | 'skip_ad';
 
@@ -35,7 +40,12 @@ export interface ObstacleRule {
   unlessTask?: RegExp;
   /** When none of `press` is on screen: a button whose whole label only closes the notice. */
   closeLike?: RegExp;
+  /** The notice can be taller than the screen with its buttons below: scroll it to find them. */
+  scrollToButtons?: boolean;
 }
+
+/** Browsers and in-app web views, where web pages put their notices. */
+const BROWSERS = /chrome|browser|firefox|sbrowser|opera|edge|brave|\.webview|dev\.tarung/;
 
 /**
  * Labels that only close a notice or banner. Oct 12, #3863/#3864: Blogger's EU
@@ -87,9 +97,70 @@ export const OBSTACLE_RULES: ObstacleRule[] = [
     press: ['Use without an account', 'No thanks', 'No, thanks', 'Not now', 'Skip'],
   },
   {
+    // A whole-page privacy notice ("We value your privacy", the IAB consent dialog) whose
+    // buttons sit below a long text, off the screen. Oct 15: whatismyipaddress.com on a
+    // Xiaomi showed only the text; the run tapped and scrolled it until "got stuck"
+    // (#3984 before it: 15 steps on the same notice).
+    id: 'privacy_consent',
+    label: 'Privacy / consent notice',
+    packages: BROWSERS,
+    text: /we value your privacy|your privacy (?:choices|matters|is important)|privacy (?:choices|preferences)|manage (?:your )?(?:options|preferences|consent)|do not consent|consent to (?:our|the) (?:use|processing)|personali[sz]ed (?:ads|advertising) and content/i,
+    // The least tracking choice when there is one; otherwise agree, which only lets the page show.
+    press: ['Do not consent', 'Reject all', 'Reject All', 'Decline all', 'Only necessary', 'Necessary only', 'Disagree', 'Consent', 'Accept all', 'Accept All', 'Agree', 'I agree', 'AGREE', 'Accept', 'Allow all'],
+    closeLike: CLOSE_NOTICE,
+    unlessTask: /\b(consent|privacy settings|cookies?)\b/i,
+    scrollToButtons: true,
+  },
+  {
+    id: 'chrome_password',
+    label: 'Chrome password prompt',
+    packages: /^com\.(android\.chrome|chrome\.beta)$/,
+    text: /save password\?|update password\?|change your password|password (?:was )?(?:found )?in a data breach|compromised password/i,
+    press: ['Never', 'No thanks', 'No, thanks', 'Not now', 'Close'],
+    closeLike: CLOSE_NOTICE,
+    unlessTask: /\bpasswords?\b/i,
+  },
+  {
+    id: 'site_notifications',
+    label: 'Website notification request',
+    packages: BROWSERS,
+    text: /wants to (?:show|send) (?:you )?notifications|allow notifications\?|turn on notifications|get notified/i,
+    press: ['Block', "Don't allow", 'Never allow', 'No thanks', 'No, thanks', 'Not now', 'Later'],
+    unlessTask: /\bnotifications?\b/i,
+  },
+  {
+    // A site or app asking to sign in before it shows the page. Never signs in: only skips.
+    id: 'sign_in_nag',
+    label: 'Sign-in prompt',
+    text: /sign in for the best experience|tap here to (?:log ?in|sign ?in)|(?:log ?in|sign ?in) to continue|continue as (?:a )?guest|skip sign[ -]?in/i,
+    press: ['Skip sign in', 'Skip sign-in', 'Continue as guest', 'Continue as a guest', 'Not now', 'Maybe later', 'No thanks', 'Skip'],
+    closeLike: CLOSE_NOTICE,
+    unlessTask: /\b(log ?in|sign ?in|login|signin|account)\b/i,
+  },
+  {
+    // Play's sheet that stops an install. Continue only leads to the payment choices
+    // below, where Skip adds nothing. install_app handles it inside an install; this
+    // covers the sheet anywhere else. Adds no card and changes no account setting.
+    id: 'play_account_setup',
+    label: 'Play "Complete account setup" sheet',
+    packages: /^com\.android\.vending$/,
+    text: /complete account setup|review your account to continue/i,
+    press: ['Skip', 'Not now', 'Continue'],
+    unlessTask: /\b(payment|card|paypal|redeem|gift card|account setup)\b/i,
+  },
+  {
+    // The payment choices that sheet leads to: only ever skipped.
+    id: 'play_account_setup',
+    label: 'Play payment choices after account setup',
+    packages: /^com\.android\.vending$/,
+    text: /^add (?:a )?(?:card|credit or debit card|paypal)\b/im,
+    press: ['Skip'],
+    unlessTask: /\b(payment|card|paypal|redeem|gift card|account setup)\b/i,
+  },
+  {
     id: 'cookie_banner',
     label: 'Cookie banner',
-    packages: /chrome|browser|firefox|sbrowser|opera|edge|brave|\.webview|dev\.tarung/,
+    packages: BROWSERS,
     // Labels are cut at 60 characters, so "cookies" can be past the cut: the EU notice's own words count too.
     text: /\bcookies?\b|european union (?:laws?|visitors?)|\bEU (?:laws?|cookie)|^notices? \(\d+\)$/im,
     // The least tracking choice when there is one; otherwise just close it.
@@ -117,6 +188,22 @@ export interface ObstacleMatch {
 }
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * A notice whose wording is on screen but none of whose buttons are (they are below
+ * its long text): the rule to scroll it for, or null.
+ */
+export function noticeWithoutButtons(screen: ScreenModel | null, packageName: string | null, task = ''): ObstacleRule | null {
+  if (!screen?.elements.length) return null;
+  const allText = screen.elements.map((e) => e.label).join('\n');
+  for (const rule of OBSTACLE_RULES) {
+    if (!rule.scrollToButtons || !rule.text) continue;
+    if (rule.unlessTask && rule.unlessTask.test(task)) continue;
+    if (rule.packages && !rule.packages.test(packageName ?? '')) continue;
+    if (rule.text.test(allText)) return rule;
+  }
+  return null;
+}
 
 /**
  * The first obstacle this screen shows, with the button to press, or null.
