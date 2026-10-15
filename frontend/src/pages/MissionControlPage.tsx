@@ -116,8 +116,6 @@ interface LiveFeed {
   sight: Record<number, RunSight>;
 }
 
-/** A password written into the prompt ("password: x", "pass is x"). */
-const PASSWORD_IN_PROMPT = /\b(?:pass(?:word|wd)?|pwd)\b\s*(?:[:=-]|is|hai|h)?\s*(?!(?:field|box|reset|manager|screen|page|prompt)\b)\S{4,}/i;
 
 const MAX_STEPS_KEPT = 40;
 const NO_STEPS: LiveStep[] = [];
@@ -725,10 +723,11 @@ function LiveScreens({ items, feed }: { items: MissionItem[]; feed: LiveFeed }) 
 
 type RerunHandler = (missionId: number, options: { scope: 'failed' | 'all'; continue?: boolean }) => void;
 
-const COUNT_TONE: { key: MissionItemStatus | 'PAUSED' | 'BUSY'; label: string; color: string }[] = [
+const COUNT_TONE: { key: MissionItemStatus | 'PAUSED' | 'BUSY' | 'OFFLINE'; label: string; color: string }[] = [
   { key: 'RUNNING', label: 'Running', color: '#0284c7' },
   { key: 'PAUSED', label: 'Paused', color: '#b45309' },
   { key: 'BUSY', label: 'Phone busy', color: '#7c3aed' },
+  { key: 'OFFLINE', label: 'Phone offline', color: '#c2410c' },
   { key: 'QUEUED', label: 'In queue', color: '#b45309' },
   { key: 'PENDING', label: 'Waiting', color: '#64748b' },
   { key: 'SUCCEEDED', label: 'Done', color: '#15803d' },
@@ -736,11 +735,20 @@ const COUNT_TONE: { key: MissionItemStatus | 'PAUSED' | 'BUSY'; label: string; c
   { key: 'CANCELLED', label: 'Cancelled', color: '#64748b' },
 ];
 
+/** Waiting for its phone to come back online (the server sets waiting_until while it waits). */
+const waitsOffline = (i: MissionItem) => i.status === 'PENDING' && (Boolean(i.waiting_until) || i.last_reason === 'DEVICE_OFFLINE');
+
 /** "20 Running · 3 Failed · 25 Done" — only the counts that are not zero. */
 function SummaryLine({ items }: { items: MissionItem[] }) {
   // A paused phone is PENDING on the server with PAUSED as its reason.
   const keyOf = (i: MissionItem) =>
-    i.status === 'PENDING' && i.last_reason === 'PAUSED' ? 'PAUSED' : i.status === 'PENDING' && i.last_reason === 'DEVICE_BUSY' ? 'BUSY' : i.status;
+    i.status === 'PENDING' && i.last_reason === 'PAUSED'
+      ? 'PAUSED'
+      : i.status === 'PENDING' && i.last_reason === 'DEVICE_BUSY'
+        ? 'BUSY'
+        : waitsOffline(i)
+          ? 'OFFLINE'
+          : i.status;
   const parts = COUNT_TONE.map((tone) => ({ ...tone, n: items.filter((i) => keyOf(i) === tone.key).length })).filter((p) => p.n > 0);
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -829,6 +837,9 @@ function PhoneTile({ item, steps, round, feed }: { item: MissionItem; steps: Liv
   const latest = steps[steps.length - 1];
   const finished = item.status === 'SUCCEEDED' || item.status === 'FAILED' || item.status === 'CANCELLED';
   const [open, setOpen] = useState(false);
+  // A succeeded phone's report is its answer: shown whole on request, not cut at three lines.
+  const [whole, setWhole] = useState(false);
+  const longResult = item.status === 'SUCCEEDED' && (item.last_message?.length ?? 0) > 160;
   const line =
     item.status === 'RUNNING'
       ? latest
@@ -840,7 +851,7 @@ function PhoneTile({ item, steps, round, feed }: { item: MissionItem; steps: Liv
           ? item.reason_text ?? 'Failed'
           : ITEM_TONE[item.status].label;
   return (
-    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1.5, py: 1.25, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75, gridColumn: open ? '1 / -1' : 'auto' }}>
+    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1.5, py: 1.25, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75, gridColumn: open || whole ? '1 / -1' : 'auto' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
         <Typography sx={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }} noWrap>
           {item.device_name}
@@ -859,12 +870,28 @@ function PhoneTile({ item, steps, round, feed }: { item: MissionItem; steps: Liv
         <TileScreen item={item} feed={feed} />
         <Typography
           key={latest?.index}
-          sx={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 1.45, color: 'text.secondary', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 14,
+            lineHeight: 1.45,
+            color: 'text.secondary',
+            ...(whole
+              ? { whiteSpace: 'pre-line', overflowWrap: 'anywhere' }
+              : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }),
+            animation: `${slideStep} 240ms ${ease}`,
+            ...reducedMotion,
+          }}
         >
           {item.status === 'RUNNING' && round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}
           {line}
         </Typography>
       </Box>
+      {longResult && (
+        <Button size="small" onClick={() => setWhole((v) => !v)} sx={{ alignSelf: 'flex-start', textTransform: 'none', px: 0.5, mt: -0.5 }}>
+          {whole ? 'Show less' : 'Show the whole result'}
+        </Button>
+      )}
       {finished && item.agent_task_id && (
         <Button size="small" onClick={() => setOpen((v) => !v)} endIcon={open ? <ExpandLessIcon /> : <ExpandMoreIcon />} sx={{ alignSelf: 'flex-start', textTransform: 'none', px: 0.5 }}>
           {open ? 'Hide steps' : 'Show steps'}
@@ -1122,12 +1149,15 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
   // "Running" only once a phone really runs it; before that, say what it waits for.
   const open = items.filter((i) => i.status === 'PENDING' || i.status === 'QUEUED' || i.status === 'RUNNING');
   const busyCount = open.filter((i) => i.status === 'PENDING' && i.last_reason === 'DEVICE_BUSY').length;
+  const offlineCount = open.filter(waitsOffline).length;
   const phonesWord = (n: number) => `${n} ${n === 1 ? 'phone' : 'phones'}`;
   const title = running
     ? open.length === 0
       ? 'Finishing…'
       : runningItems.length > 0
-      ? `Running — ${progress.succeeded} of ${progress.total} done`
+      ? `Running — ${progress.succeeded} of ${progress.total} done${offlineCount ? ` · ${phonesWord(offlineCount)} offline` : ''}`
+      : offlineCount > 0 && offlineCount === open.length
+        ? `Waiting — ${phonesWord(offlineCount)} offline`
       : busyCount > 0 && busyCount === open.length
         ? `Waiting — ${phonesWord(busyCount)} busy with another task`
         : open.every((i) => i.status === 'QUEUED')
@@ -2849,15 +2879,6 @@ export default function MissionControlPage() {
         />
         {/* After the field, so the textarea exists when it measures itself against it. */}
         <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
-        {PASSWORD_IN_PROMPT.test(input) && (
-          <Typography
-            role="note"
-            variant="caption"
-            sx={{ display: 'block', px: 0.75, mt: 0.5, color: 'warning.dark', fontWeight: 600, animation: 'vbFadeIn 240ms ease-out', '@keyframes vbFadeIn': { from: { opacity: 0, transform: 'translateY(-3px)' }, to: { opacity: 1, transform: 'none' } } }}
-          >
-            No need for a password here: the agent uses the Google account already signed in on each phone. A password typed here stays in the chat and mission history.
-          </Typography>
-        )}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
           <AttachChip onPick={attachFile} />
           <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />

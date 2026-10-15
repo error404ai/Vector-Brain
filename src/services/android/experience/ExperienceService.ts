@@ -269,7 +269,7 @@ export class ExperienceService {
     return { id: saved.id };
   }
 
-  async update(userId: number, id: number, input: { scope?: string; kind?: string; text?: string; status?: string }) {
+  async update(userId: number, id: number, input: { scope?: string; kind?: string; text?: string; status?: string; reset_score?: boolean }) {
     const row = await this.lessonRepo.findOne({ where: { id, user_id: userId } });
     if (!row) throw new AppError('Lesson not found', 404);
     const patch: Partial<ExperienceLesson> = {};
@@ -283,7 +283,9 @@ export class ExperienceService {
       if (input.status !== 'off') patch.off_reason = null;
       else patch.off_reason = 'Switched off by you.';
     }
-    await this.lessonRepo.update({ id }, patch);
+    // "Reset score": helped and hurt start again from 0 (a lesson blamed for runs it had no part in).
+    if (input.reset_score === true) Object.assign(patch, { helped: 0, hurt: 0 });
+    if (Object.keys(patch).length) await this.lessonRepo.update({ id }, patch);
     return { id };
   }
 

@@ -135,11 +135,13 @@ export class CommandChatService {
   /**
    * Posts the answer card for a finished mission that the chat started: the
    * user's question, a one-line answer written from the phones' own reports,
-   * and one row per phone. Missions not started from the chat, and stopped
-   * ones, get nothing.
+   * and one row per phone. Missions not started from the chat get nothing; a
+   * stopped one gets the card when at least one phone had finished, answered
+   * from those phones (the rest are listed as stopped).
    */
   private async postTaskAnswer(mission: { id: number; user_id: number; status: string; prompt: string | null; request: string }): Promise<void> {
-    if (mission.status !== 'DONE') return;
+    const stopped = mission.status === 'CANCELLED';
+    if (mission.status !== 'DONE' && !stopped) return;
     const started = await this.messageRepo.findOne({ where: { user_id: mission.user_id, mission_id: mission.id, role: 'assistant' } });
     if (!started) return;
     const asked = await this.messageRepo.findOne({
@@ -152,13 +154,23 @@ export class CommandChatService {
     const replaced = new Set(described.items.map((i) => i.replaces_item_id).filter(Boolean));
     const phones = described.items
       .filter((i) => !replaced.has(i.id) || i.status === 'SUCCEEDED')
-      .map((i) => ({ name: i.device_name, ok: i.status === 'SUCCEEDED', report: (i.status === 'SUCCEEDED' ? i.last_message : i.reason_text ?? i.last_message) ?? '' }));
+      .map((i) => ({
+        name: i.device_name,
+        ok: i.status === 'SUCCEEDED',
+        report: (i.status === 'SUCCEEDED' ? i.last_message : i.status === 'CANCELLED' ? 'Stopped before it finished.' : (i.reason_text ?? i.last_message)) ?? '',
+      }));
     if (!phones.length) return;
+    const finished = phones.filter((p) => p.ok).length;
+    if (stopped && finished === 0) return;
 
     const question = (asked?.text ?? mission.request).slice(0, 500);
     const written = SIMULATION ? null : await this.agent.writeTaskAnswer(mission.user_id, { question, task: mission.prompt ?? mission.request, phones });
     const body = written ?? fallbackAnswer(phones);
-    const reply: ChatReply = { kind: 'result', text: body.answer, result: { mission_id: mission.id, question, answer: body.answer, phones: body.phones } };
+    const reply: ChatReply = {
+      kind: 'result',
+      text: body.answer,
+      result: { mission_id: mission.id, question, answer: body.answer, phones: body.phones, ...(stopped ? { stopped: { finished, total: phones.length } } : {}) },
+    };
     const conversationId = started.conversation_id ?? undefined;
     await this.record(mission.user_id, 'assistant', body.answer, reply, conversationId);
     this.gatewayService.broadcastToUser(mission.user_id, 'chat:result', { conversation_id: conversationId ?? null, reply });

@@ -42,7 +42,7 @@ export const experienceService = baseApi.injectEndpoints({
       query: (body) => ({ url: '/android/experience/lessons', method: 'POST', body }),
       invalidatesTags: [TAGS.EXPERIENCE],
     }),
-    updateLesson: builder.mutation<{ data: { id: number } }, { id: number; scope?: string; kind?: LessonKind; text?: string; status?: LessonStatus }>({
+    updateLesson: builder.mutation<{ data: { id: number } }, { id: number; scope?: string; kind?: LessonKind; text?: string; status?: LessonStatus; reset_score?: boolean }>({
       query: ({ id, ...body }) => ({ url: `/android/experience/lessons/${id}`, method: 'PATCH', body }),
       invalidatesTags: [TAGS.EXPERIENCE],
     }),

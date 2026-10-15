@@ -26,6 +26,8 @@ export interface TaskAnswer {
   question: string;
   answer: string;
   phones: AnswerPhone[];
+  /** The user stopped the task: the card answers from the phones that had finished. */
+  stopped?: { finished: number; total: number };
 }
 
 const clip = (text: string, max: number) => {

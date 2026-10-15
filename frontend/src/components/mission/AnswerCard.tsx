@@ -99,7 +99,9 @@ export default function AnswerCard({ result, onRetryFailed }: { result: TaskAnsw
           },
         }}
       >
-        <Typography sx={{ font: `700 10.5px ${MONO}`, letterSpacing: '.14em', color: '#7C5CFF' }}>ANSWER</Typography>
+        <Typography sx={{ font: `700 10.5px ${MONO}`, letterSpacing: '.14em', color: '#7C5CFF' }}>
+          {result.stopped ? `ANSWER · STOPPED — ${result.stopped.finished} OF ${result.stopped.total} PHONES FINISHED` : 'ANSWER'}
+        </Typography>
         <Typography sx={{ fontWeight: 800, fontSize: 19, lineHeight: 1.25, letterSpacing: '-0.02em', mt: 0.25 }}>{result.question}</Typography>
       </Box>
 

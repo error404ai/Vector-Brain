@@ -18,6 +18,8 @@ export interface TaskAnswer {
   question: string;
   answer: string;
   phones: AnswerPhone[];
+  /** The user stopped the task: answered from the phones that had finished. */
+  stopped?: { finished: number; total: number };
 }
 
 /** One phone's current screen for the chat: the image, or why there isn't one. */

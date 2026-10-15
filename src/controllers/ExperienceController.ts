@@ -28,7 +28,7 @@ export class ExperienceController {
   }
 
   @Patch('/lessons/:id')
-  async update(@Param('id') id: number, @Body() body: { scope?: string; kind?: string; text?: string; status?: string }, @CurrentUser({ required: true }) user: AuthUser) {
+  async update(@Param('id') id: number, @Body() body: { scope?: string; kind?: string; text?: string; status?: string; reset_score?: boolean }, @CurrentUser({ required: true }) user: AuthUser) {
     return { data: await this.experience.update(user.userId, Number(id), body ?? {}) };
   }
 

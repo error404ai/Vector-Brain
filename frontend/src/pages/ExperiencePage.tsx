@@ -268,6 +268,22 @@ function LessonCard({ lesson, index, onEdit }: { lesson: Lesson; index: number; 
           <b style={{ fontVariantNumeric: 'tabular-nums' }}>{lesson.uses}</b> runs
         </span>
         <HelpBar helped={lesson.helped} hurt={lesson.hurt} />
+        {lesson.helped + lesson.hurt > 0 && (
+          <Tooltip title="Start Helped and Hurt again from 0, for a lesson blamed for runs it had no part in">
+            <Button
+              size="small"
+              onClick={() =>
+                void update({ id: lesson.id, reset_score: true })
+                  .unwrap()
+                  .then(() => toast.success('Score reset'))
+                  .catch(() => toast.error('Could not reset it'))
+              }
+              sx={{ textTransform: 'none', minWidth: 0, px: 0.75, py: 0, fontSize: 12 }}
+            >
+              Reset score
+            </Button>
+          </Tooltip>
+        )}
         {lesson.evidence.length > 0 && (
           <span>
             From run{lesson.evidence.length > 1 ? 's' : ''}{' '}

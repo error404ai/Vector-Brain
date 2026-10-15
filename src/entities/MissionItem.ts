@@ -46,7 +46,7 @@ export class MissionItem {
   @Column({ type: 'varchar', length: 40, nullable: true })
   last_reason: string | null;
 
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'text', nullable: true })
   last_message: string | null;
 
   @Column({ type: 'datetime', nullable: true })

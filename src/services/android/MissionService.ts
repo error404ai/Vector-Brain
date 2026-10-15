@@ -46,11 +46,22 @@ const RETRY_DELAY_MS = Number(process.env.MISSION_RETRY_DELAY_MS) || 15_000;
 /**
  * How long a mission waits for an offline phone to reconnect before calling it
  * failed. Waiting does not use up retries: a phone that dropped for a minute
- * (a restart, "Connecting…") used to fail after ~45 s of quick retries.
+ * (a restart, "Connecting…") used to fail after ~45 s of quick retries. One
+ * minute covers a Wi-Fi blink; ten (until Oct 16) held the whole answer up for
+ * a phone that was not coming back.
  */
-const OFFLINE_WAIT_MS = Number(process.env.MISSION_OFFLINE_WAIT_MS) || 10 * 60_000;
+const OFFLINE_WAIT_MS = Number(process.env.MISSION_OFFLINE_WAIT_MS) || 60_000;
+/** A phone not seen for this long when the mission reaches it is skipped at once: it is not about to come back. */
+const LONG_GONE_MS = 2 * 60_000;
 /** "Any N phones" hands an offline phone's share to a spare soon instead of waiting long. */
 const COUNT_OFFLINE_WAIT_MS = Math.min(OFFLINE_WAIT_MS, 60_000);
+/** "3 min", "2 h", "4 days". */
+function agoText(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${Math.max(1, min)} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h` : `${Math.round(h / 24)} days`;
+}
 const offlineWaitFor = (mission: Pick<Mission, 'target_mode'>) => (mission.target_mode === 'count' ? COUNT_OFFLINE_WAIT_MS : OFFLINE_WAIT_MS);
 /** How often a waiting item checks whether its phone is back. */
 const OFFLINE_POLL_MS = Number(process.env.MISSION_OFFLINE_POLL_MS) || 10_000;
@@ -719,6 +730,16 @@ export class MissionService {
    */
   private async waitForPhone(mission: Mission, item: MissionItem): Promise<void> {
     const now = Date.now();
+    // Not tried yet and gone for a while: skipped at once, not waited for.
+    if (!item.waiting_since && item.attempts === 0) {
+      const device = await this.deviceRepo.findOne({ where: { id: item.device_id }, select: ['id', 'last_seen_at'] });
+      const seen = device?.last_seen_at ? new Date(device.last_seen_at).getTime() : 0;
+      if (now - seen > LONG_GONE_MS) {
+        const ago = seen ? ` (last seen ${agoText(now - seen)} ago)` : '';
+        await this.settleFailure(mission, item, 'DEVICE_OFFLINE', `Offline when the task started${ago}`, { final: true });
+        return;
+      }
+    }
     if (!item.waiting_since) item.waiting_since = new Date(now);
     const limit = offlineWaitFor(mission);
     if (now - item.waiting_since.getTime() >= limit) {
@@ -785,7 +806,8 @@ export class MissionService {
     if (task.status === 'SUCCEEDED') {
       item.status = 'SUCCEEDED';
       item.last_reason = null;
-      item.last_message = truncate(task.message);
+      // The phone's whole report: it is the answer (only a runaway one is cut).
+      item.last_message = truncate(task.message, 20_000);
       await this.itemRepo.save(item);
       // A run asked for the phone's email accounts ends with an "EMAILS:" line;
       // remember them on the phone (the full message, not the truncated one).
@@ -1056,9 +1078,9 @@ export class MissionService {
 // Helpers
 // -----------------------------------------------------------------------------
 
-function truncate(text?: string | null): string | null {
+function truncate(text?: string | null, max = 500): string | null {
   if (!text) return null;
-  return text.length > 500 ? `${text.slice(0, 497)}...` : text;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
 function classifyDispatchError(message: string): string {
@@ -1183,7 +1205,7 @@ function summarize(mission: Mission, items: MissionItem[], names: Map<number, st
     const detail =
       item.last_message && item.last_reason === 'AGENT_REPORTED_FAILURE'
         ? ` — ${item.last_message.slice(0, 160)}`
-        : item.last_reason === 'DEVICE_OFFLINE' && item.last_message?.startsWith('Stayed offline')
+        : item.last_reason === 'DEVICE_OFFLINE' && /^(?:Stayed offline|Offline when)/.test(item.last_message ?? '')
           ? ` (${item.last_message.toLowerCase()})`
           : '';
     lines.push(`✗ ${names.get(item.device_id) ?? item.device_id}: ${why}${item.attempts > 1 ? ` after ${item.attempts} tries` : ''}${detail}`);
