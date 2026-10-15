@@ -46,9 +46,13 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../ui/Logo';
 import PrismBackground from '../ui/PrismBackground';
 import { Sidebar } from './Sidebar';
+import { APP_MENU_EVENT, BOTTOM_NAV_HEIGHT, PROFILE_MENU_EVENT } from './layoutEvents';
 
 /** Pages that lay out their own prism full-bleed; the layout leaves them alone. */
 const OWN_PRISM = ['/mission-control', '/settings', '/android-fleet', '/dashboard'];
+/** Pages that draw their own top bar on phones. */
+const OWN_BAR = ['/mission-control'];
+
 
 /**
  * Every other app page sits on the prism too, and its outlined cards and papers
@@ -133,6 +137,19 @@ export function AuthLayout({ children }: AuthLayoutProps) {
     setOpen(!isMobile);
   }, [isMobile]);
 
+  // A page that draws its own top bar on phones (Mission Control) opens the app
+  // menu and the account menu through these.
+  useEffect(() => {
+    const openMenu = () => setMobileOpen(true);
+    const openProfile = (event: Event) => setProfileAnchor((event as CustomEvent<HTMLElement>).detail ?? null);
+    window.addEventListener(APP_MENU_EVENT, openMenu);
+    window.addEventListener(PROFILE_MENU_EVENT, openProfile);
+    return () => {
+      window.removeEventListener(APP_MENU_EVENT, openMenu);
+      window.removeEventListener(PROFILE_MENU_EVENT, openProfile);
+    };
+  }, []);
+
   useEffect(() => {
     if (user) {
       dispatch(setUser(user));
@@ -141,6 +158,8 @@ export function AuthLayout({ children }: AuthLayoutProps) {
 
   const drawerWidth = open ? DRAWER_WIDTH : MINI_DRAWER_WIDTH;
   const ownPrism = OWN_PRISM.some((path) => location.pathname.startsWith(path));
+  // Phones: Mission Control is a full-height app screen with its own top bar.
+  const ownBar = isMobile && OWN_BAR.some((path) => location.pathname.startsWith(path));
   const currentMobileValue = useMemo(() => mobileNav.find((item) => location.pathname.startsWith(item.value))?.value ?? '/dashboard', [location.pathname]);
 
   const handleLogout = async () => {
@@ -158,6 +177,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
         position="fixed"
         elevation={0}
         sx={{
+          display: ownBar ? 'none' : undefined,
           bgcolor: 'rgba(255, 255, 255, 0.92)',
           color: 'text.primary',
           borderBottom: '1px solid',
@@ -337,10 +357,10 @@ export function AuthLayout({ children }: AuthLayoutProps) {
         sx={{
           position: 'relative',
           ml: { md: `${drawerWidth}px` },
-          pt: { xs: '76px', md: '88px' },
-          px: { xs: 1.5, sm: 2, md: 3 },
-          pb: { xs: 10, md: 3 },
-          minHeight: '100vh',
+          pt: ownBar ? 0 : { xs: '76px', md: '88px' },
+          px: ownBar ? 0 : { xs: 1.5, sm: 2, md: 3 },
+          pb: ownBar ? 0 : { xs: 10, md: 3 },
+          minHeight: ownBar ? 0 : '100vh',
           transition: theme.transitions.create('margin-left', { duration: theme.transitions.duration.shorter }),
         }}
       >
@@ -359,10 +379,39 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   );
 }
 
+/** Phones: frosted glass, the current page's icon in a Prism gradient pill. */
 function PaperBottomNav({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
-    <Box sx={{ display: { xs: 'block', md: 'none' }, position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: (theme) => theme.zIndex.appBar }}>
-      <BottomNavigation showLabels value={value} onChange={(_event, nextValue) => onChange(nextValue)} sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
+    <Box
+      sx={{
+        display: { xs: 'block', md: 'none' },
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: (theme) => theme.zIndex.appBar,
+        bgcolor: 'rgba(255,255,255,.8)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderTop: '1px solid rgba(255,255,255,.95)',
+        boxShadow: '0 -10px 30px -20px rgba(30,40,90,.35)',
+        pb: 'env(safe-area-inset-bottom, 0px)',
+      }}
+    >
+      <BottomNavigation
+        showLabels
+        value={value}
+        onChange={(_event, nextValue) => onChange(nextValue)}
+        sx={{
+          height: BOTTOM_NAV_HEIGHT,
+          bgcolor: 'transparent',
+          '& .MuiBottomNavigationAction-root': { color: '#3c435e', minWidth: 0, gap: '3px', pt: 0.75 },
+          '& .MuiBottomNavigationAction-label': { fontSize: 11, fontWeight: 600, '&.Mui-selected': { fontSize: 11, fontWeight: 800 } },
+          '& .MuiBottomNavigationAction-root.Mui-selected': { color: '#3b4cff' },
+          '& .MuiBottomNavigationAction-root .MuiSvgIcon-root': { fontSize: 22, width: 52, height: 26, px: '15px', borderRadius: '13px', transition: 'background 220ms, color 220ms' },
+          '& .MuiBottomNavigationAction-root.Mui-selected .MuiSvgIcon-root': { color: '#fff', background: 'linear-gradient(135deg, #3b4cff, #6d28d9)', boxShadow: '0 8px 18px -10px rgba(59,76,255,.9)' },
+        }}
+      >
         {mobileNav.map((item) => (
           <BottomNavigationAction key={item.value} label={item.label} value={item.value} icon={item.icon} />
         ))}

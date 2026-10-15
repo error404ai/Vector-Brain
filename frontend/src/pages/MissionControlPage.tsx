@@ -86,6 +86,11 @@ import VectorBot from '@/components/mission/VectorBot';
 import { isStructured } from '@/components/mission/chatText';
 import { stepSummary, useRunSteps } from '@/components/mission/steps';
 import { contentKey, useLiveThumbnail, useNearViewport, useThumbnail } from '@/_helpers/screenThumbs';
+import { glass, livePulse, MobileTopBar, PRISM, ProgressRing, quietButton, StatusBadge, thumbShimmer, type BadgeTone } from '@/components/mission/PrismMobile';
+import { BOTTOM_NAV_HEIGHT } from '@/components/layout/layoutEvents';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
+import WifiOffRoundedIcon from '@mui/icons-material/WifiOffRounded';
 
 // -----------------------------------------------------------------------------
 // Live feed: one page socket carrying screens, steps, rounds and mission pushes
@@ -1130,13 +1135,174 @@ function ScreensReply({ screens, feed }: { screens: PhoneShot[]; feed: LiveFeed 
   );
 }
 
+/** Phones: the mission card is compact below this width (the page's own breakpoint). */
+const PHONE_QUERY = '(max-width:900px)';
+
+/** One phone's state as a short badge and a one-line reading of what it is doing or did. */
+function phoneState(item: MissionItem, steps: LiveStep[], round?: { round: number; endsAt: number }, now = Date.now()): { tone: BadgeTone; line: string } {
+  const latest = steps[steps.length - 1];
+  switch (item.status) {
+    case 'RUNNING':
+      return {
+        tone: 'live',
+        line: `${round ? `Round ${round.round} · ${minutesLeft(round.endsAt)} · ` : ''}${latest ? `Step ${latest.index} · ${latest.thought || latest.action}` : 'Starting…'}`,
+      };
+    case 'SUCCEEDED':
+      return { tone: 'done', line: item.last_message ?? 'Done' };
+    case 'FAILED':
+      return { tone: 'failed', line: item.reason_text ?? 'Failed' };
+    case 'CANCELLED':
+      return { tone: 'stopped', line: 'Stopped before it finished' };
+    case 'QUEUED':
+      return { tone: 'wait', line: 'In the lane queue' };
+    default: {
+      if (item.last_reason === 'PAUSED') return { tone: 'paused', line: 'Paused — keeps its progress' };
+      if (item.last_reason === 'DEVICE_BUSY') return { tone: 'busy', line: 'Busy with another task' };
+      if (waitsOffline(item)) {
+        const until = item.waiting_until ? Date.parse(item.waiting_until) : NaN;
+        const left = Number.isFinite(until) ? Math.max(0, Math.round((until - now) / 1000)) : null;
+        return { tone: 'off', line: left ? `Offline — waiting ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} more` : item.reason_text ?? 'Offline' };
+      }
+      return { tone: 'wait', line: ITEM_TONE[item.status]?.label ?? 'Waiting' };
+    }
+  }
+}
+
+/** The phone's screen as a tiny frame: live while it runs, its last screen once done, a sketch otherwise. */
+function MiniScreen({ item, feed, tone }: { item: MissionItem; feed: LiveFeed; tone: BadgeTone }) {
+  const liveFrame = item.status === 'RUNNING' && item.device_hw_id ? feed.frames[item.device_hw_id] : undefined;
+  const finished = item.status === 'SUCCEEDED' || item.status === 'FAILED' || item.status === 'CANCELLED';
+  const { ref, near, seen } = useNearViewport<HTMLDivElement>();
+  const { data } = useGetFinalScreenQuery(item.id, { skip: !finished || !item.agent_task_id || !!liveFrame || !seen });
+  const stored = data?.data?.base64 ?? null;
+  const thumb = useThumbnail(liveFrame || !stored ? null : `final:${item.id}`, stored);
+  const liveThumb = useLiveThumbnail(liveFrame ? item.device_hw_id : null, liveFrame);
+  const src = liveFrame ? liveThumb : thumb;
+  const border = tone === 'live' ? PRISM.accent : tone === 'failed' ? '#f4a7a2' : tone === 'done' ? '#9fe0c4' : PRISM.ink;
+  if (tone === 'off') {
+    return (
+      <Box ref={ref} aria-hidden sx={{ width: 32, height: 56, borderRadius: '8px', bgcolor: '#2a2f45', flexShrink: 0, display: 'grid', placeItems: 'center', color: '#f5b971' }}>
+        <WifiOffRoundedIcon sx={{ fontSize: 16 }} />
+      </Box>
+    );
+  }
+  return (
+    <Box
+      ref={ref}
+      aria-hidden
+      sx={{ position: 'relative', overflow: 'hidden', width: 32, height: 56, borderRadius: '8px', bgcolor: '#fff', border: `1.5px solid ${border}`, flexShrink: 0, boxSizing: 'border-box' }}
+    >
+      {src && near ? (
+        <Box component="img" src={src} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', animation: `${screenFade} 280ms ${ease}`, ...reducedMotion }} />
+      ) : (
+        <Box sx={{ p: '4px 3px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+          <Box sx={{ height: 5, borderRadius: '2px', bgcolor: '#fbbf24' }} />
+          <Box sx={{ height: 8, borderRadius: '2px', bgcolor: PRISM.track }} />
+          <Box sx={{ height: 8, borderRadius: '2px', bgcolor: tone === 'live' ? '#dde1ff' : PRISM.track }} />
+          <Box sx={{ height: 8, borderRadius: '2px', bgcolor: tone === 'done' ? '#bff0d9' : PRISM.track }} />
+        </Box>
+      )}
+      {tone === 'live' && (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(100deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.85) 50%, rgba(255,255,255,0) 70%)',
+            backgroundSize: '250% 100%',
+            animation: `${thumbShimmer} 1.6s linear infinite`,
+            ...reducedMotion,
+          }}
+        />
+      )}
+    </Box>
+  );
+}
+
+/** One phone as a row: tiny screen, name, one line, badge. Tap for its full tile (steps, whole result, cost). */
+function PhoneRow({ item, steps, round, feed, now }: { item: MissionItem; steps: LiveStep[]; round?: { round: number; endsAt: number }; feed: LiveFeed; now: number }) {
+  const [open, setOpen] = useState(false);
+  const { tone, line } = phoneState(item, steps, round, now);
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+      <Box
+        component="button"
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        sx={{
+          all: 'unset',
+          boxSizing: 'border-box',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          p: 1,
+          borderRadius: '16px',
+          bgcolor: tone === 'off' ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.8)',
+          border: tone === 'off' ? '1px dashed #f5b971' : '1px solid transparent',
+          transition: 'background 200ms',
+          '&:hover': { bgcolor: '#fff' },
+          '&:focus-visible': { outline: `2px solid ${PRISM.accent}`, outlineOffset: 2 },
+        }}
+      >
+        <MiniScreen item={item} feed={feed} tone={tone} />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography noWrap sx={{ fontWeight: 700, fontSize: 14, color: PRISM.ink, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {item.device_name}
+            </Box>
+            {tone === 'live' && <Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: PRISM.accent, flexShrink: 0, animation: `${livePulse} 1.8s ease-out infinite`, ...reducedMotion }} />}
+          </Typography>
+          <Typography
+            key={steps[steps.length - 1]?.index}
+            noWrap
+            sx={{ fontSize: 12.5, color: tone === 'off' ? '#8a4b0f' : tone === 'failed' ? '#b42318' : PRISM.muted, animation: `${slideStep} 240ms ${ease}`, ...reducedMotion }}
+          >
+            {line}
+          </Typography>
+        </Box>
+        <StatusBadge tone={tone} />
+      </Box>
+      {open && (
+        <Box sx={{ animation: `${riseIn} 200ms ${ease}`, ...reducedMotion, '& > *': { bgcolor: 'rgba(255,255,255,.9)' } }}>
+          <PhoneTile item={item} steps={steps} round={round} feed={feed} />
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** Seconds ticking while a mission runs, for the elapsed clock and offline countdowns. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+function clock(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+const PHONE_ROWS_SHOWN = 6;
+
 function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mission; feed: LiveFeed; onRerun?: RerunHandler; showLive?: boolean }) {
   const [cancelMission, { isLoading: cancelling }] = useCancelMissionMutation();
   const [pauseMission, { isLoading: pausing }] = usePauseMissionMutation();
   const [resumeMission, { isLoading: resuming }] = useResumeMissionMutation();
   const [showAll, setShowAll] = useState(false);
+  const compact = useMediaQuery(PHONE_QUERY);
+  const [screensOpen, setScreensOpen] = useState(false);
   const { progress, items } = mission;
   const running = mission.status === 'RUNNING';
+  const now = useNow(compact && running);
   const paused = mission.status === 'PAUSED';
   const settled = progress.succeeded + progress.failed;
   const percent = progress.total ? Math.round((settled / progress.total) * 100) : 0;
@@ -1198,6 +1364,148 @@ function MissionCard({ mission, feed, onRerun, showLive = true }: { mission: Mis
       toast.error(errorMessage(error));
     }
   };
+
+  if (compact) {
+    // Phones: "Prism Ring". The same facts and actions as the wide card, folded:
+    // a ring and one line up top, one row per phone, screens and details on a tap.
+    const started = Date.parse(mission.created_at);
+    const ended = mission.finished_at ? Date.parse(mission.finished_at) : running ? now : NaN;
+    const elapsed = Number.isFinite(started) && Number.isFinite(ended) ? clock(ended - started) : null;
+    const counts = [
+      runningItems.length ? `${runningItems.length} running` : '',
+      progress.failed ? `${progress.failed} failed` : '',
+      offlineCount ? `${phonesWord(offlineCount)} offline` : '',
+      busyCount ? `${busyCount} busy` : '',
+      mission.duration_seconds ? `for ${Math.round(mission.duration_seconds / 60)} min` : '',
+      elapsed ?? '',
+    ].filter(Boolean);
+    const order = (i: MissionItem) => (i.status === 'RUNNING' ? 0 : i.status === 'FAILED' ? 1 : i.status === 'SUCCEEDED' ? 3 : 2);
+    const rows = [...items].sort((a, b) => order(a) - order(b));
+    const shown = showAll ? rows : rows.slice(0, PHONE_ROWS_SHOWN);
+    const ringTone = !running && !paused && mission.status !== 'DONE' ? '#94a3b8' : finishedWithFailures && progress.succeeded === 0 ? '#dc2626' : undefined;
+    return (
+      <Box
+        key={mission.status}
+        component="section"
+        id={`mission-${mission.id}`}
+        aria-label={title}
+        sx={{
+          ...glass,
+          width: '100%',
+          boxSizing: 'border-box',
+          p: 1.75,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1.5,
+          animation: finishedClean
+            ? `${riseIn} 300ms ${ease}, ${glowSuccess} 1.1s ease-out`
+            : finishedWithFailures
+              ? `${riseIn} 300ms ${ease}, ${glowError} 1.1s ease-out`
+              : `${riseIn} 300ms ${ease}`,
+          ...reducedMotion,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <ProgressRing done={settled} total={progress.total} running={running} tone={ringTone} />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 800, fontSize: 16, letterSpacing: '-.02em', color: PRISM.ink, lineHeight: 1.25 }}>{title}</Typography>
+            {counts.length > 0 && (
+              <Typography sx={{ fontSize: 12.5, color: PRISM.muted, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>{counts.join(' · ')}</Typography>
+            )}
+          </Box>
+          {/* One action up here: Stop while it runs, Resume once paused; the other sits below. */}
+          {running && (
+            <Button onClick={onCancel} disabled={cancelling} sx={{ ...quietButton, flexShrink: 0 }}>
+              Stop
+            </Button>
+          )}
+          {paused && <ResumeButton onClick={onResume} busy={resuming} />}
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', '&:empty': { display: 'none' } }}>
+          <SightCounter run={sumSight(items.map((i) => (i.agent_task_id ? feed.sight[i.agent_task_id] : null) ?? i.sight))} finished={!running && !paused} />
+          <CostChip mission={mission} finished={!running && !paused} />
+        </Box>
+
+        {paused && (
+          <>
+            <PausedProgress percent={percent} />
+            <Typography variant="caption" sx={{ color: '#B45309', fontWeight: 600 }}>
+              Resume continues each phone from where it stopped{left ? ` · ${left}` : ''}.
+            </Typography>
+          </>
+        )}
+
+        {!running && items.length === 1 && items[0].agent_task_id ? (
+          <SinglePhoneRecord item={items[0]} steps={stepsFor(items[0])} />
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+            {shown.map((item) => (
+              <PhoneRow key={item.id} item={item} steps={stepsFor(item)} round={roundFor(item)} feed={feed} now={now} />
+            ))}
+          </Box>
+        )}
+
+        <FailureGroups items={items} />
+
+        {mission.note && (
+          <Typography variant="caption" color="warning.main">
+            {mission.note}
+          </Typography>
+        )}
+
+        {screensOpen && (
+          <Box sx={{ animation: `${riseIn} 220ms ${ease}`, ...reducedMotion }}>
+            {running && showLive && <LiveScreens items={items} feed={feed} />}
+            <FinalScreens items={items} feed={feed} live={running} />
+          </Box>
+        )}
+
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button onClick={() => setScreensOpen((v) => !v)} aria-expanded={screensOpen} sx={{ ...quietButton, flex: 1, height: 40 }}>
+            {screensOpen ? 'Hide screens' : running ? 'Live screens' : 'Screens'}
+          </Button>
+          {running && (
+            <Button onClick={onPause} disabled={pausing} aria-label="Pause mission" sx={{ ...quietButton, flex: 1, height: 40, color: '#92400e', borderColor: 'rgba(245,158,11,.55)', bgcolor: '#fffaf0' }}>
+              Pause
+            </Button>
+          )}
+          {paused && (
+            <Button onClick={onCancel} disabled={cancelling} sx={{ ...quietButton, flex: 1, height: 40 }}>
+              Stop
+            </Button>
+          )}
+          {rows.length > PHONE_ROWS_SHOWN && (
+            <Button onClick={() => setShowAll((v) => !v)} aria-expanded={showAll} sx={{ ...quietButton, flex: 1, height: 40 }}>
+              {showAll ? 'Fewer phones' : `All ${rows.length} phones`}
+            </Button>
+          )}
+        </Box>
+
+        {!running && !paused && onRerun && (
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {items.some((i) => i.status === 'FAILED' && (i.last_reason === 'STEP_LIMIT' || i.last_reason === 'UNFINISHED')) && (
+              <Button
+                startIcon={<PlayArrowRoundedIcon />}
+                onClick={() => onRerun(mission.id, { scope: 'failed', continue: true })}
+                sx={{ ...quietButton, height: 40, color: '#fff', border: 0, background: PRISM.gradient, '&:hover': { background: PRISM.gradient, filter: 'brightness(1.08)' } }}
+              >
+                Continue
+              </Button>
+            )}
+            {progress.failed > 0 && (
+              <Button startIcon={<ReplayIcon />} onClick={() => onRerun(mission.id, { scope: 'failed' })} sx={{ ...quietButton, height: 40 }}>
+                Retry failed
+              </Button>
+            )}
+            <Button startIcon={<RestartAltIcon />} onClick={() => onRerun(mission.id, { scope: 'all' })} sx={{ ...quietButton, height: 40 }}>
+              Run again
+            </Button>
+          </Box>
+        )}
+      </Box>
+    );
+  }
 
   return (
     <Paper
@@ -1546,9 +1854,11 @@ function VectorAvatar() {
 }
 
 function AssistantRow({ children }: { children: React.ReactNode }) {
+  // Phones: replies use the full width; the avatar's column cost a fifth of it.
+  const phone = useMediaQuery(PHONE_QUERY);
   return (
     <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', alignSelf: 'stretch', ...bubbleIn }}>
-      <VectorAvatar />
+      {!phone && <VectorAvatar />}
       <Box sx={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column' }}>{children}</Box>
     </Box>
   );
@@ -2205,6 +2515,8 @@ export default function MissionControlPage() {
   const navigate = useNavigate();
   const openVisionSettings = () => navigate('/settings#agent-engine');
   const [composerFocused, setComposerFocused] = useState(false);
+  /** Phones: attach, @phones, #tags and the switches sit behind the composer's + button. */
+  const [composerTools, setComposerTools] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2691,14 +3003,24 @@ export default function MissionControlPage() {
   };
 
   return (
-    <Box sx={{ position: 'relative', display: 'flex', height: 'calc(100vh - 64px)', minHeight: 0, overflow: 'hidden' }}>
+    <Box
+      sx={{
+        position: 'relative',
+        display: 'flex',
+        // Phones: the whole screen above the bottom bar (the page draws its own top bar).
+        height: isMobile ? `calc(100dvh - ${BOTTOM_NAV_HEIGHT}px - env(safe-area-inset-bottom, 0px))` : 'calc(100vh - 64px)',
+        minHeight: 0,
+        overflow: 'hidden',
+        flexDirection: isMobile ? 'column' : 'row',
+      }}
+    >
     <PrismBackground />
     {isMobile ? (
       <Drawer
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         ModalProps={{ keepMounted: true }}
-        PaperProps={{ sx: { width: 260, top: { xs: 60, md: 64 }, height: { xs: 'calc(100% - 60px)', md: 'calc(100% - 64px)' } } }}
+        PaperProps={{ sx: { width: 280, maxWidth: '86vw' } }}
       >
         <ConversationSidebar
           open
@@ -2719,8 +3041,18 @@ export default function MissionControlPage() {
         onDelete={removeConversation}
       />
     )}
-    <Box sx={{ position: 'relative', zIndex: 1, flex: 1, minWidth: 0, maxWidth: 1120, mx: 'auto', width: '100%', px: { xs: 1.5, md: 3 }, py: { xs: 1.5, md: 3 }, display: 'flex', flexDirection: 'column' }}>
-      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.25 }}>
+    {isMobile && (
+      <MobileTopBar
+        title={conversations.find((c) => c.id === conversationId)?.title || (turns.length ? 'This chat' : 'New mission')}
+        alerts={alertPhones}
+        alertsOpen={alertsOpen}
+        onAlerts={() => setAlertsOpen((v) => !v)}
+        onChats={() => setSidebarOpen(true)}
+        showAlerts={!wide}
+      />
+    )}
+    <Box sx={{ position: 'relative', zIndex: 1, flex: 1, minWidth: 0, minHeight: 0, maxWidth: 1120, mx: 'auto', width: '100%', boxSizing: 'border-box', px: { xs: 1.5, md: 3 }, pt: { xs: 1.5, md: 3 }, pb: { xs: 0, md: 3 }, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ mb: 2, display: isMobile ? 'none' : 'flex', alignItems: 'center', gap: 1.25 }}>
         <IconButton size="small" aria-label={sidebarOpen ? 'Hide chats' : 'Show chats'} onClick={() => setSidebarOpen((v) => !v)}>
           <MenuIcon />
         </IconButton>
@@ -2776,7 +3108,11 @@ export default function MissionControlPage() {
           ) : turn.role === 'user' ? (
             <Box
               key={turn.id}
-              sx={{ alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 3, borderBottomRightRadius: 6, ...bubbleIn }}
+              sx={
+                isMobile
+                  ? { alignSelf: 'flex-end', maxWidth: '82%', bgcolor: PRISM.ink, color: '#fff', px: 1.75, py: 1.4, borderRadius: '18px 18px 6px 18px', ...bubbleIn }
+                  : { alignSelf: 'flex-end', maxWidth: '80%', bgcolor: 'primary.main', color: 'primary.contrastText', px: 2, py: 1.25, borderRadius: 3, borderBottomRightRadius: 6, ...bubbleIn }
+              }
             >
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 <MentionText text={turn.text} vocab={mentionVocab} />
@@ -2841,116 +3177,221 @@ export default function MissionControlPage() {
         />
       )}
 
-      <Paper
-        variant="outlined"
-        onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes('Files')) return;
-          event.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(event) => {
-          if (!event.dataTransfer.files.length) return;
-          event.preventDefault();
-          setDragOver(false);
-          attachFile(event.dataTransfer.files[0]);
-        }}
-        sx={{ position: 'relative', px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms, border-color 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' }, ...(dragOver ? { borderColor: 'primary.main', borderStyle: 'dashed', boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.14)' } : {}) }}
-      >
-        {attached && (
-          <AttachedFile file={attached} targets={attachTargets.targets} picked={attachTargets.picked} onRemove={() => setAttached(null)} />
-        )}
-        <TextField
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={onKeyDown}
-          onFocus={() => setComposerFocused(true)}
-          onBlur={() => setComposerFocused(false)}
-          placeholder={attached ? 'Pick phones with @ or # (or leave empty for all online phones)' : 'Tell Vector what the phones should do…'}
-          multiline
-          minRows={2}
-          maxRows={8}
-          fullWidth
-          variant="standard"
-          inputRef={inputRef}
-          sx={{ position: 'relative', zIndex: 1 }}
-          InputProps={{ disableUnderline: true, sx: { px: 0.75, fontSize: 16, '& textarea::placeholder': { color: 'text.secondary', opacity: 0.8 } } }}
-          inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
-        />
-        {/* After the field, so the textarea exists when it measures itself against it. */}
-        <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
-          <AttachChip onPick={attachFile} />
-          <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
-          <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
-          <RotationSwitch />
-          <AgentSightChip status={sightStatus} onFix={openVisionSettings} />
-          <Dialog open={blindAsk !== null} onClose={() => setBlindAsk(null)} maxWidth="xs" fullWidth>
-            <Box sx={{ p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography sx={{ fontWeight: 800, fontSize: 17 }}>The AI won't see the screenshots</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Screenshots are on, but {(sightStatus?.model ?? 'this model').split('/').pop()} can't read images and no vision helper is set. On screens the
-                element list can't describe (ChatGPT, games, web views) it will tap blind. Run anyway?
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <Button onClick={() => { setBlindAsk(null); openVisionSettings(); }}>Add vision helper</Button>
-                <Button
-                  variant="contained"
-                  onClick={() => {
-                    const text = blindAsk;
-                    blindAcknowledged.current = true;
-                    setBlindAsk(null);
-                    if (text) void send(text);
-                  }}
-                >
-                  Run anyway
-                </Button>
-              </Box>
-            </Box>
-          </Dialog>
-          <Box sx={{ flex: 1 }} />
-          {speechSupported && (
-            <Tooltip title={listening ? 'Stop dictation' : 'Speak to type'}>
-              <IconButton
-                onClick={toggleDictation}
-                aria-label={listening ? 'Stop dictation' : 'Speak to type'}
-                sx={{
-                  color: listening ? 'error.main' : 'text.secondary',
-                  bgcolor: listening ? 'rgba(220,38,38,0.08)' : 'transparent',
-                  ...(listening ? { animation: `${micPulse} 1.6s infinite` } : {}),
-                  ...reducedMotion,
-                }}
-              >
-                <MicRoundedIcon />
-              </IconButton>
-            </Tooltip>
-          )}
-          {sending ? (
-            <Tooltip title="Stop — nothing more runs for this message">
-              <Button
-                variant="contained"
-                color="inherit"
-                onClick={stopSending}
-                aria-label="Stop"
-                startIcon={<StopRoundedIcon />}
-                sx={{ borderRadius: 99, px: 2.5, fontWeight: 700, bgcolor: 'grey.900', color: '#fff', '&:hover': { bgcolor: 'grey.800' } }}
-              >
-                Stop
-              </Button>
-            </Tooltip>
-          ) : (
+      <Dialog open={blindAsk !== null} onClose={() => setBlindAsk(null)} maxWidth="xs" fullWidth>
+        <Box sx={{ p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: 17 }}>The AI won't see the screenshots</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Screenshots are on, but {(sightStatus?.model ?? 'this model').split('/').pop()} can't read images and no vision helper is set. On screens the
+            element list can't describe (ChatGPT, games, web views) it will tap blind. Run anyway?
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <Button onClick={() => { setBlindAsk(null); openVisionSettings(); }}>Add vision helper</Button>
             <Button
               variant="contained"
-              onClick={() => void send()}
-              disabled={!input.trim() && !attached}
-              endIcon={<SendIcon />}
-              sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
+              onClick={() => {
+                const text = blindAsk;
+                blindAcknowledged.current = true;
+                setBlindAsk(null);
+                if (text) void send(text);
+              }}
             >
-              Send
+              Run anyway
             </Button>
-          )}
+          </Box>
         </Box>
-      </Paper>
+      </Dialog>
+      {(() => {
+        const dropHandlers = {
+          onDragOver: (event: React.DragEvent) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            setDragOver(true);
+          },
+          onDragLeave: () => setDragOver(false),
+          onDrop: (event: React.DragEvent) => {
+            if (!event.dataTransfer.files.length) return;
+            event.preventDefault();
+            setDragOver(false);
+            attachFile(event.dataTransfer.files[0]);
+          },
+        };
+        const field = (
+          <TextField
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={onKeyDown}
+            onFocus={() => setComposerFocused(true)}
+            onBlur={() => setComposerFocused(false)}
+            placeholder={attached ? 'Pick phones with @ or # (or leave empty for all online phones)' : isMobile ? 'Tell your phones…' : 'Tell Vector what the phones should do…'}
+            multiline
+            minRows={isMobile ? 1 : 2}
+            maxRows={isMobile ? 5 : 8}
+            fullWidth
+            variant="standard"
+            inputRef={inputRef}
+            sx={{ position: 'relative', zIndex: 1 }}
+            InputProps={{
+              disableUnderline: true,
+              sx: isMobile
+                ? { px: 0.5, py: '9px', fontSize: 16, fontWeight: 500, color: PRISM.ink, '& textarea::placeholder': { color: PRISM.muted, opacity: 0.85 } }
+                : { px: 0.75, fontSize: 16, '& textarea::placeholder': { color: 'text.secondary', opacity: 0.8 } },
+            }}
+            inputProps={{ maxLength: 4000, 'aria-label': 'Message Vector' }}
+          />
+        );
+        const tools = (
+          <>
+            <AttachChip onPick={attachFile} />
+            <Chip label="@ Phones" size="small" variant="outlined" onClick={() => insertTrigger('@')} />
+            <Chip label="# Tags" size="small" variant="outlined" onClick={() => insertTrigger('#')} />
+            <RotationSwitch />
+            <AgentSightChip status={sightStatus} onFix={openVisionSettings} />
+          </>
+        );
+        const mic = speechSupported && (
+          <Tooltip title={listening ? 'Stop dictation' : 'Speak to type'}>
+            <IconButton
+              onClick={toggleDictation}
+              aria-label={listening ? 'Stop dictation' : 'Speak to type'}
+              sx={{
+                flexShrink: 0,
+                color: listening ? 'error.main' : isMobile ? PRISM.muted : 'text.secondary',
+                bgcolor: listening ? 'rgba(220,38,38,0.08)' : 'transparent',
+                ...(listening ? { animation: `${micPulse} 1.6s infinite` } : {}),
+                ...reducedMotion,
+              }}
+            >
+              <MicRoundedIcon />
+            </IconButton>
+          </Tooltip>
+        );
+        if (isMobile) {
+          return (
+            <Box sx={{ position: 'relative', flexShrink: 0, pt: 1.25, pb: 1.25, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {composerTools && (
+                <Box sx={{ ...glass, borderRadius: '18px', p: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', animation: `${riseIn} 200ms ${ease}`, ...reducedMotion }}>
+                  {tools}
+                </Box>
+              )}
+              {attached && (
+                <Box sx={{ ...glass, borderRadius: '18px', px: 1.25, py: 0.75 }}>
+                  <AttachedFile file={attached} targets={attachTargets.targets} picked={attachTargets.picked} onRemove={() => setAttached(null)} />
+                </Box>
+              )}
+              <Box
+                component="form"
+                aria-label="Message Vector"
+                onSubmit={(event: React.FormEvent) => {
+                  event.preventDefault();
+                  void send();
+                }}
+                {...dropHandlers}
+                sx={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  gap: 0.75,
+                  p: 0.75,
+                  bgcolor: 'rgba(255,255,255,.86)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                  borderRadius: '26px',
+                  border: '1px solid rgba(255,255,255,.95)',
+                  boxShadow: '0 18px 40px -22px rgba(30,40,90,.45)',
+                  transition: 'box-shadow 200ms',
+                  '&:focus-within': { boxShadow: `0 0 0 3px rgba(59,76,255,.18), 0 18px 40px -22px rgba(30,40,90,.45)` },
+                  ...(dragOver ? { outline: `2px dashed ${PRISM.accent}` } : {}),
+                }}
+              >
+                <IconButton
+                  aria-label={composerTools ? 'Hide attach, phones and tags' : 'Attach, phones, tags'}
+                  aria-expanded={composerTools}
+                  onClick={() => setComposerTools((v) => !v)}
+                  sx={{ flexShrink: 0, width: 40, height: 40, bgcolor: '#eef0fa', color: PRISM.ink, '&:hover': { bgcolor: '#e4e7f7' } }}
+                >
+                  <AddRoundedIcon sx={{ transition: `transform 220ms ${ease}`, transform: composerTools ? 'rotate(45deg)' : 'none' }} />
+                </IconButton>
+                <Box sx={{ position: 'relative', flex: 1, minWidth: 0, alignSelf: 'center' }}>
+                  {field}
+                  <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
+                </Box>
+                {mic}
+                {sending ? (
+                  <IconButton
+                    onClick={stopSending}
+                    aria-label="Stop"
+                    sx={{ flexShrink: 0, width: 44, height: 44, bgcolor: PRISM.ink, color: '#fff', '&:hover': { bgcolor: '#262c48' } }}
+                  >
+                    <StopRoundedIcon />
+                  </IconButton>
+                ) : (
+                  <IconButton
+                    type="submit"
+                    aria-label="Send"
+                    disabled={!input.trim() && !attached}
+                    sx={{
+                      flexShrink: 0,
+                      width: 44,
+                      height: 44,
+                      background: PRISM.send,
+                      color: '#fff',
+                      boxShadow: '0 10px 22px -10px rgba(59,76,255,.9)',
+                      transition: 'opacity 200ms, transform 160ms',
+                      '&:active': { transform: 'scale(.94)' },
+                      '&.Mui-disabled': { background: PRISM.send, color: '#fff', opacity: 0.45, boxShadow: 'none' },
+                    }}
+                  >
+                    <ArrowUpwardRoundedIcon />
+                  </IconButton>
+                )}
+              </Box>
+            </Box>
+          );
+        }
+        return (
+          <Paper
+            variant="outlined"
+            {...dropHandlers}
+            sx={{ position: 'relative', px: 1.5, pt: 1.25, pb: 1, borderRadius: 4, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)', transition: 'box-shadow 200ms, border-color 200ms', '&:focus-within': { boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.18), 0 10px 30px rgba(15, 23, 42, 0.08)' }, ...(dragOver ? { borderColor: 'primary.main', borderStyle: 'dashed', boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.14)' } : {}) }}
+          >
+            {attached && (
+              <AttachedFile file={attached} targets={attachTargets.targets} picked={attachTargets.picked} onRemove={() => setAttached(null)} />
+            )}
+            {field}
+            {/* After the field, so the textarea exists when it measures itself against it. */}
+            <MentionHighlighter inputRef={inputRef} value={input} vocab={mentionVocab} />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
+              {tools}
+              <Box sx={{ flex: 1 }} />
+              {mic}
+              {sending ? (
+                <Tooltip title="Stop — nothing more runs for this message">
+                  <Button
+                    variant="contained"
+                    color="inherit"
+                    onClick={stopSending}
+                    aria-label="Stop"
+                    startIcon={<StopRoundedIcon />}
+                    sx={{ borderRadius: 99, px: 2.5, fontWeight: 700, bgcolor: 'grey.900', color: '#fff', '&:hover': { bgcolor: 'grey.800' } }}
+                  >
+                    Stop
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Button
+                  variant="contained"
+                  onClick={() => void send()}
+                  disabled={!input.trim() && !attached}
+                  endIcon={<SendIcon />}
+                  sx={{ borderRadius: 99, px: 2.5, fontWeight: 700 }}
+                >
+                  Send
+                </Button>
+              )}
+            </Box>
+          </Paper>
+        );
+      })()}
     </Box>
     {wide && (
       <FleetPanel
