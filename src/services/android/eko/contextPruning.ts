@@ -96,3 +96,45 @@ export function keepOnlyFreshImage(messages: Message[], vision: boolean): { kept
   }
   return { kept, removed };
 }
+
+type Marked = Message & { providerOptions?: Record<string, Record<string, unknown> | undefined> };
+
+/** Messages that carry our moving cache mark, with what their own options were before. */
+const ownMarks = new WeakMap<object, Marked['providerOptions']>();
+
+/**
+ * One moving prompt-cache mark, on the newest assistant turn.
+ *
+ * Eko marks only its system prompt, so on models that cache by mark (Claude)
+ * the whole step history was billed in full on every call. The newest
+ * assistant turn is the last message the next call will send unchanged: the
+ * screen dump after it is shortened on that call (pruneStaleScreens), so a mark
+ * any later would never be read. The previous mark is taken off first, because
+ * Anthropic allows only four marks in a request. Models that cache on their
+ * own (DeepSeek, GPT, Gemini) ignore the mark. Nothing in the text changes.
+ */
+export function markCacheBreakpoint(messages: Message[], mark: Record<string, Record<string, unknown>>): number {
+  let marked = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'assistant') {
+      marked = i;
+      break;
+    }
+  }
+  messages.forEach((message, index) => {
+    if (index === marked || !ownMarks.has(message)) return;
+    const original = ownMarks.get(message);
+    ownMarks.delete(message);
+    if (original === undefined) delete (message as Marked).providerOptions;
+    else (message as Marked).providerOptions = original;
+  });
+  if (marked < 0) return -1;
+  const message = messages[marked] as Marked;
+  if (ownMarks.has(message)) return marked;
+  const original = message.providerOptions;
+  ownMarks.set(message, original);
+  const merged: NonNullable<Marked['providerOptions']> = { ...(original ?? {}) };
+  for (const [provider, options] of Object.entries(mark)) merged[provider] = { ...(original?.[provider] ?? {}), ...options };
+  message.providerOptions = merged;
+  return marked;
+}

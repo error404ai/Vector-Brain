@@ -26,9 +26,9 @@ const num = (value: unknown): number | null => {
 
 export function usageDetails(usage: Usage, providerMetadata: Metadata): UsageDetails {
   const openrouter = providerMetadata?.openrouter as { usage?: { cost?: unknown; promptTokensDetails?: { cachedTokens?: unknown } } } | undefined;
-  const anthropic = providerMetadata?.anthropic as { cacheCreationInputTokens?: unknown; usage?: { cache_creation_input_tokens?: unknown } } | undefined;
+  const anthropic = providerMetadata?.anthropic as { cacheCreationInputTokens?: unknown; usage?: { cache_creation_input_tokens?: unknown; cache_read_input_tokens?: unknown } } | undefined;
   return {
-    cachedTokens: num(usage?.cachedInputTokens) ?? num(openrouter?.usage?.promptTokensDetails?.cachedTokens) ?? 0,
+    cachedTokens: num(usage?.cachedInputTokens) ?? num(openrouter?.usage?.promptTokensDetails?.cachedTokens) ?? num(anthropic?.usage?.cache_read_input_tokens) ?? 0,
     cacheWriteTokens: num(anthropic?.cacheCreationInputTokens) ?? num(anthropic?.usage?.cache_creation_input_tokens),
     reasoningTokens: num(usage?.reasoningTokens) ?? 0,
     costUsd: num(openrouter?.usage?.cost),

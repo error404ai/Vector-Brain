@@ -6,7 +6,8 @@ import type { Tool, ToolResult } from '@eko-ai/eko';
 import type { AndroidGatewayService } from '../AndroidGatewayService';
 import type { ActionResult, AutomationAction, CompanionFeature, DeviceKey, UiEvent, UiNodeSnapshot, UiTreeSnapshot } from '../AndroidProtocol';
 import { parseAppList } from '../agent/successVerifier';
-import { keepOnlyFreshImage, pruneStaleScreens } from './contextPruning';
+import { keepOnlyFreshImage, markCacheBreakpoint, pruneStaleScreens } from './contextPruning';
+import { CACHE_BREAKPOINT } from '../agent/usageDetails';
 import { CLOSE_NOTICE, findObstacle, noticeWithoutButtons, type ObstacleId } from './obstacles';
 import { domainOf, lessonNote, lessonsFor, normalUrl, scopesInText, type AgentLesson } from '../experience/experience';
 import { compactSystemPrompt } from './compactPrompt';
@@ -1767,6 +1768,7 @@ export class AndroidAgent extends Agent {
     await super.handleMessages(agentContext, messages, tools);
     pruneStaleScreens(messages as unknown as Parameters<typeof pruneStaleScreens>[0]);
     keepOnlyFreshImage(messages as unknown as Parameters<typeof keepOnlyFreshImage>[0], Boolean(this.options.vision));
+    markCacheBreakpoint(messages as unknown as Parameters<typeof markCacheBreakpoint>[0], CACHE_BREAKPOINT as unknown as Record<string, Record<string, unknown>>);
   }
 
   /**

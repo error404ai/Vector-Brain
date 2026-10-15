@@ -28,7 +28,7 @@ import { saveStepLog, saveTaskResult } from './safeWrites';
 import { isEngineKind, type AgentEngine, type EngineKind, type EngineRunResult } from './agent/AgentEngine';
 import { EkoEngine } from './agent/EkoEngine';
 import { VectorEngine } from './agent/VectorEngine';
-import { costFromPrice, type UsageDetails } from './agent/usageDetails';
+import { costFromPrice, usageDetails, type UsageDetails } from './agent/usageDetails';
 import { withRateLimitRetry } from '@/services/ai/rateLimitFetch';
 import { createScreenGrounder } from './agent/screenGrounder';
 import { isOscillating } from './agent/oscillation';
@@ -57,6 +57,11 @@ config.compressTokensThreshold = 60000;
 // a tool result: OpenRouter and OpenAI-compatible APIs turn tool-result images
 // into base64 text (~80k tokens per screenshot, re-sent on every later call).
 config.toolResultMultimodal = false;
+
+/** The object without its null/undefined fields, so they do not override a value found elsewhere. */
+function stripNullish<T extends object>(value: T | undefined): Partial<T> {
+  return Object.fromEntries(Object.entries(value ?? {}).filter(([, v]) => v != null)) as Partial<T>;
+}
 
 const MAX_CONSECUTIVE_FAILURES = 6;
 const MAX_IDENTICAL_TOOL_STATES = 3;
@@ -1099,7 +1104,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
   }
 
   /** One model in Eko's shape. Short rate limits are waited out at the HTTP level. */
-  private ekoLlm(aiConfig: DecryptedAiConfig): LLMs[string] {
+  private ekoLlm(aiConfig: DecryptedAiConfig, cacheSession?: string): LLMs[string] {
     const defaultBaseUrl = this.aiConfigService.getDefaultBaseUrl(aiConfig.provider);
     const baseURL = aiConfig.base_url?.trim() || defaultBaseUrl || undefined;
     let provider: any;
@@ -1129,6 +1134,12 @@ Use the current visible Android screen and UI state as context. Continue from wh
       apiKey: aiConfig.api_key,
       // Stays under Eko's 45 s wait for the first streamed token.
       fetch: withRateLimitRetry(fetch, { maxTotalMs: 30_000 }),
+      // OpenRouter: report each call's billed cost and cached tokens (they arrive
+      // with the call's usage), and keep the run's calls on one upstream server
+      // so the prompt cache it wrote is the one read next.
+      ...(aiConfig.provider === AiProvider.OPENROUTER
+        ? { options: { usage: { include: true }, ...(cacheSession ? { session_id: cacheSession } : {}) } }
+        : {}),
       config: {
         baseURL,
         temperature: 0.1,
@@ -1137,9 +1148,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
   }
 
   /** "default" is the account's model; "fallback", when set, is tried when it fails (Eko walks the names in order). */
-  private buildEkoLlms(aiConfig: DecryptedAiConfig, fallback?: DecryptedAiConfig | null): LLMs {
-    const llms: LLMs = { default: this.ekoLlm(aiConfig) };
-    if (fallback) llms.fallback = this.ekoLlm(fallback);
+  private buildEkoLlms(aiConfig: DecryptedAiConfig, fallback?: DecryptedAiConfig | null, userId?: number): LLMs {
+    const session = (config: DecryptedAiConfig) => (userId ? `vb-u${userId}-c${config.id}-eko` : undefined);
+    const llms: LLMs = { default: this.ekoLlm(aiConfig, session(aiConfig)) };
+    if (fallback) llms.fallback = this.ekoLlm(fallback, session(fallback));
     return llms;
   }
 
@@ -1609,7 +1621,10 @@ Use the current visible Android screen and UI state as context. Continue from wh
             // One model call ended. Its usage belongs to the first step it chose;
             // a call that chose no step (planning, final answer) only counts in the totals.
             llmCalls += 1;
-            const usage = (message as { usage?: { promptTokens?: number; completionTokens?: number } & Partial<UsageDetails> }).usage;
+            const reported = message as { usage?: { promptTokens?: number; completionTokens?: number } & Partial<UsageDetails>; providerMetadata?: unknown };
+            // Vector/Lite put the details in usage; Eko passes the provider's own
+            // report (OpenRouter's cost and cached tokens) along as providerMetadata.
+            const usage = { ...usageDetails(undefined, reported.providerMetadata as never), ...stripNullish(reported.usage) };
             const inTokens = Math.max(0, Number(usage?.promptTokens) || 0);
             const outTokens = Math.max(0, Number(usage?.completionTokens) || 0);
             const cacheRead = Math.max(0, Number(usage?.cachedTokens) || 0);
@@ -1666,7 +1681,7 @@ Use the current visible Android screen and UI state as context. Continue from wh
             callIdleMs: Number(process.env.VECTOR_CALL_IDLE_MS) || undefined,
             callMaxMs: Number(process.env.VECTOR_CALL_MAX_MS) || undefined,
           })
-        : new EkoEngine(this.buildEkoLlms(aiConfig, fallbackConfig), androidAgent, handleMessage);
+        : new EkoEngine(this.buildEkoLlms(aiConfig, fallbackConfig, userId), androidAgent, handleMessage);
     const activeEngine = engine;
     agentTask.engine = engineSettings.kind;
     void this.agentTaskRepo.update({ id: agentTask.id }, { engine: engineSettings.kind }).catch(() => undefined);
