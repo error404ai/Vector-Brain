@@ -253,6 +253,17 @@ const ANOTHER_ACCOUNT = /^(?:use another account|add another account|add account
 /** Menu buttons: hamburger, overflow, navigation drawer. */
 const MENU_LABEL = /^(?:main menu|menu|open menu|more options|more actions|more|options|navigation menu|open navigation drawer|show navigation drawer|navigate up menu|drawer|⋮|≡|☰)$/i;
 const OPPOSITE = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' } as const;
+
+/** An address as a page: no scheme, www. or m., fragment or trailing slash; the query kept (two searches are two pages). */
+export function pageKey(url: string): string {
+  return String(url ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .replace(/^(?:www\.|m\.)/, '')
+    .replace(/#.*$/, '')
+    .replace(/\/+(?=\?|$)/, '');
+}
 /** Tasks that mean to turn a toggle OFF: there, tapping one that is on is the point. */
 const UNDO_TASK = /\b(?:un-?(?:like|follow|save|subscribe|star|bookmark|heart|favou?rite)|remove (?:the |my |all )?(?:likes?|saves?|bookmarks?|stars?)|dislike|undo)\b/i;
 const isOn = (e: ScreenElement) => e.on === true || e.selected === true;
@@ -548,6 +559,8 @@ export class AndroidAgent extends Agent {
   private actionTrail: string[] = [];
   /** Up/down scrolls this run, newest last (F = further down the page, B = back up): for "back and forth". */
   private scrollTrail: ('F' | 'B')[] = [];
+  /** Successful opens per address this run (pageKey), for "the same address a third time". */
+  private urlOpens = new Map<string, number>();
   /** The app the scroll trail belongs to, and BACK AND FORTH notes given in it. */
   private scrollTrailApp: string | null = null;
   private backForthWarnings = 0;
@@ -1034,6 +1047,15 @@ export class AndroidAgent extends Agent {
             this.shownLessons.add(dead.id);
             return { content: [{ type: 'text', text: `Not opened: earlier runs found that this address does not exist (${dead.text}) Use the site's own menus instead.${this.menuHint()}` }], isError: true };
           }
+          // The same address a third time: it is not getting the run anywhere. Oct 15, #4023
+          // (Blogger, lite): blogger.com, /home and /blog/posts opened 10, 10 and 7 times with
+          // taps and waits in between, so no exact cycle showed and no warning ever came.
+          const urlKey = pageKey(String(args.url ?? ''));
+          if (urlKey && (this.urlOpens.get(urlKey) ?? 0) >= 2 && !this.userRepeats) {
+            const extra = await this.screenExtras(undefined, 'loop');
+            const text = `Not opened: you have already opened ${cutText(String(args.url), 80)} twice in this run, and it has not got you there. Opening it again will not either. Work with the page that is on screen: its menu, a dropdown or a switcher (a site often keeps "new …" or "create" under the name of the current item), a tab, or a link; or finish and report what you found.${this.menuHint()}${extra.note}`;
+            return extra.image ? { content: [{ type: 'text', text }, { type: 'image', data: extra.image, mimeType: 'image/jpeg' }], isError: true } : { content: [{ type: 'text', text }], isError: true };
+          }
           this.lastUrl = String(args.url ?? '');
           this.actionHistory = []; // Reset history on URL open
           this.consecutiveFailures = 0;
@@ -1042,9 +1064,10 @@ export class AndroidAgent extends Agent {
           const browser = browserFor(this.lastForegroundApp, this.options.task);
           const open = (packageName?: string) =>
             this.runDeviceAction({ type: 'OpenUrl', url: withScheme(String(args.url || '')), sameTab: USE_IN_APP_BROWSER, ...(packageName ? { packageName } : {}) }, 'open_url', args);
-          const opened = await open(browser);
+          let opened = await open(browser);
           // Chrome by default, but this phone may not have it: the phone's own browser then.
-          if (opened.isError && browser === DEFAULT_BROWSER && !BROWSERS[0][0].test(this.options.task ?? '')) return open();
+          if (opened.isError && browser === DEFAULT_BROWSER && !BROWSERS[0][0].test(this.options.task ?? '')) opened = await open();
+          if (!opened.isError && urlKey) this.urlOpens.set(urlKey, (this.urlOpens.get(urlKey) ?? 0) + 1);
           return opened;
         },
       },

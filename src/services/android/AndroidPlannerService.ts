@@ -18,6 +18,7 @@ import { config, global, GlobalPromptKey, type AgentStreamMessage, type LLMs } f
 import { AndroidAgent, type PhoneAccounts } from './eko/AndroidAgent';
 import { DeviceFactService } from './DeviceFactService';
 import { ExperienceService } from './experience/ExperienceService';
+import { failureKind } from './failureKind';
 import { classifyFailure } from './failureReason';
 import { RunDiagnosticsService } from './RunDiagnosticsService';
 import { screenFingerprint, type RecoveryKind } from './runDiagnostics';
@@ -2178,10 +2179,13 @@ Use the current visible Android screen and UI state as context. Continue from wh
 
       // Experience memory: score the lessons this run was shown and learn from it. Not awaited.
       if (!flowOptions.aiOnly && !this.shuttingDown) {
+        // A failure that was not the agent's (cancelled, phone, AI service, server) says nothing about a lesson.
+        const cancelledRun = Boolean(this.activeTasks.get(agentTask.id)?.cancelled) || agentTask.status === 'CANCELLED';
         void Container.get(ExperienceService).afterRun({
           userId,
           taskId: agentTask.id,
           succeeded: runSucceeded,
+          countsForLessons: runSucceeded || (!cancelledRun && failureKind(agentTask.reason_code, agentTask.message) === 'agent'),
           used: androidAgent.experienceUsed(),
           // The run's own model writes the lessons (none in the harness's scripted runs).
           model: AGENT_SIMULATION || process.env.EXPERIENCE_REFLECT === '0' ? null : modelFor(aiConfig),

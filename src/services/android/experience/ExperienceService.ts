@@ -20,6 +20,7 @@ import {
   provenLessons,
   sameLesson,
   scopesOfRun,
+  lessonsToScore,
   scoreLesson,
   traceText,
   unsafeText,
@@ -75,10 +76,20 @@ export class ExperienceService {
    * dead addresses with no model, the rest with one reflection call on the
    * run's own model. Never throws; never holds the run up.
    */
-  async afterRun(input: { userId: number; taskId: number; succeeded: boolean; used: number[]; model: LanguageModel | null; prompt: string }): Promise<void> {
+  async afterRun(input: {
+    userId: number;
+    taskId: number;
+    succeeded: boolean;
+    /** False when a failure was not the agent's (cancelled, phone, AI service, server): lessons are not scored. */
+    countsForLessons?: boolean;
+    used: number[];
+    model: LanguageModel | null;
+    prompt: string;
+  }): Promise<void> {
     try {
       const { learn } = await this.settings(input.userId);
-      if (input.used.length) await this.score(input.userId, input.used, input.succeeded);
+      const outcome = input.succeeded ? 'succeeded' : input.countsForLessons === false ? 'not_counted' : 'agent_failed';
+      if (input.used.length) await this.score(input.userId, input.used, outcome);
       const learned: number[] = [];
       if (learn) {
         const steps = await this.stepsOf(input.taskId);
@@ -99,8 +110,11 @@ export class ExperienceService {
     }
   }
 
-  private async score(userId: number, ids: number[], succeeded: boolean) {
-    const rows = await this.lessonRepo.find({ where: { user_id: userId, id: In(ids) } });
+  private async score(userId: number, ids: number[], outcome: 'succeeded' | 'agent_failed' | 'not_counted') {
+    if (outcome === 'not_counted') return;
+    const succeeded = outcome === 'succeeded';
+    const shown = await this.lessonRepo.find({ where: { user_id: userId, id: In(ids) } });
+    const rows = lessonsToScore(shown.map((r) => Object.assign(r, { status: r.status as LessonStatus })), outcome);
     for (const row of rows) {
       const next = scoreLesson({ status: row.status as LessonStatus, helped: row.helped, hurt: row.hurt, source: row.source }, succeeded);
       const offNow = next.status === 'off' && row.status !== 'off';

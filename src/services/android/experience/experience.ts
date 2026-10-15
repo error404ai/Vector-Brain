@@ -242,6 +242,21 @@ export function parseLessons(raw: string, run: { domains: Set<string>; apps: Set
   return out;
 }
 
+/**
+ * Which of the lessons a run was shown take its outcome. A success counts for all of
+ * them. A failure counts only when it was the agent's own (a cancel, a phone gone
+ * offline, an AI out of quota or a server restart says nothing about a lesson), and when
+ * an unconfirmed lesson was among them, only the unconfirmed ones take it: a trusted
+ * lesson has already helped, the new one is the likelier cause (Oct 15: three right
+ * blogger.com lessons each took "hurt" from one failed run).
+ */
+export function lessonsToScore<T extends { status: LessonStatus }>(lessons: T[], outcome: 'succeeded' | 'agent_failed' | 'not_counted'): T[] {
+  if (outcome === 'not_counted') return [];
+  if (outcome === 'succeeded') return lessons;
+  const unconfirmed = lessons.filter((l) => l.status === 'candidate');
+  return unconfirmed.length ? unconfirmed : lessons;
+}
+
 /** After a finished run that used the lesson: its new standing. */
 export function scoreLesson(l: { status: LessonStatus; helped: number; hurt: number; source: string }, succeeded: boolean): { status: LessonStatus; helped: number; hurt: number } {
   const helped = l.helped + (succeeded ? 1 : 0);
