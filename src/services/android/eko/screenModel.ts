@@ -571,3 +571,20 @@ export function verticalShift(before: ScreenModel | null, after: ScreenModel | n
   moved.sort((x, y) => x - y);
   return { shift: moved[Math.floor(moved.length / 2)], kept, total };
 }
+
+/** Browsers whose page content reaches the list through the browser's own accessibility tree. */
+const BROWSER_PACKAGE = /chrome|browser|firefox|sbrowser|opera|edge|brave/i;
+
+/**
+ * A browser screen whose page area came back as one empty box: the toolbar is listed,
+ * the page is not. Chrome builds a page's accessibility tree lazily and now and then
+ * hands over only the box (Oct 15, Amazon results on a Samsung: 7 rows — the toolbar and
+ * an unlabelled view over the page — on 46 of 87 screens of run #3998, 16–50 rows on the others).
+ * The page is not blank; its content just did not come with this read.
+ */
+export function webContentMissing(model: ScreenModel | null, packageName: string | null): boolean {
+  if (!model || !BROWSER_PACKAGE.test(packageName ?? '')) return false;
+  const box = model.elements.find((e) => !e.label.trim() && !e.seen && e.box.bottom - e.box.top >= 400 && e.box.right - e.box.left >= 600);
+  if (!box) return false;
+  return !model.elements.some((e) => e !== box && !e.seen && e.label.trim() && e.grid.y > box.box.top && e.grid.y < box.box.bottom);
+}

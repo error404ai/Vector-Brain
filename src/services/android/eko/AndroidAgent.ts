@@ -27,6 +27,7 @@ import {
   toPixels,
   uncoveredPoint,
   verticalShift,
+  webContentMissing,
   withSeenElements,
   type ScreenElement,
   type ScreenModel,
@@ -547,6 +548,9 @@ export class AndroidAgent extends Agent {
   private actionTrail: string[] = [];
   /** Up/down scrolls this run, newest last (F = further down the page, B = back up): for "back and forth". */
   private scrollTrail: ('F' | 'B')[] = [];
+  /** The app the scroll trail belongs to, and BACK AND FORTH notes given in it. */
+  private scrollTrailApp: string | null = null;
+  private backForthWarnings = 0;
   /** Times this run scrolled a long notice to find its buttons (at most 3). */
   private noticeScrolls = 0;
   /** Taps per label on one screen ("screenKey|label"), for "this tap may have undone the last one". */
@@ -938,6 +942,8 @@ export class AndroidAgent extends Agent {
           // way to the phone while the description said "finger direction": every UP went
           // DOWN (56 of 95 Instagram swipes moved nothing, #3875-#3894).
           const direction = String(args.direction ?? '').toUpperCase() as 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+          const refused = direction === 'UP' || direction === 'DOWN' ? this.refuseReversal(direction === 'UP' ? 'F' : 'B') : null;
+          if (refused) return refused;
 
           // A swipe that starts on the keyboard glide-types a word into the field: Blogger's title
           // became "Wanderlust Diaries by by by" after four swipes (Oct 12, #3864). Close it first.
@@ -1160,6 +1166,8 @@ export class AndroidAgent extends Agent {
         },
         execute: async (args: Record<string, unknown>): Promise<ToolResult> => {
           const direction = String(args.direction ?? 'FORWARD').toUpperCase() === 'BACKWARD' ? 'BACKWARD' : 'FORWARD';
+          const refused = this.refuseReversal(direction === 'FORWARD' ? 'F' : 'B');
+          if (refused) return refused;
           const amount = String(args.amount ?? 'page').toLowerCase();
           const before = this.currentKey();
           const frameBefore = this.frameKey();
@@ -2156,7 +2164,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     try {
       if (skipObservation) throw new Error('skip');
       // The screen already came with the action's result (and no fallback action ran since): use it.
-      const observation = res === bundled && res.status === 'SUCCESS' && res.uiTree ? res : await this.observe();
+      const observation = res === bundled && res.status === 'SUCCESS' && res.uiTree && !this.pageMissingIn(res) ? res : await this.observe();
       this.absorb(observation);
       freshShot = observation.status === 'SUCCESS' ? observation.screenCapture?.base64Data : undefined;
     } catch {
@@ -2353,12 +2361,35 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * it the agent was blind for that step (Oct 11: 19 times in one day).
    */
   private async observe(): Promise<ActionResult> {
+    let res = await this.observeOnce();
+    // A browser that handed over only its toolbar and an empty box for the page is
+    // usually still building the page's tree: read again shortly, twice at most.
+    for (let i = 0; i < 2 && this.pageMissingIn(res); i += 1) {
+      await sleep(700);
+      const again = await this.observeOnce();
+      if (again.status !== 'SUCCESS') break;
+      res = again;
+    }
+    return res;
+  }
+
+  private async observeOnce(): Promise<ActionResult> {
     const res = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ObserveScreen' });
     if (res.status === 'FAILURE' && /frame|captur|screenshot|projection/i.test(res.message)) {
       const tree = await this.gatewayService.executeAction(this.hardwareDeviceId, { type: 'ReadUiTree' });
       if (tree.status === 'SUCCESS' && tree.uiTree) return tree;
     }
     return res;
+  }
+
+  /** An observation of a browser whose page content did not come with it (see webContentMissing). */
+  private pageMissingIn(observation: ActionResult): boolean {
+    if (observation.status !== 'SUCCESS') return false;
+    const tree = observation.uiTree as UiTreeSnapshot | undefined;
+    if (!tree?.root) return false;
+    const pkg = this.detectPackageName(tree.root, tree.packageName || '');
+    if (!/chrome|browser|firefox|sbrowser|opera|edge|brave/i.test(pkg)) return false;
+    return webContentMissing(buildScreenModel(tree.root, undefined, this.fullScreen ?? undefined), pkg);
   }
 
   /** A fingerprint of the latest frame the phone sent (identical pixels give identical JPEG bytes), or null without one. */
@@ -2420,8 +2451,17 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
 
   private async screenExtras(shot?: string, stuck: 'loop' | 'no_effect' | null = null): Promise<{ note: string; image?: string }> {
     this.readNote = '';
+    const missing = webContentMissing(this.screen, this.lastForegroundApp);
     const extras = await this.screenExtrasInner(shot, stuck);
-    return this.readNote && !extras.note.includes(this.readNote) ? { ...extras, note: `${this.readNote}${extras.note}` } : extras;
+    const withRead = this.readNote && !extras.note.includes(this.readNote) ? { ...extras, note: `${this.readNote}${extras.note}` } : extras;
+    // Said in words, so a page the browser did not hand over is not taken for a blank one
+    // (Oct 15, #3998: "the page appears blank", then waits and reloads for 40 steps).
+    return missing
+      ? {
+          ...withRead,
+          note: `\n\nNOTE: the browser did not give this page's content to the element list (only its toolbar). This does not mean the page is blank or still loading, so do not wait or reload for it (unless a screenshot shows it loading). Use the rows read from the screen (v1, v2…) or the screenshot if there is one, click_node or wait_for_element with text you expect, or scroll_element and read again.${withRead.note}`,
+        }
+      : withRead;
   }
 
   /** A point on the 0–1000 grid: an element's centre by idx, else x and y as given. */
@@ -2454,8 +2494,19 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
    * run if it helped; (2) companion 0.32: read its text on the phone (OCR) and add
    * the lines as rows v1, v2… that can be tapped. Both are free; images cost.
    */
-  private async readMoreOfScreen(): Promise<string> {
+  /**
+   * "This screen" for the extra reads: on a thin screen the list stays the same while the
+   * page under it scrolls (a browser that hands over only its toolbar), so the frame
+   * counts too. Keyed on the list alone, OCR read such a page once and never again
+   * (Oct 15, #3998: 46 screens of Amazon results the agent could not read).
+   */
+  private readKey(): string {
     const key = this.currentKey();
+    return this.screen && isThin(this.screen) ? `${key}|${this.frameKey() ?? ''}` : key;
+  }
+
+  private async readMoreOfScreen(): Promise<string> {
+    const key = this.readKey();
     if (this.readMoreKeys.has(key) || this.readMoreKeys.size > 40) return '';
     this.readMoreKeys.add(key);
     const has = (f: CompanionFeature) => Boolean(this.gatewayService.hasFeature?.(this.hardwareDeviceId, f));
@@ -2571,7 +2622,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
       };
     }
     const reader = this.screenReader;
-    if (reader && image && this.ocrKey !== this.currentKey()) {
+    if (reader && image && this.ocrKey !== this.readKey()) {
       const key = this.currentKey();
       if (key !== this.groundedKey && this.groundingUsed < GROUNDING_BUDGET) {
         this.groundedKey = key;
@@ -2783,7 +2834,7 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
   private scrollReport(direction: 'FORWARD' | 'BACKWARD', amount: string, before: string, frameBefore: string | null, screenBefore: ScreenModel | null): string {
     const way = direction === 'FORWARD' ? 'down' : 'up';
     if (!this.contentMoved(before, frameBefore)) {
-      return `NOTHING MOVED: the list did not scroll ${way}. It is at its end that way, or this part of the screen does not scroll. Do not repeat it; work with what is on screen, scroll the other way, or try swipe.`;
+      return `NOTE: NOTHING MOVED: the list did not scroll ${way}. It is at its end that way, or this part of the screen does not scroll. Do not repeat it; work with what is on screen, scroll the other way, or try swipe.`;
     }
     const smallHint = this.canDrag() && amount === 'page' ? ' If you wanted only a little, scroll back with amount small.' : '';
     const { shift, kept, total } = verticalShift(screenBefore, this.screen);
@@ -2795,7 +2846,27 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
     } else {
       line = 'MOVED: new content is on screen.';
     }
-    return `${line}${this.noteScroll(direction === 'FORWARD' ? 'F' : 'B')}`;
+    return `NOTE: ${line}${this.noteScroll(direction === 'FORWARD' ? 'F' : 'B')}`;
+  }
+
+  /**
+   * After two BACK AND FORTH notes in one app, a scroll back the other way is refused:
+   * the run is hunting for something that is not on this page the way it expects
+   * (Oct 15, #3997: 30 steps up and down a Play page for a row that layout does not have).
+   */
+  private refuseReversal(way: 'F' | 'B'): ToolResult | null {
+    if (this.backForthWarnings < 2 || this.scrollTrailApp !== this.lastForegroundApp) return null;
+    const lastWay = this.scrollTrail[this.scrollTrail.length - 1];
+    if (!lastWay || lastWay === way) return null;
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Refused: on this page you have scrolled down and back up past it again and again. What you are looking for is not on this page in the place or form you expect. Do not scroll back. Read what is on screen now, open the section, tab or link that holds it, use scroll_until with its exact text, or finish and report what you found.',
+        },
+      ],
+      isError: true,
+    };
   }
 
   /** Companion 0.32+: finger drags, so scroll_element takes an amount. */
@@ -2805,11 +2876,19 @@ middle), the same scale tap_coordinate takes. Example: 5|input|Search Google|te|
 
   /** Records an up/down scroll that moved; says so when the run keeps going down and back up. */
   private noteScroll(way: 'F' | 'B'): string {
+    // A new app or site starts a new trail.
+    if (this.scrollTrailApp !== this.lastForegroundApp) {
+      this.scrollTrailApp = this.lastForegroundApp;
+      this.scrollTrail = [];
+      this.backForthWarnings = 0;
+    }
     this.scrollTrail.push(way);
     if (this.scrollTrail.length > 8) this.scrollTrail.shift();
     const last = this.scrollTrail.slice(-4);
     const alternating = last.length === 4 && last.every((d, i) => i === 0 || d !== last[i - 1]);
     if (!alternating) return '';
+    this.backForthWarnings += 1;
+    this.scrollTrail = [way];
     const small = this.canDrag() ? '; to move only a little, use scroll_element with amount small' : '';
     return `\nBACK AND FORTH: the last four scrolls went down and up in turn, each one going past what you are looking for. To bring a named item on screen use scroll_until with its text${small}. Or read what is on screen now and carry on with it.`;
   }
